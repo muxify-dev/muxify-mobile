@@ -416,7 +416,7 @@ function ToolbarActions({
         <RNText style={[styles.toolbarWord, { color: palette.toolbarTint }]}>Edit</RNText>
       </Pressable>
       <Pressable onPress={onNew} accessibilityRole="button" accessibilityLabel="New Session">
-        <SymbolView name="plus" size={22} tintColor={palette.toolbarTint} />
+        <SymbolView name="plus" size={23} tintColor={palette.toolbarTint} />
       </Pressable>
     </View>
   );
@@ -453,7 +453,14 @@ const styles = StyleSheet.create({
   toolbarGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    // The glass capsule is drawn around this view's frame, so its insets are
+    // this view's padding, plus a little under six points UIKit adds of its
+    // own. Eight and thirty-one put the capsule within a point of the one a
+    // real ToolbarItemGroup draws: 108pt wide, 13 in from the word, 35 across
+    // to the plus. The trailing side measures wider than the leading one in
+    // both, because the plus has more empty box around its ink than the E has.
+    paddingHorizontal: 8,
+    gap: 31,
   },
   toolbarWord: {
     fontSize: 17,
