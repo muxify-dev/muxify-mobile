@@ -23,12 +23,14 @@ import {
   font,
   foregroundColor,
   frame,
+  lineLimit,
   listRowBackground,
   listStyle,
   multilineTextAlignment,
   padding,
   scrollContentBackground,
   tint,
+  truncationMode,
 } from '@expo/ui/swift-ui/modifiers';
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
@@ -154,13 +156,23 @@ export default function HostsScreen() {
                         color={attachedHere ? palette.controlAccent : palette.rowIcon}
                       />
                       <VStack spacing={2} alignment="leading">
-                        <Text modifiers={[font({ size: 17, weight: 'bold' })]}>
+                        {/* One line each, however long the name: a row that
+                            wraps is taller than its neighbours and the list
+                            stops reading as a list. Both lose their tail. */}
+                        <Text
+                          modifiers={[
+                            font({ size: 17, weight: 'bold' }),
+                            lineLimit(1),
+                            truncationMode('tail'),
+                          ]}>
                           {host.displayName}
                         </Text>
                         <Text
                           modifiers={[
                             font({ size: 13, design: 'monospaced' }),
                             foregroundColor(palette.secondaryLabel),
+                            lineLimit(1),
+                            truncationMode('tail'),
                           ]}>
                           {`${host.address}:${host.port}`}
                         </Text>
