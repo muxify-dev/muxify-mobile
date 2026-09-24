@@ -430,7 +430,7 @@ describe('setClientSize', () => {
     expect(transport.commands[0]).toContain("stty -F '/dev/pts/3' rows 19 cols 38");
   });
 
-  it('keeps the Session usable when the Host refuses', async () => {
+  it('reports a Host that refuses outright', async () => {
     const transport: TmuxTransport = {
       exec: async () => {
         throw new Error('channel closed');
@@ -442,6 +442,7 @@ describe('setClientSize', () => {
 
     await expect(
       new TmuxClient(transport).setClientSize('/dev/pts/3', { cols: 38, rows: 19 }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow();
   });
 });
+

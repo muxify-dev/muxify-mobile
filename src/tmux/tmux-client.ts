@@ -25,6 +25,7 @@ import {
   zoomPaneCommand,
 } from './commands';
 import { parseWindowLayout } from './layout';
+
 import type { TmuxExecResult, TmuxShell, TmuxShellEvents, TmuxTransport } from './transport';
 
 /** A tmux Session on a Host. */
@@ -375,12 +376,24 @@ export class TmuxClient {
    * size is briefly wrong is a cosmetic problem, and throwing here would take
    * down a Session that is otherwise working.
    */
+  /**
+   * Sets the Client's size from the Host side.
+   *
+   * Reports a failure rather than swallowing it, because the scheduler must not
+   * record a size it never sent — that was enough, on its own, to disable every
+   * later resize of a Connection.
+   *
+   * It cannot confirm the size took. tmux's `#{client_width}` reports the size
+   * from one change ago, at any delay: with the pty at 13 it says 23, and
+   * setting the pty to 15 makes it say 13. So there is nothing here to read
+   * back and compare against, and an assertion built on that field is testing
+   * tmux's bookkeeping rather than the Surface.
+   */
   async setClientSize(clientTty: string, grid: Grid): Promise<void> {
-    try {
-      await this.transport.exec(resizeClientCommand(clientTty, grid.cols, grid.rows));
-    } catch {
-      // Best effort.
-    }
+    const result = await this.transport.exec(
+      resizeClientCommand(clientTty, grid.cols, grid.rows, this.tmuxExecutablePath),
+    );
+    if (result.exitCode !== 0) throw failure('resize the Client', result);
   }
 
   /** Reads whether tmux is reading mouse events, so it can be restored. */

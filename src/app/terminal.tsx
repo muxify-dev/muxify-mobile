@@ -118,6 +118,15 @@ export default function TerminalScreen() {
   const lastScrollAt = useRef(0);
   /** What a scroll gesture should become for the Pane as it stands. */
   const route = useRef<ScrollRoute>('history');
+  /**
+   * The last cards each picker showed, so the next open has something to draw
+   * before the Host has been asked. Emptied whenever Muxify itself changes the
+   * Topology, because a highlight on the Pane you just left is worse than a
+   * spinner.
+   */
+  const pickerCache = useRef<Partial<Record<PickerKind, { cards: PreviewCard[]; subtitle: string }>>>(
+    {},
+  );
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   /**
@@ -524,23 +533,39 @@ export default function TerminalScreen() {
   /**
    * Opens a picker, reading what it shows from the Host right then.
    *
-   * Muxify holds no live model of the Host — see ADR 0001 — so a sheet that
-   * opened on a cached list would show Sessions that have since been killed and
-   * Windows that have since been closed. The previews are read in the same
-   * breath, one round trip for all of them, because a picker that takes a
-   * second to fill is a picker nobody opens.
+   * Opens on what was last seen, then corrects itself.
+   *
+   * Muxify holds no live model of the Host — see ADR 0001 — so what is shown
+   * first is a memory, and a Session killed since will be in it. The answer is
+   * not to make the user wait for a round trip and a `capture-pane` before the
+   * sheet will appear: it is to show the memory immediately and replace it the
+   * moment the Host answers, which is what makes opening a picker feel like
+   * opening a drawer rather than asking a question.
+   *
+   * The first open of a Session has nothing remembered and still waits. Every
+   * one after that does not.
    */
   const openPicker = useCallback(
     (kind: PickerKind) => {
-      setPicker({ open: true, kind, loading: true, cards: [], subtitle: '' });
+      const remembered = pickerCache.current[kind];
+      setPicker({
+        open: true,
+        kind,
+        // Only the first open of a kind has nothing to show while it asks.
+        loading: remembered === undefined,
+        cards: remembered?.cards ?? [],
+        subtitle: remembered?.subtitle ?? '',
+      });
       void (async () => {
         const client = tmux.current;
-        const show = (cards: PreviewCard[], subtitle: string) =>
+        const show = (cards: PreviewCard[], subtitle: string) => {
+          pickerCache.current[kind] = { cards, subtitle };
           setPicker((previous) =>
             previous.open && previous.kind === kind
               ? { open: true, kind, loading: false, cards, subtitle }
               : previous,
           );
+        };
         const fail = (message: string) =>
           setPicker((previous) =>
             previous.open && previous.kind === kind
@@ -637,6 +662,8 @@ export default function TerminalScreen() {
       void (async () => {
         const client = tmux.current;
         if (!client) return;
+        // What every picker showed is now out of date by construction.
+        pickerCache.current = {};
         try {
           if (kind === 'sessions') {
             if (id === sessionName.current) {
@@ -692,6 +719,7 @@ export default function TerminalScreen() {
       void (async () => {
         const client = tmux.current;
         if (!client) return;
+        pickerCache.current = {};
         try {
           if (id === 'new-window') {
             await client.newWindow(sessionName.current);

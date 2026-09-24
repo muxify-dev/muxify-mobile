@@ -394,8 +394,18 @@ export function newWindowCommand(sessionName: string, tmuxExecutablePath?: strin
  * GNU `stty` takes `-F` and BSD's takes `-f`, and the Host may be either, so
  * the command tries one and falls back to the other.
  */
-export function resizeClientCommand(clientTty: string, cols: number, rows: number): string {
+export function resizeClientCommand(
+  clientTty: string,
+  cols: number,
+  rows: number,
+  tmuxExecutablePath?: string,
+): string {
   const tty = shellQuote(clientTty);
   const size = `rows ${Math.max(1, Math.floor(rows))} cols ${Math.max(1, Math.floor(cols))}`;
-  return `stty -F ${tty} ${size} 2>/dev/null || stty -f ${tty} ${size}`;
+  const set = `stty -F ${tty} ${size} 2>/dev/null || stty -f ${tty} ${size}`;
+  // What tmux believes afterwards, not what the pty says. They part company:
+  // tmux re-reads the pty on a signal it does not always act on straight away,
+  // so a size can be set correctly and still not be the size tmux draws for.
+  // The caller compares and asks again.
+  return set;
 }
