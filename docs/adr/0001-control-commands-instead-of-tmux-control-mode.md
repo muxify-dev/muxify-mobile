@@ -1,5 +1,10 @@
 # Control Commands instead of tmux control mode
 
+> **Status: superseded by [ADR 0006](0006-tmux-control-mode-in-typescript.md).**
+> The premise below — that control mode needs `ghostty_tmux_client_*` — holds
+> only for rendering a whole split Window. One Surface showing one Pane needs
+> no native support, and control mode borrows no Session option.
+
 `remux`, the native Swift app this project probes, drives tmux with control mode
 (`tmux -C`) and lets Ghostty's C API parse the protocol, reconcile state, and
 project panes. Muxify cannot: `expo-libghostty` exposes exactly one component,
