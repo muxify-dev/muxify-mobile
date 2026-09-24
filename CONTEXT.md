@@ -60,6 +60,13 @@ tmux's term for one Pane filling its Window on its own. Muxify attaches zoomed
 by default, because a phone is too narrow to read two Panes side by side; the
 Panes picker is where it is turned off to see the real split.
 
+**Theme**:
+The colours the Surface paints with, chosen in Settings: Default (Ghostty's
+own), Mocha and Latte (the two Catppuccin palettes). Applied from the next
+Attach, not to a Session already on screen.
+_Avoid_: colour scheme (which is the phone's light/dark setting — Muxify is
+always dark), skin
+
 **Attach**:
 Binding the Shell Channel to an existing Session. Muxify only ever attaches —
 it does not create, rename, or kill Sessions.

@@ -1,11 +1,38 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { GlassRow } from '@/components/glass-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import {
+  Button,
+  Form,
+  Host,
+  Picker,
+  SecureField,
+  Section,
+  Text,
+  TextField,
+  useNativeState,
+  VStack,
+} from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  autocorrectionDisabled,
+  background,
+  environment,
+  font,
+  foregroundColor,
+  frame,
+  keyboardType,
+  listRowBackground,
+  lineLimit,
+  pickerStyle,
+  scrollContentBackground,
+  tag,
+  textInputAutocapitalization,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
+
+import { AppPalette } from '@/constants/app-theme';
 import {
   emptyHostDraft,
   validateHostDraft,
@@ -13,11 +40,10 @@ import {
   type HostDraftField,
   type IdentityKind,
 } from '@/domain/validate-host-draft';
-import { useTheme } from '@/hooks/use-theme';
 import { deviceHostStore } from '@/storage/device-store';
 
 /**
- * Add or edit a Host.
+ * Add or edit a Host, as a sheet over the list.
  *
  * One form for both, because a typo in an address should not mean recreating
  * the Host and losing what is attached to it. Editing keeps the Host's id, so
@@ -27,232 +53,327 @@ import { deviceHostStore } from '@/storage/device-store';
  * immediate, specific answer rather than a network error thirty seconds later.
  */
 export default function HostFormScreen() {
-  const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const [draft, setDraft] = useState<HostDraft>(emptyHostDraft);
-  const [errors, setErrors] = useState<Partial<Record<HostDraftField, string>>>({});
-  const [identityId, setIdentityId] = useState<string | undefined>();
+  const [loaded, setLoaded] = useState<{ draft: HostDraft; identityId?: string } | null>(null);
 
   useEffect(() => {
-    if (!id) return;
     void (async () => {
+      if (!id) {
+        setLoaded({ draft: emptyHostDraft() });
+        return;
+      }
       const records = await deviceHostStore().load();
       const host = records.hosts.find((candidate) => candidate.id === id);
-      if (!host) return;
+      if (!host) {
+        setLoaded({ draft: emptyHostDraft() });
+        return;
+      }
       const identity = records.identities.find((candidate) => candidate.id === host.identityId);
-      setIdentityId(host.identityId);
-      setDraft({
-        ...emptyHostDraft(),
-        displayName: host.displayName,
-        address: host.address,
-        port: String(host.port),
-        username: identity?.username ?? '',
-        tmuxExecutablePath: host.tmuxExecutablePath ?? '',
-        identityKind: identity?.kind ?? 'password',
+      setLoaded({
+        identityId: host.identityId,
+        draft: {
+          ...emptyHostDraft(),
+          displayName: host.displayName,
+          address: host.address,
+          port: String(host.port),
+          username: identity?.username ?? '',
+          tmuxExecutablePath: host.tmuxExecutablePath ?? '',
+          identityKind: identity?.kind ?? 'password',
+        },
       });
     })();
   }, [id]);
 
-  const set = useCallback(
-    (field: HostDraftField, value: string) =>
-      setDraft((previous) => ({ ...previous, [field]: value })),
-    [],
-  );
+  // Remounted once the record arrives, because the native fields take their
+  // starting text when they are created and there is nothing to set it with
+  // afterwards that would not fight the user's typing.
+  if (!loaded) return <View style={styles.fill} />;
+  return <HostForm hostId={id} identityId={loaded.identityId} initial={loaded.draft} />;
+}
+
+function HostForm({
+  hostId,
+  identityId,
+  initial,
+}: {
+  hostId?: string;
+  identityId?: string;
+  initial: HostDraft;
+}) {
+  const router = useRouter();
+  const [errors, setErrors] = useState<Partial<Record<HostDraftField, string>>>({});
+  const [identityKind, setIdentityKind] = useState<IdentityKind>(initial.identityKind);
+
+  const displayName = useNativeState(initial.displayName);
+  const address = useNativeState(initial.address);
+  const port = useNativeState(initial.port);
+  const username = useNativeState(initial.username);
+  const password = useNativeState('');
+  const privateKeyPem = useNativeState('');
+  const tmuxExecutablePath = useNativeState(initial.tmuxExecutablePath);
 
   const save = useCallback(() => {
-    const validation = validateHostDraft(draft, { requireCredential: id === undefined });
+    const draft: HostDraft = {
+      displayName: displayName.value,
+      address: address.value,
+      port: port.value,
+      username: username.value,
+      password: password.value,
+      privateKeyPem: privateKeyPem.value,
+      tmuxExecutablePath: tmuxExecutablePath.value,
+      identityKind,
+    };
+    const validation = validateHostDraft(draft, { requireCredential: hostId === undefined });
     setErrors(validation.errors);
     if (!validation.ok) return;
 
     void (async () => {
       await deviceHostStore().saveHost({
         host: {
-          id,
+          id: hostId,
           displayName: draft.displayName.trim(),
           address: draft.address.trim(),
           port: Number(draft.port),
           tmuxExecutablePath: draft.tmuxExecutablePath.trim() || undefined,
         },
-        identity: { id: identityId, username: draft.username.trim(), kind: draft.identityKind },
+        identity: { id: identityId, username: draft.username.trim(), kind: identityKind },
         // Empty on an edit means "keep what the keychain already holds", so a
         // changed address does not mean retyping a private key.
-        credential: draft.identityKind === 'password' ? draft.password : draft.privateKeyPem,
+        credential: identityKind === 'password' ? draft.password : draft.privateKeyPem,
       });
       router.back();
     })();
-  }, [draft, id, identityId, router]);
+  }, [
+    displayName,
+    address,
+    port,
+    username,
+    password,
+    privateKeyPem,
+    tmuxExecutablePath,
+    identityKind,
+    hostId,
+    identityId,
+    router,
+  ]);
+
+  const keptPlaceholder = hostId ? 'Leave blank to keep the stored one' : undefined;
 
   return (
-    <ThemedView style={styles.fill}>
-      <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-        <Field
-          label="Display name"
-          value={draft.displayName}
-          error={errors.displayName}
-          onChange={(text) => set('displayName', text)}
-        />
-        <Field
-          label="Address"
-          value={draft.address}
-          error={errors.address}
-          autoCapitalize="none"
-          onChange={(text) => set('address', text)}
-        />
-        <Field
-          label="Port"
-          value={draft.port}
-          error={errors.port}
-          keyboardType="number-pad"
-          onChange={(text) => set('port', text)}
-        />
-        <Field
-          label="User"
-          value={draft.username}
-          error={errors.username}
-          autoCapitalize="none"
-          onChange={(text) => set('username', text)}
-        />
+    <View style={styles.fill}>
+      <Stack.Screen
+        options={{
+          title: hostId ? 'Edit Host' : 'New Host',
+          headerLeft: () => (
+            <ToolbarText label="Cancel" onPress={() => router.back()} />
+          ),
+          headerRight: () => <ToolbarText label="Save" onPress={save} bold />,
+        }}
+      />
 
-        <View style={styles.segmented}>
-          {(['password', 'privateKey'] as IdentityKind[]).map((kind) => (
-            <Pressable
-              key={kind}
-              onPress={() => set('identityKind', kind)}
-              accessibilityRole="button"
-              accessibilityLabel={kind === 'password' ? 'Use password' : 'Use private key'}
-              style={[styles.segment, draft.identityKind === kind && styles.segmentOn]}>
-              <ThemedText type="small">{kind === 'password' ? 'Password' : 'Private key'}</ThemedText>
-            </Pressable>
-          ))}
-        </View>
+      <Host style={styles.fill} matchContents={false}>
+        <Form
+          modifiers={[
+            environment('colorScheme', 'dark'),
+            scrollContentBackground('hidden'),
+            background(AppPalette.background),
+            tint(AppPalette.controlAccent),
+          ]}>
+          <Section
+            header={<SectionHeader>Host</SectionHeader>}
+            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            <Field label="Name" placeholder="Mac mini" error={errors.displayName}>
+              <TextField
+                text={displayName}
+                placeholder="Mac mini"
+                modifiers={[
+                  textInputAutocapitalization('never'),
+                  accessibilityLabel('Name'),
+                ]}
+              />
+            </Field>
 
-        {draft.identityKind === 'password' ? (
-          <Field
-            label="Password"
-            value={draft.password}
-            error={errors.password}
-            secureTextEntry
-            autoCapitalize="none"
-            placeholder={id ? 'Leave blank to keep the stored one' : undefined}
-            onChange={(text) => set('password', text)}
-          />
-        ) : (
-          <Field
-            label="Private key"
-            value={draft.privateKeyPem}
-            error={errors.privateKeyPem}
-            multiline
-            autoCapitalize="none"
-            placeholder={id ? 'Leave blank to keep the stored one' : 'Paste the key'}
-            onChange={(text) => set('privateKeyPem', text)}
-          />
-        )}
+            <Field label="IP or Hostname" error={errors.address}>
+              <TextField
+                text={address}
+                placeholder="server.local or 100.64.0.10"
+                modifiers={[
+                  font({ design: 'monospaced' }),
+                  keyboardType('url'),
+                  textInputAutocapitalization('never'),
+                  autocorrectionDisabled(),
+                  accessibilityLabel('Address'),
+                ]}
+              />
+            </Field>
 
-        <Field
-          label="tmux path (optional)"
-          value={draft.tmuxExecutablePath}
-          error={errors.tmuxExecutablePath}
-          autoCapitalize="none"
-          placeholder="Only when tmux is not on a non-interactive PATH"
-          onChange={(text) => set('tmuxExecutablePath', text)}
-        />
+            <Field label="Port" error={errors.port}>
+              <TextField
+                text={port}
+                placeholder="22"
+                modifiers={[
+                  font({ design: 'monospaced' }),
+                  keyboardType('numeric'),
+                  accessibilityLabel('Port'),
+                ]}
+              />
+            </Field>
 
-        <GlassRow accessibilityLabel="Save Host" onPress={save} style={styles.save}>
-          <ThemedText type="smallBold">{id ? 'Save changes' : 'Add Host'}</ThemedText>
-        </GlassRow>
-      </ScrollView>
-    </ThemedView>
+            <Field label="User" error={errors.username}>
+              <TextField
+                text={username}
+                placeholder="ubuntu"
+                modifiers={[
+                  font({ design: 'monospaced' }),
+                  textInputAutocapitalization('never'),
+                  autocorrectionDisabled(),
+                  accessibilityLabel('User'),
+                ]}
+              />
+            </Field>
+          </Section>
+
+          <Section
+            header={<SectionHeader>Authentication</SectionHeader>}
+            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            <Picker
+              label=""
+              selection={identityKind}
+              onSelectionChange={(next) => setIdentityKind(next as IdentityKind)}
+              modifiers={[pickerStyle('segmented')]}>
+              <Text modifiers={[tag('password')]}>Password</Text>
+              <Text modifiers={[tag('privateKey')]}>Private Key</Text>
+            </Picker>
+
+            {identityKind === 'password' ? (
+              <Field label="Password" error={errors.password}>
+                <SecureField
+                  text={password}
+                  placeholder={keptPlaceholder ?? 'Required'}
+                  modifiers={[accessibilityLabel('Password')]}
+                />
+              </Field>
+            ) : (
+              <Field label="Private Key" error={errors.privateKeyPem}>
+                <TextField
+                  text={privateKeyPem}
+                  placeholder={keptPlaceholder ?? 'Paste the key'}
+                  axis="vertical"
+                  modifiers={[
+                    font({ size: 12, design: 'monospaced' }),
+                    lineLimit(6),
+                    textInputAutocapitalization('never'),
+                    autocorrectionDisabled(),
+                    accessibilityLabel('Private key'),
+                  ]}
+                />
+              </Field>
+            )}
+          </Section>
+
+          <Section
+            header={<SectionHeader>tmux</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(AppPalette.sectionHeader)]}>
+                Only needed when tmux is not on the Host&apos;s non-interactive PATH.
+              </Text>
+            }
+            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            <Field label="Executable Path (Optional)" error={errors.tmuxExecutablePath}>
+              <TextField
+                text={tmuxExecutablePath}
+                placeholder="/absolute/path/to/tmux"
+                modifiers={[
+                  font({ design: 'monospaced' }),
+                  keyboardType('url'),
+                  textInputAutocapitalization('never'),
+                  autocorrectionDisabled(),
+                  accessibilityLabel('tmux path'),
+                ]}
+              />
+            </Field>
+          </Section>
+        </Form>
+      </Host>
+    </View>
   );
 }
 
+/**
+ * A labelled row: the field's name above it in small caps-weight grey, the
+ * input under it, and whatever is wrong with it below that.
+ *
+ * The label sits above rather than beside because these values are long — an
+ * address or a key path beside a label has nowhere to go on a phone.
+ */
 function Field({
   label,
-  value,
   error,
-  onChange,
-  multiline,
-  ...input
+  children,
 }: {
   label: string;
-  value: string;
+  placeholder?: string;
   error?: string;
-  onChange: (text: string) => void;
-  multiline?: boolean;
-} & Omit<React.ComponentProps<typeof TextInput>, 'onChange' | 'value'>) {
-  const theme = useTheme();
+  children: React.ReactNode;
+}) {
   return (
-    <View style={styles.field}>
-      <ThemedText type="small" themeColor="textSecondary">
+    <VStack spacing={6} alignment="leading" modifiers={[frame({ maxWidth: 3000 })]}>
+      <Text
+        modifiers={[
+          font({ size: 13, weight: 'semibold' }),
+          foregroundColor(AppPalette.secondaryLabel),
+        ]}>
         {label}
-      </ThemedText>
-      <TextInput
-        {...input}
-        value={value}
-        onChangeText={onChange}
-        multiline={multiline}
-        accessibilityLabel={label}
-        autoCorrect={false}
-        placeholderTextColor="#6b7080"
-        style={[
-          styles.input,
-          { color: theme.text, backgroundColor: theme.backgroundElement },
-          multiline && styles.inputTall,
-          error !== undefined && styles.inputBad,
+      </Text>
+      {children}
+      {error !== undefined ? (
+        <Text modifiers={[font({ size: 13 }), foregroundColor(AppPalette.destructive)]}>
+          {error}
+        </Text>
+      ) : null}
+    </VStack>
+  );
+}
+
+function SectionHeader({ children }: { children: string }) {
+  return (
+    <Text
+      modifiers={[
+        font({ size: 13, weight: 'semibold' }),
+        foregroundColor(AppPalette.sectionHeader),
+      ]}>
+      {children}
+    </Text>
+  );
+}
+
+/** A word in the navigation bar: Cancel on the left, Save on the right. */
+function ToolbarText({
+  label,
+  onPress,
+  bold,
+}: {
+  label: string;
+  onPress: () => void;
+  bold?: boolean;
+}) {
+  return (
+    <Host matchContents>
+      <Button
+        label={label}
+        onPress={onPress}
+        modifiers={[
+          font({ size: 17, weight: bold ? 'semibold' : 'regular' }),
+          foregroundColor(AppPalette.controlAccent),
+          accessibilityLabel(label),
         ]}
       />
-      {error !== undefined ? (
-        <ThemedText type="small" style={styles.error}>
-          {error}
-        </ThemedText>
-      ) : null}
-    </View>
+    </Host>
   );
 }
 
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
-  },
-  form: {
-    padding: Spacing.three,
-    gap: Spacing.two,
-  },
-  field: {
-    gap: 4,
-  },
-  input: {
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
-  inputTall: {
-    minHeight: 96,
-    fontSize: 12,
-  },
-  inputBad: {
-    borderWidth: 1,
-    borderColor: '#ff6b6b',
-  },
-  error: {
-    color: '#ff6b6b',
-  },
-  segmented: {
-    flexDirection: 'row',
-    gap: Spacing.one,
-  },
-  segment: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#20242f',
-  },
-  segmentOn: {
-    backgroundColor: '#3b6ce0',
-  },
-  save: {
-    alignItems: 'center',
-    marginTop: Spacing.two,
   },
 });

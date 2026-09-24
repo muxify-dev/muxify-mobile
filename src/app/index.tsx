@@ -1,11 +1,37 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { GlassRow } from '@/components/glass-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import {
+  Button,
+  Host,
+  HStack,
+  Image,
+  List,
+  Section,
+  Spacer,
+  SwipeActions,
+  Text,
+  VStack,
+} from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  background,
+  buttonStyle,
+  environment,
+  font,
+  foregroundColor,
+  frame,
+  listRowBackground,
+  listStyle,
+  multilineTextAlignment,
+  padding,
+  scrollContentBackground,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
+import type { SFSymbol } from 'sf-symbols-typescript';
+
+import { AppPalette } from '@/constants/app-theme';
 import { readDevHost } from '@/dev/dev-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
@@ -16,6 +42,9 @@ import type { Host as HostRecord } from '@/storage/records';
  * Re-reads on focus rather than holding state, because the form writes through
  * the store and this screen would otherwise show a Host that was just renamed
  * under its old name.
+ *
+ * Laid out after remux, with its own nouns: a Host here is what remux calls a
+ * server, and the glossary in CONTEXT.md is the thing to keep consistent.
  */
 export default function HostsScreen() {
   const router = useRouter();
@@ -51,71 +80,188 @@ export default function HostsScreen() {
     [reload],
   );
 
-  if (hosts === null) return <ThemedView style={styles.fill} />;
-
-  if (hosts.length === 0) {
-    return (
-      <ThemedView style={styles.centred}>
-        <ThemedText type="subtitle">No Hosts yet</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.blurb}>
-          Add an SSH Host to start attaching to tmux Sessions from this phone.
-        </ThemedText>
-        <GlassRow
-          accessibilityLabel="Add Host"
-          onPress={() => router.push('/host-form')}
-          style={styles.button}>
-          <ThemedText type="smallBold">Add Host</ThemedText>
-        </GlassRow>
-        {readDevHost().ok ? (
-          <Pressable
-            onPress={() => void addDevHost(reload)}
-            accessibilityRole="button"
-            accessibilityLabel="Add dev Host">
-            <ThemedText type="small" themeColor="textSecondary">
-              Add dev Host from .env.local
-            </ThemedText>
-          </Pressable>
-        ) : null}
-      </ThemedView>
-    );
-  }
+  const addHost = useCallback(() => router.push('/host-form'), [router]);
 
   return (
-    <ThemedView style={styles.fill}>
-      <ScrollView contentContainerStyle={styles.list}>
-        {hosts.map((host) => (
-          <GlassRow
-            key={host.id}
-            accessibilityLabel={host.displayName}
-            onPress={() => router.push({ pathname: '/hosts/[id]', params: { id: host.id } })}>
-            <View style={styles.row}>
-              <View style={styles.rowText}>
-                <ThemedText type="smallBold">{host.displayName}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {`${host.address}:${host.port}`}
-                </ThemedText>
-              </View>
-              <Pressable
-                onPress={() => confirmRemove(host)}
-                accessibilityRole="button"
-                accessibilityLabel={`Delete ${host.displayName}`}
-                hitSlop={10}>
-                <ThemedText type="small" style={styles.delete}>
-                  Delete
-                </ThemedText>
-              </Pressable>
-            </View>
-          </GlassRow>
-        ))}
+    <View style={styles.fill}>
+      <Stack.Screen
+        options={{
+          title: 'Muxify',
+          headerLeft: () => (
+            <ToolbarButton
+              systemImage="gearshape"
+              label="Settings"
+              onPress={() => router.push('/settings')}
+            />
+          ),
+          headerRight: () => (
+            <ToolbarButton systemImage="plus" label="Add Host" onPress={addHost} />
+          ),
+        }}
+      />
 
-        <GlassRow
-          accessibilityLabel="Add Host"
-          onPress={() => router.push('/host-form')}
-          style={styles.button}>
-          <ThemedText type="smallBold">Add Host</ThemedText>
-        </GlassRow>
-      </ScrollView>
-    </ThemedView>
+      {hosts === null ? null : hosts.length === 0 ? (
+        <EmptyState onAddHost={addHost} onAddDevHost={() => void addDevHost(reload)} />
+      ) : (
+        <Host style={styles.fill} matchContents={false}>
+          <List
+            modifiers={[
+              // See settings.tsx: SwiftUI follows the phone, not the app.
+              environment('colorScheme', 'dark'),
+              listStyle('insetGrouped'),
+              scrollContentBackground('hidden'),
+              background(AppPalette.background),
+              tint(AppPalette.controlAccent),
+            ]}>
+            <Section modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+              {hosts.map((host) => (
+                <SwipeActions key={host.id}>
+                  <Button
+                    onPress={() =>
+                      router.push({ pathname: '/hosts/[id]', params: { id: host.id } })
+                    }
+                    modifiers={[buttonStyle('plain'), accessibilityLabel(host.displayName)]}>
+                    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+                      <Image systemName="server.rack" size={20} color={AppPalette.rowIcon} />
+                      <VStack spacing={2} alignment="leading">
+                        <Text modifiers={[font({ size: 17 })]}>{host.displayName}</Text>
+                        <Text
+                          modifiers={[
+                            font({ size: 13, design: 'monospaced' }),
+                            foregroundColor(AppPalette.secondaryLabel),
+                          ]}>
+                          {`${host.address}:${host.port}`}
+                        </Text>
+                      </VStack>
+                      <Spacer />
+                      <Image
+                        systemName="chevron.right"
+                        size={13}
+                        color={AppPalette.secondaryLabel}
+                      />
+                    </HStack>
+                  </Button>
+
+                  <SwipeActions.Actions>
+                    <Button
+                      label="Delete"
+                      systemImage="trash"
+                      role="destructive"
+                      onPress={() => confirmRemove(host)}
+                      modifiers={[accessibilityLabel(`Delete ${host.displayName}`)]}
+                    />
+                  </SwipeActions.Actions>
+                </SwipeActions>
+              ))}
+            </Section>
+          </List>
+        </Host>
+      )}
+    </View>
+  );
+}
+
+/**
+ * A navigation-bar button.
+ *
+ * SwiftUI rather than a React Native view, because iOS 26 draws a bare glyph
+ * button as a glass disc and nothing in React Native does — and these two sit
+ * beside a system back button that gets one for free.
+ */
+function ToolbarButton({
+  systemImage,
+  label,
+  onPress,
+}: {
+  systemImage: SFSymbol;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Host matchContents>
+      <Button
+        label=""
+        systemImage={systemImage}
+        onPress={onPress}
+        modifiers={[
+          buttonStyle('glass'),
+          frame({ width: 38, height: 38 }),
+          tint(AppPalette.toolbarTint),
+          accessibilityLabel(label),
+        ]}
+      />
+    </Host>
+  );
+}
+
+/** Nothing saved yet: what this app is for, and the one thing to do about it. */
+function EmptyState({
+  onAddHost,
+  onAddDevHost,
+}: {
+  onAddHost: () => void;
+  onAddDevHost: () => void;
+}) {
+  return (
+    <Host style={styles.fill} matchContents={false}>
+      <VStack
+        spacing={0}
+        modifiers={[
+          environment('colorScheme', 'dark'),
+          frame({ maxWidth: 3000, maxHeight: 3000 }),
+        ]}>
+        <Spacer />
+
+        <Image systemName="server.rack" size={64} color={AppPalette.secondaryLabel} />
+
+        <Text
+          modifiers={[font({ size: 22, weight: 'bold' }), padding({ top: 16, bottom: 6 })]}>
+          No Hosts
+        </Text>
+
+        <Text
+          modifiers={[
+            font({ size: 17 }),
+            foregroundColor(AppPalette.secondaryLabel),
+            multilineTextAlignment('center'),
+            padding({ horizontal: 40, bottom: 24 }),
+          ]}>
+          Add an SSH Host to start using tmux Sessions from this phone.
+        </Text>
+
+        <Button
+          label="Add Host"
+          systemImage="plus"
+          onPress={onAddHost}
+          modifiers={[
+            buttonStyle('glass'),
+            font({ size: 17, weight: 'semibold' }),
+            tint(AppPalette.controlAccent),
+            padding({ horizontal: 24, vertical: 12 }),
+            accessibilityLabel('Add Host'),
+          ]}
+        />
+
+        {readDevHost().ok ? (
+          <Button
+            label="Add dev Host from .env.local"
+            onPress={onAddDevHost}
+            modifiers={[
+              buttonStyle('plain'),
+              font({ size: 15 }),
+              foregroundColor(AppPalette.secondaryLabel),
+              padding({ top: 16 }),
+              accessibilityLabel('Add dev Host'),
+            ]}
+          />
+        ) : null}
+
+        <Spacer />
+        {/* The stack of Spacers leaves the block a little above centre, which
+            is where the eye expects it when the top bar is the only chrome. */}
+        <Spacer modifiers={[frame({ height: 48 })]} />
+      </VStack>
+    </Host>
   );
 }
 
@@ -139,34 +285,5 @@ async function addDevHost(reload: () => Promise<void>): Promise<void> {
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
-  },
-  centred: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.four,
-  },
-  blurb: {
-    textAlign: 'center',
-  },
-  list: {
-    padding: Spacing.three,
-    gap: Spacing.two,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  rowText: {
-    flex: 1,
-    gap: 2,
-  },
-  delete: {
-    color: '#ff6b6b',
-  },
-  button: {
-    alignItems: 'center',
   },
 });
