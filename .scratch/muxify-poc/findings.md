@@ -176,7 +176,7 @@ the Surface produced a genuine second grid, and it propagated: the Surface went
 38x32 -> 38x30 and `tmux list-clients` reported `[38x30 xterm-256color]`.
 Focusing the Surface shrank it further to 38x27 and tmux reflowed again.
 
-## `Keyboard.dismiss()` does nothing to the Surface (ticket 07)
+## The keyboard toggle needed a patch to the terminal library (ticket 07)
 
 The Dock's keyboard button initially did nothing at all, and an earlier version
 of this log wrongly recorded it as working — that claim was reasoned about, not
@@ -188,17 +188,26 @@ verified.
 holds no record of it and there is nothing for `dismiss()` to blur. Any RN API
 that works through that registry has the same blind spot.
 
-**Fix.** Keep a zero-sized RN `TextInput` on the screen as a focus trap. Focusing
-it takes first responder away from the Surface; blurring it immediately after
-closes the keyboard. Verified: accessory-bar buttons in the accessibility tree
-went 5 to 0, and the grid reflowed 38x27 back to 38x30 with tmux redrawing.
+A focus trap — a zero-sized RN `TextInput` focused then blurred to steal first
+responder — dismissed the keyboard, but could never raise it, and nothing in the
+library's four-call API could either.
 
-**Still impossible: raising the keyboard.** `expo-libghostty` exposes no focus
-API — only `write`, `writeText` and `finish` — so nothing can make the Surface
-first responder except a tap on it. Since the Accessory Bar exists only while the
-Surface is focused, dismissing the keyboard also removes the only route to ctrl,
-esc and tab until the user taps the terminal again.
+**Fix: patch the library.** The capability was already there and simply not
+exposed. The vendored `UITerminalView` overrides `canBecomeFirstResponder`,
+`becomeFirstResponder()` and `resignFirstResponder()`, and the latter two also
+tell ghostty's core about focus. The patch adds three `AsyncFunction`s to the
+Expo module — `focus`, `blur`, `isFocused` — wires them into the imperative ref,
+and extends the TypeScript types. About 115 lines, held in
+`patches/expo-libghostty.patch` and hash-pinned in the lockfile.
 
-That asymmetry is the concrete cost of ADR 0003 and the strongest argument found
-for revisiting it: a Dock group writing bytes straight to the Shell Channel would
-not depend on focus at all.
+Verified by toggling three times: accessory-bar buttons in the accessibility
+tree went 0 to 5 to 0 to 5, and the terminal reflowed each way.
+
+**This is a good upstream contribution.** The library's stated contract is that
+the view "only renders bytes and reports input/resizes", but keyboard control is
+not transport — it is view state, and every consumer embedding this view in a
+real app will hit the same wall. Worth filing upstream, with the caveat that the
+project has had no functional commit since 2026-07-17.
+
+**Cost of carrying a patch:** any version bump has to reapply it, and a native
+change means a full prebuild and rebuild, not a Metro reload.

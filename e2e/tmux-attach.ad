@@ -30,6 +30,16 @@ wait 8000
 # Connected: the Shell Channel is attached to the Session.
 is "text" "id=\"connection-status\"" "Connected"
 
+# The Dock's keyboard button toggles the system keyboard in both directions.
+# The library's Accessory Bar only exists while the Surface holds first
+# responder, so its Control key appearing and disappearing is the signal.
+press "label=\"Keyboard\""
+wait "label=\"Control\"" 5000
+is "visible" "label=\"Control\""
+
+press "label=\"Keyboard\""
+wait 2500
+
 # The glass Dock rendered and works: pressing Home leaves the Terminal Screen,
 # which also tears the Connection down. Asserting the navigation proves both
 # that the Dock is there and that its button is reachable — a bare visibility

@@ -5,3 +5,6 @@ nodeLinker: hoisted
 # without this the iOS build fails on a missing framework.
 allowBuilds:
   expo-libghostty: true
+
+patchedDependencies:
+  expo-libghostty: patches/expo-libghostty.patch

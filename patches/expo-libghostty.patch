@@ -1,0 +1,115 @@
+diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..d7e5b0e3a5d126924f314e9c557c3ea949bf8e35 100644
+--- a/build/ExpoLibghostty.types.d.ts
++++ b/build/ExpoLibghostty.types.d.ts
+@@ -18,6 +18,12 @@ export type TerminalViewRef = {
+     writeText(text: string): Promise<void>;
+     /** Mark the underlying PTY as exited. */
+     finish(exitCode: number): Promise<void>;
++    /** Make the terminal first responder, raising the system keyboard. */
++    focus(): Promise<boolean>;
++    /** Resign first responder, dismissing the system keyboard. */
++    blur(): Promise<boolean>;
++    /** Whether the terminal currently holds first responder. */
++    isFocused(): Promise<boolean>;
+ };
+ export type TerminalTheme = {
+     /**
+diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
+index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..9200e3be3bd92af2e11ba06af52bc356a3376e1a 100644
+--- a/build/ExpoLibghosttyView.js
++++ b/build/ExpoLibghosttyView.js
+@@ -22,6 +22,9 @@ export default function TerminalView({ ref, onResize, ...props }) {
+             write: whenReady((base64) => native.current.write(base64)),
+             writeText: whenReady((text) => native.current.writeText(text)),
+             finish: whenReady((exitCode) => native.current.finish(exitCode)),
++            focus: whenReady(() => native.current.focus()),
++            blur: whenReady(() => native.current.blur()),
++            isFocused: whenReady(() => native.current.isFocused()),
+         };
+     }, []);
+     return (<NativeView {...props} ref={native} onResize={(event) => {
+diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..3cde43a455bf2bc70aefd176dc4354872fc28cff 100644
+--- a/ios/ExpoLibghosttyModule.swift
++++ b/ios/ExpoLibghosttyModule.swift
+@@ -36,6 +36,21 @@ public class ExpoLibghosttyModule: Module {
+       AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
+         view.finish(exitCode: exitCode)
+       }.runOnQueue(.main)
++
++      // Raise the system keyboard by making the terminal first responder.
++      AsyncFunction("focus") { (view: ExpoLibghosttyView) -> Bool in
++        view.focusTerminal()
++      }.runOnQueue(.main)
++
++      // Dismiss the system keyboard by resigning first responder.
++      AsyncFunction("blur") { (view: ExpoLibghosttyView) -> Bool in
++        view.blurTerminal()
++      }.runOnQueue(.main)
++
++      // Whether the terminal currently holds first responder.
++      AsyncFunction("isFocused") { (view: ExpoLibghosttyView) -> Bool in
++        view.isTerminalFocused
++      }.runOnQueue(.main)
+     }
+   }
+ }
+diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fc1ab064816b694decdc8d2a45080af3410b1e4c 100644
+--- a/ios/ExpoLibghosttyView.swift
++++ b/ios/ExpoLibghosttyView.swift
+@@ -83,4 +83,22 @@ class ExpoLibghosttyView: ExpoView {
+   func finish(exitCode: UInt32) {
+     session?.finish(exitCode: exitCode, runtimeMilliseconds: 0)
+   }
++
++  /// Make the terminal first responder, raising the system keyboard and its
++  /// accessory bar. Also tells ghostty's core it has focus.
++  @discardableResult
++  func focusTerminal() -> Bool {
++    terminalView.becomeFirstResponder()
++  }
++
++  /// Resign first responder, dismissing the keyboard.
++  @discardableResult
++  func blurTerminal() -> Bool {
++    terminalView.resignFirstResponder()
++  }
++
++  /// Whether the terminal currently holds first responder.
++  var isTerminalFocused: Bool {
++    terminalView.isFirstResponder
++  }
+ }
+diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..9d373c62403218f83574d43e7890a804b13a11e7 100644
+--- a/src/ExpoLibghostty.types.ts
++++ b/src/ExpoLibghostty.types.ts
+@@ -21,6 +21,12 @@ export type TerminalViewRef = {
+   writeText(text: string): Promise<void>;
+   /** Mark the underlying PTY as exited. */
+   finish(exitCode: number): Promise<void>;
++  /** Make the terminal first responder, raising the system keyboard. */
++  focus(): Promise<boolean>;
++  /** Resign first responder, dismissing the system keyboard. */
++  blur(): Promise<boolean>;
++  /** Whether the terminal currently holds first responder. */
++  isFocused(): Promise<boolean>;
+ };
+ 
+ export type TerminalTheme = {
+diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
+index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..73c24409794fa61216b8580b42ea2ae01c68c0ad 100644
+--- a/src/ExpoLibghosttyView.tsx
++++ b/src/ExpoLibghosttyView.tsx
+@@ -28,6 +28,9 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
+       write: whenReady((base64: string) => native.current!.write(base64)),
+       writeText: whenReady((text: string) => native.current!.writeText(text)),
+       finish: whenReady((exitCode: number) => native.current!.finish(exitCode)),
++      focus: whenReady(() => native.current!.focus()),
++      blur: whenReady(() => native.current!.blur()),
++      isFocused: whenReady(() => native.current!.isFocused()),
+     };
+   }, []);
+ 
