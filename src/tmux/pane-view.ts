@@ -154,6 +154,22 @@ export function createPaneView(
     if (!disposed) events.onError?.(error);
   }
 
+  /**
+   * Pane output, with the cursor kept down if this Pane is not the one being
+   * typed into.
+   *
+   * Telling the Surface once is not enough. An unattended Pane is still
+   * running something, and anything that redraws ends its redraw by asking for
+   * the cursor back — a TUI, a shell drawing its prompt, `clear`. So the
+   * answer is repeated after every chunk rather than given once, which is what
+   * makes "one cursor, in the Pane with the keyboard" hold over time rather
+   * than only at the moment the Pane changed.
+   */
+  function writeOutput(bytes: Uint8Array): void {
+    events.write(bytes);
+    if (!cursorVisible) events.write(asciiBytes('\u001b[?25l'));
+  }
+
   function announce(): void {
     if (disposed) return;
     events.onScroll(
@@ -226,17 +242,17 @@ export function createPaneView(
         paintScreen({
           lines,
           alternate: next?.alternate ?? false,
-          cursor:
-            next && cursorVisible
-              ? { column: next.cursorColumn, row: next.cursorRow }
-              : undefined,
+          // Where it is, and whether it is drawn, are two different questions:
+          // an unattended Pane's cursor still moves with its output.
+          cursor: next ? { column: next.cursorColumn, row: next.cursorRow } : undefined,
+          cursorVisible,
         }),
       );
     } finally {
       // Written after the repaint and in the order it arrived, so the last
       // second of the Pane's life lands on top of it rather than under it.
       if (held === mine) held = null;
-      if (!disposed && asked === pane) for (const bytes of mine) events.write(bytes);
+      if (!disposed && asked === pane) for (const bytes of mine) writeOutput(bytes);
     }
     announce();
   }
@@ -333,7 +349,7 @@ export function createPaneView(
       // Dropped rather than written while the Pane is scrolled away: the
       // Surface is showing the past, and tmux is holding the present.
       if (back > 0) return;
-      events.write(bytes);
+      writeOutput(bytes);
     },
 
     click(column: number, row: number): boolean {

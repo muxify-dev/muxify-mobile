@@ -580,7 +580,10 @@ describe('which Pane draws a cursor', () => {
 
     await view.show('%0', 24);
 
-    expect(shown(written)).not.toContain('<ESC>[2;6H');
+    // Put where tmux has it all the same — see ScreenPaint.cursorVisible. A
+    // hidden cursor that is nowhere in particular is one that reappears in the
+    // wrong place the moment the Pane is tapped.
+    expect(shown(written)).toContain('<ESC>[2;6H');
     expect(shown(written)).not.toContain('<ESC>[?25h');
   });
 
@@ -594,6 +597,34 @@ describe('which Pane draws a cursor', () => {
     view.setCursorVisible(true);
 
     expect(shown(written)).toBe('<ESC>[?25h');
+  });
+
+  it('puts it back down when the application in the Pane asks for it back', async () => {
+    // The real source of a second cursor, and the one setCursorVisible alone
+    // could not close: an unattended Pane is still running something, and
+    // anything that redraws — a TUI, a shell drawing its prompt — ends its
+    // redraw with its own `?25h`. Told once at the start, the Pane simply had
+    // its cursor handed back a moment later.
+    const host = fakePane();
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    view.setCursorVisible(false);
+    written.length = 0;
+
+    view.receive('%0', bytes('\u001b[?25hhello'));
+
+    expect(shown(written)).toBe('<ESC>[?25hhello<ESC>[?25l');
+  });
+
+  it('leaves the output of the Pane that has the keyboard alone', async () => {
+    const host = fakePane();
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    written.length = 0;
+
+    view.receive('%0', bytes('hello'));
+
+    expect(shown(written)).toBe('hello');
   });
 
   it('says nothing when asked for what it already does', async () => {

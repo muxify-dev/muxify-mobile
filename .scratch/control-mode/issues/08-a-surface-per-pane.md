@@ -63,6 +63,32 @@ nothing would wrap where tmux wrapped it.
 several places to type, only one of them real. A view is told whether it is the
 Pane with the keyboard, and remembers it, so a repaint does not bring it back.
 
+A cursor that is not drawn is still *somewhere*, and that is the half this
+missed at first. A repaint of an unattended Pane left the cursor wherever the
+last blank row was painted, so the Pane tapped next showed its cursor in the
+bottom-left corner instead of on its prompt. Where it is and whether it is drawn
+are now two separate questions — see `ScreenPaint.cursorVisible`.
+
+**One line between the Panes, and none anywhere else.** A rectangle drawn per
+Pane gave a rule along the bottom of the Window and another along the top,
+neither of which divides anything, and every seam doubled because both sides
+drew their own. A Pane that does not start at the Window's edge has a neighbour
+there, so that is where the line goes and the Pane on the far side draws
+nothing. It falls in the separator cell the two share half each.
+
+**A tap moves the active Pane here first, then asks.** A `select-pane` is a
+round trip and `%window-pane-changed` arrives after it; a cursor that waits for
+either lands a beat after the finger. `TopologyStore.activate` makes the move,
+the notification agrees with it, and a refusal from the Host throws the guess
+away. The same call is what keeps the Panes sheet right, since its rows are
+drawn from the Topology.
+
+**The mouse layer covers the active Pane, not the screen.** While something is
+listening for the mouse the finger belongs to it — but a layer over the whole
+container sent a tap on the *other* half of a split into the application in this
+one, so the only way to change Panes while Claude Code was running was the
+sheet.
+
 Three things that cost real time and are worth knowing:
 
 - A Surface that has just mounted **reports its grid before it will accept

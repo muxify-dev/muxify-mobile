@@ -290,9 +290,8 @@ export default function TerminalScreen() {
 
   /** A drag, already counted in wheel notches by whoever owned the finger. */
   const handleNotches = useCallback(
-    (notches: number) => {
-      const size = grid.current;
-      if (size) activeView()?.scroll(notches, size);
+    (notches: number, size: Grid) => {
+      activeView()?.scroll(notches, size);
     },
     [activeView],
   );
@@ -336,6 +335,21 @@ export default function TerminalScreen() {
   const slotKey = slots.map((slot) => slot.pane.id).join('|');
 
   /**
+   * The slot the finger belongs to while something is listening for the mouse.
+   *
+   * The active Pane's, and only its rectangle — not the whole container. A
+   * layer over everything would send a tap on the *other* half of a split to
+   * the application in this one, so the only way to change Panes while Claude
+   * Code was running would be the sheet.
+   */
+  const activeSlot = slots.find((slot) => slot.pane.id === activePaneId);
+  const mouseGrid = activeSlot
+    ? activeSlot.fillsWindow
+      ? visibleGrid
+      : { cols: activeSlot.pane.width, rows: activeSlot.rows }
+    : null;
+
+  /**
    * Paints a Pane, once there is both a view and a grid to paint into.
    *
    * Both halves are needed and neither can be waited for. A Surface reports
@@ -347,8 +361,8 @@ export default function TerminalScreen() {
    */
   const paintWhenReady = useCallback((paneId: string) => {
     const view = views.current.get(paneId);
-    const grid = paneGrids.current.get(paneId);
-    if (!view || !grid || disposed.current || view.paneId() === paneId) return;
+    if (!view || !paneGrids.current.has(paneId) || disposed.current) return;
+    if (view.paneId() === paneId) return;
     // Not immediately, and this is measured rather than cautious. A Surface
     // that has just mounted reports its grid before it will accept anything
     // written to it: the resync ran, the bytes went out, and the Pane stayed
@@ -357,6 +371,11 @@ export default function TerminalScreen() {
     // doing at that moment, it is done well inside this.
     setTimeout(() => {
       if (disposed.current || view.paneId() === paneId) return;
+      // Read now rather than when the wait began: a Surface reports a grid
+      // before it has been laid out, and painting at that one gives a Pane
+      // eleven rows tall.
+      const grid = paneGrids.current.get(paneId);
+      if (!grid) return;
       view.setCursorVisible(paneId === activePaneRef.current);
       void view.show(paneId, grid.rows);
     }, PAINT_SETTLE_MS);
@@ -447,6 +466,19 @@ export default function TerminalScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotKey]);
 
+  /**
+   * The grid the Client should be, from what is on screen right now.
+   *
+   * A Surface that spans the Window reports the answer itself. A split does
+   * not — nothing mounted covers the whole Window — so it is worked out from
+   * the cell metric, which the font fixes and a resize does not change.
+   */
+  const containerGrid = useCallback((): Grid | null => {
+    if (slots.some((slot) => slot.fillsWindow)) return grid.current;
+    const metric = cell.current;
+    return (metric && gridForContainer(metric, containerSize)) ?? null;
+  }, [slots, containerSize]);
+
   /** Keeps the Client sized when nothing on screen spans the whole Window. */
   useEffect(() => {
     if (!control.current || slots.some((slot) => slot.fillsWindow)) return;
@@ -456,19 +488,51 @@ export default function TerminalScreen() {
     if (next) remoteSize.request(next);
   }, [containerSize, slots, remoteSize]);
 
+  /**
+   * Says how big this Client is again, the moment a sheet closes.
+   *
+   * A sheet is where the Window's shape is changed — a split made, a Window
+   * or Session switched into, zoom turned off — and every one of those lands
+   * tmux in a Window it has laid out for whatever size it last heard. The
+   * Surfaces behind the sheet have not moved, so nothing else would think to
+   * mention it, and the Panes would stay laid out for the wrong Client until
+   * something unrelated resized. `reset` first, because the size asked for is
+   * usually the size already sent and the scheduler would otherwise skip it.
+   */
+  const sheetOpen = picker.open;
+  const sheetWasOpen = useRef(false);
+  useEffect(() => {
+    const closing = sheetWasOpen.current && !sheetOpen;
+    sheetWasOpen.current = sheetOpen;
+    if (!closing || !control.current) return;
+    const next = containerGrid();
+    if (!next) return;
+    remoteSize.reset();
+    remoteSize.request(next);
+  }, [sheetOpen, containerGrid, remoteSize]);
+
   /** Moves tmux's active Pane to the one that was tapped. */
   const selectPaneById = useCallback(
     (paneId: string) => {
       const client = tmux.current;
+      const model = store.current;
       const pane = topology.panes.find((each) => each.id === paneId);
       const windowIndex = topology.activeWindow?.index;
-      if (!client || !pane || windowIndex === undefined || pane.active) return;
+      if (!client || !model || !pane || windowIndex === undefined || pane.active) return;
+      // Moved here first, then asked for. The cursor, the keyboard and the
+      // Panes sheet all follow the Topology, so doing it in this order is the
+      // difference between a tap that lands and one that lands a round trip
+      // later. tmux's own `%window-pane-changed` arrives after and agrees.
+      model.activate(paneId);
       void (async () => {
         try {
           await client.selectPane(sessionName.current, windowIndex, pane.index);
-          await refreshTopology();
         } catch (error) {
-          if (!disposed.current) setPaneTrouble(describe(error));
+          if (disposed.current) return;
+          setPaneTrouble(describe(error));
+          // The move was made on a guess the Host has just refused, so the
+          // guess is thrown away rather than left showing.
+          await refreshTopology();
         }
       })();
     },
@@ -717,9 +781,8 @@ export default function TerminalScreen() {
    * the cell metric is measured from. A Pane in a split reports only its own
    * share, which would size the Window to a fraction of itself.
    */
-  const handleWindowResize = useCallback(
-    ({ nativeEvent }: { nativeEvent: Grid }) => {
-      const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+  const applyWindowGrid = useCallback(
+    (next: Grid) => {
       grid.current = next;
       setVisibleGrid(next);
       // Measured here and kept, because a split mounts nothing that spans the
@@ -743,6 +806,38 @@ export default function TerminalScreen() {
       }
     },
     [start, remoteSize],
+  );
+
+  /**
+   * The same, but only once the Surface has stopped changing its mind.
+   *
+   * A Surface reports a grid before it has been laid out — 32x11, on a phone
+   * whose Window is 49x41 — and six milliseconds later reports the real one.
+   * Sent straight through, that first value squashed the Window to eleven rows
+   * and tmux redistributed the Panes to fit; growing back gave a split whose
+   * halves bore no relation to the ones the user had set. tmux keeps split
+   * sizes across a resize perfectly well; what it cannot do is undo a trip
+   * through a size nobody asked for.
+   *
+   * It also protects the cell metric, which is measured here: a grid that
+   * small against a container that size implies a cell nothing is drawn at.
+   */
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reportedGrid = useRef<Grid | null>(null);
+  const handleWindowResize = useCallback(
+    ({ nativeEvent }: { nativeEvent: Grid }) => {
+      const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+      reportedGrid.current = next;
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        const latest = reportedGrid.current;
+        if (disposed.current || !latest) return;
+        if (latest.cols !== next.cols || latest.rows !== next.rows) return;
+        applyWindowGrid(next);
+      }, GRID_SETTLE_MS);
+    },
+    [applyWindowGrid],
   );
 
   /**
@@ -982,6 +1077,7 @@ export default function TerminalScreen() {
       // none of this — leaves the Session exactly as it was found. That is the
       // whole of ADR 0006, and it is why this teardown is three lines.
       disposed.current = true;
+      if (settleTimer.current) clearTimeout(settleTimer.current);
       const openControl = control.current;
       const openConnection = connection.current;
       for (const view of views.current.values()) view.dispose();
@@ -1074,8 +1170,13 @@ export default function TerminalScreen() {
           </>
         ) : null}
 
-        {mouseTracking && visibleGrid ? (
-          <MouseLayer grid={visibleGrid} onTap={handleTapCell} onScroll={handleNotches} />
+        {mouseTracking && activeSlot && mouseGrid ? (
+          <MouseLayer
+            box={activeSlot.box}
+            grid={mouseGrid}
+            onTap={handleTapCell}
+            onScroll={(notches) => handleNotches(notches, mouseGrid)}
+          />
         ) : null}
       </View>
 
@@ -1190,6 +1291,8 @@ function PaneSurface({
   onSelect: (paneId: string) => void;
 }) {
   const own = useRef<Grid>({ cols: slot.pane.width, rows: slot.rows });
+  /** Where a touch on an inactive Pane started, so a drag is not a tap. */
+  const from = useRef({ x: 0, y: 0 });
   const paneId = slot.pane.id;
   /**
    * Stable, and that matters more than it looks.
@@ -1240,21 +1343,18 @@ function PaneSurface({
         }
       />
 
-      {/* A split needs a seam, and the keyboard belongs to one Pane of it. The
-          edge is drawn *over* the Surface rather than around it: a border
-          would come out of the content box, leaving the Surface a column
-          narrower than the Pane tmux is wrapping for. */}
-      {!slot.fillsWindow ? (
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              borderColor: slot.pane.active ? terminal.cursor : terminal.dim,
-              borderWidth: slot.pane.active ? 1 : StyleSheet.hairlineWidth,
-            },
-          ]}
-        />
+      {/* The seam, and only the seam. A rectangle per Pane drew a rule along
+          the bottom of the Window and another along the top, neither of which
+          divides anything, and doubled every line between Panes — each side of
+          it drawing its own. A Pane that does not start at the Window's own
+          edge has a neighbour there, so that is where the line goes, and the
+          Pane on the far side of it draws nothing. It sits in the cell tmux
+          keeps for a separator, which the two Panes share half each. */}
+      {!slot.fillsWindow && slot.pane.top > 0 ? (
+        <View pointerEvents="none" style={[styles.seamTop, { backgroundColor: terminal.dim }]} />
+      ) : null}
+      {!slot.fillsWindow && slot.pane.left > 0 ? (
+        <View pointerEvents="none" style={[styles.seamLeft, { backgroundColor: terminal.dim }]} />
       ) : null}
 
       {!slot.fillsWindow && !slot.pane.active ? (
@@ -1263,7 +1363,19 @@ function PaneSurface({
           accessibilityRole="button"
           accessibilityLabel={`Pane ${slot.pane.index}`}
           onStartShouldSetResponder={() => true}
-          onResponderRelease={() => onSelect(slot.pane.id)}
+          onResponderGrant={({ nativeEvent }: GestureResponderEvent) => {
+            from.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+          }}
+          // A tap, not a drag. Without the slop a finger that started on the
+          // other Pane on its way somewhere moved the keyboard with it.
+          onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
+            const start = from.current;
+            const travelled = Math.hypot(
+              nativeEvent.locationX - start.x,
+              nativeEvent.locationY - start.y,
+            );
+            if (travelled <= TAP_SLOP) onSelect(slot.pane.id);
+          }}
         />
       ) : null}
     </View>
@@ -1294,10 +1406,12 @@ const TAP_SLOP = 10;
  * is listening this layer is gone and the Surface behaves exactly as it did.
  */
 function MouseLayer({
+  box,
   grid,
   onTap,
   onScroll,
 }: {
+  box: PaneBox;
   grid: Grid;
   onTap: (column: number, row: number) => void;
   onScroll: (notches: number) => void;
@@ -1311,7 +1425,7 @@ function MouseLayer({
 
   return (
     <View
-      style={StyleSheet.absoluteFill}
+      style={[styles.paneBox, box]}
       testID="mouse-layer"
       onLayout={({ nativeEvent }) => {
         size.current = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
@@ -1622,6 +1736,24 @@ const styles = StyleSheet.create({
   paneBox: {
     position: 'absolute',
     overflow: 'hidden',
+  },
+  // Quiet: a division, not a frame. Drawn in the Theme's dim tone so it reads
+  // as part of the terminal rather than as chrome laid over it.
+  seamTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    opacity: 0.5,
+  },
+  seamLeft: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: StyleSheet.hairlineWidth,
+    opacity: 0.5,
   },
   surface: {
     flex: 1,

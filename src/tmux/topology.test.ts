@@ -179,6 +179,36 @@ describe('what a notification can settle on its own', () => {
     expect(asked).toEqual([]);
   });
 
+  it('moves the active Pane before tmux is asked to, so a tap lands at once', async () => {
+    // A tap on a Pane travels to the Host and back, and the notification that
+    // confirms it arrives later still. Waiting for either is a Pane that
+    // highlights a beat after the finger left it.
+    const { store, asked } = await opened(
+      [window({ paneCount: 2 })],
+      { 0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })] },
+    );
+    expect(store.activate('%2')).toBe('changed');
+    expect(store.current().activePane?.id).toBe('%2');
+    expect(asked).toEqual([]);
+    // And tmux's own word for it, when it comes, is no longer news.
+    expect(store.apply({ kind: 'window-pane-changed', window: '@0', pane: '%2' })).toBe(
+      'unchanged',
+    );
+  });
+
+  it('says nothing changed for the Pane that is already active', async () => {
+    const { store } = await opened(
+      [window({ paneCount: 2 })],
+      { 0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })] },
+    );
+    expect(store.activate('%0')).toBe('unchanged');
+  });
+
+  it('asks again for a Pane it does not hold', async () => {
+    const { store } = await opened();
+    expect(store.activate('%9')).toBe('stale');
+  });
+
   it('drops a Window that closed, and asks what is active now', async () => {
     const { store } = await opened([
       window({ id: '@0', index: 0 }),

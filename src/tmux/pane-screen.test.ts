@@ -34,6 +34,24 @@ describe('painting a Pane onto the Surface', () => {
     expect(painted).toContain('<ESC>[?25h');
   });
 
+  it('puts an unseen cursor where tmux says it is, without showing it', () => {
+    // The Pane a split is not typing into draws no cursor, but it still has
+    // one, and output arriving in it moves it. Leaving it where the repaint
+    // happened to end means the Pane that is tapped next shows its cursor in
+    // the wrong place — the bottom-left corner, where the last blank row was
+    // painted.
+    const painted = shown(
+      paintScreen({
+        lines: [line('x')],
+        cursor: { column: 43, row: 2 },
+        cursorVisible: false,
+        alternate: false,
+      }),
+    );
+    expect(painted).toContain('<ESC>[3;44H');
+    expect(painted).not.toContain('<ESC>[?25h');
+  });
+
   it('leaves the cursor hidden when there is none to show', () => {
     // A view of the Scrollback has no cursor in it, and one parked in the
     // middle of old output reads as a prompt that is not there.

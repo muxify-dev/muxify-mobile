@@ -21,6 +21,17 @@ export interface ScreenPaint {
    */
   cursor?: { column: number; row: number };
   /**
+   * Whether the Pane draws its cursor. False for a Pane of a split that is not
+   * the one being typed into.
+   *
+   * Separate from `cursor` on purpose, because a cursor that is not drawn is
+   * still *somewhere*: output arriving in an unattended Pane moves it, and the
+   * Surface can only follow that if the repaint left it where tmux had it. Put
+   * nowhere, a Pane tapped later showed its cursor wherever the repaint
+   * stopped — the bottom-left corner.
+   */
+  cursorVisible?: boolean;
+  /**
    * Whether the Pane is on the alternate screen.
    *
    * Set either way rather than only on: the Surface follows the Pane, so
@@ -60,7 +71,8 @@ export function paintScreen(paint: ScreenPaint): Uint8Array {
 
   if (paint.cursor) {
     // tmux counts from zero and terminals count from one.
-    write(`[${paint.cursor.row + 1};${paint.cursor.column + 1}H[?25h`);
+    write(`[${paint.cursor.row + 1};${paint.cursor.column + 1}H`);
+    if (paint.cursorVisible !== false) write('[?25h');
   }
 
   return concat(parts);

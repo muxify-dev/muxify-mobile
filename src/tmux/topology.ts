@@ -45,6 +45,15 @@ export interface TopologyStore {
    * something this Session does not hold.
    */
   apply(event: ControlEvent): Applied;
+  /**
+   * Moves the active Pane here, ahead of the Host being told.
+   *
+   * A tap on a Pane is a round trip and then a `%window-pane-changed` on top of
+   * it, and a highlight that waits for both lands a beat after the finger. The
+   * move is small and the Host is about to agree, so it is made here first;
+   * whichever of the two comes back changes nothing further.
+   */
+  activate(paneId: string): Applied;
   /** Called whenever the model changes, however it changed. */
   subscribe(listener: (topology: Topology) => void): () => void;
 }
@@ -73,6 +82,16 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
     topology = next;
     for (const listener of listeners) listener(next);
     return next;
+  }
+
+  /** The one place the active Pane moves, whoever asked for it. */
+  function activatePane(paneId: string): Applied {
+    const target = topology.panes.find((pane) => pane.id === paneId);
+    if (!target) return 'stale';
+    if (target.active && topology.activePane?.id === paneId) return 'unchanged';
+    const panes = topology.panes.map((pane) => ({ ...pane, active: pane.id === paneId }));
+    publish({ ...topology, panes, activePane: panes.find((pane) => pane.active) });
+    return 'changed';
   }
 
   return {
@@ -165,13 +184,10 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
 
         case 'window-pane-changed': {
           if (event.window !== topology.activeWindow?.id) return 'unchanged';
-          if (!topology.panes.some((pane) => pane.id === event.pane)) return 'stale';
-          const panes = topology.panes.map((pane) => ({
-            ...pane,
-            active: pane.id === event.pane,
-          }));
-          publish({ ...topology, panes, activePane: panes.find((pane) => pane.active) });
-          return 'changed';
+          // Ordinarily this is tmux confirming a move already made here by a
+          // tap, and there is nothing left to do; a `select-pane` on the laptop
+          // is the same notification and moves it for real.
+          return activatePane(event.pane);
         }
 
         case 'window-add':
@@ -186,6 +202,8 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
           return 'unchanged';
       }
     },
+
+    activate: activatePane,
 
     subscribe(listener: (topology: Topology) => void): () => void {
       listeners.add(listener);
