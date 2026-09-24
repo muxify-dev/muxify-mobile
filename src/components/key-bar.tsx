@@ -19,7 +19,7 @@ export interface KeyBarProps {
    * The chrome colours of the Theme in use.
    *
    * The rest of the Dock is SwiftUI and takes the system tint on its own; this
-   * capsule draws its own text, so it has to be told. A dark label on Mocha's
+   * capsule draws its own text, so it has to be told. A dark label on Dracula's
    * glass is a key nobody can read.
    */
   palette: Appearance;

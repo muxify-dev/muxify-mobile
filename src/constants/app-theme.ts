@@ -2,7 +2,7 @@
  * The app's chrome colours, and the terminal Themes the user can pick between.
  *
  * Taken from remux, whose screens these copy. Both appearances are here because
- * the chosen Theme decides which one is used: Latte is a light terminal, and a
+ * the chosen Theme decides which one is used: Solarized is a light terminal, and a
  * dark list wrapped around a light terminal reads as two apps stitched
  * together. The phone's own light/dark setting does not come into it — the
  * Theme is the setting.
@@ -136,14 +136,14 @@ export interface TerminalPalette {
   white: string;
 }
 
-export type ThemeId = 'default' | 'mocha' | 'latte';
+export type ThemeId = 'default' | 'dracula' | 'solarized';
 
 /**
  * The sixteen colours a terminal application actually paints with.
  *
  * Without these a Theme only reaches the background, the foreground and the
  * cursor — every prompt, every `ls`, every diff keeps ghostty's own colours,
- * and picking Mocha changes almost nothing. Ordered as ANSI has them: the
+ * and picking Dracula changes almost nothing. Ordered as ANSI has them: the
  * eight normal colours, then the eight bright ones.
  *
  * Omitted for the Default Theme, whose whole point is ghostty's own palette.
@@ -157,7 +157,7 @@ export type AnsiPalette = readonly [
  * The Themes, in the order the picker shows them.
  *
  * `name` is what the picker segment says; `displayName` is the full name shown
- * beside the preview, because "Mocha" alone does not tell you it is Catppuccin.
+ * beside the preview, because "Solarized" alone does not say which half of it.
  */
 export const Themes: Record<ThemeId, {
   name: string;
@@ -181,65 +181,71 @@ export const Themes: Record<ThemeId, {
       white: '#c5c8c6',
     },
   },
-  mocha: {
-    name: 'Mocha',
-    displayName: 'Catppuccin Mocha',
+  dracula: {
+    name: 'Dracula',
+    displayName: 'Dracula',
+    // The official terminal spec: draculatheme.com. Dracula's "blue" is its
+    // purple, and the cursor is the foreground, as the spec has them.
     palette: {
-      background: '#1e1e2e',
-      foreground: '#cdd6f4',
-      cursor: '#f5e0dc',
-      dim: '#6c7086',
-      blue: '#89b4fa',
-      green: '#a6e3a1',
-      yellow: '#f9e2af',
-      grey: '#585b70',
-      black: '#45475a',
-      white: '#a6adc8',
+      background: '#282a36',
+      foreground: '#f8f8f2',
+      cursor: '#f8f8f2',
+      dim: '#6272a4',
+      blue: '#bd93f9',
+      green: '#50fa7b',
+      yellow: '#f1fa8c',
+      grey: '#6272a4',
+      black: '#21222c',
+      white: '#f8f8f2',
     },
     ansi: [
-      '#45475a', '#f38ba8', '#a6e3a1', '#f9e2af',
-      '#89b4fa', '#f5c2e7', '#94e2d5', '#bac2de',
-      '#585b70', '#f38ba8', '#a6e3a1', '#f9e2af',
-      '#89b4fa', '#f5c2e7', '#94e2d5', '#a6adc8',
+      '#21222c', '#ff5555', '#50fa7b', '#f1fa8c',
+      '#bd93f9', '#ff79c6', '#8be9fd', '#f8f8f2',
+      '#6272a4', '#ff6e6e', '#69ff94', '#ffffa5',
+      '#d6acff', '#ff92df', '#a4ffff', '#ffffff',
     ],
   },
-  latte: {
-    name: 'Latte',
-    displayName: 'Catppuccin Latte',
+  solarized: {
+    name: 'Solarized',
+    displayName: 'Solarized Light',
+    // Ethan Schoonover's palette with its standard ANSI mapping, which puts the
+    // base tones in the bright slots: bright black is base03, the darkest of
+    // them, so line numbers come out near-black on the cream ground. That is
+    // how Solarized Light looks in every terminal, not a slip here.
     palette: {
-      background: '#eff1f5',
-      foreground: '#4c4f69',
-      cursor: '#dc8a78',
-      dim: '#8c8fa1',
-      blue: '#1e66f5',
-      green: '#40a02b',
-      yellow: '#df8e1d',
-      grey: '#6c6f85',
-      black: '#5c5f77',
-      white: '#acb0be',
+      background: '#fdf6e3',
+      foreground: '#657b83',
+      cursor: '#657b83',
+      dim: '#93a1a1',
+      blue: '#268bd2',
+      green: '#859900',
+      yellow: '#b58900',
+      grey: '#002b36',
+      black: '#073642',
+      white: '#eee8d5',
     },
     ansi: [
-      '#5c5f77', '#d20f39', '#40a02b', '#df8e1d',
-      '#1e66f5', '#ea76cb', '#179299', '#acb0be',
-      '#6c6f85', '#d20f39', '#40a02b', '#df8e1d',
-      '#1e66f5', '#ea76cb', '#179299', '#bcc0cc',
+      '#073642', '#dc322f', '#859900', '#b58900',
+      '#268bd2', '#d33682', '#2aa198', '#eee8d5',
+      '#002b36', '#cb4b16', '#586e75', '#657b83',
+      '#839496', '#6c71c4', '#93a1a1', '#fdf6e3',
     ],
   },
 };
 
 /** The Themes in picker order. */
-export const THEME_IDS: ThemeId[] = ['default', 'mocha', 'latte'];
+export const THEME_IDS: ThemeId[] = ['default', 'dracula', 'solarized'];
 
 /**
  * Which appearance a Theme wants the app drawn in.
  *
- * Latte is the one light terminal, so it is the one light app. This is what
+ * Solarized is the one light terminal, so it is the one light app. This is what
  * makes the Theme picker a light/dark switch as well: there is no separate
  * setting for it, because there is no sensible pairing of a light terminal with
  * dark chrome.
  */
 export function appearanceFor(theme: ThemeId): 'light' | 'dark' {
-  return theme === 'latte' ? 'light' : 'dark';
+  return theme === 'solarized' ? 'light' : 'dark';
 }
 
 /** The chrome colours a Theme is drawn with. */

@@ -45,7 +45,7 @@
 # zero padding pixels on screen.
 #
 # What was left was a detector that counted bright pixels in a band, which
-# cannot tell a row of dots from a light terminal: under the Latte Theme the
+# cannot tell a row of dots from a light terminal: under the Solarized Theme the
 # background itself is bright and the check reported padding everywhere. A
 # check that fails on one Theme and passes on another is measuring the Theme.
 # Check 4 carries what it was really protecting — the Surface and the Window

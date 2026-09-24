@@ -40,7 +40,7 @@ export interface BannerProps {
  * over whatever is on screen, rather than a dark bar along the bottom that was
  * neither the system's nor the terminal's. It is drawn in the Theme's
  * appearance — the glass is told which one, since on its own it would follow
- * the phone's setting and a light phone would put a white card over a Mocha
+ * the phone's setting and a light phone would put a white card over a Dracula
  * terminal — and its text in the Theme's chrome colours. See appearanceFor.
  *
  * With a single action the action sits at the trailing edge, where iOS puts the
@@ -97,7 +97,7 @@ export function Banner({
 
   // The shadow is the outer view's, not the glass's: the glass clips to its
   // corners, and a shadow inside a clipped view is a shadow nobody sees.
-  // Without one the card has no edge at all over a light terminal — Latte's
+  // Without one the card has no edge at all over a light terminal — Solarized's
   // background and frosted glass over it come out the same near-white.
   return (
     <View style={styles.shadow}>

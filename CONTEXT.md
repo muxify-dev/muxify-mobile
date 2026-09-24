@@ -74,8 +74,8 @@ drawing the split it is about to throw away.
 
 **Theme**:
 The colours the Surface paints with, chosen in Settings: Default (Ghostty's
-own), Mocha and Latte (the two Catppuccin palettes). It decides the app's
-appearance too — Latte is the light one — so the picker is the light/dark
+own), Dracula and Solarized Light. It decides the app's appearance too —
+Solarized is the light one — so the picker is the light/dark
 switch as well; there is no separate setting, because a light terminal in a
 dark app reads as two apps. Applied to the Surface from the next Attach, not to
 a Session already on screen; the chrome follows immediately.
@@ -209,7 +209,7 @@ screen. It says what the Attach is doing while that is anything other than
 connected — Connecting, Reconnecting, a disconnect reason with Reconnect where
 retrying could work — and it is where the changed-host-key warning is shown.
 Drawn in the Theme's appearance, not the phone's, so a light phone never puts a
-white card over a Mocha terminal. Not a toast: it stays while the thing it
+white card over a Dracula terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
 

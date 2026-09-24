@@ -27,9 +27,9 @@ describe('clampFontSize', () => {
 
 describe('parseSettings', () => {
   it('reads settings written by this version', () => {
-    expect(parseSettings({ fontSize: 14, theme: 'mocha', zoomMultipaneWindows: false })).toEqual({
+    expect(parseSettings({ fontSize: 14, theme: 'dracula', zoomMultipaneWindows: false })).toEqual({
       fontSize: 14,
-      theme: 'mocha',
+      theme: 'dracula',
       zoomMultipaneWindows: false,
     });
   });
@@ -43,7 +43,7 @@ describe('parseSettings', () => {
   });
 
   it('reads a missing font size as the Surface picking, not as zero', () => {
-    expect(parseSettings({ theme: 'latte' }).fontSize).toBeNull();
+    expect(parseSettings({ theme: 'solarized' }).fontSize).toBeNull();
   });
 
   it('clamps a font size from a version with different bounds', () => {
@@ -51,7 +51,15 @@ describe('parseSettings', () => {
   });
 
   it('falls back to the default Theme for one it does not know', () => {
-    expect(parseSettings({ theme: 'solarized' }).theme).toBe('default');
+    expect(parseSettings({ theme: 'nord' }).theme).toBe('default');
+  });
+
+  it('carries a Catppuccin choice over to the Theme of the same appearance', () => {
+    // Mocha and Latte were the dark and light Themes before Dracula and
+    // Solarized; a phone that picked the light one should not turn dark on
+    // update.
+    expect(parseSettings({ theme: 'mocha' }).theme).toBe('dracula');
+    expect(parseSettings({ theme: 'latte' }).theme).toBe('solarized');
   });
 
   it('keeps each field independent, so one bad value loses only itself', () => {

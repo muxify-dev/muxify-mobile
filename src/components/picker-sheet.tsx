@@ -214,13 +214,13 @@ export function PickerSheet({
                   [{ height: sheetHeight(layout, cards.length) }, 'large'],
             ),
             presentationDragIndicator('hidden'),
-            // The Theme's appearance, not the phone's: Latte is a light
+            // The Theme's appearance, not the phone's: Solarized is a light
             // terminal and a dark sheet over it reads as two apps stitched
             // together — which is the same reason the Host Screen follows it.
             environment('colorScheme', appearance),
             // A colour, not a material: a material follows the *system*
             // appearance, so a phone in light mode would show a white sheet
-            // over a Mocha terminal no matter what colorScheme says.
+            // over a Dracula terminal no matter what colorScheme says.
             presentationBackground(palette.sheet),
           ]}>
           <VStack spacing={0} modifiers={[padding({ all: SHEET_PADDING })]}>

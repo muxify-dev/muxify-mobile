@@ -2,23 +2,23 @@ import { appearanceFor, AppPalettes, paletteFor, Themes, THEME_IDS } from './app
 
 describe('appearanceFor', () => {
   it('draws the app light for the one light terminal', () => {
-    expect(appearanceFor('latte')).toBe('light');
+    expect(appearanceFor('solarized')).toBe('light');
   });
 
   it('draws it dark for the dark ones', () => {
     expect(appearanceFor('default')).toBe('dark');
-    expect(appearanceFor('mocha')).toBe('dark');
+    expect(appearanceFor('dracula')).toBe('dark');
   });
 
   it('hands back the chrome for that appearance', () => {
-    expect(paletteFor('latte')).toBe(AppPalettes.light);
-    expect(paletteFor('mocha')).toBe(AppPalettes.dark);
+    expect(paletteFor('solarized')).toBe(AppPalettes.light);
+    expect(paletteFor('dracula')).toBe(AppPalettes.dark);
   });
 });
 
 describe('Themes', () => {
   it('has one for every id the picker offers', () => {
-    expect(THEME_IDS.map((id) => Themes[id].name)).toEqual(['Default', 'Mocha', 'Latte']);
+    expect(THEME_IDS.map((id) => Themes[id].name)).toEqual(['Default', 'Dracula', 'Solarized']);
   });
 
   it('gives every Theme a full terminal palette, so no colour falls back to black', () => {

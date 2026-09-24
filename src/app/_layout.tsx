@@ -21,7 +21,7 @@ export default function RootLayout() {
 /**
  * The navigation chrome, painted in whatever the chosen Theme wants.
  *
- * Light or dark is not the phone's setting here, it is the Theme's: Latte is a
+ * Light or dark is not the phone's setting here, it is the Theme's: Solarized is a
  * light terminal, and dark chrome around it would read as two apps. See
  * appearanceFor.
  */

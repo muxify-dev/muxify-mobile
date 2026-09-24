@@ -41,6 +41,29 @@ export function clampFontSize(size: number): number {
 }
 
 /**
+ * The Theme a saved value names, or the default for one it does not know.
+ *
+ * Mocha and Latte are the Catppuccin pair this app shipped with before Dracula
+ * and Solarized replaced them. A phone that chose one of those chose a dark or
+ * a light terminal, and that choice is kept: the replacement of the same
+ * appearance, rather than a fall back to the default that would turn a light
+ * app dark on update.
+ */
+function parseTheme(theme: unknown): ThemeId {
+  switch (theme) {
+    case 'dracula':
+    case 'solarized':
+      return theme;
+    case 'mocha':
+      return 'dracula';
+    case 'latte':
+      return 'solarized';
+    default:
+      return 'default';
+  }
+}
+
+/**
  * Reads settings back off disk, taking what it recognises and defaulting the
  * rest.
  *
@@ -58,7 +81,7 @@ export function parseSettings(raw: unknown): Settings {
 
   return {
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
-    theme: theme === 'mocha' || theme === 'latte' ? theme : 'default',
+    theme: parseTheme(theme),
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
   };

@@ -710,7 +710,7 @@ export default function TerminalScreen() {
    * The quiet overlay text, in the Theme's own dim tone.
    *
    * It sits directly on the Surface, so a fixed colour is right for exactly one
-   * Theme and unreadable in another — Latte's terminal is nearly white.
+   * Theme and unreadable in another — Solarized's terminal is nearly white.
    */
   const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
 
@@ -874,7 +874,7 @@ export default function TerminalScreen() {
         styles.container,
         { paddingTop: insets.top, backgroundColor: opened.terminal.background },
       ]}>
-      {/* The Theme decides this, not the phone: white glyphs over Latte's
+      {/* The Theme decides this, not the phone: white glyphs over Solarized's
           near-white terminal are a status bar nobody can read. */}
       <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
 
@@ -1553,7 +1553,7 @@ function ScrollBackIndicator({
       hitSlop={PILL_SLOP}
       // Inverted against the Theme rather than painted a fixed light: the pill
       // has to read over whatever the Session is painting behind it, and a
-      // light pill with light text is what a fixed one gave on Latte.
+      // light pill with light text is what a fixed one gave on Solarized.
       style={[styles.scrollPill, { backgroundColor: palette.foreground }]}
       testID="scroll-position">
       <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>

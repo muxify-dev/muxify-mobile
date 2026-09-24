@@ -14,7 +14,7 @@ function fakeFile(initial: string | null = null) {
   return { file, read: () => contents };
 }
 
-const CHANGED: Settings = { fontSize: 14, theme: 'mocha', zoomMultipaneWindows: false };
+const CHANGED: Settings = { fontSize: 14, theme: 'dracula', zoomMultipaneWindows: false };
 
 describe('settings store', () => {
   it('is defaults on a phone that has never had settings', async () => {
