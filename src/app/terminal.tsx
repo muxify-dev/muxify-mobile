@@ -21,6 +21,7 @@ import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
 import { openControlConnection, type ControlConnection } from '@/tmux/control-connection';
+import { cellSizeOf, gridForContainer, paneBoxes, type PaneBox } from '@/tmux/pane-layout';
 import { createPaneView, type PaneView, type ScrollPosition } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
@@ -31,7 +32,7 @@ import {
   type TopologyStore,
 } from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
-import { TmuxClient, type Grid, type Session } from '@/tmux/tmux-client';
+import { TmuxClient, type Grid, type Pane, type Session } from '@/tmux/tmux-client';
 
 /** What the Surface uses when the user has not picked a size. */
 const DEFAULT_FONT_SIZE = 13;
@@ -43,6 +44,35 @@ const DEFAULT_FONT_SIZE = 13;
  */
 const GRID_SETTLE_MS = 80;
 const GRID_SETTLE_TRIES = 12;
+
+/**
+ * How much Scrollback a finger moves, against how far it travels.
+ *
+ * One would be the content keeping pace with the finger, as a scroll view does.
+ * A terminal is not a scroll view: there is nothing to take hold of and no
+ * inertia to carry it on, and a screenful of lines is a short distance to cross
+ * a long history with. Two is the finger moving a screen and the Scrollback
+ * moving two.
+ */
+const SCROLL_SPEED = 2;
+
+/** How long a newly mounted Surface is given before it is painted into. */
+const PAINT_SETTLE_MS = 250;
+
+/** One Pane on screen: which Pane, where it goes, and how tall it is in cells. */
+type PaneSlot = {
+  pane: Pane;
+  box: PaneBox;
+  /** The Pane's height in cells, which its Scrollback captures are cut to. */
+  rows: number;
+  /**
+   * Whether this Surface covers the whole Window.
+   *
+   * True for the single-Pane and zoomed cases, and only then is the grid it
+   * reports the Window's grid — which is what the Client is sized from.
+   */
+  fillsWindow: boolean;
+};
 
 /** What a picker is picking. One sheet serves all three. */
 type PickerKind = 'sessions' | 'windows' | 'panes';
@@ -76,13 +106,25 @@ export default function TerminalScreen() {
   // clear of the status bar. Going Home is the Dock's job, not a back button's.
   const insets = useSafeAreaInsets();
   const { settings, terminal, ansi, appearance } = useSettings();
-  const surface = useRef<TerminalViewRef>(null);
+  /**
+   * One Surface and one view per Pane on screen.
+   *
+   * A registry rather than a single ref, because a Window that is not zoomed
+   * shows every Pane at once — each with its own grid, cursor and Scrollback,
+   * and each fed the `%output` addressed to it. See ADR 0006: this is the
+   * thing control mode makes possible that an attached client cannot, because
+   * an attached client's byte stream is one composited Window.
+   */
+  const surfaces = useRef(new Map<string, TerminalViewRef | null>());
+  const views = useRef(new Map<string, PaneView>());
+  /** The grid each Pane's Surface last reported, which it is painted at. */
+  const paneGrids = useRef(new Map<string, Grid>());
   const connection = useRef<SshConnection | null>(null);
   /** The one channel: commands and Pane output, no PTY. */
   const control = useRef<ControlConnection | null>(null);
   const tmux = useRef<TmuxClient | null>(null);
   /** What the Surface is showing: the resync, the stream and the scrolling. */
-  const view = useRef<PaneView | null>(null);
+
   const sessionName = useRef<string>('');
   const grid = useRef<Grid | null>(null);
   /** The Surface's size in points, paired with the grid it produced. */
@@ -95,6 +137,17 @@ export default function TerminalScreen() {
 
   const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
+  /** The Surface area's size in points, which every Pane is placed inside. */
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  /**
+   * How big one cell is, learned from a Surface that filled the container.
+   *
+   * A split mounts nothing that spans the whole Window, so nothing reports the
+   * Window's grid — and the grid is what the Client's size has to be set from.
+   * The font fixes the cell, so measuring it once while a single Surface is up
+   * is enough to work the grid out afterwards.
+   */
+  const cell = useRef<{ width: number; height: number } | null>(null);
   /** How far back the Pane is being viewed, or null at the live bottom. */
   const [scrolled, setScrolled] = useState<ScrollPosition | null>(null);
   /**
@@ -176,6 +229,18 @@ export default function TerminalScreen() {
     [],
   );
 
+  /**
+   * The Pane the keyboard, the Dock and the scroll indicator are about.
+   *
+   * A split shows several Panes but only one of them is *the* Pane: tmux has
+   * an active one and so does this screen, and they are kept the same.
+   */
+  const activePaneId = topology.activePane?.id ?? '';
+  /** The same, where a view's own callbacks can read it without being rebuilt. */
+  const activePaneRef = useRef('');
+  activePaneRef.current = activePaneId;
+  const activeView = useCallback(() => views.current.get(activePaneId), [activePaneId]);
+
   /** Reads the Topology from the Host and publishes it to the screen. */
   const refreshTopology = useCallback(async (): Promise<Topology> => {
     const model = store.current;
@@ -184,68 +249,237 @@ export default function TerminalScreen() {
   }, []);
 
   /**
-   * Points the Surface at whichever Pane tmux says is active.
-   *
-   * A resync rather than a redraw: there is no composited Window to repaint
-   * any more, so moving to another Pane means reading what is on that Pane and
-   * painting it. Does nothing when the Surface is already showing it, which is
-   * what keeps a Topology read from costing a capture it does not need.
-   */
-  const showActivePane = useCallback(async (): Promise<void> => {
-    const pane = store.current?.current().activePane;
-    if (!pane || !view.current || view.current.paneId() === pane.id) return;
-    await view.current.show(pane.id, grid.current?.rows ?? 24);
-  }, []);
-
-  /**
-   * One finger on the Surface, moving the Pane through its Scrollback.
+   * One finger on a Pane, moving it through its Scrollback.
    *
    * The gesture is the library's own — the same pan and the same momentum it
    * would otherwise spend on ghostty's scrollback, which a Surface painted from
    * a capture does not have. Points become lines here because only this side
-   * knows both the grid and the height it was laid out at.
+   * knows both the Pane's grid and the height it was laid out at.
    *
    * The fraction of a line left over is carried between frames rather than
    * dropped, so a slow drag moves at the speed of the finger instead of
    * stalling until a whole line has accumulated.
    */
-  const handleScroll = useCallback(
-    ({ nativeEvent }: { nativeEvent: { points: number } }) => {
-      const size = grid.current;
-      const height = surfaceHeight.current;
-      if (!view.current || !size || size.rows <= 0 || height <= 0) return;
+  const handlePaneScroll = useCallback(
+    (paneId: string, grid: Grid, height: number, points: number) => {
+      const view = views.current.get(paneId);
+      if (!view || grid.rows <= 0 || height <= 0) return;
 
       // A finger moving down pulls older output into view.
-      carriedLines.current += nativeEvent.points * (size.rows / height);
+      carriedLines.current += points * (grid.rows / height) * SCROLL_SPEED;
       const notches = Math.trunc(carriedLines.current / LINES_PER_NOTCH);
       if (notches === 0) return;
       carriedLines.current -= notches * LINES_PER_NOTCH;
 
-      view.current.scroll(notches, size);
+      view.scroll(notches, grid);
     },
     [],
   );
 
   /**
-   * A tap at one cell, while an application is listening for the mouse.
+   * A tap at one cell of the active Pane, while something wants the mouse.
    *
    * See MouseLayer for why this does not go through the Surface's own gesture.
    */
-  const handleTapCell = useCallback((column: number, row: number) => {
-    view.current?.click(column, row);
-  }, []);
+  const handleTapCell = useCallback(
+    (column: number, row: number) => {
+      activeView()?.click(column, row);
+    },
+    [activeView],
+  );
 
   /** A drag, already counted in wheel notches by whoever owned the finger. */
-  const handleNotches = useCallback((notches: number) => {
-    const size = grid.current;
-    if (size) view.current?.scroll(notches, size);
+  const handleNotches = useCallback(
+    (notches: number) => {
+      const size = grid.current;
+      if (size) activeView()?.scroll(notches, size);
+    },
+    [activeView],
+  );
+
+  /**
+   * Which Panes are on screen, and where.
+   *
+   * Zoomed — or with nothing to split — that is one Surface filling the
+   * container, which is the shape this app has had all along. Otherwise it is
+   * every Pane at the rectangle the Layout gives it, on one cell metric. See
+   * paneBoxes, and ADR 0006 for why this is possible at all.
+   */
+  const slots = useMemo((): PaneSlot[] => {
+    const panes = topology.panes;
+    const active = topology.activePane;
+    if (panes.length === 0 || !active) return [];
+
+    // tmux's zoom, not Muxify's preference for it. The preference says what a
+    // Session should arrive as and what the switch asks for; what is on screen
+    // has to follow the Window, or unzooming from the laptop would leave this
+    // showing one Pane stretched across a split.
+    if ((topology.activeWindow?.zoomed ?? true) || panes.length === 1) {
+      return [
+        {
+          pane: active,
+          box: { left: 0, top: 0, width: containerSize.width, height: containerSize.height },
+          rows: visibleGrid?.rows ?? active.height,
+          fillsWindow: true,
+        },
+      ];
+    }
+
+    const boxes = paneBoxes(panes, containerSize);
+    return panes.flatMap((pane) => {
+      const box = boxes.get(pane.id);
+      return box ? [{ pane, box, rows: pane.height, fillsWindow: false }] : [];
+    });
+  }, [topology, containerSize, visibleGrid]);
+
+  /** The Panes on screen, as one value an effect can depend on. */
+  const slotKey = slots.map((slot) => slot.pane.id).join('|');
+
+  /**
+   * Paints a Pane, once there is both a view and a grid to paint into.
+   *
+   * Both halves are needed and neither can be waited for. A Surface reports
+   * its size only after layout, and bytes written before that land in a grid
+   * of no width — the capture wraps away to nothing and all that survives is
+   * the cursor. But the order the two arrive in is not fixed either: one Pane
+   * of a split had its grid before its ref and so was never painted at all.
+   * So whichever comes last does the painting.
+   */
+  const paintWhenReady = useCallback((paneId: string) => {
+    const view = views.current.get(paneId);
+    const grid = paneGrids.current.get(paneId);
+    if (!view || !grid || disposed.current || view.paneId() === paneId) return;
+    // Not immediately, and this is measured rather than cautious. A Surface
+    // that has just mounted reports its grid before it will accept anything
+    // written to it: the resync ran, the bytes went out, and the Pane stayed
+    // blank — while the Surface that had been on screen all along, the one the
+    // split grew out of, painted perfectly. Whatever the library is still
+    // doing at that moment, it is done well inside this.
+    setTimeout(() => {
+      if (disposed.current || view.paneId() === paneId) return;
+      view.setCursorVisible(paneId === activePaneRef.current);
+      void view.show(paneId, grid.rows);
+    }, PAINT_SETTLE_MS);
   }, []);
 
-  /** Puts the Pane back at the live bottom, and the indicator away with it. */
+  /**
+   * The view for one Pane, made the moment its Surface exists.
+   *
+   * Made here rather than alongside the slot because a view with nowhere to
+   * write is a view whose resync is lost, and `%output` carries only what
+   * happens next — so a Pane that missed its resync stays blank until
+   * something moves in it. It does not paint yet, though: see paintPane.
+   */
+  const adoptPaneSurface = useCallback(
+    (paneId: string, ref: TerminalViewRef | null) => {
+      if (!ref) {
+        surfaces.current.delete(paneId);
+        return;
+      }
+      surfaces.current.set(paneId, ref);
+
+      const client = tmux.current;
+      if (!client || disposed.current || views.current.has(paneId)) return;
+
+      const view = createPaneView(client, {
+        write: (bytes) => {
+          surfaces.current.get(paneId)?.write(bytesToBase64(bytes));
+          if (!disposed.current) setPaneTrouble(null);
+        },
+        // Only the active Pane's position is worth an indicator; the others
+        // are on screen but nobody is driving them.
+        onScroll: (position) => {
+          if (!disposed.current && paneId === activePaneRef.current) setScrolled(position);
+        },
+        onMouseTracking: (wanted) => {
+          if (!disposed.current && paneId === activePaneRef.current) setMouseTracking(wanted);
+        },
+        // Without this a refused command — typing into a Pane that has just
+        // been killed, most likely — would vanish, and the Surface would sit
+        // there looking connected and ignoring the keyboard.
+        onError: (error) => {
+          if (!disposed.current) setPaneTrouble(describe(error));
+        },
+      });
+      views.current.set(paneId, view);
+      paintWhenReady(paneId);
+    },
+    [paintWhenReady],
+  );
+
+  /** A Pane's Surface reporting its own grid. */
+  const paintPane = useCallback(
+    (paneId: string, grid: Grid) => {
+      paneGrids.current.set(paneId, grid);
+      // A later grid is a resize, and tmux redraws every Pane it resizes, so
+      // the bytes are already on their way — only the rows have to be told,
+      // for the Scrollback captures.
+      views.current.get(paneId)?.resize(grid.rows);
+      paintWhenReady(paneId);
+    },
+    [paintWhenReady],
+  );
+
+  /**
+   * One cursor, in the Pane the keyboard is in.
+   *
+   * Every Surface draws its own, so a split showed one per Pane — several
+   * places to type, only one of which was real. Re-applied whenever the active
+   * Pane moves, and remembered by the view so a repaint does not bring it back.
+   */
+  useEffect(() => {
+    for (const slot of slots) {
+      views.current.get(slot.pane.id)?.setCursorVisible(slot.pane.id === activePaneId);
+    }
+  }, [slots, activePaneId]);
+
+  /** Lets go of the view for a Pane that has left the screen. */
+  useEffect(() => {
+    const wanted = new Set(slots.map((slot) => slot.pane.id));
+    for (const [id, view] of [...views.current]) {
+      if (wanted.has(id)) continue;
+      view.dispose();
+      views.current.delete(id);
+      surfaces.current.delete(id);
+      paneGrids.current.delete(id);
+    }
+    // Only the set of Panes decides this; the container moving does not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotKey]);
+
+  /** Keeps the Client sized when nothing on screen spans the whole Window. */
+  useEffect(() => {
+    if (!control.current || slots.some((slot) => slot.fillsWindow)) return;
+    const metric = cell.current;
+    if (!metric) return;
+    const next = gridForContainer(metric, containerSize);
+    if (next) remoteSize.request(next);
+  }, [containerSize, slots, remoteSize]);
+
+  /** Moves tmux's active Pane to the one that was tapped. */
+  const selectPaneById = useCallback(
+    (paneId: string) => {
+      const client = tmux.current;
+      const pane = topology.panes.find((each) => each.id === paneId);
+      const windowIndex = topology.activeWindow?.index;
+      if (!client || !pane || windowIndex === undefined || pane.active) return;
+      void (async () => {
+        try {
+          await client.selectPane(sessionName.current, windowIndex, pane.index);
+          await refreshTopology();
+        } catch (error) {
+          if (!disposed.current) setPaneTrouble(describe(error));
+        }
+      })();
+    },
+    [topology.panes, topology.activeWindow, refreshTopology],
+  );
+
+  /** Puts the active Pane back at the live bottom, and the indicator with it. */
   const jumpToLatest = useCallback(() => {
     carriedLines.current = 0;
-    view.current?.jumpToLatest();
-  }, []);
+    activeView()?.jumpToLatest();
+  }, [activeView]);
 
   /**
    * What a picker would show, from the model that is already right.
@@ -409,7 +643,10 @@ export default function TerminalScreen() {
           sshTmuxTransport(conn),
           { sessionName: sessionParam, tmuxExecutablePath: host.tmuxExecutablePath },
           {
-            onOutput: (pane, bytes) => view.current?.receive(pane, bytes),
+            // Straight to the Pane it belongs to. A Window that is not zoomed
+            // has a view for each of them, and this is the thing an attached
+            // client could not do: its byte stream is one composited Window.
+            onOutput: (pane, bytes) => views.current.get(pane)?.receive(pane, bytes),
             onNotification: (event) => {
               const model = store.current;
               if (!model) return;
@@ -437,34 +674,13 @@ export default function TerminalScreen() {
         const client = new TmuxClient(opening);
         tmux.current = client;
 
-        view.current = createPaneView(client, {
-          write: (bytes) => {
-            surface.current?.write(bytesToBase64(bytes));
-            if (!disposed.current) setPaneTrouble(null);
-          },
-          onScroll: (position) => {
-            if (!disposed.current) setScrolled(position);
-          },
-          onMouseTracking: (wanted) => {
-            if (!disposed.current) setMouseTracking(wanted);
-          },
-          // Without this a refused command — typing into a Pane that has just
-          // been killed, most likely — would vanish, and the Surface would sit
-          // there looking connected and ignoring the keyboard.
-          onError: (error) => {
-            if (!disposed.current) setPaneTrouble(describe(error));
-          },
-        });
-
         const model = createTopologyStore(client);
         store.current = model;
+        // Publishing the Topology is all that is needed: the Surfaces on
+        // screen are derived from it, so a split made on the laptop, a Window
+        // switch or somebody else's `select-pane` all arrive the same way.
         model.subscribe((next) => {
-          if (disposed.current) return;
-          setTopology(next);
-          // tmux moved the active Pane — a split, a Window switch, somebody
-          // else's `select-pane` on the laptop. The Surface follows it from
-          // here, so nothing that changes the Topology has to remember to.
-          void showActivePane();
+          if (!disposed.current) setTopology(next);
         });
 
         setAttachedSession(sessionParam);
@@ -483,7 +699,6 @@ export default function TerminalScreen() {
         // arrives with its active Pane filling the Window.
         await client.setZoom(sessionParam, zoomed);
         await refreshTopology();
-        await showActivePane();
         refreshSessions();
       } catch (error) {
         if (!disposed.current) {
@@ -491,23 +706,29 @@ export default function TerminalScreen() {
         }
       }
     },
-    [
-      hostId,
-      sessionParam,
-      remoteSize,
-      refreshTopology,
-      showActivePane,
-      refreshSessions,
-      zoomed,
-    ],
+    [hostId, sessionParam, remoteSize, refreshTopology, refreshSessions, zoomed],
   );
 
-  const handleResize = useCallback(
+  /**
+   * A Surface that fills the Window reporting its grid.
+   *
+   * Only the single-Pane case goes through here, and that is the point: its
+   * grid *is* the Window's, so it is what the Client is sized from and what
+   * the cell metric is measured from. A Pane in a split reports only its own
+   * share, which would size the Window to a fraction of itself.
+   */
+  const handleWindowResize = useCallback(
     ({ nativeEvent }: { nativeEvent: Grid }) => {
       const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
       grid.current = next;
       setVisibleGrid(next);
-      view.current?.resize(next.rows);
+      // Measured here and kept, because a split mounts nothing that spans the
+      // Window and so has nothing to measure. See the `cell` ref.
+      const measured = cellSizeOf(next, {
+        width: surfaceWidth.current,
+        height: surfaceHeight.current,
+      });
+      if (measured) cell.current = measured;
 
       if (control.current) {
         // Every remote resize goes through one place, so a keyboard animation
@@ -524,13 +745,19 @@ export default function TerminalScreen() {
     [start, remoteSize],
   );
 
-  const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
+  /**
+   * Bytes typed into one Pane's Surface.
+   *
+   * Aimed at the Surface that had first responder, which is the only one the
+   * keyboard was ever talking to — so a split needs no routing of its own.
+   */
+  const handlePaneInput = useCallback((paneId: string, data: string) => {
     // `data` is base64. The sibling `text` field must not be used: a
     // multi-byte character split across reads is corrupted by text decoding.
     //
     // What comes out of the Surface is not quite what a shell expects — every
     // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-    view.current?.type(toShellInput(base64ToBytes(nativeEvent.data)));
+    views.current.get(paneId)?.type(toShellInput(base64ToBytes(data)));
   }, []);
 
   /**
@@ -543,12 +770,13 @@ export default function TerminalScreen() {
    * a no-op, and there was no way at all to raise the keyboard again.
    */
   const toggleKeyboard = useCallback(() => {
+    const surface = surfaces.current.get(activePaneId);
     if (keyboardVisible) {
-      void surface.current?.blur();
+      void surface?.blur();
     } else {
-      void surface.current?.focus();
+      void surface?.focus();
     }
-  }, [keyboardVisible]);
+  }, [keyboardVisible, activePaneId]);
 
   /**
    * Opens a picker on a model that is already right.
@@ -630,21 +858,12 @@ export default function TerminalScreen() {
           // re-applied rather than assumed to have survived.
           await client.setZoom(sessionName.current, zoomed);
           await refreshTopology();
-          await showActivePane();
         } catch (error) {
           showPickerError(error);
         }
       })();
     },
-    [
-      refreshTopology,
-      showActivePane,
-      showPickerError,
-      topology.activeWindow,
-      zoomed,
-      remoteSize,
-      hostId,
-    ],
+    [refreshTopology, showPickerError, topology.activeWindow, zoomed, remoteSize, hostId],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */
@@ -664,13 +883,12 @@ export default function TerminalScreen() {
           }
           setPicker({ open: false });
           await refreshTopology();
-          await showActivePane();
         } catch (error) {
           showPickerError(error);
         }
       })();
     },
-    [refreshTopology, showActivePane, showPickerError, zoomed],
+    [refreshTopology, showPickerError, zoomed],
   );
 
   const changeZoom = useCallback(
@@ -766,8 +984,10 @@ export default function TerminalScreen() {
       disposed.current = true;
       const openControl = control.current;
       const openConnection = connection.current;
-      view.current?.dispose();
-      view.current = null;
+      for (const view of views.current.values()) view.dispose();
+      views.current.clear();
+      surfaces.current.clear();
+      paneGrids.current.clear();
       control.current = null;
       connection.current = null;
       tmux.current = null;
@@ -795,36 +1015,49 @@ export default function TerminalScreen() {
       <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
 
       <View
-        style={styles.surfaceArea}
+        style={[styles.surfaceArea, { backgroundColor: opened.terminal.background }]}
         onLayout={({ nativeEvent }) => {
           surfaceHeight.current = nativeEvent.layout.height;
           surfaceWidth.current = nativeEvent.layout.width;
+          setContainerSize({
+            width: nativeEvent.layout.width,
+            height: nativeEvent.layout.height,
+          });
         }}>
-        <TerminalView
-          ref={surface}
-          style={styles.surface}
-          fontSize={opened.font ?? DEFAULT_FONT_SIZE}
-          // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
-          // turned off by a local patch. It was the reason ADR 0003 ruled out
-          // a modifier group in the Dock, so that decision is now open again —
-          // with the bar gone there are no modifier keys at all.
-          accessoryBar={false}
-          theme={{
-            background: opened.terminal.background,
-            foreground: opened.terminal.foreground,
-            cursorColor: opened.terminal.cursor,
-            // The sixteen colours everything on the Host actually paints with.
-            // Undefined for the Default Theme, which is ghostty's own palette.
-            palette: opened.ansi ? [...opened.ansi] : undefined,
-          }}
-          onResize={handleResize}
-          onInput={handleInput}
-          // The Scrollback is tmux's, so the gesture has to be Muxify's:
-          // ghostty would otherwise spend it on one of its own that does not
-          // exist here. Needs the local patch.
-          ownsScrollGesture
-          onScroll={handleScroll}
-        />
+        {/* Before there is a Topology there are no Panes to place, and the
+            Connection cannot start until something reports a grid — so one
+            Surface stands in as the measure. It is replaced by the real Panes
+            the moment they are known, and the resync paints them. */}
+        {slots.length === 0 ? (
+          <TerminalView
+            style={styles.surface}
+            fontSize={opened.font ?? DEFAULT_FONT_SIZE}
+            accessoryBar={false}
+            theme={{
+              background: opened.terminal.background,
+              foreground: opened.terminal.foreground,
+              cursorColor: opened.terminal.cursor,
+              palette: opened.ansi ? [...opened.ansi] : undefined,
+            }}
+            onResize={handleWindowResize}
+          />
+        ) : null}
+
+        {slots.map((slot) => (
+          <PaneSurface
+            key={slot.pane.id}
+            slot={slot}
+            font={opened.font ?? DEFAULT_FONT_SIZE}
+            terminal={opened.terminal}
+            ansi={opened.ansi}
+            onRef={adoptPaneSurface}
+            onPaneResize={paintPane}
+            onWindowResize={slot.fillsWindow ? handleWindowResize : undefined}
+            onInput={handlePaneInput}
+            onScroll={handlePaneScroll}
+            onSelect={selectPaneById}
+          />
+        ))}
 
         {scrolled ? (
           <>
@@ -861,9 +1094,11 @@ export default function TerminalScreen() {
         actions={picker.open ? PICKER_ACTIONS[picker.kind] : undefined}
         onAction={runSheetAction}
         zoom={
-          // Nothing to zoom out of with one Pane, so the switch is not offered
-          // — unlike Split, which is how the second one gets made.
-          picker.open && picker.kind === 'panes' && picker.cards.length > 1
+          // Offered whatever the Pane count. With one Pane there is nothing to
+          // zoom out of yet, but the switch is the setting rather than the act
+          // — it says what the next split should do, and a switch that appears
+          // only once you have split is one you have to find twice.
+          picker.open && picker.kind === 'panes'
             ? { on: zoomed, onChange: changeZoom }
             : undefined
         }
@@ -914,6 +1149,123 @@ export default function TerminalScreen() {
       </View>
 
       <StatusBanner status={status} palette={opened.terminal} />
+    </View>
+  );
+}
+
+/**
+ * One Pane's Surface, placed where the Layout puts it.
+ *
+ * The Surface is the library's and unchanged; what is new is that there may be
+ * several of them, each with its own grid, cursor and palette against the one
+ * shared `ghostty_app_t`. Only the Pane that fills the Window reports a grid
+ * anyone acts on — see `fillsWindow`.
+ *
+ * An inactive Pane is covered by a tap target rather than left live. Tapping
+ * one should move tmux's active Pane to it, and a Surface taking first
+ * responder instead would raise the keyboard over a Pane that is not the one
+ * being typed into.
+ */
+function PaneSurface({
+  slot,
+  font,
+  terminal,
+  ansi,
+  onRef,
+  onPaneResize,
+  onWindowResize,
+  onInput,
+  onScroll,
+  onSelect,
+}: {
+  slot: PaneSlot;
+  font: number;
+  terminal: TerminalPalette;
+  ansi: readonly string[] | undefined;
+  onRef: (paneId: string, ref: TerminalViewRef | null) => void;
+  onPaneResize: (paneId: string, grid: Grid) => void;
+  onWindowResize?: (event: { nativeEvent: Grid }) => void;
+  onInput: (paneId: string, data: string) => void;
+  onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
+  onSelect: (paneId: string) => void;
+}) {
+  const own = useRef<Grid>({ cols: slot.pane.width, rows: slot.rows });
+  const paneId = slot.pane.id;
+  /**
+   * Stable, and that matters more than it looks.
+   *
+   * React calls a ref callback with null and then the instance whenever the
+   * callback's identity changes — so an inline arrow here means the Surface is
+   * unregistered and re-registered on every render. A resync that finished
+   * during one of those gaps wrote its bytes to nothing, and the Pane stayed
+   * blank until something else happened to write to it.
+   */
+  const register = useCallback((ref: TerminalViewRef | null) => onRef(paneId, ref), [
+    onRef,
+    paneId,
+  ]);
+
+  return (
+    <View
+      style={[styles.paneBox, slot.box]}>
+      <TerminalView
+        ref={register}
+        style={styles.surface}
+        fontSize={font}
+        // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
+        // turned off by a local patch. It was the reason ADR 0003 ruled out
+        // a modifier group in the Dock, so that decision is now open again —
+        // with the bar gone there are no modifier keys at all.
+        accessoryBar={false}
+        theme={{
+          background: terminal.background,
+          foreground: terminal.foreground,
+          cursorColor: terminal.cursor,
+          // The sixteen colours everything on the Host actually paints with.
+          // Undefined for the Default Theme, which is ghostty's own palette.
+          palette: ansi ? [...ansi] : undefined,
+        }}
+        onResize={({ nativeEvent }) => {
+          own.current = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+          onWindowResize?.({ nativeEvent });
+          onPaneResize(slot.pane.id, own.current);
+        }}
+        onInput={({ nativeEvent }) => onInput(slot.pane.id, nativeEvent.data)}
+        // The Scrollback is tmux's, so the gesture has to be Muxify's:
+        // ghostty would otherwise spend it on one of its own that does not
+        // exist here. Needs the local patch.
+        ownsScrollGesture
+        onScroll={({ nativeEvent }) =>
+          onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
+        }
+      />
+
+      {/* A split needs a seam, and the keyboard belongs to one Pane of it. The
+          edge is drawn *over* the Surface rather than around it: a border
+          would come out of the content box, leaving the Surface a column
+          narrower than the Pane tmux is wrapping for. */}
+      {!slot.fillsWindow ? (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              borderColor: slot.pane.active ? terminal.cursor : terminal.dim,
+              borderWidth: slot.pane.active ? 1 : StyleSheet.hairlineWidth,
+            },
+          ]}
+        />
+      ) : null}
+
+      {!slot.fillsWindow && !slot.pane.active ? (
+        <View
+          style={StyleSheet.absoluteFill}
+          accessibilityRole="button"
+          accessibilityLabel={`Pane ${slot.pane.index}`}
+          onStartShouldSetResponder={() => true}
+          onResponderRelease={() => onSelect(slot.pane.id)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -981,7 +1333,7 @@ function MouseLayer({
 
         // A finger moving down pulls older output into view, which is the same
         // sign the Surface's own scroll reports.
-        carried.current += travelled * (grid.rows / height);
+        carried.current += travelled * (grid.rows / height) * SCROLL_SPEED;
         const notches = Math.trunc(carried.current / LINES_PER_NOTCH);
         if (notches === 0) return;
         carried.current -= notches * LINES_PER_NOTCH;
@@ -1266,6 +1618,10 @@ const styles = StyleSheet.create({
   },
   surfaceArea: {
     flex: 1,
+  },
+  paneBox: {
+    position: 'absolute',
+    overflow: 'hidden',
   },
   surface: {
     flex: 1,

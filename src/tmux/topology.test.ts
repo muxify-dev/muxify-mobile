@@ -222,3 +222,51 @@ describe('what a notification can settle on its own', () => {
     for (const event of irrelevant) expect(store.apply(event)).toBe('unchanged');
   });
 });
+
+describe('zoom, which rides along in a layout change', () => {
+  async function opened(windows: Window[], panes: Record<number, Pane[]>) {
+    const { reader } = fakeReader(windows, panes);
+    const store = createTopologyStore(reader);
+    await store.refresh('work');
+    return store;
+  }
+
+  const TWO_PANES = {
+    0: [pane({ id: '%0', index: 0 }), pane({ id: '%2', index: 1, active: false })],
+  };
+  const layout = (flags: string) => ({
+    kind: 'layout-change' as const,
+    window: '@0',
+    layout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
+    visibleLayout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
+    flags,
+  });
+
+  it('reads a Window becoming zoomed', async () => {
+    const store = await opened([window({ paneCount: 2, zoomed: false })], TWO_PANES);
+    expect(store.apply(layout('*Z'))).toBe('changed');
+    expect(store.current().activeWindow?.zoomed).toBe(true);
+    expect(store.current().windows[0].zoomed).toBe(true);
+  });
+
+  it('reads it being turned off again', async () => {
+    const store = await opened([window({ paneCount: 2, zoomed: true })], TWO_PANES);
+    expect(store.apply(layout('*'))).toBe('changed');
+    expect(store.current().activeWindow?.zoomed).toBe(false);
+  });
+
+  it('is the only way a zoom toggled elsewhere is noticed', async () => {
+    // The Layout describes the arrangement zoom is hiding, so the rectangles
+    // are identical either way — the flags are the whole of the signal. Two
+    // applies of the same Layout, so the first settles the rectangles and the
+    // second can only differ by its flags.
+    const store = await opened([window({ paneCount: 2, zoomed: false })], TWO_PANES);
+    store.apply(layout('*'));
+    const before = store.current().panes.map((each) => [each.top, each.height]);
+
+    store.apply(layout('*Z'));
+
+    expect(store.current().panes.map((each) => [each.top, each.height])).toEqual(before);
+    expect(store.current().activeWindow?.zoomed).toBe(true);
+  });
+});

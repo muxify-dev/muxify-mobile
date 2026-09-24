@@ -551,3 +551,57 @@ describe('telling the Screen what a tap should mean', () => {
     expect(mouse).toEqual([true, false]);
   });
 });
+
+describe('which Pane draws a cursor', () => {
+  it('draws one by default, because a single Pane is the Pane', async () => {
+    const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    expect(shown(written)).toContain('<ESC>[2;6H');
+  });
+
+  it('hides it the moment the Pane stops being the one being typed in', async () => {
+    const host = fakePane();
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    written.length = 0;
+
+    view.setCursorVisible(false);
+
+    expect(shown(written)).toBe('<ESC>[?25l');
+  });
+
+  it('keeps it hidden through a repaint, rather than letting it back', async () => {
+    const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    view.setCursorVisible(false);
+    written.length = 0;
+
+    await view.show('%0', 24);
+
+    expect(shown(written)).not.toContain('<ESC>[2;6H');
+    expect(shown(written)).not.toContain('<ESC>[?25h');
+  });
+
+  it('brings it back when the Pane takes the keyboard again', async () => {
+    const host = fakePane();
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    view.setCursorVisible(false);
+    written.length = 0;
+
+    view.setCursorVisible(true);
+
+    expect(shown(written)).toBe('<ESC>[?25h');
+  });
+
+  it('says nothing when asked for what it already does', async () => {
+    const host = fakePane();
+    const { view, written } = viewOn(host);
+    await view.show('%0', 24);
+    written.length = 0;
+    view.setCursorVisible(true);
+    expect(written).toHaveLength(0);
+  });
+});

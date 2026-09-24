@@ -144,8 +144,19 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
             ...pane,
             ...(rects.get(paneNumber(pane.id)) as NonNullable<ReturnType<typeof rects.get>>),
           }));
+          // Zoom rides along in the flags, and has to: the Layout describes the
+          // arrangement zoom is hiding, so the rectangles are the same whether
+          // or not one Pane is filling the Window. Without reading this, a zoom
+          // toggled anywhere but here would never be noticed.
+          const windows = topology.windows.map((window) =>
+            window.id === event.window
+              ? { ...window, zoomed: event.flags.includes('Z') }
+              : window,
+          );
           publish({
             ...topology,
+            windows,
+            activeWindow: windows.find((window) => window.id === topology.activeWindow?.id),
             panes,
             activePane: panes.find((pane) => pane.id === topology.activePane?.id),
           });

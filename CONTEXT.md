@@ -58,7 +58,8 @@ _Avoid_: Topology (which is what exists, not where it is), geometry
 **Zoom**:
 tmux's term for one Pane filling its Window on its own. Muxify attaches zoomed
 by default, because a phone is too narrow to read two Panes side by side; the
-Panes picker is where it is turned off to see the real split.
+Panes picker is where it is turned off, and turning it off shows the real
+split — a Surface per Pane, each laid out where the Layout puts it.
 
 **Theme**:
 The colours the Surface paints with, chosen in Settings: Default (Ghostty's
@@ -116,7 +117,8 @@ _Avoid_: exec channel, one-shot
 **Surface**:
 The `expo-libghostty` view that renders the bytes Muxify paints it with and
 reports typed input back. Owns VT parsing and the keyboard; Muxify only moves
-bytes.
+bytes. There is one per Pane on screen, so an unzoomed Window has several —
+each with its own grid, cursor and Scrollback.
 _Avoid_: Terminal, emulator, view
 
 **Accessory Bar**:

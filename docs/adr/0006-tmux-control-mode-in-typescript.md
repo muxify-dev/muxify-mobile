@@ -106,8 +106,9 @@ therefore reachable the way remux reaches it — its shipped
 window at its authoritative grid rectangle using one shared, unscaled cell
 metric", which is a Surface per Pane placed by the Layout string. Control mode
 is what makes it possible at all, since `%output` is per-Pane where an attached
-client's byte stream is one composited Window. It is out of scope here and
-wanted most on an iPad; see ticket 08.
+client's byte stream is one composited Window. *(Shipped: see ticket 08. A
+Window that is not zoomed now renders a Surface per Pane, and both the claim
+about `ghostty_app_t` and the one about `%output` held.)*
 
 What the fork does buy is terminal state for a Pane with *no view*:
 `ghostty_terminal_surface_*` is a headless terminal, so remux can hold live

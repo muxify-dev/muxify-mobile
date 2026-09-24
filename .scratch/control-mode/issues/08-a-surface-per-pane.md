@@ -5,11 +5,12 @@ where tmux says they are. Tapping one makes it the Pane that takes the keyboard.
 
 **Blocked by:** 03, 04
 
-**Status:** not scheduled — wanted on iPad, not needed on a phone
+**Status:** done — picked up on a phone after all, on request
 
-This is not part of the migration and nothing above depends on it. It is written
-down because control mode is what makes it possible, and because a phone-shaped
-decision should not quietly become an iPad-shaped limitation.
+This was not part of the migration and nothing above depended on it. It was
+written down because control mode is what makes it possible, and because a
+phone-shaped decision should not quietly become an iPad-shaped limitation —
+which is exactly how it came to be picked up.
 
 Verified on the simulator while writing ADR 0006: two `TerminalView`s mount and
 render at once, each with its own grid, cursor and palette, against the one
@@ -33,7 +34,47 @@ Three things to settle when it is picked up:
 - **Focus.** Only the active Pane takes input, and `send-keys` already targets
   a Pane by id, so this is a tap target and a highlight, not a new input path.
 
-- [ ] A two-Pane Window renders both Panes at their Layout rectangles
-- [ ] Output lands in the right Pane, and resizing keeps the rectangles honest
-- [ ] Tapping a Pane moves the keyboard to it, and tmux agrees which is active
-- [ ] Four Panes on an iPad hold a usable frame rate, or the ceiling is recorded
+- [x] A two-Pane Window renders both Panes at their Layout rectangles
+- [x] Output lands in the right Pane, and resizing keeps the rectangles honest
+- [x] Tapping a Pane moves the keyboard to it, and tmux agrees which is active
+- [~] Four Panes on an iPad hold a usable frame rate, or the ceiling is recorded
+
+## Comments
+
+Four Panes were driven on an iPhone 17 Pro, each live, each painting its own
+resync and streaming its own `%output`. No frame rate was measured, so the
+ceiling above four is still unrecorded — hence the `~`.
+
+**Zoom is tmux's, not Muxify's.** What is on screen follows
+`#{window_zoomed_flag}`, and the setting only says what a Session should arrive
+as and what the switch asks for. Reading the Window's own flag is what makes an
+unzoom from the laptop show the split here. It arrives in `%layout-change`'s
+flags, which is the only place it arrives at all: the Layout describes the
+arrangement zoom is *hiding*, so the rectangles are identical either way.
+
+**The separator cell is shared, not left empty.** tmux keeps one cell between
+neighbours for a separator it would draw for a client that renders one. Leaving
+it showed a strip of ground between the Panes. Each neighbour takes half, which
+closes the seam and leaves both Surfaces a whisker under their own cell count —
+taking the whole cell would round them a column *wider* than the Pane, and then
+nothing would wrap where tmux wrapped it.
+
+**One cursor.** Every Surface draws its own, so a split showed one per Pane —
+several places to type, only one of them real. A view is told whether it is the
+Pane with the keyboard, and remembers it, so a repaint does not bring it back.
+
+Three things that cost real time and are worth knowing:
+
+- A Surface that has just mounted **reports its grid before it will accept
+  anything written to it**. The resync ran, the bytes went out, and the Pane
+  stayed blank — while the Surface the split grew out of painted perfectly.
+  PAINT_SETTLE_MS is the wait, and it is measured rather than cautious.
+- A ref callback written inline is a **new callback every render**, so React
+  unregisters and re-registers the Surface constantly. A resync finishing
+  during one of those gaps wrote to nothing.
+- Pane *edges* are rounded, not widths. A Pane a third of a point short of 24
+  cells is a Pane of 23, and then every line tmux wrote for 24 wraps.
+
+What the proportions are is tmux's business: the Panes are drawn at the
+rectangles the Layout gives them, so a Window whose splits are uneven in tmux
+is uneven here. `select-layout tiled` is what evens it.

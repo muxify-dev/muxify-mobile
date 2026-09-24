@@ -96,10 +96,12 @@ sleep 1
 agent-device press 'label="Panes"' >/dev/null 2>&1
 sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "a Window with one Pane must still offer Split →"
-# Nothing to zoom out of with one Pane, unlike Split, which is how the second
-# one gets made.
+# Offered with one Pane as well. There is nothing to zoom out of yet, but the
+# switch is the setting rather than the act — it says what the next split
+# should do, and one that appears only after you have split is one you have to
+# find twice.
 agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
-  && fail "the Zoom switch should not be offered for a single Pane"
+  || fail "the Zoom switch should be offered whatever the Pane count"
 
 echo "2/4  three Windows: the Windows picker opens and lists them"
 vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
@@ -116,7 +118,7 @@ sheet Windows
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "the Windows sheet has no New Window action"
 
-echo "3/4  two Panes: the Session arrives zoomed, and the picker lists them"
+echo "3/4  two Panes: the Session arrives zoomed, and unzooming shows the split"
 vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
     tmux resize-pane -t '$SESSION:0' 2>/dev/null; true"
 attach
@@ -132,11 +134,28 @@ sheet Panes
 agent-device snapshot -i 2>/dev/null | grep -q 'Zoom' \
   || fail "the Panes sheet has no Zoom toggle"
 
+# Turning zoom off shows the real split: a Surface per Pane, laid out where
+# tmux says they are. The inactive one is a tap target, which is what makes it
+# assertable from here at all — the Surfaces themselves render with Metal and
+# never reach the accessibility tree.
+SWITCH=$(agent-device snapshot -i 2>/dev/null | grep -E '^@e[0-9]+ \[switch\] "[01]"' | head -1 | awk '{print $1}')
+[ -n "$SWITCH" ] || fail "no Zoom switch to turn off"
+agent-device press "$SWITCH" >/dev/null 2>&1
+sleep 2
+agent-device press 'label="Close Panes"' >/dev/null 2>&1
+sleep 3
+[ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 0 ] \
+  || fail "turning the Zoom switch off did not unzoom the Window"
+agent-device is exists 'label="Pane 1"' >/dev/null 2>&1 \
+  || fail "unzooming should show the other Pane, not one stretched across the split"
+echo "     unzoomed, and both Panes are on screen"
+
 echo "4/4  putting the Host back the way it was found"
 agent-device close >/dev/null 2>&1
 vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo
-echo "PASS: a split Session arrives zoomed, Topology reaches both sheets, and"
-echo "      both stay reachable with one of something so more can be made."
+echo "PASS: a split Session arrives zoomed, unzooming shows a Surface per Pane,"
+echo "      Topology reaches both sheets, and both stay reachable with one of"
+echo "      something so more can be made."

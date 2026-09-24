@@ -74,6 +74,14 @@ export interface PaneView {
    * which redraws the Pane when the Client's size changes.
    */
   resize(rows: number): void;
+  /**
+   * Whether this Pane should draw a cursor at all.
+   *
+   * Only one Pane of a split has the keyboard, and a cursor in each of the
+   * others says otherwise — it reads as several places to type. Applied now
+   * and remembered, so the next repaint does not bring it back.
+   */
+  setCursorVisible(visible: boolean): void;
   /** Nothing more is wanted from this view. */
   dispose(): void;
 }
@@ -138,6 +146,9 @@ export function createPaneView(
   /** A repaint in flight, and the position asked for behind it. */
   let painting = false;
   let wanted = false;
+
+  /** Whether this Pane draws a cursor. False for a Pane nobody is typing in. */
+  let cursorVisible = true;
 
   function report(error: unknown): void {
     if (!disposed) events.onError?.(error);
@@ -215,7 +226,10 @@ export function createPaneView(
         paintScreen({
           lines,
           alternate: next?.alternate ?? false,
-          cursor: next ? { column: next.cursorColumn, row: next.cursorRow } : undefined,
+          cursor:
+            next && cursorVisible
+              ? { column: next.cursorColumn, row: next.cursorRow }
+              : undefined,
         }),
       );
     } finally {
@@ -340,6 +354,12 @@ export function createPaneView(
 
     type,
     jumpToLatest,
+
+    setCursorVisible(visible: boolean): void {
+      if (disposed || visible === cursorVisible) return;
+      cursorVisible = visible;
+      events.write(asciiBytes(visible ? '\u001b[?25h' : '\u001b[?25l'));
+    },
 
     resize(height: number): void {
       const next = Math.max(1, Math.floor(height));
