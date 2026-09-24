@@ -59,8 +59,15 @@ export const BAR_KEYS: BarKey[] = [
   { key: 'Down', label: '↓', spoken: 'down' },
   { key: 'Up', label: '↑', spoken: 'up' },
   { key: 'Right', label: '→', spoken: 'right' },
-  { key: 'PageUp', label: 'pgup', spoken: 'page up' },
-  { key: 'PageDown', label: 'pgdn', spoken: 'page down' },
+  // Arrows with a bar at the head, matching the four beside them: page up and
+  // page down move the same way the arrows do and further, and a row of four
+  // glyphs followed by two words read as two different kinds of key. `pgup`
+  // and `pgdn` were also the only labels on the bar that had to shrink to fit.
+  // Not ⇞ and ⇟, which are what a Mac keyboard prints: they are a pair of
+  // their own and say nothing about which way they go to an eye that has not
+  // seen them before.
+  { key: 'PageUp', label: '⤒', spoken: 'page up' },
+  { key: 'PageDown', label: '⤓', spoken: 'page down' },
   { key: 'M-', label: 'alt', modifier: 'alt' },
   // Spoken as what they do rather than what they are called. `home` and the
   // Dock's own Home button are two different journeys, and a screen that

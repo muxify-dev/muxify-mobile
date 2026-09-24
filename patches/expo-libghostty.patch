@@ -287,6 +287,95 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..9266a2d660c344cdeab5419ae9d44037
          }
  
          func stopMomentumScrolling(sendTerminalEndEvent: Bool = true) {
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift
+index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f32b612d8 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift
+@@ -143,11 +143,46 @@
+             set {}
+         }
+ 
++        // MARK: - Held delete
++
++        /// How long a document UIKit is told about while nothing is being composed.
++        ///
++        /// Muxify patch. The real document here is only the IME's composition
++        /// buffer, so with nothing being composed it is empty and the caret sits
++        /// at index 0. UIKit reads that as "the caret is at the start, there is
++        /// nothing behind it to delete", and stops repeating `deleteBackward`
++        /// after the first one — which is why holding the delete key on the
++        /// software keyboard removed exactly one character however long it was
++        /// held. A phantom character behind the caret keeps the repeat running;
++        /// it is never inserted or deleted, because `deleteBackward` sends a key
++        /// to the terminal rather than editing anything here.
++        ///
++        /// Only while there is no marked text. Composition still sees the real
++        /// buffer, so the IME is untouched.
++        private var phantomLength: Int { 1 }
++
++        /// The document as UIKit is told it, which is the real one whenever the
++        /// IME is composing into it.
++        var uiDocumentLength: Int {
++            inputHandler.hasMarkedText ? inputHandler.documentLength : phantomLength
++        }
++
+         // MARK: - UITextInput Selection
+ 
+         open var selectedTextRange: UITextRange? {
+-            get { inputHandler.selectedTextRange() }
+-            set { inputHandler.setSelectedTextRange(newValue) }
++            get {
++                guard !inputHandler.hasMarkedText else { return inputHandler.selectedTextRange() }
++                // Muxify patch: the caret sits after the phantom character, so
++                // there is always something behind it. See phantomLength.
++                return TerminalTextRange(location: phantomLength, length: 0)
++            }
++            set {
++                // Muxify patch: a selection set over the phantom document is
++                // UIKit talking about text that does not exist. Only the IME's
++                // own buffer can be selected into.
++                guard inputHandler.hasMarkedText else { return }
++                inputHandler.setSelectedTextRange(newValue)
++            }
+         }
+ 
+         // MARK: - UITextInput Positions
+@@ -157,7 +192,7 @@
+         }
+ 
+         open var endOfDocument: UITextPosition {
+-            TerminalTextPosition(inputHandler.documentLength)
++            TerminalTextPosition(uiDocumentLength)
+         }
+ 
+         open func textRange(
+@@ -177,7 +212,10 @@
+         ) -> UITextPosition? {
+             guard let pos = position as? TerminalTextPosition else { return nil }
+             let newIndex = pos.index + offset
+-            guard newIndex >= 0, newIndex <= inputHandler.documentLength else { return nil }
++            // Muxify patch: bounded by what UIKit has been told the document is,
++            // or a step back from the caret falls off the front of an empty one
++            // and the delete key stops repeating. See phantomLength.
++            guard newIndex >= 0, newIndex <= uiDocumentLength else { return nil }
+             return TerminalTextPosition(newIndex)
+         }
+ 
+@@ -218,6 +256,14 @@
+ 
+         open func text(in range: UITextRange) -> String? {
+             guard let range = range as? TerminalTextRange else { return nil }
++            // Muxify patch: the phantom document reads as spaces. Nothing is
++            // ever shown it — autocorrect, spell checking and the smart
++            // substitutions are all off above — but UIKit asks for the context
++            // behind the caret while a key repeats, and nil there is the same
++            // "nothing to delete" that stopped it. See phantomLength.
++            guard inputHandler.hasMarkedText else {
++                return String(repeating: " ", count: max(0, range.length))
++            }
+             return inputHandler.text(in: range)
+         }
+ 
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..1ae13e701215172331b156c50f2d6c2a2ba235d1 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift

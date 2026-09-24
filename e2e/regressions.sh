@@ -10,6 +10,7 @@
 #   4  the resize, which has broken four separate ways
 #   5  Enter, which for a long time only made a new line
 #   6  the Session left as it was found, with nothing to put back
+#   7  the delete key, which removed one character however long it was held
 #
 # Checks 3 and 7 changed shape with control mode. They used to assert that the
 # status line was hidden on attach and restored on the way out — the borrowing
@@ -50,6 +51,9 @@ set -uo pipefail
 APP=dev.muxify.app
 SESSION=0
 MARKER=MUXIFY_ENTER_RUNS
+# Twenty characters for the held-delete check. Plain letters: what is asserted
+# is how many of them survive, so anything the shell might expand is out.
+HELD=abcdefghijklmnopqrst
 
 vm() {
   ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -59,6 +63,19 @@ vm() {
 fail() { echo "FAIL: $1"; exit 1; }
 
 snap()    { agent-device snapshot -i 2>/dev/null; }
+# Where the software keyboard's delete key is. Empty with the keyboard down.
+delete_key() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
+import json, sys
+for n in json.load(sys.stdin)['data']['nodes']:
+    if n['type'] == 'Key' and (n.get('label') or '') == 'delete':
+        r = n['rect']
+        print(round(r['x'] + r['width'] / 2), round(r['y'] + r['height'] / 2))
+        break
+"
+}
+# The last line the Pane is showing, which is the one being typed on.
+typed_line() { vm "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
 surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
 window()  { vm "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
@@ -113,7 +130,7 @@ attach() {
   sleep 3
 }
 
-echo "0/6  putting the Session somewhere known"
+echo "0/7  putting the Session somewhere known"
 vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
@@ -123,14 +140,14 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/6  the Terminal Screen has no navigation header"
+echo "1/7  the Terminal Screen has no navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
 snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
   && fail "a back button is back; Home in the Dock is what leaves this screen"
 echo "     no header, no back button"
 
-echo "2/6  the library's Accessory Bar stays hidden"
+echo "2/7  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Bar offers ctrl, esc and tab
 # — lowercase, which is what keeps this check able to tell the two apart. The
 # library's bar spells them `Control`, `Escape` and `Tab`.
@@ -138,7 +155,7 @@ snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/6  attaching changes no option, on the Session or its Window"
+echo "3/7  attaching changes no option, on the Session or its Window"
 # The whole of ADR 0006. A control client renders nothing, so `status` is not
 # its business; it is sized with `refresh-client -C`, so `window-size` is not
 # either; and scrolling is a capture, so neither is `mouse`.
@@ -149,12 +166,12 @@ echo "3/6  attaching changes no option, on the Session or its Window"
 [ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
 echo "     session and window options byte-identical while attached"
 
-echo "4/6  sizes agree with the keyboard down, and again with it up"
+echo "4/7  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
 toggle_keyboard
 agree "keyboard up"
 
-echo "5/6  Enter on the device runs the command"
+echo "5/7  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
 #
@@ -171,7 +188,32 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "6/6  leaving finds the Session exactly as it was, bar the zoom"
+echo "6/7  holding the delete key removes more than one character"
+# The other half of the local patch, and the same kind of check as 2. iOS
+# repeats the delete key only while it believes there is something behind the
+# caret to delete, and the terminal's document is the IME's composition buffer
+# — empty whenever nobody is composing. So UIKit asked once, decided the caret
+# was at the start of an empty document and stopped: a key held for three
+# seconds removed one character. See patches/expo-libghostty.patch.
+#
+# Twenty characters, of which a single delete leaves nineteen and a working
+# repeat leaves none. Requiring the first ten to be gone is a margin wide
+# enough that neither answer can be mistaken for the other.
+vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+sleep 1
+agent-device type "$HELD" >/dev/null 2>&1
+sleep 2
+typed_line | grep -q "$HELD" || fail "the marker never reached the Pane; is the keyboard up?"
+read -r DELETE_X DELETE_Y <<<"$(delete_key)"
+[ -n "$DELETE_X" ] || fail "no delete key on screen; the keyboard is down"
+agent-device longpress "$DELETE_X" "$DELETE_Y" 3000 >/dev/null 2>&1
+sleep 2
+typed_line | grep -q "${HELD:0:10}" \
+  && fail "a three-second hold on delete removed fewer than ten characters: $(typed_line)"
+echo "     three seconds of delete took the line back past ten characters"
+vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+
+echo "7/7  leaving finds the Session exactly as it was, bar the zoom"
 toggle_keyboard
 sleep 1
 agent-device press 'label="Home"' >/dev/null 2>&1
@@ -195,5 +237,5 @@ echo "     zoom is left as Muxify set it: $(vm "tmux display-message -p -t '$SES
 agent-device close >/dev/null 2>&1
 echo
 echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
-echo "      untouched throughout, sizes agree in both keyboard states, and"
-echo "      Enter runs commands."
+echo "      untouched throughout, sizes agree in both keyboard states, Enter"
+echo "      runs commands, and a held delete key keeps deleting."

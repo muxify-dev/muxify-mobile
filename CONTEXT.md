@@ -137,6 +137,12 @@ The `expo-libghostty` view that renders the bytes Muxify paints it with and
 reports typed input back. Owns VT parsing and the keyboard; Muxify only moves
 bytes. There is one per Pane on screen, so an unzoomed Window has several —
 each with its own grid, cursor and Scrollback.
+
+It runs under a local patch — `patches/expo-libghostty.patch` — for the two
+things the published library does not offer and the app cannot do from outside
+it: hiding the Accessory Bar, which covered the Dock (see ADR 0003), and
+telling UIKit the view has a document behind its caret, without which a held
+delete key removes exactly one character. Each hunk says why in place.
 _Avoid_: Terminal, emulator, view
 
 **Accessory Bar**:
