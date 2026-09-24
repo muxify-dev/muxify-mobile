@@ -61,5 +61,15 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+/**
+ * Colours handed to the Surface. Kept apart from `Colors` because these are
+ * terminal cell colours consumed by ghostty, not app chrome.
+ */
+export const SurfacePalette = {
+  background: '#11131a',
+  foreground: '#e6e6e6',
+  cursor: '#5aa9ff',
+  dim: '#5a6072',
+} as const;

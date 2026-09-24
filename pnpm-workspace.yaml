@@ -1,1 +1,7 @@
 nodeLinker: hoisted
+
+# expo-libghostty fetches a ~127MB prebuilt GhosttyKit.xcframework in a
+# postinstall script. pnpm blocks dependency build scripts by default, and
+# without this the iOS build fails on a missing framework.
+allowBuilds:
+  expo-libghostty: true

@@ -1,0 +1,25 @@
+context platform=ios kind=simulator
+
+# Surface smoke test (ticket 03).
+#
+# Proves the app launches, navigates to the Terminal Screen, and that the
+# Surface lays out and reports a cell grid — `surface-grid` only renders once
+# `onResize` has fired, so its presence is the signal that the native terminal
+# view came up.
+#
+# What this CANNOT assert: the Surface's contents. ghostty renders cells with
+# Metal, so the terminal text is absent from the accessibility tree (the view
+# exposes a bare TextView rect with no text). Verifying what is actually drawn
+# needs screenshot comparison, not selectors.
+#
+# Run with:  agent-device test ./e2e/surface-smoke.ad
+
+open "dev.muxify.app" --relaunch
+wait "text" "No Hosts yet" 10000
+
+press "label=\"Open Surface smoke test\""
+wait "text" "Terminal" 8000
+
+is "visible" "id=\"surface-grid\""
+
+close

@@ -12,8 +12,8 @@ easy, then make the easy change.
 
 **Status:** ready-for-agent
 
-- [ ] The tab bar and its second route are removed; navigation is a single stack
-- [ ] Starter demo components not used by the design are deleted
-- [ ] Theme constants and colour-scheme hooks are retained and still applied
-- [ ] The app builds and launches to one screen with no dead imports
-- [ ] A typecheck passes with no errors
+- [x] The tab bar and its second route are removed; navigation is a single stack
+- [x] Starter demo components not used by the design are deleted
+- [x] Theme constants and colour-scheme hooks are retained and still applied
+- [x] The app builds and launches to one screen with no dead imports
+- [x] A typecheck passes with no errors

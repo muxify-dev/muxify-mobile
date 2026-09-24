@@ -13,8 +13,8 @@ pattern is correct and the pnpm-specific variant is not needed.
 
 **Status:** ready-for-agent
 
-- [ ] `jest-expo` and its companions are installed at versions matched to the SDK
-- [ ] A test script runs the suite from the command line
-- [ ] Jest types are registered so test files typecheck
-- [ ] A trivial placeholder test passes, proving the harness works end to end
-- [ ] Dependency versions are pinned exactly and the lockfile is committed
+- [x] `jest-expo` and its companions are installed at versions matched to the SDK
+- [x] A test script runs the suite from the command line
+- [x] Jest types are registered so test files typecheck
+- [x] A trivial placeholder test passes, proving the harness works end to end
+- [x] Dependency versions are pinned exactly and the lockfile is committed

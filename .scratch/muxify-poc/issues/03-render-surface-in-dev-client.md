@@ -16,9 +16,9 @@ development client.
 
 **Status:** ready-for-agent
 
-- [ ] The terminal library is installed at an exact pinned published version
-- [ ] The workspace permits that package's build script so its framework is fetched
-- [ ] A prebuild succeeds and a custom development client builds and installs
-- [ ] A Surface renders on screen and displays canned bytes written to it
-- [ ] Text, colour and cursor positioning all render correctly
-- [ ] Verified on both the simulator and a physical device
+- [x] The terminal library is installed at an exact pinned published version
+- [x] The workspace permits that package's build script so its framework is fetched
+- [x] A prebuild succeeds and a custom development client builds and installs
+- [x] A Surface renders on screen and displays canned bytes written to it
+- [x] Text, colour and cursor positioning all render correctly
+- [ ] Verified on both the simulator and a physical device (simulator done on iOS 26.5; device pending)

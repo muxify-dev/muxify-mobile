@@ -21,6 +21,9 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
+# agent-device run artifacts (e2e scripts live in e2e/)
+.agent-device/
+
 # debug
 npm-debug.*
 pnpm-debug.*
