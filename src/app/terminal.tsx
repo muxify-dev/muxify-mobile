@@ -1,8 +1,10 @@
 import { connect, type SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Keyboard, StyleSheet, View } from 'react-native';
 
+import { Dock, type DockAction } from '@/components/dock';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 import { readDevHost } from '@/dev/dev-host';
@@ -22,6 +24,7 @@ type Status =
   | { phase: 'failed'; message: string };
 
 export default function TerminalScreen() {
+  const router = useRouter();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
@@ -126,6 +129,29 @@ export default function TerminalScreen() {
     shell.current?.write(base64ToBytes(nativeEvent.data));
   }, []);
 
+  const dockGroups: DockAction[][] = useMemo(
+    () => [
+      [
+        {
+          id: 'home',
+          label: 'Home',
+          systemImage: 'house',
+          onPress: () => router.back(),
+        },
+        {
+          id: 'keyboard',
+          label: 'Keyboard',
+          // Dismiss only. `expo-libghostty` exposes no focus API, so the
+          // keyboard cannot be raised programmatically — tapping the Surface is
+          // the only way back. See findings.md.
+          systemImage: 'keyboard.chevron.compact.down',
+          onPress: () => Keyboard.dismiss(),
+        },
+      ],
+    ],
+    [router],
+  );
+
   useEffect(() => {
     disposed.current = false;
     return () => {
@@ -148,18 +174,22 @@ export default function TerminalScreen() {
 
   return (
     <View style={styles.container}>
-      <TerminalView
-        ref={surface}
-        style={styles.surface}
-        fontSize={13}
-        theme={{
-          background: SurfacePalette.background,
-          foreground: SurfacePalette.foreground,
-          cursorColor: SurfacePalette.cursor,
-        }}
-        onResize={handleResize}
-        onInput={handleInput}
-      />
+      <View style={styles.surfaceArea}>
+        <TerminalView
+          ref={surface}
+          style={styles.surface}
+          fontSize={13}
+          theme={{
+            background: SurfacePalette.background,
+            foreground: SurfacePalette.foreground,
+            cursorColor: SurfacePalette.cursor,
+          }}
+          onResize={handleResize}
+          onInput={handleInput}
+        />
+      </View>
+
+      <Dock groups={dockGroups} />
 
       <View style={styles.overlay} pointerEvents="none">
         {/* Always rendered, so its value can be asserted rather than its
@@ -232,6 +262,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: SurfacePalette.background,
+  },
+  surfaceArea: {
+    flex: 1,
   },
   surface: {
     flex: 1,

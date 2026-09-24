@@ -134,3 +134,56 @@ The VM's own address (`172.30.31.83:22`) is **not** reachable and is a dead end.
   Typing via `type` works; individual special keys do not. This matters for
   ticket 07, whose Dock keyboard toggle will need a different verification
   route than pressing keyboard keys.
+
+---
+
+## The Accessory Bar covers the Dock, not just duplicates it (ticket 07)
+
+ADR 0003 predicted the library's Accessory Bar would make a custom modifier-key
+group redundant. The reality is sharper: the Accessory Bar is an **input
+accessory view**, so whenever the Surface is focused it sits at the bottom of
+the screen above everything else — **directly on top of the Dock**.
+
+Found the hard way. Pressing the Dock's Home button landed on the Accessory
+Bar's alt key and armed a modifier instead of navigating; the next press hit
+cmd. The Dock was unusable exactly when the terminal was in use.
+
+**Fix:** lift the Dock by the keyboard frame height. iOS reports the accessory
+bar as part of that frame, so one `keyboardWillChangeFrame` listener covers
+both. The Dock now renders above the Accessory Bar and both are usable.
+
+**Consequence for tickets 08 and 09:** the Session, Window and Pane pickers live
+in this same Dock, so they inherit the lift. Anyone adding a floating control to
+the Terminal Screen has to account for the Accessory Bar, and cannot simply pin
+to the bottom safe area.
+
+## Liquid Glass works, and the merge behaviour is real (ticket 07)
+
+`Host` + `Namespace` + `GlassEffectContainer` + `glassEffect()` +
+`glassEffectId()` renders as documented on iOS 26.5, and adjacent buttons
+visibly blend into a single merged capsule as the container spacing brings them
+together. `buttonStyle('glass')` and a `frame` modifier were both needed: without
+an explicit frame the buttons collapse to near-invisible dots.
+
+`isGlassEffectAPIAvailable()` returned true and no fallback was exercised, so
+the non-glass path remains unverified code.
+
+## Resize forwarding is proven after all (ticket 05)
+
+Earlier this could not be demonstrated — the app is orientation-locked and the
+keyboard overlays rather than resizes. Putting the Dock into layout flow beneath
+the Surface produced a genuine second grid, and it propagated: the Surface went
+38x32 -> 38x30 and `tmux list-clients` reported `[38x30 xterm-256color]`.
+Focusing the Surface shrank it further to 38x27 and tmux reflowed again.
+
+## The keyboard can be dismissed but not raised (ticket 07)
+
+`expo-libghostty` exposes no focus API — only `write`, `writeText` and `finish`.
+So the Dock's keyboard button can call `Keyboard.dismiss()` but cannot bring the
+keyboard back; only tapping the Surface does that. Since the Accessory Bar exists
+only while the Surface is focused, dismissing the keyboard also removes the only
+route to ctrl, esc and tab.
+
+This is the concrete cost of ADR 0003, and it is the strongest argument found so
+far for revisiting that decision: a Dock group that writes bytes straight to the
+Shell Channel would not depend on focus at all.

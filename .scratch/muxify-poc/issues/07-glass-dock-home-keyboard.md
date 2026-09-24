@@ -23,9 +23,9 @@ exposes no way to hide it; see ADR 0003.
 
 **Status:** ready-for-agent
 
-- [ ] The Dock renders in Liquid Glass, pinned to the bottom of the terminal
-- [ ] Adjacent buttons merge and morph via a shared namespace
-- [ ] Keyboard toggles the system keyboard and the terminal reflows around it
-- [ ] Home returns to the previous screen
-- [ ] The runtime glass-availability probe guards rendering so a device without the effect does not crash
-- [ ] The library's Accessory Bar still appears above the keyboard and is not duplicated
+- [x] The Dock renders in Liquid Glass, pinned to the bottom of the terminal
+- [x] Adjacent buttons merge and morph via a shared namespace
+- [ ] Keyboard toggles the system keyboard and the terminal reflows around it (dismiss works and the terminal reflows; raising it is impossible — expo-libghostty exposes no focus API, see findings.md)
+- [x] Home returns to the previous screen
+- [x] The runtime glass-availability probe guards rendering so a device without the effect does not crash (probe in place; the fallback path itself is unexercised, every target device has the API)
+- [x] The library's Accessory Bar still appears above the keyboard and is not duplicated
