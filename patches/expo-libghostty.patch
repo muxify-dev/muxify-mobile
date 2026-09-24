@@ -121,7 +121,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..e67b1cb7d748d9d6a015e5995d4501a9
    }
  }
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..04be52758d13f52a42a3c4f846fd5c92c7c19143 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..35578c43f48bd220826eab8008b5677ccb59cde6 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,51 @@ import GhosttyTerminal
@@ -207,30 +207,35 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..04be52758d13f52a42a3c4f846fd5c92
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -57,7 +121,15 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +120,19 @@ class ExpoLibghosttyView: ExpoView {
+           "text": String(decoding: data, as: UTF8.self),
          ])
        },
-       resize: { [weak self] viewport in
+-      resize: { [weak self] viewport in
 -        self?.onResize(["cols": viewport.columns, "rows": viewport.rows])
-+        // The library's own report, which arrives once per distinct viewport
-+        // and from whichever thread ghostty resized on. It is one of two ways
-+        // a grid reaches `report`; see terminalDidResize for the other.
-+        self?.reportOnMain(
-+          cols: Int(viewport.columns),
-+          rows: Int(viewport.rows),
-+          cellWidthPixels: viewport.cellWidthPixels,
-+          cellHeightPixels: viewport.cellHeightPixels
-+        )
++      resize: { _ in
++        // Deliberately nothing. This is ghostty's own announcement, made from
++        // whichever thread it resized on, and it is the path the placeholder
++        // grid travels: ghostty announces 32 by 11 from inside surface
++        // creation with no cell size, the session fills the cell in from the
++        // last real report, and by the time it lands on the main queue the
++        // surface has been attached — so neither an attach check nor a cell
++        // check can tell it from a real grid. Measured through the app's own
++        // Log as 49x40, 32x11, 49x40 within a millisecond, on every new
++        // surface, each one a repaint. terminalDidResize below is computed
++        // from the view's own size after the surface has been given it,
++        // carries the cell, and fires for every surface built and every size
++        // the view takes: it is the one report worth passing on.
        }
      )
      self.session = session
-@@ -66,21 +138,165 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +141,168 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 +    // Told when a surface is built and torn down, and its grid every time
-+    // the library synchronises one — which, unlike the session's report
-+    // above, starts afresh for each surface.
++    // the library synchronises one — computed from the view's size, with the
++    // cell, and starting afresh for each surface. The only grid reported.
 +    terminalView.delegate = self
      addSubview(terminalView)
 +    applyScrollOwnership()
@@ -280,12 +285,15 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..04be52758d13f52a42a3c4f846fd5c92
 +  /// Points, not pixels: everything else across this bridge is points, and
 +  /// the scale is this side's business rather than JavaScript's.
 +  private func report(cols: Int, rows: Int, cellWidthPixels: UInt32, cellHeightPixels: UInt32) {
-+    // Not before the surface is attached. ghostty announces its own default
-+    // grid — 32 by 11, with no cell size — from inside surface creation,
-+    // before the session has been handed the surface and before the view's
-+    // size has been given to it. That is not a grid of this view, and passing
-+    // it on was the "pre-layout grid" every caller had to learn to distrust.
-+    guard surfaceAttached, cols > 0, rows > 0 else { return }
++    // Not before the surface is attached, and not without a cell. Both are
++    // true of everything terminalDidResize delivers; they stand so that a
++    // report from anywhere else — ghostty's default 32 by 11, announced from
++    // inside surface creation with no cell — could not be mistaken for a grid
++    // of this view. See the session's resize closure for why that path
++    // reports nothing at all.
++    guard surfaceAttached, cols > 0, rows > 0, cellWidthPixels > 0, cellHeightPixels > 0 else {
++      return
++    }
 +    let scale = terminalView.contentScaleFactor
 +    let divisor = scale > 0 ? Double(scale) : 1
 +    let grid = Report(

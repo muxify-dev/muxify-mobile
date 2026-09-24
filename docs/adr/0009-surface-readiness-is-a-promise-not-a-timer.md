@@ -45,3 +45,20 @@ the library has rebuilt a surface. Tests that used to advance the paint timer
 assert on the two facts alone. The regressions suite opens a second Session over
 the first, the one flow where an Attach is replaced under a Surface that has
 already spoken.
+
+Refusing to report before the surface is attached turned out not to be enough
+to keep the default grid out. The Log (ADR 0010) showed a fresh Surface saying
+49x40, then 32x11, then 49x40 again, all within a millisecond and all after
+attach — so the app repainted every new Pane three times, the placeholder
+reached the sizing module as a Window grid, and a zero cell once reached the
+screen. The placeholder travels ghostty's own resize callback: announced from
+inside surface creation with no cell, given the last real cell by the
+library's session on the way through, and delivered to the main queue after
+the surface has been attached, so no check on the report itself can tell it
+from a real grid. That callback now reports nothing. The coordinator's
+`terminalDidResize` is computed from the view's own size after the surface
+has been given it, carries the cell, and fires for every surface built and
+every size the view takes; it is the one report the Surface passes on. Had the
+placeholder ever arrived last, the settle window would have believed it and
+the Window would have been sized to eleven rows, which is the same failure ADR
+0006 measured on a real device.
