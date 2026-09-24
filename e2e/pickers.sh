@@ -71,12 +71,19 @@ else: print('missing')
 # Each card is a Button carrying its Window name or Pane title.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
-echo "1/4  one Window, one Pane: neither picker has anything to offer"
+echo "1/4  one Window, one Pane: both pickers still open, to make more"
+# Deliberately not disabled. The sheet is the only way to add a Window or a
+# split, and one of something is exactly when that is wanted — an earlier
+# version disabled the buttons here and locked the user out of the action.
 vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true" || fail "could not reach the VM"
 attach
-expect_enabled Windows no
-expect_enabled Panes no
+expect_enabled Windows yes
+expect_enabled Panes yes
+agent-device press 'label="Windows"' >/dev/null 2>&1
+agent-device wait text "Windows" 8000 >/dev/null 2>&1
+agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
+  || fail "a Session with one Window must still offer New Window"
 
 echo "2/4  three Windows: the Windows picker opens and lists them"
 vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
@@ -97,7 +104,6 @@ echo "3/4  two Panes: the Session arrives zoomed, and the picker lists them"
 vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
     tmux resize-pane -t '$SESSION:0' 2>/dev/null; true"
 attach
-expect_enabled Panes yes
 # A phone is too narrow for side-by-side Panes, so a split Session is zoomed on
 # arrival and the Panes picker is where that is turned off.
 [ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
@@ -116,6 +122,5 @@ vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo
-echo "PASS: a split Session arrives zoomed, Topology reaches both sheets, each"
-echo "      carries its own actions, and a picker with nothing to offer is"
-echo "      disabled."
+echo "PASS: a split Session arrives zoomed, Topology reaches both sheets, and"
+echo "      both stay reachable with one of something so more can be made."

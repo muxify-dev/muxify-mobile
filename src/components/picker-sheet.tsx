@@ -74,6 +74,8 @@ export interface PickerSheetProps {
   loading: boolean;
   error?: string;
   emptyMessage: string;
+  /** What to say when there is one: nothing to pick, but plenty to do. */
+  onlyOneMessage?: string;
   onSelect: (id: string) => void;
   /** The bar along the bottom: New Window, or the two Splits. */
   actions?: SheetAction[];
@@ -119,6 +121,7 @@ export function PickerSheet({
   loading,
   error,
   emptyMessage,
+  onlyOneMessage,
   onSelect,
   actions,
   onAction,
@@ -160,6 +163,12 @@ export function PickerSheet({
             ) : null}
             {!loading && error === undefined && cards.length === 0 ? (
               <Text modifiers={[foregroundColor(SurfacePalette.dim)]}>{emptyMessage}</Text>
+            ) : null}
+
+            {!loading && cards.length === 1 && onlyOneMessage ? (
+              <Text modifiers={[font({ size: 13 }), foregroundColor(SurfacePalette.dim)]}>
+                {onlyOneMessage}
+              </Text>
             ) : null}
 
             {cards.length > 0 && layout === 'panes' ? (

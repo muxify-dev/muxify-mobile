@@ -542,17 +542,18 @@ export default function TerminalScreen() {
           label: 'Windows',
           systemImage: 'macwindow',
           onPress: () => openPicker('windows'),
-          // Nothing to pick from one Window, and an empty sheet is worse than
-          // a button that plainly cannot be used. Unknown counts as something
-          // to pick: the sheet re-reads on open and can say otherwise.
-          disabled: !connected || (topology !== null && topology.windows.length < 2),
+          // Never disabled while connected: the sheet is not only a picker,
+          // it is the only way to make a Window, and a Session with one Window
+          // is exactly when that is wanted.
+          disabled: !connected,
         },
         {
           id: 'panes',
           label: 'Panes',
           systemImage: 'rectangle.split.2x1',
           onPress: () => openPicker('panes'),
-          disabled: !connected || (topology !== null && topology.panes.length < 2),
+          // Same: one Pane is when you reach for Split.
+          disabled: !connected,
         },
         {
           id: 'home',
@@ -663,6 +664,7 @@ export default function TerminalScreen() {
         loading={picker.open && picker.loading}
         error={picker.open ? picker.error : undefined}
         emptyMessage={picker.open ? PICKER_EMPTY[picker.kind] : ''}
+        onlyOneMessage={picker.open ? PICKER_ONLY_ONE[picker.kind] : ''}
         cards={picker.open ? picker.cards : []}
         layout={picker.open ? PICKER_LAYOUTS[picker.kind] : 'list'}
         onSelect={(id) => {
@@ -749,6 +751,13 @@ const PICKER_EMPTY: Record<PickerKind, string> = {
   sessions: 'No Sessions on this Host',
   windows: 'No Windows in this Session',
   panes: 'No Panes in this Window',
+};
+
+/** Shown when there is one of something: nothing to pick, but plenty to do. */
+const PICKER_ONLY_ONE: Record<PickerKind, string> = {
+  sessions: '',
+  windows: 'The only Window. New Window adds another.',
+  panes: 'The only Pane. Split divides it.',
 };
 
 const PICKER_LAYOUTS: Record<PickerKind, 'grid' | 'panes' | 'list'> = {

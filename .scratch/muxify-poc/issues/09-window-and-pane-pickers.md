@@ -20,7 +20,7 @@ of it.
 - [x] Each opens a glass sheet listing the current Topology, read on open
 - [x] The active Window and the active Pane are indicated
 - [x] Selecting a Window or Pane moves the attached client to it
-- [x] Each button is disabled when there is nothing to pick
+- [~] Each button is disabled when there is nothing to pick — **superseded**, see below
 - [x] The terminal redraws after a selection
 
 **Notes:** Selecting a row cannot be driven by agent-device (see ticket 08), so
@@ -28,3 +28,10 @@ of it.
 reaching both sheets, the current Window and Pane being marked, and a button
 with nothing to offer being genuinely disabled. It drives the Host's Topology
 itself and puts it back, so it does not depend on how the VM was left.
+
+**Correction:** the disabled-when-nothing-to-pick criterion was wrong, and was
+built before being questioned. The sheets are not only pickers: New Window and
+Split live in them, and a Session with one Window or one Pane is exactly when
+those are wanted. Disabling the button locked the user out of the only way to
+make a second one. Both buttons now open whenever connected, and a one-item
+sheet says what the action below it will do.

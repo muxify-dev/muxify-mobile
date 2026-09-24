@@ -755,3 +755,23 @@ the device: Xcode began demanding a license agreement partway through the
 session (`sudo xcodebuild -license`, which needs a human), and the simulator
 cannot start until that is accepted. The device suites should be re-run before
 this is trusted.
+
+## A picker that is also a workshop must not disable itself
+
+Ticket 09 asked for the Windows and Panes buttons to be disabled when there is
+nothing to pick, and that is what was built — a Session with one Window had a
+dead Windows button.
+
+It is the wrong rule, and the reason is a design change that happened after the
+ticket was written: the sheets gained New Window and Split. A Session with one
+Window is not a case with nothing to offer, it is precisely the case where you
+want to make a second one, and the disabled button locked the user out of the
+only route to it.
+
+Both buttons now open whenever there is a Connection. A sheet holding one item
+says what the action below it does — "The only Window. New Window adds another."
+— which is more use than a button that cannot be pressed and does not say why.
+
+Worth keeping in mind: an acceptance criterion written before a feature exists
+can be made obsolete by that feature, and ticking it is not the same as
+checking it still makes sense.
