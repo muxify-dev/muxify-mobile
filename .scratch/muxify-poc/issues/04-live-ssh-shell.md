@@ -14,7 +14,7 @@ that split across network chunk boundaries and must not be used.
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] The SSH library is installed at an exact pinned version
 - [x] A Connection authenticates to a hardcoded Host and opens a Shell Channel

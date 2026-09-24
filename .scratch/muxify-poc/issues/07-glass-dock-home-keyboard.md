@@ -21,7 +21,7 @@ exposes no way to hide it; see ADR 0003.
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] The Dock renders in Liquid Glass, pinned to the bottom of the terminal
 - [x] Adjacent buttons merge and morph via a shared namespace

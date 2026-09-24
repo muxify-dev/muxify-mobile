@@ -10,7 +10,7 @@ easy, then make the easy change.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] The tab bar and its second route are removed; navigation is a single stack
 - [x] Starter demo components not used by the design are deleted

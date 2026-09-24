@@ -21,6 +21,9 @@ Not by inspection. Each of these was verified on a device against a real Host:
   each read live off the Host.
 - Hosts persist with credentials in the keychain, and host keys are checked on
   every Connection.
+- A full-screen program (`top`) draws correctly at the Surface's grid, which is
+  the real test of the resize path: headers, inverse video and column
+  alignment all land where they should.
 - 219 unit tests, three `.ad` suites and four shell suites, including one that
   proves its own instrument before asserting with it.
 

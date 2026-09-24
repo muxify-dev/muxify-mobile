@@ -14,7 +14,7 @@ development client.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done, bar one criterion
 
 - [x] The terminal library is installed at an exact pinned published version
 - [x] The workspace permits that package's build script so its framework is fetched
@@ -22,3 +22,7 @@ development client.
 - [x] A Surface renders on screen and displays canned bytes written to it
 - [x] Text, colour and cursor positioning all render correctly
 - [ ] Verified on both the simulator and a physical device (simulator done on iOS 26.5; device pending)
+
+**Notes:** Everything here is verified on the simulator. The physical-device
+criterion is left unticked rather than quietly dropped: no device was available
+to this build, and ticking it would be a claim nobody made.

@@ -11,7 +11,7 @@ pattern is correct and the pnpm-specific variant is not needed.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] `jest-expo` and its companions are installed at versions matched to the SDK
 - [x] A test script runs the suite from the command line

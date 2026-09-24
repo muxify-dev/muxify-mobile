@@ -19,7 +19,7 @@ mode is deliberately not used; see ADR 0001.
 
 **Blocked by:** 02, 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A transport interface exists with execute and open-shell operations
 - [x] TmuxClient exposes the domain operations and depends only on that interface
