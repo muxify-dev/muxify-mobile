@@ -118,7 +118,8 @@ runtime-state types on 16 September 2026.
 This is the real cost, and it is paid by the user rather than by the code. It
 is mitigated rather than removed: the Hosts list marks the Host that has the
 attached Session and says which one, the Host Screen's row for it shows its
-phase and carries Disconnect, and opening any other Session closes it. It is
+phase and carries Disconnect a swipe away, and opening any other Session
+closes it. It is
 still true that walking away from the app leaves an SSH connection up until iOS
 kills the process.
 

@@ -283,32 +283,52 @@ export default function HostScreen() {
                   : 'Nothing opened on this Host yet. Pick one below to start.'}
               </Text>
             ) : (
-              collapse(rows, showEveryRecent).map((row) => (
-                <SwipeActions key={row.name}>
-                  <LogMenu onCopyLog={copyLog}>
-                    <RecentSessionRow
-                      row={row}
-                      palette={palette}
-                      openedAt={openedAt}
-                      attached={
-                        attachedHere?.sessionName === row.name ? attachedHere.phase : undefined
-                      }
-                      onPress={() => open(row.name)}
-                      onDisconnect={disconnect}
-                    />
-                  </LogMenu>
-                  <SwipeActions.Actions>
-                    {/* Not destructive, and deliberately not red: this drops
-                        Muxify's memory of the Session and leaves it running. */}
-                    <Button
-                      label="Forget"
-                      systemImage="minus.circle"
-                      onPress={() => forget(row.name)}
-                      modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
-                    />
-                  </SwipeActions.Actions>
-                </SwipeActions>
-              ))
+              collapse(rows, showEveryRecent).map((row) => {
+                const attached = attachedHere?.sessionName === row.name;
+                return (
+                  <SwipeActions key={row.name}>
+                    <LogMenu onCopyLog={copyLog}>
+                      <RecentSessionRow
+                        row={row}
+                        palette={palette}
+                        openedAt={openedAt}
+                        attached={attached ? attachedHere.phase : undefined}
+                        onPress={() => open(row.name)}
+                      />
+                    </LogMenu>
+                    <SwipeActions.Actions>
+                      {/* First, so a full swipe on the attached row ends the
+                          Connection: on that row it is the verb being reached
+                          for, and Forget is the odd one. Red because it is —
+                          it ends something, unlike Forget beside it. Here
+                          rather than in the row, where a red word sat beside
+                          the phase and read as part of the status. */}
+                      {attached ? (
+                        <Button
+                          label="Disconnect"
+                          systemImage="bolt.slash"
+                          role="destructive"
+                          onPress={disconnect}
+                          // Said outright, because the Form's own tint reaches
+                          // in here and paints the role's red over in accent.
+                          modifiers={[
+                            tint(palette.destructive),
+                            accessibilityLabel(`Disconnect ${row.name}`),
+                          ]}
+                        />
+                      ) : null}
+                      {/* Not destructive, and deliberately not red: this drops
+                          Muxify's memory of the Session and leaves it running. */}
+                      <Button
+                        label="Forget"
+                        systemImage="minus.circle"
+                        onPress={() => forget(row.name)}
+                        modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
+                      />
+                    </SwipeActions.Actions>
+                  </SwipeActions>
+                );
+              })
             )}
 
             {rows.length > COLLAPSED ? (
@@ -401,9 +421,9 @@ export default function HostScreen() {
 /**
  * A remembered Session: what it is called, when you last opened it, who is on it.
  *
- * The one that is attached says so where the "Opened 2 hr ago" line would be,
- * and carries the way to end it. Nothing here starts or stops a Connection:
- * Disconnect asks the root, and the row itself is navigation.
+ * The one that is attached says so where the "Opened 2 hr ago" line would be.
+ * The way to end it is a swipe away, with Forget, rather than in the row:
+ * nothing here starts or stops a Connection, and the row itself is navigation.
  */
 function RecentSessionRow({
   row,
@@ -411,7 +431,6 @@ function RecentSessionRow({
   openedAt,
   attached,
   onPress,
-  onDisconnect,
 }: {
   row: RecentRow;
   palette: Appearance;
@@ -419,52 +438,34 @@ function RecentSessionRow({
   /** The phase of the Attach on this Session, or undefined when it is not. */
   attached?: AttachPhase;
   onPress: () => void;
-  onDisconnect: () => void;
 }) {
   const opened = timeAgoFrom(row.lastOpenedAt, openedAt);
   return (
-    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
-      <Button
-        onPress={onPress}
-        modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
-        <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-          <Image
-            systemName="terminal"
-            size={20}
-            color={attached ? palette.controlAccent : palette.rowIcon}
-          />
-          <VStack spacing={2} alignment="leading">
-            <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
-            {attached ? (
-              <Text
-                modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>
-                {phaseLabel(attached)}
-              </Text>
-            ) : opened === undefined ? null : (
-              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
-                {`Opened ${opened}`}
-              </Text>
-            )}
-          </VStack>
-          <Spacer />
-          {attached ? null : (
-            <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
-          )}
-        </HStack>
-      </Button>
-      {attached ? (
-        <Button
-          label="Disconnect"
-          onPress={onDisconnect}
-          modifiers={[
-            buttonStyle('plain'),
-            font({ size: 15 }),
-            foregroundColor(palette.destructive),
-            accessibilityLabel(`Disconnect ${row.name}`),
-          ]}
+    <Button
+      onPress={onPress}
+      modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+        <Image
+          systemName="terminal"
+          size={20}
+          color={attached ? palette.controlAccent : palette.rowIcon}
         />
-      ) : null}
-    </HStack>
+        <VStack spacing={2} alignment="leading">
+          <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
+          {attached ? (
+            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>
+              {phaseLabel(attached)}
+            </Text>
+          ) : opened === undefined ? null : (
+            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+              {`Opened ${opened}`}
+            </Text>
+          )}
+        </VStack>
+        <Spacer />
+        <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+      </HStack>
+    </Button>
   );
 }
 
