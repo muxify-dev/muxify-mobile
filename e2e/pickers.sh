@@ -93,10 +93,16 @@ agent-device wait text "Windows" 8000 >/dev/null 2>&1
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "the Windows sheet has no New Window action"
 
-echo "3/4  two Panes: the Panes picker opens and lists them"
-vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'"
+echo "3/4  two Panes: the Session arrives zoomed, and the picker lists them"
+vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
+    tmux resize-pane -t '$SESSION:0' 2>/dev/null; true"
 attach
 expect_enabled Panes yes
+# A phone is too narrow for side-by-side Panes, so a split Session is zoomed on
+# arrival and the Panes picker is where that is turned off.
+[ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
+  || fail "a split Session should arrive with its active Pane zoomed"
+echo "     arrived zoomed"
 agent-device press 'label="Panes"' >/dev/null 2>&1
 agent-device wait text "Panes" 8000 >/dev/null 2>&1
 [ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"
@@ -110,5 +116,6 @@ vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo
-echo "PASS: Topology reaches both sheets, each carries its own actions, and a"
-echo "      picker with nothing to offer is disabled."
+echo "PASS: a split Session arrives zoomed, Topology reaches both sheets, each"
+echo "      carries its own actions, and a picker with nothing to offer is"
+echo "      disabled."
