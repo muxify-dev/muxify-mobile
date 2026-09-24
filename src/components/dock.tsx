@@ -1,14 +1,15 @@
 import { isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { Button, GlassEffectContainer, HStack, Host, Namespace } from '@expo/ui/swift-ui';
+import { Button, HStack, Host } from '@expo/ui/swift-ui';
 import {
   buttonStyle,
   disabled,
   frame,
   glassEffect,
-  glassEffectId,
+  labelStyle,
+  padding,
 } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -31,10 +32,9 @@ export interface DockProps {
 /**
  * The Liquid Glass bar pinned to the bottom of the Terminal Screen.
  *
- * Built from SwiftUI glass primitives rather than RN views so adjacent buttons
- * actually merge and morph: a `Namespace` plus a `GlassEffectContainer` is the
- * sanctioned pattern, with `glassEffectId` giving each button an identity the
- * container can blend between.
+ * Built from SwiftUI glass primitives rather than RN views, with the glass
+ * applied once around the whole row: giving each button its own capsule makes
+ * the Dock read as a chain of separate blobs, and it is one control.
  *
  * Note this bar carries no modifier keys. The terminal library ships its own
  * Accessory Bar with ctrl, esc and tab above the keyboard and exposes no way to
@@ -91,34 +91,37 @@ export function Dock({ groups }: DockProps) {
 }
 
 function GlassGroup({ actions }: { actions: DockAction[] }) {
-  const namespace = useId();
-
   return (
     <Host matchContents style={styles.host}>
-      <Namespace id={namespace}>
-        <GlassEffectContainer spacing={12}>
-          <HStack spacing={4}>
-            {actions.map((action) => (
-              <Button
-                key={action.id}
-                label={action.label}
-                systemImage={action.systemImage}
-                onPress={action.onPress}
-                modifiers={[
-                  // 44pt is the smallest reliably tappable target on iOS.
-                  frame({ width: 52, height: 44 }),
-                  buttonStyle('glass'),
-                  glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
-                  glassEffectId(action.id, namespace),
-                  // Actually disabled, not merely inert: a button that looks
-                  // pressable and does nothing is worse than one that says so.
-                  disabled(action.disabled ?? false),
-                ]}
-              />
-            ))}
-          </HStack>
-        </GlassEffectContainer>
-      </Namespace>
+      <HStack
+        spacing={0}
+        modifiers={[
+          // One piece of glass around the whole row, rather than one per
+          // button. Per-button capsules merge into a chain of blobs; the Dock
+          // is a single control and should read as one.
+          padding({ horizontal: 6, vertical: 4 }),
+          glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
+        ]}>
+        {actions.map((action) => (
+          <Button
+            key={action.id}
+            label={action.label}
+            systemImage={action.systemImage}
+            onPress={action.onPress}
+            modifiers={[
+              // 44pt is the smallest reliably tappable target on iOS.
+              frame({ width: 52, height: 44 }),
+              buttonStyle('plain'),
+              // Icon only, but the label stays: it is what the accessibility
+              // tree exposes, and what every e2e suite presses by.
+              labelStyle('iconOnly'),
+              // Actually disabled, not merely inert: a button that looks
+              // pressable and does nothing is worse than one that says so.
+              disabled(action.disabled ?? false),
+            ]}
+          />
+        ))}
+      </HStack>
     </Host>
   );
 }
