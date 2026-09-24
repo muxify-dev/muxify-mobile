@@ -31,6 +31,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
+import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
@@ -134,7 +135,7 @@ export default function HostsScreen() {
                       router.push({ pathname: '/hosts/[id]', params: { id: host.id } })
                     }
                     modifiers={[buttonStyle('plain'), accessibilityLabel(host.displayName)]}>
-                    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+                    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
                       <Image systemName="server.rack" size={20} color={palette.rowIcon} />
                       <VStack spacing={2} alignment="leading">
                         <Text modifiers={[font({ size: 17 })]}>{host.displayName}</Text>

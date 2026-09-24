@@ -29,6 +29,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { hostSessions, type RecentRow } from '@/domain/host-sessions';
 import { timeAgoFrom } from '@/lib/relative-time';
@@ -290,7 +291,7 @@ export default function HostScreen() {
                 key={session.name}
                 onPress={() => open(session.name)}
                 modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${session.name}`)]}>
-                <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+                <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
                   <Image systemName="terminal" size={20} color={palette.rowIcon} />
                   <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
                   <Spacer />
@@ -331,7 +332,7 @@ function RecentSessionRow({
     <Button
       onPress={onPress}
       modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
-      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
         <Image systemName="terminal" size={20} color={palette.rowIcon} />
         <VStack spacing={2} alignment="leading">
           <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
@@ -380,7 +381,7 @@ function DisclosureRow({
     <Button
       onPress={onPress}
       modifiers={[buttonStyle('plain'), accessibilityLabel(label)]}>
-      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
         <Image
           systemName={expanded ? 'chevron.up' : 'chevron.down'}
           size={15}
