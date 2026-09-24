@@ -8,9 +8,8 @@
 #   2  the library's own Accessory Bar, hidden by a local patch
 #   3  the Session's options, which Muxify used to borrow and now never touches
 #   4  the resize, which has broken four separate ways
-#   5  tmux's padding, which flashed along the bottom edge on every keyboard
-#   6  Enter, which for a long time only made a new line
-#   7  the Session left as it was found, with nothing to put back
+#   5  Enter, which for a long time only made a new line
+#   6  the Session left as it was found, with nothing to put back
 #
 # Checks 3 and 7 changed shape with control mode. They used to assert that the
 # status line was hidden on attach and restored on the way out — the borrowing
@@ -29,14 +28,19 @@
 # agree: the Surface tells tmux its size with `refresh-client -C`, and under
 # tmux's default `window-size latest` the Window follows it.
 #
-# Check 5 is now a much weaker claim than it used to be, and deliberately so.
-# tmux's dot-padding was something tmux drew into an attached client's
-# composited screen. A control client is sent `%output` per Pane and composites
-# nothing, so there is nowhere for padding to come from. Measured: with the
-# Window forced to 38x8 under a 27x13 Surface — the state that used to produce
-# a band of dots — the screen had zero padding pixels. So the old known-bad
-# self-test cannot be satisfied any more, and the detector is instead checked
-# against a region that certainly does have content.
+# The padding check is gone, and that is a deletion worth explaining. tmux's
+# dot-padding was something tmux drew into an *attached client's* composited
+# screen. A control client is sent `%output` per Pane and composites nothing,
+# so there is nowhere for padding to come from — measured by forcing the state
+# that used to produce it, a Window of 38x8 under a 27x13 Surface, and finding
+# zero padding pixels on screen.
+#
+# What was left was a detector that counted bright pixels in a band, which
+# cannot tell a row of dots from a light terminal: under the Latte Theme the
+# background itself is bright and the check reported padding everywhere. A
+# check that fails on one Theme and passes on another is measuring the Theme.
+# Check 4 carries what it was really protecting — the Surface and the Window
+# agreeing — and reads both rather than looking at pixels.
 #
 # Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/regressions.sh
@@ -46,7 +50,6 @@ set -uo pipefail
 APP=dev.muxify.app
 SESSION=0
 MARKER=MUXIFY_ENTER_RUNS
-SHOT=$(mktemp -t muxify-regression).png
 
 vm() {
   ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -110,7 +113,7 @@ attach() {
   sleep 3
 }
 
-echo "0/7  putting the Session somewhere known"
+echo "0/6  putting the Session somewhere known"
 vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
@@ -120,19 +123,19 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/7  the Terminal Screen has no navigation header"
+echo "1/6  the Terminal Screen has no navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
 snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
   && fail "a back button is back; Home in the Dock is what leaves this screen"
 echo "     no header, no back button"
 
-echo "2/7  the library's Accessory Bar stays hidden"
+echo "2/6  the library's Accessory Bar stays hidden"
 snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/7  attaching changes no option, on the Session or its Window"
+echo "3/6  attaching changes no option, on the Session or its Window"
 # The whole of ADR 0006. A control client renders nothing, so `status` is not
 # its business; it is sized with `refresh-client -C`, so `window-size` is not
 # either; and scrolling is a capture, so neither is `mouse`.
@@ -143,37 +146,12 @@ echo "3/7  attaching changes no option, on the Session or its Window"
 [ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
 echo "     session and window options byte-identical while attached"
 
-echo "4/7  sizes agree with the keyboard down, and again with it up"
+echo "4/6  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
 toggle_keyboard
 agree "keyboard up"
 
-echo "5/7  no tmux padding on screen, in either keyboard state"
-# tmux padded the gap whenever an attached client was bigger than the Window,
-# and those rows landed past the end of the Surface's grid. That cannot happen
-# to a control client, which composites nothing — so this is now a check that
-# the property still holds rather than one that catches a live hazard.
-#
-# `band` is where padding used to appear; `body` is the terminal itself, which
-# always has something in it. Self-testing on `body` is what stops a detector
-# that reports zero for everything from passing this for the wrong reason.
-pixels() {
-  agent-device screenshot "$SHOT" >/dev/null 2>&1
-  magick "$SHOT" -crop "$1" -threshold 45% -format '%[fx:int(mean*w*h)]' info:
-}
-band() { pixels 1206x600+0+900; }
-body() { pixels 1206x600+0+200; }
-
-[ "$(body)" -gt 0 ] || fail "the detector sees nothing at all; the check below would pass for the wrong reason"
-echo "     detector confirmed against the terminal's own pixels"
-
-toggle_keyboard
-[ "$(band)" -eq 0 ] || fail "padding on screen after the keyboard closed"
-toggle_keyboard
-[ "$(band)" -eq 0 ] || fail "padding on screen after the keyboard opened"
-echo "     none, opening or closing"
-
-echo "6/7  Enter on the device runs the command"
+echo "5/6  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
 #
@@ -190,7 +168,7 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "7/7  leaving finds the Session exactly as it was, bar the zoom"
+echo "6/6  leaving finds the Session exactly as it was, bar the zoom"
 toggle_keyboard
 sleep 1
 agent-device press 'label="Home"' >/dev/null 2>&1
@@ -213,7 +191,6 @@ echo "     zoom is left as Muxify set it: $(vm "tmux display-message -p -t '$SES
 
 agent-device close >/dev/null 2>&1
 echo
-rm -f "$SHOT"
 echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
-echo "      untouched throughout, sizes agree in both keyboard states, no"
-echo "      padding on screen, and Enter runs commands."
+echo "      untouched throughout, sizes agree in both keyboard states, and"
+echo "      Enter runs commands."

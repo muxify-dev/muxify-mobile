@@ -46,6 +46,10 @@ function AppStack() {
           headerTintColor: palette.toolbarTint,
           headerTitleStyle: { color: palette.toolbarTint },
           headerTitleAlign: 'center',
+          // No hairline under the title. The screens below are grouped lists
+          // on their own background, so the rule separates the bar from
+          // nothing — it only ever drew a line across the top of the app.
+          headerShadowVisible: false,
           // A chevron on its own, as remux has it: the title of the screen you
           // came from is a word the user already read.
           headerBackButtonDisplayMode: 'minimal',

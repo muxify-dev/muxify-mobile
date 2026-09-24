@@ -1,4 +1,4 @@
-import { cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
+import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
 
 import { asciiBytes, clampBack, paintScreen, scrollbackRange } from './pane-screen';
 import type { Grid, PaneState } from './tmux-client';
@@ -29,6 +29,16 @@ export interface PaneViewEvents {
   write: (bytes: Uint8Array) => void;
   /** Where the Pane is in its Scrollback, or null at the live bottom. */
   onScroll: (position: ScrollPosition | null) => void;
+  /**
+   * Whether the application in the Pane is asking for mouse events.
+   *
+   * The Terminal Screen needs this to decide what a tap means: a click to send
+   * on, or the keyboard to raise. Nothing in the control protocol announces it
+   * — an application turns mouse tracking on by writing an escape sequence to
+   * its own screen — so it is read with the rest of the Pane's state and
+   * reported when it changes.
+   */
+  onMouseTracking?: (wanted: boolean) => void;
   /** Something went wrong. Best effort; never fatal to the view. */
   onError?: (error: unknown) => void;
 }
@@ -47,6 +57,14 @@ export interface PaneView {
    * grid is only for the coordinates a wheel event has to carry.
    */
   scroll(notches: number, grid: Grid): void;
+  /**
+   * A tap at one cell, 1-based as SGR counts them.
+   *
+   * Answers whether it was sent as a click. `false` means the application is
+   * not listening for the mouse and the tap belongs to whoever asked — on a
+   * phone, to the keyboard.
+   */
+  click(column: number, row: number): boolean;
   /** Back to the live bottom, and a repaint to prove it. */
   jumpToLatest(): void;
   /**
@@ -100,6 +118,12 @@ export function createPaneView(
   /** What the Pane was last seen doing, and when that was read. */
   let state: PaneState | undefined;
   let stateReadAt = 0;
+  /**
+   * The last value reported, so the Screen hears only about changes — and
+   * false to begin with, because "no mouse tracking" is the state every Pane
+   * starts in and is not news.
+   */
+  let reportedMouse = false;
 
   /** How far above the live bottom the Surface is showing. */
   let back = 0;
@@ -126,6 +150,13 @@ export function createPaneView(
     );
   }
 
+  function announceMouse(): void {
+    const wanted = state?.wantsMouse ?? false;
+    if (disposed || wanted === reportedMouse) return;
+    reportedMouse = wanted;
+    events.onMouseTracking?.(wanted);
+  }
+
   /**
    * Reads what the Pane is doing, but no more often than it can change in a
    * way that matters. A Control Command per frame of a drag is what made
@@ -141,6 +172,7 @@ export function createPaneView(
         if (disposed || asked !== pane || !next) return;
         state = next;
         announce();
+        announceMouse();
       })
       .catch(report);
   }
@@ -177,6 +209,7 @@ export function createPaneView(
       if (next) {
         state = next;
         stateReadAt = now();
+        announceMouse();
       }
       events.write(
         paintScreen({
@@ -276,10 +309,33 @@ export function createPaneView(
         held.push(bytes);
         return;
       }
+      // Output is the only sign that what the Pane is running may have
+      // changed — starting `vim` or Claude Code turns mouse tracking on by
+      // writing to its own screen, and no notification says so. Throttled to
+      // the same staleness as a drag's, so a chatty Pane costs one command a
+      // second and a quiet one costs nothing.
+      refreshState();
+
       // Dropped rather than written while the Pane is scrolled away: the
       // Surface is showing the past, and tmux is holding the present.
       if (back > 0) return;
       events.write(bytes);
+    },
+
+    click(column: number, row: number): boolean {
+      if (disposed || pane === '') return false;
+      // Only an application that asked for the mouse can do anything with a
+      // click; sending one to a shell would paste a `[<0;…M` into the prompt.
+      if (!state?.wantsMouse) return false;
+      // A tap while scrolled back means the screen under the finger is not the
+      // screen the application has, so the click would land somewhere else
+      // entirely. Going back to the bottom is what the tap gets to mean.
+      if (back > 0) {
+        jumpToLatest();
+        return true;
+      }
+      type(asciiBytes(clickSequence(column, row)));
+      return true;
     },
 
     type,

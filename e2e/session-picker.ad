@@ -39,8 +39,14 @@ wait "text" "Sessions" 8000
 # The sheet is up with its own chrome. The Sessions themselves are asserted in
 # e2e/pickers.sh, which can set up the Host's Topology first — this Host's
 # Session is named "0", and agent-device will not match a numeric selector.
+#
+# The close button is named for what it closes. It used to answer to a bare
+# "Close" as well, because an xmark image carries that label of its own; the
+# button is now the system's close role, which is one node with one name — the
+# same one e2e/pickers.sh presses.
+#
 # `exists` rather than `visible`: SwiftUI content inside a presented sheet
 # reports itself unhittable to agent-device even where a finger can press it.
-is "exists" "label=\"Close\""
+is "exists" "label=\"Close Sessions\""
 
 close

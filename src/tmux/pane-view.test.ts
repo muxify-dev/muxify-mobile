@@ -77,6 +77,7 @@ function viewOn(host: ReturnType<typeof fakePane>) {
   const written: Uint8Array[] = [];
   const positions: (ScrollPosition | null)[] = [];
   const errors: unknown[] = [];
+  const mouse: boolean[] = [];
   let clock = 0;
 
   const view = createPaneView(
@@ -85,6 +86,7 @@ function viewOn(host: ReturnType<typeof fakePane>) {
       write: (data) => written.push(data),
       onScroll: (position) => positions.push(position),
       onError: (error) => errors.push(error),
+      onMouseTracking: (wanted) => mouse.push(wanted),
     },
     { now: () => clock },
   );
@@ -94,6 +96,7 @@ function viewOn(host: ReturnType<typeof fakePane>) {
     written,
     positions,
     errors,
+    mouse,
     tick: (ms: number) => {
       clock += ms;
     },
@@ -447,3 +450,104 @@ describe('a view that has been let go', () => {
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
 }
+
+describe('tapping a Pane', () => {
+  it('sends a click to an application that asked for the mouse', async () => {
+    const host = fakePane(paneState({ wantsMouse: true }));
+    const { view } = viewOn(host);
+    await view.show('%0', 24);
+
+    expect(view.click(12, 5)).toBe(true);
+    await settle();
+
+    // Press and release together, so nothing is left held down.
+    expect(shown(host.sent)).toBe('<ESC>[<0;12;5M<ESC>[<0;12;5m');
+  });
+
+  it('sends nothing to a shell, which would only see the escape as text', async () => {
+    const host = fakePane(paneState({ wantsMouse: false }));
+    const { view } = viewOn(host);
+    await view.show('%0', 24);
+
+    expect(view.click(12, 5)).toBe(false);
+    await settle();
+    expect(host.sent).toHaveLength(0);
+  });
+
+  it('spends a tap getting back to the bottom rather than clicking the past', async () => {
+    const host = fakePane(paneState({ wantsMouse: true }));
+    const { view, positions } = viewOn(host);
+    await view.show('%0', 24);
+    view.scroll(2, { cols: 80, rows: 24 });
+    await settle();
+    host.sent.length = 0;
+
+    expect(view.click(12, 5)).toBe(true);
+    await settle();
+
+    expect(host.sent).toHaveLength(0);
+    expect(positions[positions.length - 1]).toBeNull();
+  });
+
+  it('says nothing about a Pane it is not showing', () => {
+    const host = fakePane(paneState({ wantsMouse: true }));
+    const { view } = viewOn(host);
+    expect(view.click(1, 1)).toBe(false);
+  });
+});
+
+describe('telling the Screen what a tap should mean', () => {
+  it('reports mouse tracking when the Pane is first shown', async () => {
+    const host = fakePane(paneState({ wantsMouse: true }));
+    const { view, mouse } = viewOn(host);
+    await view.show('%0', 24);
+    expect(mouse).toEqual([true]);
+  });
+
+  it('says nothing for a Pane that never wanted it', async () => {
+    const host = fakePane(paneState({ wantsMouse: false }));
+    const { view, mouse } = viewOn(host);
+    await view.show('%0', 24);
+    expect(mouse).toEqual([]);
+  });
+
+  it('notices an application turning it on, from output alone', async () => {
+    // Nothing in the control protocol announces mouse tracking: an application
+    // turns it on by writing to its own screen. Output is the only sign.
+    const host = fakePane(paneState({ wantsMouse: false }));
+    const { view, mouse, tick } = viewOn(host);
+    await view.show('%0', 24);
+
+    host.state = paneState({ wantsMouse: true });
+    tick(2000);
+    view.receive('%0', bytes('claude starting'));
+    await settle();
+
+    expect(mouse).toEqual([true]);
+  });
+
+  it('does not ask again for every byte of a chatty Pane', async () => {
+    const host = fakePane(paneState({ wantsMouse: false }));
+    const { view } = viewOn(host);
+    await view.show('%0', 24);
+    host.asked.length = 0;
+
+    for (let at = 0; at < 20; at += 1) view.receive('%0', bytes('noise'));
+    await settle();
+
+    expect(host.asked.filter((each) => each.startsWith('state'))).toHaveLength(0);
+  });
+
+  it('reports it turning off again', async () => {
+    const host = fakePane(paneState({ wantsMouse: true }));
+    const { view, mouse, tick } = viewOn(host);
+    await view.show('%0', 24);
+
+    host.state = paneState({ wantsMouse: false });
+    tick(2000);
+    view.receive('%0', bytes('claude exited'));
+    await settle();
+
+    expect(mouse).toEqual([true, false]);
+  });
+});

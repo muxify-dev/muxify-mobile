@@ -26,7 +26,9 @@ import {
   font,
   foregroundColor,
   frame,
+  buttonBorderShape,
   glassEffect,
+  labelStyle,
   layoutPriority,
   offset,
   padding,
@@ -40,6 +42,8 @@ import {
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { Dimensions, StyleSheet } from 'react-native';
 
+import type { SheetPalette } from '@/constants/app-theme';
+import { useSettings } from '@/settings/settings-context';
 import type { Frame } from '@/tmux/pane-topology';
 import { gridContentHeight } from './sheet-layout';
 
@@ -69,8 +73,6 @@ export interface SheetAction {
 
 export interface PickerSheetProps {
   title: string;
-  /** The line under the title: which Session, and how many of what. */
-  subtitle: string;
   isPresented: boolean;
   onDismiss: () => void;
   cards: PreviewCard[];
@@ -79,8 +81,6 @@ export interface PickerSheetProps {
   loading: boolean;
   error?: string;
   emptyMessage: string;
-  /** What to say when there is one: nothing to pick, but plenty to do. */
-  onlyOneMessage?: string;
   onSelect: (id: string) => void;
   /** The bar along the bottom: New Window, or the two Splits. */
   actions?: SheetAction[];
@@ -89,37 +89,12 @@ export interface PickerSheetProps {
   zoom?: { on: boolean; onChange: (on: boolean) => void };
 }
 
-/**
- * The sheet's colours.
- *
- * Named after the system roles they stand in for, and given as flat colours
- * rather than the semantic ones: the Surface is always dark, so the sheet is
- * forced dark too, and a system fill would follow the phone's appearance and
- * flash white over the terminal.
- */
-const PALETTE = {
-  sheet: '#15171d',
-  /** Behind the Pane diagram: a well, slightly darker than the sheet. */
-  well: '#11131a',
-  /** A tile that is not the current one. */
-  tile: '#33353c',
-  /** A tile that is. */
-  tileSelected: '#232f4c',
-  stroke: '#3f424a',
-  accent: '#5b8def',
-  primary: '#eaeaea',
-  secondary: '#9096a3',
-  /** Behind a label sitting over a preview, so it stays readable. */
-  scrim: '#0b0d11',
-} as const;
-
 const SHEET_PADDING = 16;
 /** The sheet is as wide as the screen, so its content is too. */
 const CONTENT_WIDTH = Dimensions.get('window').width - SHEET_PADDING * 2;
 
 /** The gaps between the sheet's parts, top to bottom. */
-const TITLE_TO_CONTEXT = 8;
-const CONTEXT_TO_CONTENT = 12;
+const HEADER_TO_CONTENT = 12;
 const CONTENT_TO_ACTIONS = 16;
 const ACTION_BAR_HEIGHT = 44;
 
@@ -139,7 +114,6 @@ const BOARD_RADIUS = 12;
 const CARD_RADIUS = 12;
 
 const HEADER_HEIGHT = 38;
-const CONTEXT_HEIGHT = 16;
 /** Room below the action bar for the home indicator. */
 const SAFE_BOTTOM = 24;
 
@@ -150,9 +124,7 @@ const SAFE_BOTTOM = 24;
 const CHROME_HEIGHT =
   SHEET_PADDING * 2 +
   HEADER_HEIGHT +
-  TITLE_TO_CONTEXT +
-  CONTEXT_HEIGHT +
-  CONTEXT_TO_CONTENT +
+  HEADER_TO_CONTENT +
   CONTENT_TO_ACTIONS +
   ACTION_BAR_HEIGHT +
   SAFE_BOTTOM;
@@ -207,7 +179,6 @@ function sheetHeight(layout: PickerSheetProps['layout'], count: number): number 
  */
 export function PickerSheet({
   title,
-  subtitle,
   isPresented,
   onDismiss,
   cards,
@@ -215,12 +186,17 @@ export function PickerSheet({
   loading,
   error,
   emptyMessage,
-  onlyOneMessage,
   onSelect,
   actions,
   onAction,
   zoom,
 }: PickerSheetProps) {
+  // The live setting, not the one the Session was opened with: the Theme
+  // decides whether the app is light or dark, and CONTEXT.md is explicit that
+  // the chrome follows it immediately even though the Surface waits for the
+  // next Attach.
+  const { appearance, sheetPalette: palette } = useSettings();
+
   return (
     <Host matchContents style={styles.host}>
       <BottomSheet
@@ -238,43 +214,29 @@ export function PickerSheet({
                   [{ height: sheetHeight(layout, cards.length) }, 'large'],
             ),
             presentationDragIndicator('hidden'),
-            // The Surface is always dark, so the sheet is too — otherwise a
-            // phone in light mode flashes a white panel over the terminal.
-            environment('colorScheme', 'dark'),
-            // A colour, not a material: a material follows the system
-            // appearance, so a phone in light mode shows a white sheet over a
-            // dark terminal no matter what colorScheme says.
-            presentationBackground(PALETTE.sheet),
+            // The Theme's appearance, not the phone's: Latte is a light
+            // terminal and a dark sheet over it reads as two apps stitched
+            // together — which is the same reason the Host Screen follows it.
+            environment('colorScheme', appearance),
+            // A colour, not a material: a material follows the *system*
+            // appearance, so a phone in light mode would show a white sheet
+            // over a Mocha terminal no matter what colorScheme says.
+            presentationBackground(palette.sheet),
           ]}>
           <VStack spacing={0} modifiers={[padding({ all: SHEET_PADDING })]}>
             <Header title={title} onDismiss={onDismiss} />
 
-            <HStack modifiers={[padding({ top: TITLE_TO_CONTEXT })]}>
-              <Text
-                modifiers={[
-                  font({ size: 12, weight: 'semibold' }),
-                  foregroundColor(PALETTE.secondary),
-                ]}>
-                {subtitle}
-              </Text>
-              <Spacer />
-            </HStack>
-
-            <VStack spacing={0} modifiers={[padding({ top: CONTEXT_TO_CONTENT })]}>
+            <VStack spacing={0} modifiers={[padding({ top: HEADER_TO_CONTENT })]}>
               {loading ? (
-                <Note>Reading…</Note>
+                <Note palette={palette}>Reading…</Note>
               ) : error !== undefined ? (
                 <Text modifiers={[foregroundColor('#ff6b6b')]}>{error}</Text>
               ) : cards.length === 0 ? (
-                <Note>{emptyMessage}</Note>
-              ) : null}
-
-              {!loading && cards.length === 1 && onlyOneMessage ? (
-                <Note>{onlyOneMessage}</Note>
+                <Note palette={palette}>{emptyMessage}</Note>
               ) : null}
 
               {cards.length > 0 && layout === 'panes' ? (
-                <PaneBoard cards={cards} onSelect={onSelect} />
+                <PaneBoard cards={cards} palette={palette} onSelect={onSelect} />
               ) : null}
 
               {cards.length > 0 && layout !== 'panes' ? (
@@ -286,6 +248,7 @@ export function PickerSheet({
                           <PreviewButton
                             key={card.id}
                             card={card}
+                            palette={palette}
                             width={layout === 'grid' ? GRID_CARD_WIDTH : CONTENT_WIDTH}
                             height={layout === 'grid' ? GRID_CARD_HEIGHT : LIST_CARD_HEIGHT}
                             onSelect={onSelect}
@@ -304,7 +267,12 @@ export function PickerSheet({
             <Spacer />
 
             {actions?.length || zoom ? (
-              <Footer actions={actions ?? []} onAction={onAction} zoom={zoom} />
+              <Footer
+                actions={actions ?? []}
+                palette={palette}
+                onAction={onAction}
+                zoom={zoom}
+              />
             ) : null}
           </VStack>
         </Group>
@@ -332,30 +300,41 @@ function outline(color: string, lineWidth: number, cornerRadius: number) {
 }
 
 /** A line of explanation where the content would be. */
-function Note({ children }: { children: string }) {
+function Note({ children, palette }: { children: string; palette: SheetPalette }) {
   return (
     <HStack>
-      <Text modifiers={[font({ size: 13 }), foregroundColor(PALETTE.secondary)]}>{children}</Text>
+      <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondary)]}>{children}</Text>
       <Spacer />
     </HStack>
   );
 }
 
-/** Close on the left, title centred over it. */
+/**
+ * Close on the left, title centred over it.
+ *
+ * `role="close"` rather than an xmark of our own. The glyph used to sit off
+ * centre, and the reason is in the Button's own contract: `systemImage` is
+ * "only used when `label` is provided", so `label=""` was still a label — an
+ * empty title laid out beside the icon, pushing it off the middle of its own
+ * button. The close role draws the system's circular xmark, centred, with no
+ * title slot to be empty.
+ *
+ * The accessibility label is still set by hand: the role draws a glyph, and a
+ * glyph is unreadable to anything but an eye and unpressable to the e2e suite.
+ */
 function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) {
   return (
     <ZStack>
       <Text modifiers={[font({ size: 17, weight: 'semibold' })]}>{title}</Text>
       <HStack modifiers={[frame({ height: HEADER_HEIGHT })]}>
         <Button
-          label=""
-          systemImage="xmark"
+          role="close"
           onPress={onDismiss}
           modifiers={[
-            frame({ width: 38, height: 38 }),
+            labelStyle('iconOnly'),
             buttonStyle('glass'),
-            // A glyph with no label is unreadable to anything but an eye, and
-            // unpressable to the e2e suite.
+            buttonBorderShape('circle'),
+            frame({ width: 34, height: 34 }),
             accessibilityLabel(`Close ${title}`),
           ]}
         />
@@ -375,9 +354,11 @@ function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) 
  */
 function PaneBoard({
   cards,
+  palette,
   onSelect,
 }: {
   cards: PreviewCard[];
+  palette: SheetPalette;
   onSelect: (id: string) => void;
 }) {
   const well = {
@@ -393,9 +374,9 @@ function PaneBoard({
         // the frame needs its own, or SwiftUI centres the whole stack inside
         // it and every offset below is measured from the wrong corner.
         frame({ width: CONTENT_WIDTH, height: BOARD_HEIGHT, alignment: 'topLeading' }),
-        background(PALETTE.well),
+        background(palette.well),
         clipShape('roundedRectangle', BOARD_RADIUS),
-        outline(PALETTE.stroke, 1, BOARD_RADIUS),
+        outline(palette.stroke, 1, BOARD_RADIUS),
       ]}>
       {cards.map((card) => {
         const box = card.frame ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -418,7 +399,7 @@ function PaneBoard({
               // has to be restated for anything reading the screen.
               accessibilityLabel(card.title),
             ]}>
-            <PaneTile card={card} width={width} height={height} />
+            <PaneTile card={card} palette={palette} width={width} height={height} />
           </Button>
         );
       })}
@@ -428,10 +409,12 @@ function PaneBoard({
 
 function PaneTile({
   card,
+  palette,
   width,
   height,
 }: {
   card: PreviewCard;
+  palette: SheetPalette;
   width: number;
   height: number;
 }) {
@@ -444,18 +427,18 @@ function PaneTile({
       spacing={2}
       modifiers={[
         frame({ width, height }),
-        background(card.current ? PALETTE.tileSelected : PALETTE.tile),
+        background(card.current ? palette.tileSelected : palette.tile),
         clipShape('roundedRectangle', radius),
-        outline(card.current ? PALETTE.accent : PALETTE.stroke, card.current ? 2 : 1, radius),
+        outline(card.current ? palette.accent : palette.stroke, card.current ? 2 : 1, radius),
       ]}>
       <Text
         modifiers={[
           font({ size: 13, weight: 'semibold' }),
-          foregroundColor(card.current ? PALETTE.accent : PALETTE.primary),
+          foregroundColor(card.current ? palette.accent : palette.primary),
         ]}>
         {card.title}
       </Text>
-      <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundColor(PALETTE.secondary)]}>
+      <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundColor(palette.secondary)]}>
         {card.detail}
       </Text>
     </VStack>
@@ -465,11 +448,13 @@ function PaneTile({
 /** A Session or Window: its preview, with a badge and a label chip over it. */
 function PreviewButton({
   card,
+  palette,
   width,
   height,
   onSelect,
 }: {
   card: PreviewCard;
+  palette: SheetPalette;
   width: number;
   height: number;
   onSelect: (id: string) => void;
@@ -483,23 +468,23 @@ function PreviewButton({
         alignment="topLeading"
         modifiers={[
           frame({ width, height }),
-          background(PALETTE.tile),
+          background(palette.tile),
           clipShape('roundedRectangle', CARD_RADIUS),
           outline(
-            card.current ? PALETTE.accent : PALETTE.stroke,
+            card.current ? palette.accent : palette.stroke,
             card.current ? 1.25 : 1,
             CARD_RADIUS,
           ),
         ]}>
-        <PreviewText lines={card.preview} />
+        <PreviewText lines={card.preview} palette={palette} />
 
         {card.badge !== undefined ? (
           <Text
             modifiers={[
               font({ size: 12, weight: 'bold' }),
               frame({ width: 28, height: 28 }),
-              foregroundColor(card.current ? '#ffffff' : PALETTE.primary),
-              background(card.current ? PALETTE.accent : PALETTE.well),
+              foregroundColor(card.current ? '#ffffff' : palette.primary),
+              background(card.current ? palette.accent : palette.well),
               cornerRadius(8),
               offset({ x: 8, y: 8 }),
             ]}>
@@ -514,7 +499,7 @@ function PreviewButton({
               modifiers={[
                 font({ size: 11 }),
                 padding({ horizontal: 8, vertical: 5 }),
-                background(PALETTE.scrim),
+                background(palette.scrim),
                 cornerRadius(7),
                 offset({ x: 8, y: -8 }),
               ]}>
@@ -529,7 +514,7 @@ function PreviewButton({
 }
 
 /** What the Window is showing, in the smallest readable monospace. */
-function PreviewText({ lines }: { lines: string[] }) {
+function PreviewText({ lines, palette }: { lines: string[]; palette: SheetPalette }) {
   return (
     <VStack alignment="leading" spacing={0} modifiers={[padding({ all: 8 })]}>
       {lines.map((line, index) => (
@@ -537,7 +522,7 @@ function PreviewText({ lines }: { lines: string[] }) {
           <Text
             modifiers={[
               font({ size: 7, design: 'monospaced' }),
-              foregroundColor(PALETTE.secondary),
+              foregroundColor(palette.secondary),
             ]}>
             {line === '' ? ' ' : line}
           </Text>
@@ -556,10 +541,12 @@ function PreviewText({ lines }: { lines: string[] }) {
  */
 function Footer({
   actions,
+  palette,
   onAction,
   zoom,
 }: {
   actions: SheetAction[];
+  palette: SheetPalette;
   onAction?: (id: string) => void;
   zoom?: { on: boolean; onChange: (on: boolean) => void };
 }) {
@@ -584,7 +571,7 @@ function Footer({
             modifiers={[
               buttonStyle('plain'),
               font({ size: 14, weight: 'semibold' }),
-              foregroundColor(PALETTE.primary),
+              foregroundColor(palette.primary),
             ]}
           />
           <Spacer />
@@ -605,7 +592,7 @@ function Footer({
               fixedSize({ horizontal: true, vertical: false }),
               layoutPriority(1),
               padding({ horizontal: 11 }),
-              tint(PALETTE.accent),
+              tint(palette.accent),
             ]}
           />
         </>

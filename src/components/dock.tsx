@@ -159,6 +159,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 12,
+    // Clearance above the capsule as well as below it. A glass group is a
+    // `Host matchContents`, and the glass is drawn a little larger than the
+    // content it is measured from — so without this the capsule reaches up
+    // over the Surface's last row and covers whatever the Pane put there.
+    paddingTop: 10,
     paddingBottom: 8,
   },
   host: {

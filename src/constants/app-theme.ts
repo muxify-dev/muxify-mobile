@@ -53,6 +53,68 @@ export const AppPalettes: Record<'light' | 'dark', Appearance> = {
   },
 };
 
+/**
+ * The Dock's pickers, which are their own small world of colour.
+ *
+ * Separate from `Appearance` because a sheet is not a grouped list: it has a
+ * well behind the Pane diagram, tiles that are and are not the current one, and
+ * a scrim for a label sitting over a preview. None of those have a counterpart
+ * in a Form, and borrowing the nearest one gave a sheet that looked like a
+ * settings screen that had fallen over.
+ */
+export interface SheetPalette {
+  /** The sheet itself. */
+  sheet: string;
+  /** Behind the Pane diagram: a well, a shade off the sheet. */
+  well: string;
+  /** A tile that is not the current one. */
+  tile: string;
+  /** A tile that is. */
+  tileSelected: string;
+  stroke: string;
+  accent: string;
+  primary: string;
+  secondary: string;
+  /** Behind a label sitting over a preview, so it stays readable. */
+  scrim: string;
+}
+
+export const SheetPalettes: Record<'light' | 'dark', SheetPalette> = {
+  dark: {
+    sheet: '#15171d',
+    well: '#11131a',
+    tile: '#33353c',
+    tileSelected: '#232f4c',
+    stroke: '#3f424a',
+    accent: '#5b8def',
+    primary: '#eaeaea',
+    secondary: '#9096a3',
+    scrim: '#0b0d11',
+  },
+  light: {
+    sheet: '#f4f4f8',
+    // A well is *darker* than its sheet in the dark palette and lighter would
+    // read as a raised panel here, so it stays darker: a recess is a recess in
+    // both appearances.
+    well: '#e4e4ec',
+    tile: '#ffffff',
+    tileSelected: '#dce9ff',
+    stroke: '#cfcfd6',
+    accent: '#007aff',
+    primary: '#1c1c1e',
+    secondary: '#6c6c70',
+    // Light rather than dark, and nearly opaque: a scrim exists to keep a
+    // label readable over a preview, and over light terminal output that means
+    // lightening it rather than darkening it.
+    scrim: '#ffffff',
+  },
+};
+
+/** The picker colours a Theme is drawn with. */
+export function sheetPaletteFor(theme: ThemeId): SheetPalette {
+  return SheetPalettes[appearanceFor(theme)];
+}
+
 /** What the Surface is painted with. One of these per Theme. */
 export interface TerminalPalette {
   background: string;

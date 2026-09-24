@@ -3,9 +3,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   appearanceFor,
   paletteFor,
+  sheetPaletteFor,
   Themes,
   type AnsiPalette,
   type Appearance,
+  type SheetPalette,
   type TerminalPalette,
 } from '@/constants/app-theme';
 import { deviceSettingsStore } from './device-settings';
@@ -19,6 +21,8 @@ interface SettingsContextValue {
   appearance: 'light' | 'dark';
   /** The chrome colours for that appearance. */
   palette: Appearance;
+  /** The colours the Dock's pickers are drawn with. */
+  sheetPalette: SheetPalette;
   /** What the Surface is painted with. */
   terminal: TerminalPalette;
   /** The sixteen colours the Host's own output is painted with. */
@@ -56,6 +60,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       update,
       appearance: appearanceFor(settings.theme),
       palette: paletteFor(settings.theme),
+      sheetPalette: sheetPaletteFor(settings.theme),
       terminal: Themes[settings.theme].palette,
       ansi: Themes[settings.theme].ansi,
     }),

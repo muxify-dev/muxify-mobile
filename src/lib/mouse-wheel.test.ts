@@ -1,4 +1,4 @@
-import { cursorKeys, wheelSequence, LINES_PER_NOTCH } from './mouse-wheel';
+import { clickSequence, cursorKeys, wheelSequence, LINES_PER_NOTCH } from './mouse-wheel';
 
 const ESC = '\u001b';
 
@@ -52,5 +52,20 @@ describe('cursorKeys', () => {
   it('uses the plain form, not the application-cursor one', () => {
     // Guessing DECCKM wrong puts letters in the buffer instead of moving.
     expect(cursorKeys('up', 1)).not.toContain('O');
+  });
+});
+
+describe('clickSequence', () => {
+  it('sends a press and a release, so nothing is left held down', () => {
+    expect(clickSequence(10, 4)).toBe('\u001b[<0;10;4M\u001b[<0;10;4m');
+  });
+
+  it('clamps a coordinate off the top-left, which tmux would discard', () => {
+    expect(clickSequence(0, -3)).toBe('\u001b[<0;1;1M\u001b[<0;1;1m');
+  });
+
+  it('uses button 0, the left one, not the wheel codes', () => {
+    expect(clickSequence(1, 1)).not.toContain('64');
+    expect(clickSequence(1, 1)).not.toContain('65');
   });
 });

@@ -71,6 +71,13 @@ else: print('missing')
 # Each card is a Button carrying its Window name or its Pane's directory.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
+# Waits for a sheet to actually be up.
+#
+# Not `wait text "Panes"`: the Dock has a button of that name too and it is on
+# screen the whole time, so the wait returned at once and everything after it
+# raced the sheet's first frame. The close button belongs to the sheet alone.
+sheet() { agent-device wait "label=\"Close $1\"" 8000 >/dev/null 2>&1; }
+
 echo "1/4  one Window, one Pane: both pickers still open, to make more"
 # Deliberately not disabled. The sheet is the only way to add a Window or a
 # split, and one of something is exactly when that is wanted — an earlier
@@ -81,13 +88,13 @@ attach
 expect_enabled Windows yes
 expect_enabled Panes yes
 agent-device press 'label="Windows"' >/dev/null 2>&1
-agent-device wait text "Windows" 8000 >/dev/null 2>&1
+sheet Windows
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "a Session with one Window must still offer New Window"
 agent-device press 'label="Close Windows"' >/dev/null 2>&1
 sleep 1
 agent-device press 'label="Panes"' >/dev/null 2>&1
-agent-device wait text "Panes" 8000 >/dev/null 2>&1
+sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "a Window with one Pane must still offer Split →"
 # Nothing to zoom out of with one Pane, unlike Split, which is how the second
 # one gets made.
@@ -101,7 +108,7 @@ vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
 attach
 expect_enabled Windows yes
 agent-device press 'label="Windows"' >/dev/null 2>&1
-agent-device wait text "Windows" 8000 >/dev/null 2>&1
+sheet Windows
 [ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the sheet"
 [ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the sheet"
 # `exists` rather than `visible`: SwiftUI content inside the sheet reports
@@ -119,7 +126,7 @@ attach
   || fail "a split Session should arrive with its active Pane zoomed"
 echo "     arrived zoomed"
 agent-device press 'label="Panes"' >/dev/null 2>&1
-agent-device wait text "Panes" 8000 >/dev/null 2>&1
+sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"
 [ "$(named 'Split ↓')" -eq 1 ] || fail "the Panes sheet has no Split ↓ action"
 agent-device snapshot -i 2>/dev/null | grep -q 'Zoom' \

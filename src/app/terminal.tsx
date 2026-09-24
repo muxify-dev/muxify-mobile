@@ -3,13 +3,14 @@ import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Dock, type DockAction } from '@/components/dock';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
-import { SurfacePalette } from '@/constants/theme';
+import type { TerminalPalette } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
@@ -54,7 +55,6 @@ type PickerState =
       kind: PickerKind;
       loading: boolean;
       cards: PreviewCard[];
-      subtitle: string;
       error?: string;
     };
 
@@ -75,7 +75,7 @@ export default function TerminalScreen() {
   // background runs to the top of the display and only the inset keeps text
   // clear of the status bar. Going Home is the Dock's job, not a back button's.
   const insets = useSafeAreaInsets();
-  const { settings, terminal, ansi } = useSettings();
+  const { settings, terminal, ansi, appearance } = useSettings();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   /** The one channel: commands and Pane output, no PTY. */
@@ -85,8 +85,9 @@ export default function TerminalScreen() {
   const view = useRef<PaneView | null>(null);
   const sessionName = useRef<string>('');
   const grid = useRef<Grid | null>(null);
-  /** The Surface's height in points, paired with the grid it produced. */
+  /** The Surface's size in points, paired with the grid it produced. */
   const surfaceHeight = useRef(0);
+  const surfaceWidth = useRef(0);
   const hasStarted = useRef(false);
   const disposed = useRef(false);
   /** Scroll distance not yet worth a notch of the wheel. */
@@ -106,6 +107,15 @@ export default function TerminalScreen() {
    */
   const [paneTrouble, setPaneTrouble] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  /**
+   * Whether the application in the Pane is listening for the mouse.
+   *
+   * It decides what a tap is for. When nothing is listening a tap belongs to
+   * the keyboard, which is what the Surface does with it on its own; when
+   * something is, the tap has to be taken off the Surface before it raises the
+   * keyboard, and sent on as a click instead.
+   */
+  const [mouseTracking, setMouseTracking] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
 
   /**
@@ -216,6 +226,21 @@ export default function TerminalScreen() {
     [],
   );
 
+  /**
+   * A tap at one cell, while an application is listening for the mouse.
+   *
+   * See MouseLayer for why this does not go through the Surface's own gesture.
+   */
+  const handleTapCell = useCallback((column: number, row: number) => {
+    view.current?.click(column, row);
+  }, []);
+
+  /** A drag, already counted in wheel notches by whoever owned the finger. */
+  const handleNotches = useCallback((notches: number) => {
+    const size = grid.current;
+    if (size) view.current?.scroll(notches, size);
+  }, []);
+
   /** Puts the Pane back at the live bottom, and the indicator away with it. */
   const jumpToLatest = useCallback(() => {
     carriedLines.current = 0;
@@ -232,37 +257,32 @@ export default function TerminalScreen() {
    * in behind an already-open sheet.
    */
   const cardsFor = useCallback(
-    (kind: PickerKind): { cards: PreviewCard[]; subtitle: string } => {
+    (kind: PickerKind): PreviewCard[] => {
       if (kind === 'sessions') {
-        const listed = sessions ?? [];
-        return {
-          cards: listed.map((session) => ({
-            id: session.name,
-            title: session.name,
-            // The name leads here, unlike a Window's chip: a Session has no
-            // badge to identify it by, so the preview alone would leave the
-            // user guessing which is which.
-            detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
-            current: session.name === sessionName.current,
-            preview: previewOf(previews, `${session.name}:`),
-          })),
-          subtitle: `${listed.length} ${plural(listed.length, 'session')}`,
-        };
+        return (sessions ?? []).map((session) => ({
+          id: session.name,
+          title: session.name,
+          // The name, even though `title` already holds it. A preview card
+          // draws its badge and its detail and nothing else — `title` is what
+          // the card is announced as, not what it is labelled with — so a
+          // Session, which has no badge, would be identified by nothing at all
+          // without this.
+          detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
+          current: session.name === sessionName.current,
+          preview: previewOf(previews, `${session.name}:`),
+        }));
       }
 
       if (kind === 'windows') {
         const session = sessionName.current;
-        return {
-          cards: topology.windows.map((window) => ({
-            id: String(window.index),
-            title: window.name,
-            detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
-            current: window.active,
-            badge: String(window.index),
-            preview: previewOf(previews, windowPreviewTarget(session, window.index)),
-          })),
-          subtitle: `${session} · ${topology.windows.length} ${plural(topology.windows.length, 'window')}`,
-        };
+        return topology.windows.map((window) => ({
+          id: String(window.index),
+          title: window.name,
+          detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
+          current: window.active,
+          badge: String(window.index),
+          preview: previewOf(previews, windowPreviewTarget(session, window.index)),
+        }));
       }
 
       // No capture here: the Panes are all on screen behind this sheet already,
@@ -270,17 +290,14 @@ export default function TerminalScreen() {
       // sits, what directory it is in and what it is running are what tell two
       // Panes apart; a tile of six-point terminal text does not.
       const frames = paneTopologyFrames(topology.panes);
-      return {
-        cards: topology.panes.map((pane) => ({
-          id: String(pane.index),
-          title: directoryName(pane.path) || `Pane ${pane.index}`,
-          detail: pane.command,
-          current: pane.active,
-          frame: frames.get(pane.index),
-          preview: [],
-        })),
-        subtitle: `${topology.panes.length} ${plural(topology.panes.length, 'pane')}`,
-      };
+      return topology.panes.map((pane) => ({
+        id: String(pane.index),
+        title: directoryName(pane.path) || `Pane ${pane.index}`,
+        detail: pane.command,
+        current: pane.active,
+        frame: frames.get(pane.index),
+        preview: [],
+      }));
     },
     [sessions, topology, previews],
   );
@@ -428,6 +445,9 @@ export default function TerminalScreen() {
           onScroll: (position) => {
             if (!disposed.current) setScrolled(position);
           },
+          onMouseTracking: (wanted) => {
+            if (!disposed.current) setMouseTracking(wanted);
+          },
           // Without this a refused command — typing into a Pane that has just
           // been killed, most likely — would vanish, and the Surface would sit
           // there looking connected and ignoring the keyboard.
@@ -540,14 +560,12 @@ export default function TerminalScreen() {
    */
   const openPicker = useCallback(
     (kind: PickerKind) => {
-      const { cards, subtitle } = cardsFor(kind);
       setPicker({
         open: true,
         kind,
         // Only a Session list that has never been read has nothing to draw.
         loading: kind === 'sessions' && sessions === null,
-        cards,
-        subtitle,
+        cards: cardsFor(kind),
       });
       refreshBehindSheet(kind);
     },
@@ -559,10 +577,8 @@ export default function TerminalScreen() {
   const openKind = picker.open ? picker.kind : null;
   useEffect(() => {
     if (openKind === null) return;
-    const { cards, subtitle } = cardsFor(openKind);
-    setPicker((previous) =>
-      previous.open ? { ...previous, loading: false, cards, subtitle } : previous,
-    );
+    const cards = cardsFor(openKind);
+    setPicker((previous) => (previous.open ? { ...previous, loading: false, cards } : previous));
   }, [cardsFor, openKind]);
 
   /**
@@ -670,6 +686,14 @@ export default function TerminalScreen() {
     [refreshTopology],
   );
 
+  /**
+   * The quiet overlay text, in the Theme's own dim tone.
+   *
+   * It sits directly on the Surface, so a fixed colour is right for exactly one
+   * Theme and unreadable in another — Latte's terminal is nearly white.
+   */
+  const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
+
   const dockGroups: DockAction[][] = useMemo(() => {
     const connected = status.phase === 'connected';
     // One group, so the Dock reads as a single control rather than a row of
@@ -766,12 +790,15 @@ export default function TerminalScreen() {
         styles.container,
         { paddingTop: insets.top, backgroundColor: opened.terminal.background },
       ]}>
-      <StatusBar style="light" />
+      {/* The Theme decides this, not the phone: white glyphs over Latte's
+          near-white terminal are a status bar nobody can read. */}
+      <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
 
       <View
         style={styles.surfaceArea}
         onLayout={({ nativeEvent }) => {
           surfaceHeight.current = nativeEvent.layout.height;
+          surfaceWidth.current = nativeEvent.layout.width;
         }}>
         <TerminalView
           ref={surface}
@@ -800,23 +827,32 @@ export default function TerminalScreen() {
         />
 
         {scrolled ? (
-          <ScrollBackIndicator
-            position={scrolled}
-            palette={opened.terminal}
-            onPress={jumpToLatest}
-          />
+          <>
+            <ScrollRail
+              position={scrolled}
+              rows={visibleGrid?.rows ?? 0}
+              palette={opened.terminal}
+            />
+            <ScrollBackIndicator
+              position={scrolled}
+              palette={opened.terminal}
+              onPress={jumpToLatest}
+            />
+          </>
+        ) : null}
+
+        {mouseTracking && visibleGrid ? (
+          <MouseLayer grid={visibleGrid} onTap={handleTapCell} onScroll={handleNotches} />
         ) : null}
       </View>
 
       <PickerSheet
         title={picker.open ? PICKER_TITLES[picker.kind] : ''}
-        subtitle={picker.open ? picker.subtitle : ''}
         isPresented={picker.open}
         onDismiss={() => setPicker({ open: false })}
         loading={picker.open && picker.loading}
         error={picker.open ? picker.error : undefined}
         emptyMessage={picker.open ? PICKER_EMPTY[picker.kind] : ''}
-        onlyOneMessage={picker.open ? PICKER_ONLY_ONE[picker.kind] : ''}
         cards={picker.open ? picker.cards : []}
         layout={picker.open ? PICKER_LAYOUTS[picker.kind] : 'list'}
         onSelect={(id) => {
@@ -849,21 +885,24 @@ export default function TerminalScreen() {
 
       <Dock groups={dockGroups} />
 
-      <View style={styles.overlay} pointerEvents="none">
+      {/* Below the status bar, not behind it: the container's padding does not
+          push an absolutely positioned child down, so the grid ended up
+          underneath the battery where nobody could read it. */}
+      <View style={[styles.overlay, { top: insets.top + 8 }]} pointerEvents="none">
         {/* Always rendered, so its value can be asserted rather than its
             absence. `surface-grid` appears only once the Surface has reported a
             grid, so its presence is the signal that layout and `onResize`
             completed; the value is device-specific, so select on the id. */}
-        <ThemedText type="code" style={styles.statusText} testID="connection-status">
+        <ThemedText type="code" style={dimText} testID="connection-status">
           {label(status)}
         </ThemedText>
         {visibleGrid ? (
-          <ThemedText type="code" style={styles.statusText} testID="surface-grid">
+          <ThemedText type="code" style={dimText} testID="surface-grid">
             {visibleGrid.cols}x{visibleGrid.rows}
           </ThemedText>
         ) : null}
         {attachedSession ? (
-          <ThemedText type="code" style={styles.statusText} testID="attached-session">
+          <ThemedText type="code" style={dimText} testID="attached-session">
             {attachedSession}
           </ThemedText>
         ) : null}
@@ -874,7 +913,141 @@ export default function TerminalScreen() {
         ) : null}
       </View>
 
-      <StatusBanner status={status} />
+      <StatusBanner status={status} palette={opened.terminal} />
+    </View>
+  );
+}
+
+/** How far a finger may travel and still be a tap rather than a drag, in points. */
+const TAP_SLOP = 10;
+
+/**
+ * The finger, while an application in the Pane is listening for the mouse.
+ *
+ * It covers the Surface and takes every touch: a tap becomes a click at the
+ * cell underneath, and a drag becomes wheel notches — which is what the
+ * application would get from any terminal, and what makes Claude Code's "Jump
+ * to bottom", vim's status line or a file in a picker tappable at all.
+ *
+ * Why a layer rather than the Surface's own gesture. A tap already means
+ * something there — it raises the keyboard — and that behaviour lives in the
+ * library, below anything this app can reach. Wrapping the Surface in a
+ * gesture recogniser of our own was tried and is worse than either outcome: it
+ * loses the race to the library's own recogniser, so no click is sent, while
+ * still cancelling the touch, so the keyboard stops rising too.
+ *
+ * So the trade is made explicitly and only where it is wanted. While something
+ * is listening for the mouse the finger belongs to it, and the keyboard is
+ * raised from the Dock — which is what that button is for. The moment nothing
+ * is listening this layer is gone and the Surface behaves exactly as it did.
+ */
+function MouseLayer({
+  grid,
+  onTap,
+  onScroll,
+}: {
+  grid: Grid;
+  onTap: (column: number, row: number) => void;
+  onScroll: (notches: number) => void;
+}) {
+  const size = useRef({ width: 0, height: 0 });
+  const origin = useRef(0);
+  const previous = useRef(0);
+  const dragged = useRef(false);
+  /** Fractions of a line a slow drag has not yet spent. */
+  const carried = useRef(0);
+
+  return (
+    <View
+      style={StyleSheet.absoluteFill}
+      testID="mouse-layer"
+      onLayout={({ nativeEvent }) => {
+        size.current = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
+      }}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={({ nativeEvent }: GestureResponderEvent) => {
+        origin.current = nativeEvent.locationY;
+        previous.current = nativeEvent.locationY;
+        dragged.current = false;
+        carried.current = 0;
+      }}
+      onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
+        const { height } = size.current;
+        const travelled = nativeEvent.locationY - previous.current;
+        previous.current = nativeEvent.locationY;
+        if (Math.abs(nativeEvent.locationY - origin.current) > TAP_SLOP) dragged.current = true;
+        if (height <= 0 || grid.rows <= 0) return;
+
+        // A finger moving down pulls older output into view, which is the same
+        // sign the Surface's own scroll reports.
+        carried.current += travelled * (grid.rows / height);
+        const notches = Math.trunc(carried.current / LINES_PER_NOTCH);
+        if (notches === 0) return;
+        carried.current -= notches * LINES_PER_NOTCH;
+        onScroll(notches);
+      }}
+      onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
+        const { width, height } = size.current;
+        if (dragged.current || width <= 0 || height <= 0) return;
+        onTap(
+          cellOf(nativeEvent.locationX, width, grid.cols),
+          cellOf(nativeEvent.locationY, height, grid.rows),
+        );
+      }}
+    />
+  );
+}
+
+/**
+ * Which cell a point lands in, 1-based as SGR counts them.
+ *
+ * Clamped to the grid: the Surface is rarely an exact number of cells tall, so
+ * a tap in the leftover strip at the edge belongs to the last cell rather than
+ * to one that is not there.
+ */
+function cellOf(point: number, extent: number, cells: number): number {
+  return Math.min(cells, Math.max(1, Math.floor((point / extent) * cells) + 1));
+}
+
+/**
+ * A hairline down the right edge saying where in the Scrollback you are.
+ *
+ * Deliberately almost invisible, and only while a drag has actually moved:
+ * it is an orientation cue on a phone-sized screen, not a control. Nothing
+ * grabs it — the finger scrolls the Surface itself — so it is drawn without a
+ * track, because a track would suggest otherwise.
+ *
+ * The arithmetic is the whole buffer, not just what has scrolled off: the
+ * thumb is the visible rows as a share of Scrollback plus screen, and it sits
+ * `back` lines up from the bottom of that.
+ */
+function ScrollRail({
+  position,
+  rows,
+  palette,
+}: {
+  position: ScrollPosition;
+  rows: number;
+  palette: TerminalPalette;
+}) {
+  const total = position.scrollbackLines + Math.max(1, rows);
+  const thumb = Math.max(RAIL_MIN_FRACTION, Math.max(1, rows) / total);
+  // Clamped so the thumb cannot be pushed off the bottom by its own minimum.
+  const top = Math.min(1 - thumb, (position.scrollbackLines - position.back) / total);
+
+  return (
+    <View style={styles.rail} pointerEvents="none" testID="scroll-rail">
+      <View
+        style={[
+          styles.railThumb,
+          {
+            backgroundColor: palette.foreground,
+            top: `${Math.max(0, top) * 100}%`,
+            height: `${thumb * 100}%`,
+          },
+        ]}
+      />
     </View>
   );
 }
@@ -898,7 +1071,7 @@ function ScrollBackIndicator({
   onPress,
 }: {
   position: ScrollPosition;
-  palette: { foreground: string; background: string };
+  palette: TerminalPalette;
   onPress: () => void;
 }) {
   const atOldest = position.back >= position.scrollbackLines;
@@ -907,12 +1080,13 @@ function ScrollBackIndicator({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Jump to latest"
-      testID="scroll-position"
-      style={styles.scrollPill}>
+      // Inverted against the Theme rather than painted a fixed light: the pill
+      // has to read over whatever the Session is painting behind it, and a
+      // light pill with light text is what a fixed one gave on Latte.
+      style={[styles.scrollPill, { backgroundColor: palette.foreground }]}
+      testID="scroll-position">
       <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>
-        {atOldest
-          ? `oldest of ${position.scrollbackLines} lines`
-          : `${position.back} lines back`}
+        {atOldest ? `oldest of ${position.scrollbackLines} lines` : `${position.back} lines back`}
       </ThemedText>
       <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.background }]}>
         Jump to latest
@@ -925,7 +1099,7 @@ function ScrollBackIndicator({
  * The loud banner, shown only while something needs the user's attention. The
  * quiet always-present indicator above carries the same state for assertions.
  */
-function StatusBanner({ status }: { status: Status }) {
+function StatusBanner({ status, palette }: { status: Status; palette: TerminalPalette }) {
   if (status.phase === 'connected') {
     return null;
   }
@@ -933,9 +1107,11 @@ function StatusBanner({ status }: { status: Status }) {
   const busy = status.phase === 'connecting' || status.phase === 'waiting-for-layout';
 
   return (
-    <View style={styles.banner} accessibilityLabel={label(status)}>
-      {busy ? <ActivityIndicator size="small" color={SurfacePalette.foreground} /> : null}
-      <ThemedText type="small" style={styles.bannerText}>
+    <View
+      style={[styles.banner, { backgroundColor: palette.black, borderColor: palette.grey }]}
+      accessibilityLabel={label(status)}>
+      {busy ? <ActivityIndicator size="small" color={palette.foreground} /> : null}
+      <ThemedText type="small" style={[styles.bannerText, { color: palette.foreground }]}>
         {label(status)}
       </ThemedText>
     </View>
@@ -952,13 +1128,6 @@ const PICKER_EMPTY: Record<PickerKind, string> = {
   sessions: 'No Sessions on this Host',
   windows: 'No Windows in this Session',
   panes: 'No Panes in this Window',
-};
-
-/** Shown when there is one of something: nothing to pick, but plenty to do. */
-const PICKER_ONLY_ONE: Record<PickerKind, string> = {
-  sessions: '',
-  windows: 'The only Window. New Window adds another.',
-  panes: 'The only Pane. Split divides it.',
 };
 
 const PICKER_LAYOUTS: Record<PickerKind, 'grid' | 'panes' | 'list'> = {
@@ -1053,7 +1222,26 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The shortest the rail's thumb may get, so it never vanishes entirely. */
+const RAIL_MIN_FRACTION = 0.04;
+
 const styles = StyleSheet.create({
+  rail: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    right: 2,
+    width: 2,
+  },
+  railThumb: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    borderRadius: 1,
+    // Barely there on purpose: enough to find with an eye that is looking for
+    // it, not enough to read as chrome over somebody's output.
+    opacity: 0.25,
+  },
   scrollPill: {
     position: 'absolute',
     alignSelf: 'center',
@@ -1064,9 +1252,6 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 14,
     borderRadius: 999,
-    // Deliberately the terminal's own foreground, inverted: the pill has to
-    // read over whatever the Session happens to be painting behind it.
-    backgroundColor: 'rgba(235, 235, 245, 0.92)',
   },
   scrollPillText: {
     fontSize: 13,
@@ -1078,7 +1263,6 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: SurfacePalette.background,
   },
   surfaceArea: {
     flex: 1,
@@ -1088,13 +1272,9 @@ const styles = StyleSheet.create({
   },
   overlay: {
     position: 'absolute',
-    top: 8,
     right: 12,
     alignItems: 'flex-end',
     gap: 2,
-  },
-  statusText: {
-    color: SurfacePalette.dim,
   },
   troubleText: {
     // Loud enough to notice over whatever the Session is painting, quiet
@@ -1139,10 +1319,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#1e2230',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   bannerText: {
     flexShrink: 1,
-    color: SurfacePalette.foreground,
   },
 });
