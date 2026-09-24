@@ -555,3 +555,37 @@ silently does nothing for an attached Client — tmux 3.6).
 clothes. The check that matters is three agreeing numbers: `surface`, `window`
 and `client`. Any two of them agreeing is not enough — that is exactly the
 state that shipped a broken terminal twice.
+
+## The Accessory Bar could be hidden all along
+
+ADR 0003 dropped the brief's ctrl/esc/tab Dock group on the grounds that
+`expo-libghostty` "exposes no prop to hide or configure" its own Accessory Bar,
+so a custom group would sit beneath a native bar showing the same keys.
+
+That was true of the published API and false of the view underneath.
+`UITerminalView.inputAccessoryView` already returns nil when
+`inputAccessoryItems` is empty, and that property is `open` with a `didSet` that
+rebuilds the bar and reloads the input views. Hiding it is one assignment, and
+the local patch now exposes it as an `accessoryBar` prop.
+
+Second time on this project that a decision rested on a library limit that was
+only a limit of its exported surface — the keyboard toggle was the first. Both
+were a `grep` away in the vendored sources. Worth the habit: when a library
+looks like it cannot do something, check what its view can do before designing
+around it.
+
+Hiding it is worth 3 rows of terminal with the keyboard up, and leaves Muxify
+with no modifier keys at all — see ADR 0003, which now records a choice rather
+than a constraint.
+
+## A settled size still needs a redraw
+
+Hiding the bar changed the keyboard's frame, which meant two resizes in quick
+succession, which left a row of tmux's padding on screen even though all three
+sizes agreed afterwards.
+
+The resize scheduler drops a request equal to the size already applied — the
+right thing for round trips, wrong for the redraw that rides along with it. So
+the redraw is now also fired from `keyboardDidShow` / `keyboardDidHide`: the
+keyboard settling is the last word on the Surface's size, and by then any
+padding painted during the animation is there to be cleaned up.

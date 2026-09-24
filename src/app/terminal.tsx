@@ -379,8 +379,21 @@ export default function TerminalScreen() {
   ]);
 
   useEffect(() => {
-    const shown = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    // The keyboard settling is the last word on the Surface's size, and tmux
+    // may have painted padding on the way there — while the animation ran, its
+    // idea of the Client and the Window disagreed. A redraw once the frame has
+    // stopped moving clears whatever it left; the resize path cannot be relied
+    // on for this, because a settled size that repeats one already applied is
+    // dropped as a no-op and takes its redraw with it.
+    const settled = () => void tmux.current?.redrawClient(clientTty.current);
+    const shown = Keyboard.addListener('keyboardDidShow', () => {
+      setKeyboardVisible(true);
+      settled();
+    });
+    const hidden = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      settled();
+    });
     return () => {
       shown.remove();
       hidden.remove();
@@ -423,6 +436,11 @@ export default function TerminalScreen() {
           ref={surface}
           style={styles.surface}
           fontSize={13}
+          // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
+          // turned off by a local patch. It was the reason ADR 0003 ruled out
+          // a modifier group in the Dock, so that decision is now open again —
+          // with the bar gone there are no modifier keys at all.
+          accessoryBar={false}
           theme={{
             background: SurfacePalette.background,
             foreground: SurfacePalette.foreground,

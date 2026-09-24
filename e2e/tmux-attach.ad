@@ -34,11 +34,12 @@ wait 8000
 is "text" "id=\"connection-status\"" "Connected"
 
 # The Dock's keyboard button toggles the system keyboard in both directions.
-# The library's Accessory Bar only exists while the Surface holds first
-# responder, so its Control key appearing and disappearing is the signal.
+# A letter key is the signal: the library's Accessory Bar used to serve, but it
+# is hidden now (see ADR 0003), and the system keyboard only exists while the
+# Surface holds first responder.
 press "label=\"Keyboard\""
-wait "label=\"Control\"" 5000
-is "visible" "label=\"Control\""
+wait "label=\"q\"" 5000
+is "visible" "label=\"q\""
 
 press "label=\"Keyboard\""
 wait 2500

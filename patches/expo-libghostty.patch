@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..d7e5b0e3a5d126924f314e9c557c3ea949bf8e35 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9ca5df64131937bf8b1c5154854307eea07dc0b8 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -18,6 +18,12 @@ export type TerminalViewRef = {
@@ -15,6 +15,18 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..d7e5b0e3a5d126924f314e9c557c3ea9
  };
  export type TerminalTheme = {
      /**
+@@ -52,6 +58,11 @@ export type TerminalViewProps = {
+      * pass undefined fields to keep ghostty's defaults.
+      */
+     theme?: TerminalTheme;
++    /**
++     * Whether to show the library's own accessory bar (ctrl, esc, tab, arrows)
++     * above the system keyboard. Defaults to true. iOS only.
++     */
++    accessoryBar?: boolean;
+     /** User keyboard/IME input to forward to the PTY. */
+     onInput?: (event: {
+         nativeEvent: TerminalInputEvent;
 diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
 index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..9200e3be3bd92af2e11ba06af52bc356a3376e1a 100644
 --- a/build/ExpoLibghosttyView.js
@@ -30,10 +42,10 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..9200e3be3bd92af2e11ba06af52bc356
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..3cde43a455bf2bc70aefd176dc4354872fc28cff 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..18761ac4c676d43bfd74dc45571a7fe84310ef3c 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -36,6 +36,21 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +36,27 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -52,14 +64,20 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..3cde43a455bf2bc70aefd176dc435487
 +      AsyncFunction("isFocused") { (view: ExpoLibghosttyView) -> Bool in
 +        view.isTerminalFocused
 +      }.runOnQueue(.main)
++
++      // The accessory bar of ctrl/esc/tab/arrows above the keyboard. Defaults
++      // to visible, which is the library's own behaviour.
++      Prop("accessoryBar") { (view: ExpoLibghosttyView, visible: Bool?) in
++        view.setAccessoryBar(visible: visible ?? true)
++      }
      }
    }
  }
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fc1ab064816b694decdc8d2a45080af3410b1e4c 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..f4d5507702af8e9cf494302d4b5ba95d38710ba3 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
-@@ -83,4 +83,22 @@ class ExpoLibghosttyView: ExpoView {
+@@ -83,4 +83,33 @@ class ExpoLibghosttyView: ExpoView {
    func finish(exitCode: UInt32) {
      session?.finish(exitCode: exitCode, runtimeMilliseconds: 0)
    }
@@ -80,6 +98,17 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fc1ab064816b694decdc8d2a45080af3
 +  /// Whether the terminal currently holds first responder.
 +  var isTerminalFocused: Bool {
 +    terminalView.isFirstResponder
++  }
++
++  /// Show or hide the accessory bar the library puts above the keyboard.
++  ///
++  /// `inputAccessoryView` is already nil when there are no items, so emptying
++  /// the list is all this takes; the property's `didSet` reloads the input
++  /// views, so it applies while the keyboard is up.
++  func setAccessoryBar(visible: Bool) {
++    #if !targetEnvironment(macCatalyst)
++      terminalView.inputAccessoryItems = visible ? TerminalInputAccessoryItem.defaultItems : []
++    #endif
 +  }
  }
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts

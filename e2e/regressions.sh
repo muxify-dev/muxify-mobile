@@ -8,6 +8,7 @@
 #   2  tmux's status line, hidden on attach and put back on the way out
 #   3  the resize, which has broken three separate ways
 #   4  Enter, which for a long time only made a new line
+#   5  the library's own Accessory Bar, hidden by a local patch
 #
 # The resize check is the one worth explaining. `surface`, `window` and
 # `client` must all agree. tmux pads every row between the Window and the
@@ -63,30 +64,35 @@ attach() {
   sleep 3
 }
 
-echo "0/5  putting the Session somewhere known"
+echo "0/6  putting the Session somewhere known"
 vm "tmux set-option -t '$SESSION' status on; \
     tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
 attach
 
-echo "1/5  the Terminal Screen has no navigation header"
+echo "1/6  the Terminal Screen has no navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
 snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
   && fail "a back button is back; Home in the Dock is what leaves this screen"
 echo "     no header, no back button"
 
-echo "2/5  tmux's status line is hidden while attached"
+echo "2/6  the library's Accessory Bar stays hidden"
+snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
+  && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
+echo "     no ctrl/esc/tab bar"
+
+echo "3/6  tmux's status line is hidden while attached"
 [ "$(status)" = off ] || fail "status line is '$(status)', expected off"
 
-echo "3/5  sizes agree with the keyboard down, and again with it up"
+echo "4/6  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
 agent-device press 'label="Keyboard"' >/dev/null 2>&1
 sleep 4
 agree "keyboard up"
 
-echo "4/5  Enter on the device runs the command"
+echo "5/6  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
 agent-device type "echo $MARKER" >/dev/null 2>&1
@@ -97,7 +103,7 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "5/5  leaving puts the Session's status line back"
+echo "6/6  leaving puts the Session's status line back"
 agent-device press 'label="Keyboard"' >/dev/null 2>&1
 sleep 2
 agent-device press 'label="Home"' >/dev/null 2>&1
@@ -107,5 +113,5 @@ sleep 2
 
 agent-device close >/dev/null 2>&1
 echo
-echo "PASS: no header, status line hidden and restored, sizes agree in both"
-echo "      keyboard states, and Enter runs commands."
+echo "PASS: no header, no Accessory Bar, status line hidden and restored,"
+echo "      sizes agree in both keyboard states, and Enter runs commands."
