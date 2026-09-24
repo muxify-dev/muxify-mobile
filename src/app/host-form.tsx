@@ -1,9 +1,8 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 
 import {
-  Button,
   Form,
   Host,
   Picker,
@@ -32,6 +31,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import {
@@ -167,10 +167,19 @@ function HostForm({
         options={{
           title: hostId ? 'Edit Host' : 'New Host',
           headerLeft: () => (
-            <ToolbarText label="Cancel" palette={palette} onPress={() => router.back()} />
+            <ToolbarGlyphButton
+              systemImage="xmark"
+              label="Cancel"
+              tint={palette.toolbarTint}
+              onPress={() => router.back()}
+            />
           ),
           headerRight: () => (
-            <ToolbarText label="Save" palette={palette} onPress={save} bold />
+            <ToolbarWord
+              label={hostId ? 'Save' : 'Add'}
+              color={palette.controlAccent}
+              onPress={save}
+            />
           ),
         }}
       />
@@ -353,35 +362,41 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
   );
 }
 
-/** A word in the navigation bar: Cancel on the left, Save on the right. */
-function ToolbarText({
+/**
+ * The sheet's confirming word: Add for a new Host, Save for an edit.
+ *
+ * Plain React Native, and padded: iOS 26 draws its glass capsule around the
+ * view's own frame, so a bare word ends up in a disc it spills out of.
+ */
+function ToolbarWord({
   label,
-  palette,
+  color,
   onPress,
-  bold,
 }: {
   label: string;
-  palette: Appearance;
+  color: string;
   onPress: () => void;
-  bold?: boolean;
 }) {
   return (
-    <Host matchContents>
-      <Button
-        label={label}
-        onPress={onPress}
-        modifiers={[
-          font({ size: 17, weight: bold ? 'semibold' : 'regular' }),
-          foregroundColor(palette.controlAccent),
-          accessibilityLabel(label),
-        ]}
-      />
-    </Host>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={styles.toolbarWord}>
+      <RNText style={[styles.toolbarWordText, { color }]}>{label}</RNText>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
+  },
+  toolbarWord: {
+    paddingHorizontal: 8,
+  },
+  toolbarWordText: {
+    fontSize: 17,
+    fontWeight: '600',
   },
 });

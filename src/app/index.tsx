@@ -30,8 +30,7 @@ import {
   scrollContentBackground,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
-import type { SFSymbol } from 'sf-symbols-typescript';
-
+import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
@@ -91,18 +90,18 @@ export default function HostsScreen() {
         options={{
           title: 'Muxify',
           headerLeft: () => (
-            <ToolbarButton
+            <ToolbarGlyphButton
               systemImage="gearshape"
               label="Settings"
-              palette={palette}
+              tint={palette.toolbarTint}
               onPress={() => router.push('/settings')}
             />
           ),
           headerRight: () => (
-            <ToolbarButton
+            <ToolbarGlyphButton
               systemImage="plus"
               label="Add Host"
-              palette={palette}
+              tint={palette.toolbarTint}
               onPress={addHost}
             />
           ),
@@ -172,41 +171,6 @@ export default function HostsScreen() {
         </Host>
       )}
     </View>
-  );
-}
-
-/**
- * A navigation-bar button.
- *
- * SwiftUI rather than a React Native view, because iOS 26 draws a bare glyph
- * button as a glass disc and nothing in React Native does — and these two sit
- * beside a system back button that gets one for free.
- */
-function ToolbarButton({
-  systemImage,
-  label,
-  palette,
-  onPress,
-}: {
-  systemImage: SFSymbol;
-  label: string;
-  palette: Appearance;
-  onPress: () => void;
-}) {
-  return (
-    <Host matchContents>
-      <Button
-        label=""
-        systemImage={systemImage}
-        onPress={onPress}
-        modifiers={[
-          buttonStyle('glass'),
-          frame({ width: 38, height: 38 }),
-          tint(palette.toolbarTint),
-          accessibilityLabel(label),
-        ]}
-      />
-    </Host>
   );
 }
 

@@ -61,7 +61,7 @@ function AppStack() {
             // the form is longer than any part-height detent would show.
             presentation: 'formSheet',
             sheetAllowedDetents: [1],
-            sheetGrabberVisible: false,
+            sheetGrabberVisible: true,
             title: 'New Host',
           }}
         />
