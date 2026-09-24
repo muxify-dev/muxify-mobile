@@ -49,7 +49,8 @@
     "test:watch": "jest --watch",
     "e2e": "agent-device test ./e2e/*.ad",
     "e2e:roundtrip": "bash e2e/ls-round-trip.sh",
-    "e2e:pickers": "bash e2e/pickers.sh"
+    "e2e:pickers": "bash e2e/pickers.sh",
+    "e2e:regressions": "bash e2e/regressions.sh"
   },
   "private": true,
   "jest": {

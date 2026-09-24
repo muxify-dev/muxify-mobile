@@ -12,7 +12,9 @@ import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 import { readDevHost } from '@/dev/dev-host';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
+import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
+import { resizeShellChannel } from '@/tmux/shell-resize';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import { readTopology, type Topology } from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
@@ -173,7 +175,7 @@ export default function TerminalScreen() {
       // A resize may have landed while connecting.
       const latest = grid.current;
       if (latest && (latest.cols !== current.cols || latest.rows !== current.rows)) {
-        opened.resize(latest.cols, latest.rows);
+        resizeShellChannel(opened, latest);
       }
     } catch (error) {
       if (!disposed.current) {
@@ -189,9 +191,9 @@ export default function TerminalScreen() {
       setVisibleGrid(next);
 
       if (shell.current) {
-        // Ask the channel too — correct in principle, and it costs nothing if
-        // the library ever starts sending the window-change request.
-        shell.current.resize(next.cols, next.rows);
+        // The Client's own size, which tmux pads the difference for when it is
+        // wrong. Needs a workaround of its own; see resizeShellChannel.
+        resizeShellChannel(shell.current, next);
         // The resize that actually lands. See TmuxClient.setWindowSize.
         remoteSize.request(next);
         return;
@@ -208,7 +210,10 @@ export default function TerminalScreen() {
   const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
     // `data` is base64. The sibling `text` field must not be used: a multi-byte
     // character split across reads is corrupted by text decoding.
-    shell.current?.write(base64ToBytes(nativeEvent.data));
+    //
+    // What comes out of the Surface is not quite what a shell expects — every
+    // keystroke arrives wrapped as a bracketed paste. See toShellInput.
+    shell.current?.write(toShellInput(base64ToBytes(nativeEvent.data)));
   }, []);
 
   /**

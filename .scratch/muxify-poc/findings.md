@@ -485,3 +485,73 @@ to decide whether a button is pressable. Every picker still re-reads on open, so
 nothing the user sees comes from a cache. A stale count can at worst leave a
 button pressable that opens a one-row sheet, which is a much smaller lie than
 showing a stale list.
+
+## Enter only ever made a new line, and the reason was not the Enter key
+
+Reported as: typing `ls` and pressing Enter does nothing but add a line.
+
+The bytes the Surface emits for typing `ls` and pressing Enter:
+
+```
+1b 5b 32 30 30 7e | 6c | 1b 5b 32 30 31 7e     ESC[200~  l  ESC[201~
+1b 5b 32 30 30 7e | 73 | 1b 5b 32 30 31 7e     ESC[200~  s  ESC[201~
+1b 5b 32 30 30 7e | 0a | 1b 5b 32 30 31 7e     ESC[200~ LF  ESC[201~
+```
+
+Every single keystroke is its own **bracketed paste**. iOS delivers all text
+through `insertText`, so ghostty cannot tell typing from pasting and calls
+`sendText`, which brackets. A shell with bracketed paste on — any modern one —
+then does exactly what it is told and inserts the newline as text rather than
+running the line.
+
+So the Enter key was never the problem, which is why looking at it never found
+anything. `toShellInput` strips the markers and turns LF into CR.
+
+The cost, stated plainly: a multi-line paste now runs every line, because
+nothing downstream can tell a paste from typing any more. That is what
+bracketed paste exists to prevent. It is the right trade only because the
+alternative is a terminal that cannot run a command.
+
+Worth noting what let this survive so long: `e2e/ls-round-trip.sh` typed on the
+device but submitted with `tmux send-keys Enter` over SSH, because agent-device
+could not press the on-screen return key. The one step that was faked was the
+one that was broken. It now submits on the device.
+
+## The resize, third time: the Client size was the whole story
+
+Reported as: the resize is still broken when the keyboard opens. It was, and an
+earlier claim here that it was fixed was wrong.
+
+The measurement that misled: `surface == window`, and `tmux capture-pane`
+showed no dots. Both true, both irrelevant. **The padding tmux draws is not in
+the pane**, so reading the pane can never see it. What the Surface actually
+showed was a screen of dots with the content scrolled off the top.
+
+The mechanism, finally: tmux pads every row between the Window and the Client.
+With the Client stuck a resize behind at 32 rows and the Window correctly at 16,
+tmux draws 16 rows of content and then keeps going to row 32. Those rows are
+past the end of the Surface's 16-row grid, so the Surface **scrolls** to fit
+them — pushing the real content out of view and leaving dots.
+
+A correct Client size is the only thing that stops it, and the earlier finding
+had written that off as impossible. It is not:
+
+The library does not send the size it is given. It sends the one it was given
+*before*, and ignores a call repeating the size it already holds. So a second
+call with a deliberately different size flushes the first. One row shorter is
+the right dummy — a Client smaller than the Window makes tmux draw less for an
+instant, where a Client larger makes it pad, which is the bug.
+
+Measured, for the first time in this project: `surface == window == client` in
+both keyboard states.
+
+Ruled out along the way: repeated identical calls (deduped), a delayed repeat,
+writing a byte to nudge the channel, and `refresh-client -C` (control-mode only,
+silently does nothing for an attached Client — tmux 3.6).
+
+## What the regression suite is actually holding down
+
+`e2e/regressions.sh` exists because three of these bugs came back in different
+clothes. The check that matters is three agreeing numbers: `surface`, `window`
+and `client`. Any two of them agreeing is not enough — that is exactly the
+state that shipped a broken terminal twice.

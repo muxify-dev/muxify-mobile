@@ -2,21 +2,17 @@
 #
 # Full input/output round trip through a real Session (tickets 04 and 05).
 #
-#   type "ls" on the device -> SSH -> tmux -> bash -> bytes back -> rendered
+#   type "ls" and press Enter on the device -> SSH -> tmux -> bash -> bytes
+#   back -> rendered
 #
 # Why this is a shell script rather than an .ad suite: the Surface renders with
 # Metal, so tmux's output never reaches the accessibility tree and no selector
 # can assert on it. Reading the pane over SSH is the only way to check what was
 # actually drawn. The .ad suites cover everything that IS visible to selectors.
 #
-# Known harness limitation: agent-device cannot press the on-screen return key.
-# Letter keys type fine, but return never reaches the app — pressed by ref it
-# lands on a neighbouring key, and pressed at its own reported rect centre it
-# does nothing. Newline and carriage return passed to `type` are inserted but
-# not submitted. So this script types the command on the device and submits it
-# out of band. That split is not a weakening of the test: the characters have to
-# have genuinely reached the remote shell's input buffer for an out-of-band
-# Enter to run the right command, which is exactly what is being proven.
+# Enter is pressed on the device, like everything else here. That was not
+# always possible: every keystroke arrives from iOS as a bracketed paste, Enter
+# included, so the shell inserted a newline and ran nothing. See toShellInput.
 #
 # Requires a configured .env.local and a booted simulator running the app.
 # Usage:  bash e2e/ls-round-trip.sh
@@ -64,8 +60,9 @@ sleep 2
 vm "tmux capture-pane -t 0 -p" | grep -q '\$ ls$' \
   || fail "characters typed on the device did not reach the remote shell"
 
-echo "5/5  submitting, then checking what the Session rendered"
-vm "tmux send-keys -t 0 Enter"
+echo "5/5  submitting on the device, then checking what the Session rendered"
+agent-device type "
+" >/dev/null 2>&1
 sleep 3
 PANE=$(vm "tmux capture-pane -t 0 -p")
 
