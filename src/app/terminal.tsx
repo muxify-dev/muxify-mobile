@@ -255,6 +255,26 @@ export default function TerminalScreen() {
   activePaneRef.current = activePaneId;
   const activeView = useCallback(() => views.current.get(activePaneId), [activePaneId]);
 
+  /**
+   * Runs a command nobody is waiting on, and owns how it can fail.
+   *
+   * Every one of these is a round trip the screen started and then stopped
+   * caring about, and leaving the screen closes the Connection out from under
+   * whatever was still in flight. A Control Command rejects when the channel
+   * is gone — that is the contract — so without somewhere to land, walking out
+   * mid-command is an unhandled rejection rather than a teardown.
+   *
+   * Once disposed there is nothing left to tell and no screen to tell it on,
+   * so it is dropped. While the screen is still up, a command that failed is
+   * worth the same quiet line as one typed into a Pane that has gone.
+   */
+  const background = useCallback((work: () => Promise<unknown>): void => {
+    void work().catch((error: unknown) => {
+      if (disposed.current) return;
+      setPaneTrouble(describe(error));
+    });
+  }, []);
+
   /** Reads the Topology from the Host and publishes it to the screen. */
   const refreshTopology = useCallback(async (): Promise<Topology> => {
     const model = store.current;
@@ -643,7 +663,7 @@ export default function TerminalScreen() {
       const client = tmux.current;
       if (!client) return;
 
-      if (kind !== 'sessions') void refreshTopology();
+      if (kind !== 'sessions') background(refreshTopology);
 
       if (kind === 'panes') return;
       const targets =
@@ -654,12 +674,18 @@ export default function TerminalScreen() {
             );
       if (targets.length === 0) return;
       void (async () => {
-        const fresh = await client.capturePanes(targets);
-        if (disposed.current || fresh.size === 0) return;
-        setPreviews((previous) => new Map([...previous, ...fresh]));
+        try {
+          const fresh = await client.capturePanes(targets);
+          if (disposed.current || fresh.size === 0) return;
+          setPreviews((previous) => new Map([...previous, ...fresh]));
+        } catch {
+          // Previews that will not read leave the sheet showing the ones it
+          // opened with, which is the same thing it shows before any land.
+          // Not worth a line of trouble over, and not the Connection's fault.
+        }
       })();
     },
-    [refreshTopology, sessions, topology.windows],
+    [background, refreshTopology, sessions, topology.windows],
   );
 
   /** Re-reads the Host's Session list, which no notification describes. */
@@ -744,7 +770,7 @@ export default function TerminalScreen() {
               }
               if (event.kind === 'sessions-changed') refreshSessions();
               const applied = model.apply(event);
-              if (applied === 'stale') void refreshTopology();
+              if (applied === 'stale') background(refreshTopology);
             },
             onClosed: (reason) => {
               if (!disposed.current) setStatus({ phase: 'closed', reason });
@@ -794,7 +820,7 @@ export default function TerminalScreen() {
         }
       }
     },
-    [hostId, sessionParam, remoteSize, refreshTopology, refreshSessions, zoomed],
+    [hostId, sessionParam, remoteSize, background, refreshTopology, refreshSessions, zoomed],
   );
 
   /**
@@ -1028,14 +1054,14 @@ export default function TerminalScreen() {
   const changeZoom = useCallback(
     (on: boolean) => {
       setZoomed(on);
-      void (async () => {
+      background(async () => {
         const client = tmux.current;
         if (!client) return;
         await client.setZoom(sessionName.current, on);
         await refreshTopology();
-      })();
+      });
     },
-    [refreshTopology],
+    [background, refreshTopology],
   );
 
   /**
@@ -1154,13 +1180,16 @@ export default function TerminalScreen() {
       connection.current = null;
       tmux.current = null;
       store.current = null;
+      // Errors on the way out go nowhere on purpose: the screen is already
+      // gone, and a Host that will not be said goodbye to politely is a Host
+      // the socket drops anyway.
       void (async () => {
         try {
           await openControl?.close();
         } finally {
           await openConnection?.disconnect();
         }
-      })();
+      })().catch(() => {});
     };
   }, []);
 
