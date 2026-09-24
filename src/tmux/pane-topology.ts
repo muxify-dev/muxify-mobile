@@ -16,14 +16,25 @@ export interface TopologyPane {
 }
 
 /**
- * Lays the Panes of a Window out for a diagram, giving each an equal share.
+ * The least of a diagram either side of a split may be given, as a fraction
+ * of the space being split.
  *
- * Drawing tmux's real proportions is the obvious thing and it reads badly: a
- * Pane holding four rows of a forty-row Window becomes a sliver too small to
- * label or tap, and the diagram is a picker before it is a picture. So the
- * arrangement is taken from tmux and the proportions are not — a split divides
- * its space by how many Panes are on each side, which keeps every Pane worth
- * pointing at while the shape of the Window still reads as itself.
+ * A Pane holding four rows of a forty-row Window is a tenth of the board: a
+ * tile too short for its own two lines of label, and too small to tap with
+ * any confidence. A fifth is the smallest tile on which the title and the
+ * command both still fit, measured on the Panes sheet's 4:3 well.
+ */
+export const MIN_SHARE = 0.2;
+
+/**
+ * Lays the Panes of a Window out for a diagram, to tmux's proportions.
+ *
+ * Each split divides its space the way tmux did — by the cells on either side
+ * of it — so a Pane the user dragged wide is wide on the diagram too, and a
+ * Pane they squeezed reads as squeezed. Under that sits a floor: neither side
+ * of a split is given less than MIN_SHARE of the space, because the diagram is
+ * a picker before it is a picture and a sliver cannot be tapped. ADR 0004
+ * records the equal-weight version this replaced, and why.
  *
  * The arrangement is recovered by finding a guillotine cut: a vertical or
  * horizontal line with every Pane wholly on one side of it. tmux's layouts are
@@ -57,23 +68,21 @@ export function paneTopologyFrames(panes: TopologyPane[]): Map<number, Frame> {
 
 /** One Pane, or two groups of them side by side or stacked. */
 type Node =
-  | { kind: 'pane'; index: number; count: 1 }
-  | { kind: 'split'; axis: Axis; first: Node; second: Node; count: number };
+  | { kind: 'pane'; pane: TopologyPane }
+  | { kind: 'split'; axis: Axis; first: Node; second: Node };
 
 type Axis = 'columns' | 'rows';
 
 function split(panes: TopologyPane[]): Node | null {
   if (panes.length === 0) return null;
-  if (panes.length === 1) return { kind: 'pane', index: panes[0].index, count: 1 };
+  if (panes.length === 1) return { kind: 'pane', pane: panes[0] };
 
   for (const axis of ['columns', 'rows'] as const) {
     const cut = guillotine(panes, axis);
     if (!cut) continue;
     const first = split(cut[0]);
     const second = split(cut[1]);
-    if (first && second) {
-      return { kind: 'split', axis, first, second, count: first.count + second.count };
-    }
+    if (first && second) return { kind: 'split', axis, first, second };
   }
   return null;
 }
@@ -104,13 +113,36 @@ function guillotine(
   return null;
 }
 
+/**
+ * How many cells a group of Panes spans along an axis, dividers excluded.
+ *
+ * Dividers are left out on both sides of a split so that two Panes tmux made
+ * 40 and 39 wide are drawn 40:39, not 41:39 with the divider counted against
+ * one of them.
+ */
+function extent(node: Node, axis: Axis): number {
+  if (node.kind === 'pane') return axis === 'columns' ? node.pane.width : node.pane.height;
+  if (node.axis === axis) return extent(node.first, axis) + extent(node.second, axis);
+  return Math.max(extent(node.first, axis), extent(node.second, axis));
+}
+
+/** tmux's share for the first side of a split, held off the floor. */
+function shareOf(node: Node & { kind: 'split' }): number {
+  const first = extent(node.first, node.axis);
+  const total = first + extent(node.second, node.axis);
+  // Degenerate geometry — a layout that parsed to zero-width Panes — has no
+  // proportion to draw; halve rather than divide by nothing.
+  const share = total > 0 ? first / total : 0.5;
+  return Math.min(1 - MIN_SHARE, Math.max(MIN_SHARE, share));
+}
+
 function place(node: Node, within: Frame, frames: Map<number, Frame>): void {
   if (node.kind === 'pane') {
-    frames.set(node.index, within);
+    frames.set(node.pane.index, within);
     return;
   }
 
-  const share = node.first.count / node.count;
+  const share = shareOf(node);
   if (node.axis === 'columns') {
     const width = within.width * share;
     place(node.first, { ...within, width }, frames);

@@ -1,4 +1,4 @@
-import { paneTopologyFrames, type TopologyPane } from './pane-topology';
+import { MIN_SHARE, paneTopologyFrames, type TopologyPane } from './pane-topology';
 
 function pane(index: number, left: number, top: number, width: number, height: number): TopologyPane {
   return { index, left, top, width, height };
@@ -18,26 +18,50 @@ describe('paneTopologyFrames', () => {
     );
   });
 
-  it('splits a two-Pane Window down the middle, whatever tmux made of it', () => {
-    // 60/20 in cells; half and half on the diagram, because both are equally
-    // worth pointing at.
+  it('splits a two-Pane Window where tmux did', () => {
+    // 60 and 19 cells with the divider between them left out of the count, so
+    // the diagram is 60:19 — the Pane the user dragged wide is wide here too.
     const frames = paneTopologyFrames([pane(0, 0, 0, 60, 24), pane(1, 61, 0, 19, 24)]);
 
-    expect(frames.get(0)).toEqual({ x: 0, y: 0, width: 0.5, height: 1 });
-    expect(frames.get(1)).toEqual({ x: 0.5, y: 0, width: 0.5, height: 1 });
+    expect(frames.get(0)).toEqual({ x: 0, y: 0, width: 60 / 79, height: 1 });
+    expect(frames.get(1)?.x).toBeCloseTo(60 / 79);
+    expect(frames.get(1)?.width).toBeCloseTo(19 / 79);
   });
 
-  it('weighs a split by how many Panes are on each side', () => {
+  it('weighs a split by the cells on each side, all the way down', () => {
     const frames = paneTopologyFrames(NESTED);
 
-    // Two Panes left, one right: two thirds and one third.
-    expect(frames.get(2)?.x).toBeCloseTo(2 / 3);
-    expect(frames.get(2)?.width).toBeCloseTo(1 / 3);
-    expect(frames.get(0)).toEqual({ x: 0, y: 0, width: 2 / 3, height: 0.5 });
-    expect(frames.get(1)).toEqual({ x: 0, y: 0.5, width: 2 / 3, height: 0.5 });
+    // 40 columns left, 39 right; the left stack is 12 rows over 11.
+    expect(frames.get(2)?.x).toBeCloseTo(40 / 79);
+    expect(frames.get(2)?.width).toBeCloseTo(39 / 79);
+    expect(frames.get(0)).toEqual({ x: 0, y: 0, width: 40 / 79, height: 12 / 23 });
+    expect(frames.get(1)?.y).toBeCloseTo(12 / 23);
+    expect(frames.get(1)?.height).toBeCloseTo(11 / 23);
   });
 
-  it('keeps the arrangement even though it drops the proportions', () => {
+  it('measures a nested group by its widest member, not the sum of them', () => {
+    // A stack of two 40-wide Panes is 40 wide, not 80: only along the axis
+    // being split do extents add up.
+    const frames = paneTopologyFrames([
+      pane(0, 0, 0, 40, 10),
+      pane(1, 0, 11, 40, 13),
+      pane(2, 41, 0, 40, 24),
+    ]);
+
+    expect(frames.get(2)?.x).toBeCloseTo(0.5);
+  });
+
+  it('holds a sliver up to the floor, so it can still be tapped', () => {
+    // Four rows of forty is a tenth of the board: too short for its label and
+    // too small to hit. It is drawn at the floor and the big Pane gives it up.
+    const frames = paneTopologyFrames([pane(0, 0, 0, 80, 4), pane(1, 0, 5, 80, 35)]);
+
+    expect(frames.get(0)?.height).toBeCloseTo(MIN_SHARE);
+    expect(frames.get(1)?.y).toBeCloseTo(MIN_SHARE);
+    expect(frames.get(1)?.height).toBeCloseTo(1 - MIN_SHARE);
+  });
+
+  it('keeps the arrangement as well as the proportions', () => {
     const frames = paneTopologyFrames(NESTED);
 
     // 0 above 1, both left of 2 — which is the whole point of the diagram.

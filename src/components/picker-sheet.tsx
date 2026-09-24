@@ -350,7 +350,8 @@ function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) 
  * Absolute placement inside one well: tmux splits nest arbitrarily, and any
  * row-and-column approximation gets the interesting layouts wrong. The frames
  * arrive as fractions, so one multiplication by the well's size places them.
- * See paneTopologyFrames for why those fractions are not tmux's real ones.
+ * The fractions are tmux's own proportions, held off a floor so the smallest
+ * Pane stays a tile and not a line — see paneTopologyFrames.
  */
 function PaneBoard({
   cards,
