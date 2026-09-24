@@ -14,17 +14,12 @@ that split across network chunk boundaries and must not be used.
 
 **Blocked by:** 03
 
-**Status:** needs-info
+**Status:** ready-for-agent
 
-> Blocked: this ticket connects to a real Host, and no SSH
-> credentials are available to the agent. Needs an address, port, user and
-> either a password or a key to proceed — ideally a throwaway box with a
-> tmux Session already running.
-
-- [ ] The SSH library is installed at an exact pinned version
-- [ ] A Connection authenticates to a hardcoded Host and opens a Shell Channel
-- [ ] Shell Channel output renders live in the Surface
-- [ ] Keystrokes typed on the device reach the remote shell and echo back
-- [ ] Bytes cross as base64 in both directions, never as decoded text
-- [ ] Output containing multi-byte characters renders without corruption
-- [ ] Leaving the screen closes the Connection cleanly
+- [x] The SSH library is installed at an exact pinned version
+- [x] A Connection authenticates to a hardcoded Host and opens a Shell Channel
+- [x] Shell Channel output renders live in the Surface
+- [x] Keystrokes typed on the device reach the remote shell and echo back
+- [x] Bytes cross as base64 in both directions, never as decoded text
+- [x] Output containing multi-byte characters renders without corruption
+- [x] Leaving the screen closes the Connection cleanly

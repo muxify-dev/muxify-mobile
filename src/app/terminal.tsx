@@ -1,66 +1,153 @@
+import { connect, type SshConnection, type SshShell } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
-import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
-import { bytesToBase64, utf8ToBytes } from '@/lib/base64';
-
-/** CSI introducer (ESC + '['), built from a char code so the source carries
- * no invisible control bytes. */
-const CSI = String.fromCharCode(27) + '[';
+import { readDevHost } from '@/dev/dev-host';
+import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
+import { attachSessionCommand } from '@/tmux/commands';
 
 /** The Surface's cell grid. Travels as a unit everywhere it is used. */
 type Grid = { cols: number; rows: number };
 
-/**
- * Canned output standing in for a Shell Channel until ticket 04 wires SSH.
- *
- * Exercises what the Surface has to get right: text, the full ANSI colour
- * range, absolute cursor positioning, and multi-byte UTF-8. All of it goes
- * through `write()` as raw bytes — the path tickets 04 and 05 must use — rather
- * than through `writeText()`, so the byte path is what actually gets proven.
- */
-function demoOutput({ cols, rows }: Grid): string {
-  const rule = '-'.repeat(Math.max(0, Math.min(cols, 40) - 2));
-
-  const swatch = (offset: number) =>
-    Array.from({ length: 8 }, (_, i) => `${CSI}${offset + i}m  ${CSI}0m`).join('');
-
-  return [
-    `${CSI}2J${CSI}H`, // clear screen, cursor home
-    `${CSI}1;36m+${rule}+${CSI}0m\r\n`,
-    `${CSI}1;36m|${CSI}0m ${CSI}1mmuxify${CSI}0m -- Surface smoke test\r\n`,
-    `${CSI}1;36m+${rule}+${CSI}0m\r\n\r\n`,
-    `  grid    ${CSI}33m${cols}${CSI}0m x ${CSI}33m${rows}${CSI}0m cells\r\n\r\n`,
-    `  normal  ${swatch(40)}\r\n`,
-    `  bright  ${swatch(100)}\r\n\r\n`,
-    `  ${CSI}1mbold${CSI}0m ${CSI}2mdim${CSI}0m ${CSI}3mitalic${CSI}0m ${CSI}4munderline${CSI}0m ${CSI}7mreverse${CSI}0m\r\n\r\n`,
-    `  utf-8   ünïcödé ✓ 日本語 ✓ ▁▃▅▇█\r\n\r\n`,
-    `${CSI}16;3H${CSI}32m*${CSI}0m cursor addressed to row 16, col 3\r\n`,
-  ].join('');
-}
+type Status =
+  | { phase: 'waiting-for-layout' }
+  | { phase: 'connecting' }
+  | { phase: 'connected'; fingerprint: string }
+  | { phase: 'closed'; exitCode: number | undefined }
+  | { phase: 'failed'; message: string };
 
 export default function TerminalScreen() {
   const surface = useRef<TerminalViewRef>(null);
-  const [grid, setGrid] = useState<Grid | null>(null);
+  const connection = useRef<SshConnection | null>(null);
+  const shell = useRef<SshShell | null>(null);
+  const grid = useRef<Grid | null>(null);
+  const hasStarted = useRef(false);
+  const disposed = useRef(false);
 
-  const handleResize = useCallback(({ nativeEvent }: { nativeEvent: Grid }) => {
-    const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
-    setGrid(next);
+  const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
+  const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
 
-    // Redraw on every resize, not just the first. The first event is a
-    // pre-layout measurement and reports a grid the Surface never settles at,
-    // so drawing once would leave stale dimensions on screen. Ticket 05 must
-    // size the remote terminal from the latest event for the same reason.
-    surface.current?.write(bytesToBase64(utf8ToBytes(demoOutput(next))));
+  const start = useCallback(async (initial: Grid) => {
+    const config = readDevHost();
+    if (!config.ok) {
+      setStatus({ phase: 'failed', message: config.reason });
+      return;
+    }
+
+    const { address, port, username, privateKeyPem } = config.host;
+    setStatus({ phase: 'connecting' });
+
+    try {
+      const conn = await connect({
+        host: address,
+        port,
+        username,
+        auth: { type: 'privateKey', privateKey: privateKeyPem },
+        // Ticket 13 replaces this with trust-on-first-use against a stored
+        // Fingerprint. Accepting unconditionally is a spike-only shortcut.
+        verifyHostKey: () => true,
+        onDisconnected: (reason) => {
+          if (!disposed.current) setStatus({ phase: 'failed', message: reason });
+        },
+      });
+
+      if (disposed.current) {
+        await conn.disconnect();
+        return;
+      }
+      connection.current = conn;
+
+      // Size from the latest grid, not the one captured when this started —
+      // `onResize` fires more than once and the first is a pre-layout value.
+      const current = grid.current ?? initial;
+
+      const opened = await conn.openShell(
+        {
+          term: 'xterm-256color',
+          cols: current.cols,
+          rows: current.rows,
+          // Attach directly instead of opening a login shell and typing: the
+          // Shell Channel exists to carry one Session. Attach-only by design.
+          command: attachSessionCommand(config.host.sessionName),
+        },
+        {
+          onData: (data) => {
+            surface.current?.write(bytesToBase64(new Uint8Array(data)));
+          },
+          onClosed: (exitCode) => {
+            shell.current = null;
+            if (!disposed.current) setStatus({ phase: 'closed', exitCode });
+          },
+        },
+      );
+
+      if (disposed.current) {
+        await opened.close();
+        await conn.disconnect();
+        return;
+      }
+
+      shell.current = opened;
+      setStatus({ phase: 'connected', fingerprint: conn.hostKey.fingerprint });
+
+      // A resize may have landed while connecting.
+      const latest = grid.current;
+      if (latest && (latest.cols !== current.cols || latest.rows !== current.rows)) {
+        opened.resize(latest.cols, latest.rows);
+      }
+    } catch (error) {
+      if (!disposed.current) {
+        setStatus({ phase: 'failed', message: describe(error) });
+      }
+    }
   }, []);
 
+  const handleResize = useCallback(
+    ({ nativeEvent }: { nativeEvent: Grid }) => {
+      const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+      grid.current = next;
+      setVisibleGrid(next);
+
+      if (shell.current) {
+        shell.current.resize(next.cols, next.rows);
+        return;
+      }
+
+      if (!hasStarted.current) {
+        hasStarted.current = true;
+        void start(next);
+      }
+    },
+    [start],
+  );
+
   const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
-    // Ticket 04 forwards these bytes to the Shell Channel. Echo locally for now
-    // so the keyboard and the library's Accessory Bar are demonstrably wired.
-    // `data` is base64; the sibling `text` field must not be used.
-    surface.current?.write(nativeEvent.data);
+    // `data` is base64. The sibling `text` field must not be used: a multi-byte
+    // character split across reads is corrupted by text decoding.
+    shell.current?.write(base64ToBytes(nativeEvent.data));
+  }, []);
+
+  useEffect(() => {
+    disposed.current = false;
+    return () => {
+      // Connections are ephemeral by design; leaving the screen tears this
+      // down and returning re-attaches, which tmux makes cheap.
+      disposed.current = true;
+      const openShellHandle = shell.current;
+      const openConnection = connection.current;
+      shell.current = null;
+      connection.current = null;
+      void (async () => {
+        try {
+          await openShellHandle?.close();
+        } finally {
+          await openConnection?.disconnect();
+        }
+      })();
+    };
   }, []);
 
   return (
@@ -77,16 +164,72 @@ export default function TerminalScreen() {
         onResize={handleResize}
         onInput={handleInput}
       />
-      {/* Only rendered once the Surface has reported a grid, so its presence is
-          the e2e signal that layout and `onResize` completed. The value is
-          device-specific; tests should select on the id, not the text. */}
-      {grid ? (
-        <ThemedText type="code" style={styles.status} testID="surface-grid">
-          {grid.cols}x{grid.rows}
+
+      <View style={styles.overlay} pointerEvents="none">
+        {/* Always rendered, so its value can be asserted rather than its
+            absence. `surface-grid` appears only once the Surface has reported a
+            grid, so its presence is the signal that layout and `onResize`
+            completed; the value is device-specific, so select on the id. */}
+        <ThemedText type="code" style={styles.statusText} testID="connection-status">
+          {label(status)}
         </ThemedText>
-      ) : null}
+        {visibleGrid ? (
+          <ThemedText type="code" style={styles.statusText} testID="surface-grid">
+            {visibleGrid.cols}x{visibleGrid.rows}
+          </ThemedText>
+        ) : null}
+      </View>
+
+      <StatusBanner status={status} />
     </View>
   );
+}
+
+/**
+ * The loud banner, shown only while something needs the user's attention. The
+ * quiet always-present indicator above carries the same state for assertions.
+ */
+function StatusBanner({ status }: { status: Status }) {
+  if (status.phase === 'connected') {
+    return null;
+  }
+
+  const busy = status.phase === 'connecting' || status.phase === 'waiting-for-layout';
+
+  return (
+    <View style={styles.banner} accessibilityLabel={label(status)}>
+      {busy ? <ActivityIndicator size="small" color={SurfacePalette.foreground} /> : null}
+      <ThemedText type="small" style={styles.bannerText}>
+        {label(status)}
+      </ThemedText>
+    </View>
+  );
+}
+
+function label(status: Status): string {
+  switch (status.phase) {
+    case 'waiting-for-layout':
+      return 'Preparing terminal';
+    case 'connecting':
+      return 'Connecting';
+    case 'connected':
+      return 'Connected';
+    case 'closed':
+      return status.exitCode === undefined
+        ? 'Shell closed'
+        : `Shell closed (exit ${status.exitCode})`;
+    case 'failed':
+      return `Failed: ${status.message}`;
+  }
+}
+
+function describe(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const { code } = error as { code?: unknown };
+    const message = error instanceof Error ? error.message : String(error);
+    return code ? `${String(code)} — ${message}` : message;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 const styles = StyleSheet.create({
@@ -97,10 +240,31 @@ const styles = StyleSheet.create({
   surface: {
     flex: 1,
   },
-  status: {
+  overlay: {
     position: 'absolute',
     top: 8,
     right: 12,
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  statusText: {
     color: SurfacePalette.dim,
+  },
+  banner: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#1e2230',
+  },
+  bannerText: {
+    flexShrink: 1,
+    color: SurfacePalette.foreground,
   },
 });

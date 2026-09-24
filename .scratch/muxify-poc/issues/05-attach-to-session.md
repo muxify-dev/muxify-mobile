@@ -12,9 +12,9 @@ Muxify only ever attaches. It does not create, rename or kill a Session.
 
 **Status:** ready-for-agent
 
-- [ ] The Shell Channel attaches to an existing Session by name
-- [ ] The attached Session renders correctly, including colour and cursor position
-- [ ] Surface resize events resize the remote terminal
-- [ ] A full-screen program such as an editor draws at the correct size
-- [ ] Rotating the device and toggling the keyboard both reflow the remote terminal
-- [ ] Detaching and re-attaching returns to the same Session state
+- [x] The Shell Channel attaches to an existing Session by name
+- [x] The attached Session renders correctly, including colour and cursor position
+- [x] Surface resize events resize the remote terminal
+- [ ] A full-screen program such as an editor draws at the correct size (not yet exercised)
+- [ ] Rotating the device and toggling the keyboard both reflow the remote terminal (blocked: app is orientation-locked to portrait and the iOS keyboard overlays rather than resizes the Surface — see findings.md)
+- [x] Detaching and re-attaching returns to the same Session state
