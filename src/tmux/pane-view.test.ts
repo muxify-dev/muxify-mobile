@@ -2,6 +2,7 @@ import { createTestClock } from '@/lib/test-clock';
 
 import {
   createPaneView,
+  OUTPUT_SETTLE_MS,
   PAINT_SETTLE_MS,
   type PaneReader,
   type PaneSurface,
@@ -130,6 +131,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
   const positions: (ScrollPosition | null)[] = [];
   const errors: unknown[] = [];
   const mouse: boolean[] = [];
+  const cursor: number[] = [];
   const paints: number[] = [];
   const clock = createTestClock();
   const screen = fakeSurface();
@@ -141,6 +143,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
       onScroll: (position) => positions.push(position),
       onError: (error) => errors.push(error),
       onMouseTracking: (wanted) => mouse.push(wanted),
+      onCursor: (row) => cursor.push(row),
       onPainted: () => paints.push(clock.now()),
     },
     { clock },
@@ -153,6 +156,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
     positions,
     errors,
     mouse,
+    cursor,
     paints,
     clock,
     tick: (ms: number) => clock.advance(ms),
@@ -962,5 +966,70 @@ describe('which Pane draws a cursor', () => {
     kit.written.length = 0;
     kit.view.setActive(true);
     expect(kit.written).toHaveLength(0);
+  });
+});
+
+describe('telling the Screen where the cursor is', () => {
+  it('reports the row once the Pane is painted', async () => {
+    const host = fakePane(paneState({ cursorRow: 7 }));
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.cursor).toEqual([7]);
+  });
+
+  it('reads the Pane once more when its output stops', async () => {
+    // The throttled readings are all taken before the chunk that prompted
+    // them is written, so the last one of a burst describes the Pane as it was
+    // before the burst finished. Thirty lines of output carry the cursor
+    // under the keyboard, and the Window has to follow it. See readWhenSettled.
+    const host = fakePane(paneState({ cursorRow: 7 }));
+    const kit = viewOn(host);
+    await paints(kit);
+
+    host.state = paneState({ cursorRow: 37 });
+    kit.view.receive(bytes('a burst'));
+    kit.view.receive(bytes('and the rest of it'));
+    await settle();
+    // Nothing yet: the reading this burst triggered was taken before it landed.
+    expect(kit.cursor).toEqual([7]);
+
+    kit.tick(OUTPUT_SETTLE_MS);
+    await settle();
+    expect(kit.cursor).toEqual([7, 37]);
+  });
+
+  it('says nothing for a cursor that has not moved', async () => {
+    const host = fakePane(paneState({ cursorRow: 7 }));
+    const kit = viewOn(host);
+    await paints(kit);
+
+    kit.tick(2000);
+    kit.view.receive(bytes('same row'));
+    await settle();
+    kit.tick(OUTPUT_SETTLE_MS);
+    await settle();
+
+    expect(kit.cursor).toEqual([7]);
+  });
+
+  it('asks no more than once for a burst, however many chunks it comes in', async () => {
+    const host = fakePane(paneState({ cursorRow: 7 }));
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.tick(2000);
+    host.asked.length = 0;
+
+    for (let at = 0; at < 20; at += 1) {
+      kit.view.receive(bytes('chunk'));
+      kit.tick(OUTPUT_SETTLE_MS / 2);
+    }
+    await settle();
+    kit.tick(OUTPUT_SETTLE_MS);
+    await settle();
+
+    // Three seconds of chunks: two throttled readings, a second and a half
+    // apart, and one settled reading at the end. A chatty Pane costs three,
+    // not twenty — and the settled one is the only one that saw the end.
+    expect(host.asked.filter((each) => each.startsWith('state'))).toHaveLength(3);
   });
 });

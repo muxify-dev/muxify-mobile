@@ -122,8 +122,17 @@ _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A
 Session can have several Clients and tmux keeps each one's size separately — so
-a Client's size is not the Session's size and not the Surface's.
+a Client's size is not the Session's size and not the Surface's. Muxify's is
+the phone's screen with the keyboard down, and the keyboard does not change it
+(ADR 0008).
 _Avoid_: viewer, terminal, connection
+
+**Slide**:
+How far the Window is pushed up under the keyboard, so the row being typed on
+stays above the keys: nothing for a Pane with three lines on it, everything the
+keyboard covers for a Pane full to its last row. The Window is not resized for
+the keyboard; it is slid, and the part slid out of view is clipped.
+_Avoid_: scroll (which is the Scrollback's), offset, keyboard avoidance
 
 ### Terminal
 

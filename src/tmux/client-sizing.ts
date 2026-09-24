@@ -61,7 +61,8 @@ export interface ClientSizing {
    * The last grid that stood still.
    *
    * What a reconnect is sized from, and deliberately not the latest reported
-   * one: a grid read while the keyboard is moving is a shape nobody asked for.
+   * one: a grid read while the screen is still turning is a shape nobody asked
+   * for.
    */
   stableGrid(): Grid | null;
   /** Nothing more is wanted. Cancels the settle and strands no waiter. */

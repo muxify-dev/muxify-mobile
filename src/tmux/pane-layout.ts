@@ -184,3 +184,41 @@ export function cellOf(
   const size = cell && cell > 0 ? cell : extent / cells;
   return Math.min(cells, Math.max(1, Math.floor(point / size) + 1));
 }
+
+/**
+ * How far the Window is slid up under the keyboard, in points.
+ *
+ * The keyboard does not resize the Window — see ADR 0008. The Window keeps the
+ * height it has with the keyboard down, the container clips it, and this is
+ * how much of its top is pushed out of view so that the row being typed on
+ * stays above the keys. Just enough and no more: a Pane with three lines on it
+ * is not slid at all, because sliding it would put those lines behind the
+ * status bar and show sixteen blank rows in their place. A Pane with the
+ * cursor on its last row is slid by the whole of what the keyboard covers,
+ * which is the shape a full terminal has always had with the keyboard up.
+ *
+ * Half a row of headroom under the cursor, because ghostty keeps a couple of
+ * points of its own padding above the grid and reports them nowhere — anchored
+ * on the row's exact bottom edge, the descenders of the line being typed were
+ * the part behind the keys.
+ *
+ * Before a Surface has said how big a cell is, or before the Pane's cursor has
+ * been read, the whole of the hidden height: a Pane whose shape is not known
+ * yet is most likely a full one, and a full one is slid all the way.
+ */
+export function windowSlide(
+  visibleHeight: number,
+  windowHeight: number,
+  cell: Extent | null,
+  cursorRow: number | null,
+): number {
+  const hidden = Math.max(0, windowHeight - visibleHeight);
+  if (hidden === 0) return 0;
+  if (!cell || cell.height <= 0 || cursorRow === null || cursorRow < 0) return hidden;
+  const cursorBottom = (cursorRow + 1.5) * cell.height;
+  const slid = Math.min(hidden, Math.max(0, cursorBottom - visibleHeight));
+  // Within a row of the end, all the way. The container is not a whole number
+  // of rows, so a cursor on the last row would otherwise stop a strip short of
+  // the bottom and leave that strip of the Window's ground under the keys.
+  return hidden - slid < cell.height ? hidden : slid;
+}

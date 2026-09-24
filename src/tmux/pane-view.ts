@@ -66,6 +66,16 @@ export interface PaneViewEvents {
    * reported when it changes.
    */
   onMouseTracking?: (wanted: boolean) => void;
+  /**
+   * The row the Pane's cursor is on, when it changes.
+   *
+   * What the Terminal Screen slides the Window by when the keyboard covers
+   * part of it — see windowSlide. Read with the rest of the Pane's state,
+   * because that is where tmux keeps it; nothing in the byte stream says where
+   * the cursor ended up without parsing the stream, and parsing it is the
+   * Surface's job.
+   */
+  onCursor?: (row: number) => void;
   /** A repaint landed on the Surface. What clears a line of trouble. */
   onPainted?: () => void;
   /** Something went wrong. Best effort; never fatal to the view. */
@@ -167,6 +177,16 @@ export interface PaneView {
 const STATE_STALE_MS = 1500;
 
 /**
+ * How long a Pane has to stay quiet before it is read one last time.
+ *
+ * Long enough that output arriving in chunks is one burst rather than a dozen,
+ * short enough that a cursor carried under the keyboard is followed before the
+ * eye has finished looking for it. A judgment, not a measurement; see
+ * readWhenSettled.
+ */
+export const OUTPUT_SETTLE_MS = 300;
+
+/**
  * How long a newly mounted Surface is given before anything is written to it.
  *
  * Measured rather than cautious. A Surface that has just mounted reports its
@@ -231,6 +251,8 @@ export function createPaneView(
   /** When the current Surface mounted, which is what the settling waits from. */
   let mountedAt = 0;
   let paintTimer: Timer | null = null;
+  /** The one reading taken after a burst of output stops; see readWhenSettled. */
+  let settleTimer: Timer | null = null;
 
   /** The grid the Surface last reported, and the one it was last painted at. */
   let grid: Grid | null = null;
@@ -246,6 +268,8 @@ export function createPaneView(
    * starts in and is not news.
    */
   let reportedMouse = false;
+  /** The cursor row last reported, so only a move is announced. */
+  let reportedCursor: number | null = null;
 
   /** How far above the live bottom the Surface is showing. */
   let back = 0;
@@ -321,13 +345,23 @@ export function createPaneView(
     events.onMouseTracking?.(asked);
   }
 
+  function announceCursor(): void {
+    if (disposed || !state) return;
+    if (state.cursorRow === reportedCursor) return;
+    reportedCursor = state.cursorRow;
+    events.onCursor?.(state.cursorRow);
+  }
+
   /**
    * Reads what the Pane is doing, but no more often than it can change in a
    * way that matters. A Control Command per frame of a drag is what made
    * dragging feel like it was catching on something.
+   *
+   * `force` is for the one reading taken *after* the output stops; see
+   * readWhenSettled for why the throttled ones are not enough on their own.
    */
-  function refreshState(): void {
-    if (clock.now() - stateReadAt < STATE_STALE_MS) return;
+  function refreshState(force = false): void {
+    if (!force && clock.now() - stateReadAt < STATE_STALE_MS) return;
     stateReadAt = clock.now();
     void reader
       .paneState(paneId)
@@ -336,8 +370,31 @@ export function createPaneView(
         state = next;
         announce();
         announceMouse();
+        announceCursor();
       })
       .catch(report);
+  }
+
+  /**
+   * Reads the Pane once more when its output stops.
+   *
+   * The throttled readings above are all taken *before* the chunk that
+   * prompted them is written, so the last one of a burst describes the Pane as
+   * it was before the burst finished — and with nothing arriving afterwards,
+   * nothing ever asks again. Harmless for mouse tracking, which a burst does
+   * not change; not harmless for the cursor, which is exactly what a burst
+   * moves. Thirty lines of output would carry the cursor under the keyboard,
+   * and the Window would not follow it until the next thing the Pane printed.
+   *
+   * Restarted by every chunk, so a chatty Pane costs one extra Control Command
+   * when it finally stops rather than one per chunk.
+   */
+  function readWhenSettled(): void {
+    clock.cancel(settleTimer);
+    settleTimer = clock.after(OUTPUT_SETTLE_MS, () => {
+      settleTimer = null;
+      if (!disposed && !paused) refreshState(true);
+    });
   }
 
   /** Paints whatever the Pane should be showing right now. */
@@ -373,6 +430,7 @@ export function createPaneView(
         state = next;
         stateReadAt = clock.now();
         announceMouse();
+        announceCursor();
       }
       write(
         paintScreen({
@@ -567,6 +625,8 @@ export function createPaneView(
       if (next) {
         clock.cancel(paintTimer);
         paintTimer = null;
+        clock.cancel(settleTimer);
+        settleTimer = null;
         return;
       }
       // What arrived while nobody was looking is not worth replaying; the
@@ -587,6 +647,7 @@ export function createPaneView(
       // the same staleness as a drag's, so a chatty Pane costs one command a
       // second and a quiet one costs nothing.
       refreshState();
+      readWhenSettled();
 
       // Dropped rather than written while the Pane is scrolled away: the
       // Surface is showing the past, and tmux is holding the present.
@@ -659,6 +720,8 @@ export function createPaneView(
       disposed = true;
       clock.cancel(paintTimer);
       paintTimer = null;
+      clock.cancel(settleTimer);
+      settleTimer = null;
       surface = null;
       outgoing = [];
       held = null;

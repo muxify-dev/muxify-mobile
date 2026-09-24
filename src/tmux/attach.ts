@@ -95,6 +95,14 @@ export interface AttachState {
   scrolled: ScrollPosition | null;
   /** Whether the application in the active Pane is listening for the mouse. */
   mouseTracking: boolean;
+  /**
+   * The row the active Pane's cursor is on, or null before it has been read.
+   *
+   * What the screen slides the Window by when the keyboard covers part of it;
+   * see windowSlide. The active Pane's only, for the same reason as the
+   * Scrollback position: one Window, one place being typed into.
+   */
+  cursorRow: number | null;
 }
 
 export interface Attach {
@@ -234,6 +242,7 @@ export function openAttach(options: AttachOptions): Attach {
     grid: null,
     scrolled: null,
     mouseTracking: false,
+    cursorRow: null,
   };
 
   const sizing: ClientSizing = createClientSizing(async (grid) => {
@@ -304,6 +313,9 @@ export function openAttach(options: AttachOptions): Attach {
         },
         onMouseTracking: (wanted) => {
           if (!stale(mine) && active()) change({ mouseTracking: wanted });
+        },
+        onCursor: (row) => {
+          if (!stale(mine) && active()) change({ cursorRow: row });
         },
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.

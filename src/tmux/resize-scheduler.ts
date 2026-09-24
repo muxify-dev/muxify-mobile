@@ -18,10 +18,13 @@ export interface ResizeScheduler {
 /**
  * Coalesces remote resizes so a burst of them cannot flood the Host.
  *
- * The Surface reports a new grid on every frame of the keyboard animation, and
- * each one would otherwise become its own Control Command — dozens of round
- * trips for one gesture, landing out of order, tmux reflowing for every size
- * the Surface passed through on its way to the one it settled at.
+ * A Surface being laid out reports a grid more than once — a rotation, a sheet
+ * closing, the first frames after mounting — and each one would otherwise
+ * become its own Control Command: several round trips for one change, landing
+ * out of order, tmux reflowing for every size the Surface passed through on
+ * its way to the one it settled at. (The keyboard used to be the worst of
+ * these, a grid per frame of its animation; it no longer resizes the Window at
+ * all — see ADR 0008.)
  *
  * So: at most one resize in flight, and only the newest size behind it. The
  * first request of a burst goes immediately, because a Surface waiting for its

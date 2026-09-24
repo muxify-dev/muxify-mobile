@@ -24,7 +24,7 @@ import type { AttachPhase, AttachState } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
-import { cellOf, paneBoxes, type Extent, type PaneBox } from '@/tmux/pane-layout';
+import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
@@ -143,6 +143,13 @@ export default function TerminalScreen() {
   const carriedLines = useRef(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   /**
+   * The same, readable from a layout callback. The container is measured in
+   * one and whether to believe the measurement depends on the other, and a
+   * state value read inside `onLayout` is the one from the render that
+   * attached the callback.
+   */
+  const keyboardUp = useRef(false);
+  /**
    * The sticky modifiers the Key Bar is holding down.
    *
    * A phone keyboard cannot hold a key while another is pressed, so ctrl is
@@ -172,12 +179,80 @@ export default function TerminalScreen() {
   const connected = state?.phase.kind === 'connected';
 
   /**
+   * How big one cell is, as the Surface that drew it says.
+   *
+   * Two things need it and both need it badly. Turning a touch into a cell by
+   * dividing the Pane by its grid is out by however much of the Pane the grid
+   * does not fill, and that error is a whole row by the bottom of the screen —
+   * where a terminal application puts its buttons. And how far to slide the
+   * Window under the keyboard is a question about rows, which nothing can
+   * answer in points without it. Every Surface has the same font, so one
+   * reading serves them all.
+   */
+  const [cellSize, setCellSize] = useState<Extent | null>(null);
+  const reportCell = useCallback((cell: Extent) => {
+    setCellSize((was) =>
+      was && was.width === cell.width && was.height === cell.height ? was : cell,
+    );
+  }, []);
+
+  /**
+   * The Window's height in points: the container's, measured with the keyboard
+   * down and kept while it is up.
+   *
+   * The keyboard does not resize the Window — see ADR 0008. It used to: the
+   * Dock lifts, the container shrinks, the Surface reports a smaller grid and
+   * the Host is told to reflow the Window to it, and back again on the way
+   * down. Every keyboard toggle was a remote resize, and a resize is where a
+   * terminal's text moves — up into the Scrollback on the way down, and back
+   * only as far as the Scrollback reaches on the way up, which after a `clear`
+   * is not at all. So the Window keeps this height whatever the keyboard does,
+   * the container clips it, and what the keyboard covers is slid out of the way
+   * instead; see windowSlide.
+   *
+   * Not recorded while the keyboard is up, because that measurement is of the
+   * strip above the keys and not of the Window. A rotation with the keyboard
+   * up is therefore a frame or two of the wrong height, corrected when it goes
+   * down; it is the one moment that gets nothing better here.
+   */
+  const [windowHeight, setWindowHeight] = useState(0);
+  const windowArea = useMemo(
+    (): Extent => ({ width: containerSize.width, height: windowHeight || containerSize.height }),
+    [containerSize, windowHeight],
+  );
+
+  /**
+   * How far up the Window is slid so the row being typed on clears the keys.
+   *
+   * The cursor is the active Pane's, and a Pane in a split does not start at
+   * the Window's top — so its row is offset by where the Layout puts it. A
+   * zoomed Pane is drawn at the top whatever the Layout says its place is,
+   * because the Layout describes the arrangement zoom is hiding.
+   */
+  const spansWindow =
+    (topology?.activeWindow?.zoomed ?? true) || (topology?.panes.length ?? 0) <= 1;
+  const cursorRow =
+    state?.cursorRow == null
+      ? null
+      : state.cursorRow + (spansWindow ? 0 : (topology?.activePane?.top ?? 0));
+  const slide = windowSlide(containerSize.height, windowArea.height, cellSize, cursorRow);
+
+  // Told from here rather than from the layout event, because the Window's
+  // area is not the container's: it is what the Panes are laid out in, and it
+  // is what a Client's size is worked out from.
+  useEffect(() => {
+    if (windowArea.width > 0 && windowArea.height > 0) attach?.containerLaidOut(windowArea);
+  }, [attach, windowArea]);
+
+  /**
    * Which Panes are on screen, and where.
    *
    * Zoomed — or with nothing to split — that is one Surface filling the
-   * container, which is the shape this app has had all along. Otherwise it is
-   * every Pane at the rectangle the Layout gives it, on one cell metric. See
-   * paneBoxes, and ADR 0006 for why this is possible at all.
+   * Window's area, which is the shape this app has had all along. Otherwise it
+   * is every Pane at the rectangle the Layout gives it, on one cell metric. See
+   * paneBoxes, and ADR 0006 for why this is possible at all. All of them sit
+   * `slide` points higher than the area they are laid out in, which is how the
+   * keyboard is kept off the row being typed on.
    */
   const slots = useMemo((): PaneSlot[] => {
     const panes = topology?.panes ?? [];
@@ -188,23 +263,25 @@ export default function TerminalScreen() {
     // Session should arrive as and what the switch asks for; what is on screen
     // has to follow the Window, or unzooming from the laptop would leave this
     // showing one Pane stretched across a split.
-    if ((topology?.activeWindow?.zoomed ?? true) || panes.length === 1) {
+    if (spansWindow) {
       return [
         {
           pane: active,
-          box: { left: 0, top: 0, width: containerSize.width, height: containerSize.height },
+          box: { left: 0, top: -slide, width: windowArea.width, height: windowArea.height },
           rows: visibleGrid?.rows ?? active.height,
           fillsWindow: true,
         },
       ];
     }
 
-    const boxes = paneBoxes(panes, containerSize);
+    const boxes = paneBoxes(panes, windowArea);
     return panes.flatMap((pane) => {
       const box = boxes.get(pane.id);
-      return box ? [{ pane, box, rows: pane.height, fillsWindow: false }] : [];
+      if (!box) return [];
+      const placed = { ...box, top: box.top - slide };
+      return [{ pane, box: placed, rows: pane.height, fillsWindow: false }];
     });
-  }, [topology, containerSize, visibleGrid]);
+  }, [topology, spansWindow, windowArea, slide, visibleGrid]);
 
   /** Whether anything on screen spans the Window, which sizing needs to know. */
   const spanning = slots.length === 0 || slots.some((slot) => slot.fillsWindow);
@@ -315,22 +392,6 @@ export default function TerminalScreen() {
   );
 
   /**
-   * How big one cell is, as the Surface that drew it says.
-   *
-   * Only the mouse layer needs it, and it needs it badly: turning a touch into
-   * a cell by dividing the Pane by its grid is out by however much of the Pane
-   * the grid does not fill, and that error is a whole row by the bottom of the
-   * screen — where a terminal application puts its buttons. Every Surface has
-   * the same font, so one reading serves them all.
-   */
-  const [cellSize, setCellSize] = useState<Extent | null>(null);
-  const reportCell = useCallback((cell: Extent) => {
-    setCellSize((was) =>
-      was && was.width === cell.width && was.height === cell.height ? was : cell,
-    );
-  }, []);
-
-  /**
    * A Surface that fills the Window reporting its grid.
    *
    * Only the single-Pane and zoomed cases go through here, and that is the
@@ -339,12 +400,15 @@ export default function TerminalScreen() {
    */
   const reportWindowGrid = useCallback(
     ({ nativeEvent }: { nativeEvent: Grid }) => {
+      // The area the Surface was laid out in, which is the Window's and not
+      // the container's: the cell metric is worked out by dividing one by the
+      // other, and with the keyboard up the container is the smaller strip.
       attach?.windowGridReported(
         { cols: nativeEvent.cols, rows: nativeEvent.rows },
-        containerSize,
+        windowArea,
       );
     },
-    [attach, containerSize],
+    [attach, windowArea],
   );
 
   /**
@@ -704,11 +768,21 @@ export default function TerminalScreen() {
   ]);
 
   useEffect(() => {
-    // Only so the Dock can show which way its keyboard button points. The
-    // action itself goes to the Surface that has focus, which this listener
-    // cannot see — see toggleKeyboard.
-    const shown = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    // For the Dock, so it can show which way its keyboard button points, and
+    // for the Window's height, which is only measured while the keyboard is
+    // down. `Will` rather than `Did`: the Dock lifts on `keyboardWillChangeFrame`
+    // and the container is laid out again in the same pass, so a flag set on
+    // `keyboardDidShow` would arrive after the measurement it is meant to veto.
+    // The action itself goes to the Surface that has focus, which no listener
+    // can see — see toggleKeyboard.
+    const shown = Keyboard.addListener('keyboardWillShow', () => {
+      keyboardUp.current = true;
+      setKeyboardVisible(true);
+    });
+    const hidden = Keyboard.addListener('keyboardWillHide', () => {
+      keyboardUp.current = false;
+      setKeyboardVisible(false);
+    });
     return () => {
       shown.remove();
       hidden.remove();
@@ -735,7 +809,9 @@ export default function TerminalScreen() {
         onLayout={({ nativeEvent }) => {
           const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
           setContainerSize(size);
-          attach?.containerLaidOut(size);
+          // The Window's height is the container's with the keyboard down, and
+          // only then; see windowHeight.
+          if (!keyboardUp.current) setWindowHeight(size.height);
         }}>
         {/* Before there is a Topology there are no Panes to place, and nothing
             but a Surface can measure a cell — so one stands in as the ruler.
@@ -744,7 +820,9 @@ export default function TerminalScreen() {
             known, and their resync paints them. */}
         {slots.length === 0 ? (
           <TerminalView
-            style={styles.surface}
+            // In the Window's box rather than filling the container, so that the
+            // grid it measures is the Window's whatever the keyboard is doing.
+            style={[styles.paneBox, { left: 0, top: -slide, ...windowArea }]}
             fontSize={opened.font ?? DEFAULT_FONT_SIZE}
             accessoryBar={false}
             theme={{
@@ -1506,6 +1584,9 @@ const styles = StyleSheet.create({
   },
   surfaceArea: {
     flex: 1,
+    // The Window is taller than this while the keyboard is up, and slid; what
+    // is past either edge is clipped rather than drawn under the glass Dock.
+    overflow: 'hidden',
   },
   paneBox: {
     position: 'absolute',

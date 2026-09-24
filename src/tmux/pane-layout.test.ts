@@ -4,6 +4,7 @@ import {
   gridForContainer,
   paneBoxes,
   windowGridOf,
+  windowSlide,
   type PaneBox,
 } from './pane-layout';
 import type { Pane } from './tmux-client';
@@ -198,5 +199,54 @@ describe('cellOf', () => {
     // A frame or two at most, and better than refusing the tap.
     expect(cellOf(358.5, undefined, PANE, ROWS)).toBe(21);
     expect(cellOf(358.5, 0, PANE, ROWS)).toBe(21);
+  });
+});
+
+describe('windowSlide', () => {
+  // An iPhone 17 Pro: 40 rows of 17.667 points with the keyboard down, and the
+  // keyboard leaves 24 of them showing.
+  const CELL = { width: 8, height: 17.667 };
+  const WINDOW = 717;
+  const VISIBLE = 424;
+  const HIDDEN = WINDOW - VISIBLE;
+
+  it('slides nothing while nothing is covered', () => {
+    expect(windowSlide(WINDOW, WINDOW, CELL, 39)).toBe(0);
+    expect(windowSlide(WINDOW + 10, WINDOW, CELL, 0)).toBe(0);
+  });
+
+  it('slides a full Pane by the whole of what the keyboard covers', () => {
+    // The cursor on the last row: the shape a full terminal has always had
+    // with the keyboard up, only without the Host being told to reflow it.
+    expect(windowSlide(VISIBLE, WINDOW, CELL, 39)).toBe(HIDDEN);
+  });
+
+  it('leaves a short Pane where it is', () => {
+    // Three lines after a `clear`. Slid, they would be behind the status bar
+    // and sixteen blank rows would be showing in their place.
+    expect(windowSlide(VISIBLE, WINDOW, CELL, 2)).toBe(0);
+    // Right up to the row that still fits above the keys.
+    expect(windowSlide(VISIBLE, WINDOW, CELL, 21)).toBe(0);
+  });
+
+  it('slides just enough once the cursor passes the fold', () => {
+    // Row 30 of 40 (0-based 29) is 6 rows below the 24 that show. Slid by
+    // those 6 rows and the half-row of headroom, and nothing more.
+    const slid = windowSlide(VISIBLE, WINDOW, CELL, 29);
+    expect(slid).toBeCloseTo((29 + 1.5) * CELL.height - VISIBLE, 5);
+    expect(slid).toBeLessThan(HIDDEN);
+    // The row is on screen: its bottom edge is above the keys.
+    expect((29 + 1) * CELL.height - slid).toBeLessThanOrEqual(VISIBLE);
+  });
+
+  it('never slides further than there is hidden height to slide into', () => {
+    // A cursor row past the Window's end, which a stale reading can say.
+    expect(windowSlide(VISIBLE, WINDOW, CELL, 60)).toBe(HIDDEN);
+  });
+
+  it('slides all the way while the shape of the Pane is unknown', () => {
+    expect(windowSlide(VISIBLE, WINDOW, null, 5)).toBe(HIDDEN);
+    expect(windowSlide(VISIBLE, WINDOW, CELL, null)).toBe(HIDDEN);
+    expect(windowSlide(VISIBLE, WINDOW, { width: 8, height: 0 }, 5)).toBe(HIDDEN);
   });
 });
