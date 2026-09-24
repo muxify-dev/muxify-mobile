@@ -212,3 +212,20 @@ Drawn in the Theme's appearance, not the phone's, so a light phone never puts a
 white card over a Mocha terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
+
+### Diagnosing
+
+**Log**:
+Muxify's own record of what it decided, kept in memory for the life of the
+app and carried out by the user: a long press on any Session row of the Host
+Screen offers **Copy log**, which puts it on the clipboard with a head saying
+what is attached and how the Attach stands. Every module that makes a decision
+a screen cannot show says so in one line — which Pane got a Surface and when
+it reported its grid, what the Topology became and why, what went down the
+Control Connection and what tmux answered, what the Terminal Screen put on
+screen. It says what the app *did*, never what the user typed or the Host
+showed: keystrokes go out as a byte count, and Pane content is not in it at
+all, so a Log can be pasted anywhere. Bounded, oldest lines first to go. See
+ADR 0010.
+_Avoid_: console (which nobody holding the phone can see), trace, telemetry
+(nothing is sent anywhere), debug output

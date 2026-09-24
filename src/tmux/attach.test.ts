@@ -1,3 +1,4 @@
+import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
 import type { Host } from '@/storage/records';
@@ -167,6 +168,7 @@ function attachOn(
   const clock = createTestClock();
   const seen: AttachState[] = [];
   const opened: ReturnType<typeof fakeHost>[] = [];
+  const log = createLog({ clock });
 
   let next = 0;
   const attach = openAttach({
@@ -175,6 +177,7 @@ function attachOn(
     zoomed: options.zoomed ?? true,
     store,
     clock,
+    log,
     openConnection: (): Promise<HostConnection> => {
       const failure = options.failLink?.();
       if (failure) return Promise.reject(failure);
@@ -201,6 +204,8 @@ function attachOn(
     clock,
     seen,
     phases: () => seen.map((state) => state.phase.kind),
+    /** What was written to the Log, as `tag: text`. */
+    said: () => log.entries().map((entry) => `${entry.tag}: ${entry.text}`),
   };
 }
 
@@ -684,6 +689,49 @@ describe('the Panes on screen', () => {
     const text = mine.written.map((each) => new TextDecoder().decode(each)).join('');
     expect(text).toContain('here');
     expect(text).not.toContain('elsewhere');
+  });
+
+  it('writes down how a Pane came to be painted, so a blank one can be read back', async () => {
+    // The Log is the account a person carries away from a Pane that came up
+    // blank. What it has to hold is the chain a paint depends on — the Attach
+    // connecting, the Topology arriving, the Surface arriving and reporting,
+    // the paint — each from the module that decided it, so that the link
+    // which is missing can be seen missing.
+    const kit = attachOn();
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+
+    const said = kit.said();
+    expect(said).toContain('attach: connecting to Dev Host (10.0.0.2:22) for work');
+    expect(said).toContain('attach: phase connected');
+    expect(said).toContain('control: → list-windows -t work -F #{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}');
+    expect(said).toContain('topology: 1 window, active @0 #0; 1 pane: %0* 0,0 49x41');
+    expect(said).toContain('attach: Surface for %0 arrived, not yet reported; no view for it yet');
+    expect(said).toContain('pane %0: Surface arrived');
+    expect(said).toContain('pane %0: not painting yet: no grid');
+    expect(said).toContain('pane %0: grid 49x41 reported');
+    expect(said).toContain('pane %0: repainting at 49x41');
+    expect(said).toContain('pane %0: painted 0 lines at 41 rows, cursor 0,0');
+  });
+
+  it('never writes what was typed into the Log, only how much', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+
+    kit.attach.view('%0').type(new TextEncoder().encode('hunter2'));
+    await settle();
+
+    const said = kit.said().join('\n');
+    expect(said).toContain('control: → send-keys -t %0 -H (7 bytes)');
+    expect(said).not.toContain('hunter2');
+    expect(said).not.toContain('68756e');
   });
 
   it('re-creates a Pane view over the Surface it kept, after a replacement', async () => {

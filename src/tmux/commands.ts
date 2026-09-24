@@ -76,6 +76,23 @@ export function renderControlCommand(argv: TmuxArgv): string {
   return argv.map(tmuxQuote).join(' ');
 }
 
+/**
+ * A command as the Log may name it.
+ *
+ * Everything but what the user typed. `send-keys -H` carries the keystrokes
+ * as hex, so a Log that quoted it would be a Log of passwords; it is written
+ * down as a count of bytes instead. A named key from the Key Bar — `Up`,
+ * `C-c` — is a key and not text, and stays.
+ */
+export function describeCommand(argv: TmuxArgv): string {
+  if (argv[0] !== 'send-keys') return argv.join(' ');
+  const target = argv.indexOf('-t');
+  const named = target >= 0 ? argv[target + 1] : '?';
+  const hex = argv.indexOf('-H');
+  if (hex >= 0) return `send-keys -t ${named} -H (${argv.length - hex - 1} bytes)`;
+  return `send-keys -t ${named} ${argv.slice(target + 2).join(' ')}`;
+}
+
 /** An argument list as one line for a shell, with the tmux binary in front. */
 export function renderExecCommand(argv: TmuxArgv, tmuxExecutablePath?: string): string {
   const tmux = tmuxExecutablePath ? shellQuote(tmuxExecutablePath) : 'tmux';

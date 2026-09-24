@@ -1,3 +1,4 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Clock, Timer } from '@/lib/clock';
 import { systemClock } from '@/lib/clock';
 import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
@@ -228,15 +229,21 @@ export function createPaneView(
   paneId: string,
   reader: PaneReader,
   events: PaneViewEvents,
-  options: { clock?: Clock } = {},
+  options: { clock?: Clock; log?: Log } = {},
 ): PaneView {
   const clock = options.clock ?? systemClock;
+  const say = speakingAs(options.log ?? silentLog, `pane ${paneId}`);
 
   let disposed = false;
   let paused = false;
 
   /** Where the bytes go, or null while this Pane has no Surface. */
   let surface: PaneSurface | null = null;
+  /**
+   * Whether output has already been dropped for want of a Surface, so the Log
+   * hears about a stretch of dropping once rather than once per chunk.
+   */
+  let droppedWithoutSurface = false;
   /**
    * Which Surface a repaint was started for, so one that lands after the
    * Surface was swapped does not paint the new one with the old one's screen.
@@ -304,7 +311,12 @@ export function createPaneView(
   /** The one way anything reaches the Surface. */
   function write(bytes: Uint8Array): void {
     if (disposed || paused) return;
-    surface?.write(bytes);
+    if (surface === null) {
+      if (!droppedWithoutSurface) say(`dropping output: no Surface (${bytes.length} bytes first)`);
+      droppedWithoutSurface = true;
+      return;
+    }
+    surface.write(bytes);
   }
 
   /**
@@ -399,6 +411,7 @@ export function createPaneView(
       // No cursor: a view of the Scrollback has none in it, and one parked in
       // the middle of old output reads as a prompt that is not there.
       write(paintScreen({ lines, alternate: false }));
+      say(`painted Scrollback ${back} back, ${lines.length} lines`);
       announce();
       return;
     }
@@ -415,7 +428,10 @@ export function createPaneView(
         reader.paneState(paneId),
         reader.capturePane(paneId),
       ]);
-      if (disposed || mine !== generation) return;
+      if (disposed || mine !== generation) {
+        say(`repaint discarded: the Surface changed while the capture was out`);
+        return;
+      }
       if (next) {
         state = next;
         stateReadAt = clock.now();
@@ -432,12 +448,22 @@ export function createPaneView(
           cursorVisible,
         }),
       );
+      say(
+        `painted ${lines.length} lines at ${rows} rows` +
+          (next
+            ? `, cursor ${next.cursorColumn},${next.cursorRow}${next.alternate ? ', alternate screen' : ''}`
+            : ', Pane state unread') +
+          (paused ? ', while paused' : ''),
+      );
       if (!paused) events.onPainted?.();
     } finally {
       // Written after the repaint and in the order it arrived, so the last
       // second of the Pane's life lands on top of it rather than under it.
       if (held === buffer) held = null;
-      if (!disposed && mine === generation) for (const bytes of buffer) writeOutput(bytes);
+      if (!disposed && mine === generation) {
+        if (buffer.length > 0) say(`wrote ${buffer.length} chunks held during the repaint`);
+        for (const bytes of buffer) writeOutput(bytes);
+      }
     }
     announce();
   }
@@ -474,8 +500,16 @@ export function createPaneView(
    * and a follow-up rather than two in flight.
    */
   function armPaint(): void {
-    if (disposed || paused || surface === null || grid === null) return;
+    if (disposed || paused || surface === null || grid === null) {
+      say(
+        `not painting yet: ${
+          disposed ? 'disposed' : paused ? 'paused' : surface === null ? 'no Surface' : 'no grid'
+        }`,
+      );
+      return;
+    }
     rows = Math.max(1, Math.floor(grid.rows));
+    say(`repainting at ${grid.cols}x${grid.rows}`);
     schedule();
   }
 
@@ -552,15 +586,21 @@ export function createPaneView(
       if (surface !== null) grid = null;
       surface = next;
       held = null;
+      droppedWithoutSurface = false;
       // A Surface arrives blank, so what it is showing is nothing rather than
       // wherever the last one had been dragged back to.
       back = 0;
-      if (next === null) return;
+      if (next === null) {
+        say('Surface left');
+        return;
+      }
+      say('Surface arrived');
       armPaint();
     },
 
     reportGrid(next: Grid): void {
       if (disposed) return;
+      say(`grid ${next.cols}x${next.rows} reported`);
       grid = { cols: next.cols, rows: next.rows };
       // A later grid is a resize, and the same grid again is a Surface that
       // has been rebuilt blank underneath — see the docblock. Either way the
@@ -573,16 +613,22 @@ export function createPaneView(
     setActive(active: boolean): void {
       if (disposed || active === cursorVisible) return;
       cursorVisible = active;
+      say(active ? 'active: cursor shown' : 'inactive: cursor hidden');
       write(asciiBytes(active ? '\u001b[?25h' : '\u001b[?25l'));
     },
 
     focusKeyboard(): void {
-      if (!disposed) surface?.focus();
+      if (disposed) return;
+      say(surface ? 'keyboard: focus' : 'keyboard: focus asked with no Surface');
+      surface?.focus();
     },
 
     async toggleKeyboard(): Promise<void> {
       const current = surface;
-      if (disposed || !current) return;
+      if (disposed || !current) {
+        say('keyboard: toggle asked with no Surface');
+        return;
+      }
       // Asked of the Surface rather than of a global keyboard listener: React
       // Native's registry never heard of this view — the Surface is a native
       // text input it never registered — so the only honest answer to "is the
@@ -590,7 +636,11 @@ export function createPaneView(
       // the keyboard rise over the other half of a split says yes, and
       // toggling on that answer blurs a Surface that was not focused.
       const focused = await current.isFocused();
-      if (disposed || surface !== current) return;
+      if (disposed || surface !== current) {
+        say('keyboard: toggle dropped, the Surface changed meanwhile');
+        return;
+      }
+      say(`keyboard: toggle, Surface ${focused ? 'has it → blur' : 'lacks it → focus'}`);
       if (focused) current.blur();
       else current.focus();
     },
@@ -600,6 +650,7 @@ export function createPaneView(
     setPaused(next: boolean): void {
       if (disposed || next === paused) return;
       paused = next;
+      say(next ? 'paused' : 'resumed');
       if (next) {
         clock.cancel(settleTimer);
         settleTimer = null;
@@ -692,6 +743,7 @@ export function createPaneView(
     },
 
     dispose(): void {
+      if (!disposed) say('disposed');
       disposed = true;
       clock.cancel(settleTimer);
       settleTimer = null;

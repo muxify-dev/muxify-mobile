@@ -1,3 +1,4 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Clock, Timer } from '@/lib/clock';
 import { systemClock } from '@/lib/clock';
 
@@ -111,9 +112,10 @@ export interface ClientSizing {
  */
 export function createClientSizing(
   send: (grid: Grid) => Promise<void>,
-  options: { clock?: Clock; onSettled?: (grid: Grid) => void } = {},
+  options: { clock?: Clock; onSettled?: (grid: Grid) => void; log?: Log } = {},
 ): ClientSizing {
   const clock = options.clock ?? systemClock;
+  const say = speakingAs(options.log ?? silentLog, 'sizing');
   const scheduler = createResizeScheduler(send);
 
   /** The grid last reported, which may still be moving. */
@@ -150,7 +152,12 @@ export function createClientSizing(
   function push(force: boolean): void {
     if (!live || disposed) return;
     const next = currentGrid();
-    if (next) scheduler.request(next, force);
+    if (!next) {
+      say(`nothing to size from: ${spanning ? 'no settled grid' : 'no cell measured'}`);
+      return;
+    }
+    say(`asking for ${next.cols}x${next.rows}${force ? ', even if unchanged' : ''}`);
+    scheduler.request(next, force);
   }
 
   /** Believes a grid: measures the cell from it, wakes Attach, and sends it. */
@@ -162,6 +169,10 @@ export function createClientSizing(
     // other reason it is settled first.
     const measured = cellSizeOf(grid, reportedAt);
     if (measured) cell = measured;
+    say(
+      `settled on ${grid.cols}x${grid.rows}` +
+        (measured ? `, cell ${measured.width.toFixed(2)}x${measured.height.toFixed(2)}` : ''),
+    );
 
     for (const wake of waiting.splice(0)) wake(grid);
     options.onSettled?.(grid);
@@ -183,15 +194,21 @@ export function createClientSizing(
         armSettle();
         return;
       }
+      if (tries >= GRID_SETTLE_TRIES) say('grid would not settle; taking the latest anyway');
       tries = 0;
       settling = null;
       if (!sameGrid(latest, stable)) adopt(latest);
+      else say(`grid ${latest.cols}x${latest.rows} settled where it already was`);
     });
   }
 
   return {
     windowGridReported(grid: Grid, surface: Extent): void {
       if (disposed) return;
+      say(
+        `Window grid ${grid.cols}x${grid.rows} reported at ` +
+          `${Math.round(surface.width)}x${Math.round(surface.height)}`,
+      );
       reported = { cols: grid.cols, rows: grid.rows };
       reportedAt = surface;
       if (settleTimer === null) {
@@ -204,6 +221,7 @@ export function createClientSizing(
     containerLaidOut(next: Extent): void {
       if (disposed) return;
       container = next;
+      say(`container ${Math.round(next.width)}x${Math.round(next.height)}`);
       // A spanning Surface answers a container change by reporting a new grid,
       // which is a better answer than this one — it is the Surface's own
       // measurement rather than arithmetic over a remembered cell.
@@ -213,6 +231,7 @@ export function createClientSizing(
     spanningSurface(present: boolean): void {
       if (disposed || present === spanning) return;
       spanning = present;
+      say(present ? 'a Surface spans the Window again' : 'nothing spans the Window: a split');
       if (!present) push(false);
     },
 
@@ -225,14 +244,21 @@ export function createClientSizing(
     sheetPresented(open: boolean): void {
       const closing = sheetUp && !open;
       sheetUp = open;
-      if (closing) push(true);
+      if (closing) {
+        say('a sheet closed; saying the size again');
+        push(true);
+      }
     },
 
-    sessionSwitched: () => push(true),
+    sessionSwitched(): void {
+      say('Session switched; saying the size again');
+      push(true);
+    },
 
     attached(): void {
       if (disposed) return;
       live = true;
+      say('attached; first size');
       push(true);
     },
 

@@ -1,6 +1,12 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { bytesToUtf8 } from '@/lib/utf8';
 
-import { controlAttachCommand, renderControlCommand, type TmuxArgv } from './commands';
+import {
+  controlAttachCommand,
+  describeCommand,
+  renderControlCommand,
+  type TmuxArgv,
+} from './commands';
 import { createControlParser, type ControlEvent } from './control-protocol';
 import { TmuxError } from './tmux-error';
 import type { ControlChannel, TmuxTransport } from './transport';
@@ -86,6 +92,8 @@ export interface ControlConnection extends CommandRunner {
 /** A command that has been written and is waiting for its reply. */
 interface Pending {
   line: string;
+  /** The command as the Log names it, so its reply can be matched to it. */
+  what: string;
   settle: (reply: CommandReply) => void;
   fail: (error: Error) => void;
 }
@@ -108,9 +116,10 @@ interface Pending {
  */
 export async function openControlConnection(
   transport: TmuxTransport,
-  options: { sessionName: string; tmuxExecutablePath?: string },
+  options: { sessionName: string; tmuxExecutablePath?: string; log?: Log },
   events: ControlConnectionEvents,
 ): Promise<ControlConnection> {
+  const say = speakingAs(options.log ?? silentLog, 'control');
   const parser = createControlParser();
   /** Written, waiting for a reply, oldest first. */
   const pending: Pending[] = [];
@@ -152,6 +161,7 @@ export async function openControlConnection(
     if (!ready || open === null) return;
     for (let entry = waiting.shift(); entry !== undefined; entry = waiting.shift()) {
       pending.push(entry);
+      say(`→ ${entry.what}`);
       open.write(new TextEncoder().encode(`${entry.line}\n`));
     }
   }
@@ -163,6 +173,7 @@ export async function openControlConnection(
     const stranded = [...pending, ...waiting];
     pending.length = 0;
     waiting.length = 0;
+    say(`closed (${cause}): ${reason}${stranded.length > 0 ? `; ${stranded.length} commands stranded` : ''}`);
     for (const entry of stranded) entry.fail(new TmuxError(reason));
     if (!ready) refused(new TmuxError(reason));
     events.onClosed(reason, cause);
@@ -170,6 +181,7 @@ export async function openControlConnection(
 
   function receive(event: ControlEvent): void {
     if (event.kind === 'notice') {
+      say(`notice: ${event.text}`);
       // Bounded: a Host that floods the channel with text must not be able to
       // grow this without limit, and the first few lines are the message.
       if (!ready && notices.length < 8) notices.push(event.text);
@@ -195,6 +207,7 @@ export async function openControlConnection(
           finish(reply.text.join(' ').trim() || 'Could not attach', 'exit');
           return;
         }
+        say('attach answered; commands may go');
         ready = true;
         opened(connection);
         flush();
@@ -205,7 +218,16 @@ export async function openControlConnection(
       // only safe thing, because handing it to the next command would put
       // every later reply one out of step.
       const entry = pending.shift();
-      entry?.settle(reply);
+      if (!entry) {
+        say(`← a reply nobody asked for (${reply.lines.length} lines), dropped`);
+        return;
+      }
+      say(
+        reply.ok
+          ? `← ${entry.what}: ok, ${reply.lines.length} lines`
+          : `← ${entry.what}: error: ${reply.text.join(' ').trim()}`,
+      );
+      entry.settle(reply);
       return;
     }
 
@@ -219,12 +241,14 @@ export async function openControlConnection(
 
   const connection: ControlConnection = {
     run(argv: TmuxArgv): Promise<CommandReply> {
-      return runLines([renderControlCommand(argv)]).then((replies) => replies[0]);
+      return runLines([renderControlCommand(argv)], [describeCommand(argv)]).then(
+        (replies) => replies[0],
+      );
     },
 
     runAll(commands: TmuxArgv[]): Promise<CommandReply[]> {
       if (commands.length === 0) return Promise.resolve([]);
-      return runLines(commands.map(renderControlCommand));
+      return runLines(commands.map(renderControlCommand), commands.map(describeCommand));
     },
 
     async command(argv: TmuxArgv): Promise<Uint8Array[]> {
@@ -252,21 +276,26 @@ export async function openControlConnection(
    * own entry in the queue and its own reply, so a command that fails does not
    * take its neighbours with it.
    */
-  function runLines(lines: string[]): Promise<CommandReply[]> {
-    if (closed !== null) return Promise.reject(new TmuxError(closed));
+  function runLines(lines: string[], described: string[]): Promise<CommandReply[]> {
+    if (closed !== null) {
+      say(`refused ${described.join(', ')}: the Connection is closed`);
+      return Promise.reject(new TmuxError(closed));
+    }
 
     const replies = lines.map(
-      (line) =>
+      (line, at) =>
         new Promise<CommandReply>((resolve, reject) => {
-          waiting.push({ line, settle: resolve, fail: reject });
+          waiting.push({ line, what: described[at], settle: resolve, fail: reject });
         }),
     );
     flush();
     return Promise.all(replies);
   }
 
+  const attaching = controlAttachCommand(options.sessionName, options.tmuxExecutablePath);
+  say(`opening: ${attaching}`);
   channel = await transport.openControl(
-    controlAttachCommand(options.sessionName, options.tmuxExecutablePath),
+    attaching,
     {
       onData: (data) => {
         for (const event of parser.push(new Uint8Array(data))) receive(event);

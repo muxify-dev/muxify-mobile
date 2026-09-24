@@ -1,3 +1,4 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Host } from '@/storage/records';
 
 import type { Attach, LifecyclePhase } from './attach';
@@ -46,10 +47,14 @@ export interface AttachHolder {
  * background and foreground *mean* is the Attach's policy; this only knows
  * which Attach to tell.
  */
-export function createAttachHolder(open: (request: AttachRequest) => Attach): AttachHolder {
+export function createAttachHolder(
+  open: (request: AttachRequest) => Attach,
+  log: Log = silentLog,
+): AttachHolder {
   let current: Attach | null = null;
   let session = '';
   const listeners = new Set<(attach: Attach | null) => void>();
+  const say = speakingAs(log, 'holder');
 
   function publish(): void {
     for (const listener of [...listeners]) listener(current);
@@ -66,6 +71,7 @@ export function createAttachHolder(open: (request: AttachRequest) => Attach): At
         session === request.sessionName &&
         attached.state().phase.kind !== 'closed'
       ) {
+        say(`open ${request.host.displayName}:${request.sessionName}: already attached`);
         return attached;
       }
 
@@ -74,9 +80,12 @@ export function createAttachHolder(open: (request: AttachRequest) => Attach): At
       // new one before the old one has gone is a Host with two Clients sizing
       // the same Session.
       if (attached) {
+        say(`open ${request.host.displayName}:${request.sessionName}: closing ${attached.hostName}:${session} first`);
         current = null;
         publish();
         await attached.close();
+      } else {
+        say(`open ${request.host.displayName}:${request.sessionName}`);
       }
 
       const next = open({ ...request });
@@ -89,6 +98,7 @@ export function createAttachHolder(open: (request: AttachRequest) => Attach): At
     async disconnect(): Promise<void> {
       const attached = current;
       if (!attached) return;
+      say(`disconnect ${attached.hostName}:${session}`);
       current = null;
       session = '';
       publish();
@@ -104,6 +114,7 @@ export function createAttachHolder(open: (request: AttachRequest) => Attach): At
     },
 
     lifecycleChanged(phase: LifecyclePhase): void {
+      say(`app ${phase}${current ? '' : ', nothing attached'}`);
       current?.lifecycleChanged(phase);
     },
   };

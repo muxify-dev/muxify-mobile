@@ -1,10 +1,12 @@
+import * as Clipboard from 'expo-clipboard';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
+import { useCallback, useState, type ReactNode } from 'react';
+import { Alert, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 
 import {
   Button,
+  ContextMenu,
   Form,
   Host,
   HStack,
@@ -31,6 +33,9 @@ import {
 
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
+import { describeApp, describeDevice, deviceLog } from '@/diagnostics/device-log';
+import { speakingAs } from '@/diagnostics/log';
+import { renderReport } from '@/diagnostics/report';
 import {
   answered,
   asking,
@@ -41,6 +46,7 @@ import {
   type Listing,
 } from '@/domain/host-listing';
 import { hostSessions, type RecentRow } from '@/domain/host-sessions';
+import { describeError } from '@/lib/describe-error';
 import { timeAgoFrom } from '@/lib/relative-time';
 import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
@@ -55,6 +61,9 @@ import { TmuxClient } from '@/tmux/tmux-client';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
+
+/** The screen's own voice in the Log: what the Host answered when asked. */
+const say = speakingAs(deviceLog(), 'host');
 
 /**
  * A Host and its Sessions.
@@ -120,6 +129,7 @@ export default function HostScreen() {
       return;
     }
 
+    say(`asking ${found.displayName} for its Sessions`);
     try {
       const { connection, fingerprint, verdict } = await connectToHost(found, store);
       try {
@@ -133,14 +143,51 @@ export default function HostScreen() {
         );
         // A Host with no tmux server is a Host with no Sessions, which the
         // client already forgives — it must not read as a failure here.
-        setListing(answered(await client.listSessions()));
+        const sessions = await client.listSessions();
+        say(`${found.displayName} listed ${sessions.length} Sessions`);
+        setListing(answered(sessions));
       } finally {
         await connection.disconnect();
       }
     } catch (error) {
-      setListing(refused(describeConnectionFailure(error)));
+      const message = describeConnectionFailure(error);
+      say(`${found.displayName} refused the listing: ${message}`);
+      setListing(refused(message));
     }
   }, [id]);
+
+  /**
+   * Puts the Log on the clipboard, for pasting wherever the problem is being
+   * looked at.
+   *
+   * Reached by a long press on any Session row rather than from Settings,
+   * because this is where someone stands after leaving a Session that went
+   * wrong: the Terminal Screen has nothing to long-press that is not a Pane,
+   * and Settings is two screens away from the thing being reported. The
+   * report's head describes the Attach as it stands, so a Log copied with the
+   * Session still attached says what state it was left in. See ADR 0010.
+   */
+  const copyLog = useCallback(() => {
+    const book = deviceLog();
+    say('Log copied from the Host Screen');
+    const text = renderReport(book, {
+      app: describeApp(),
+      device: describeDevice(),
+      now: Date.now(),
+      attached: attach && attachState ? { hostName: attach.hostName, state: attachState } : null,
+    });
+    void Clipboard.setStringAsync(text).then(
+      () => {
+        Alert.alert(
+          'Log copied',
+          `${book.entries().length} lines are on the clipboard. Paste them wherever the problem is being looked at.`,
+        );
+      },
+      (error: unknown) => {
+        Alert.alert('Could not copy the Log', describeError(error));
+      },
+    );
+  }, [attach, attachState]);
 
   useFocusEffect(
     useCallback(() => {
@@ -238,14 +285,18 @@ export default function HostScreen() {
             ) : (
               collapse(rows, showEveryRecent).map((row) => (
                 <SwipeActions key={row.name}>
-                  <RecentSessionRow
-                    row={row}
-                    palette={palette}
-                    openedAt={openedAt}
-                    attached={attachedHere?.sessionName === row.name ? attachedHere.phase : undefined}
-                    onPress={() => open(row.name)}
-                    onDisconnect={disconnect}
-                  />
+                  <LogMenu onCopyLog={copyLog}>
+                    <RecentSessionRow
+                      row={row}
+                      palette={palette}
+                      openedAt={openedAt}
+                      attached={
+                        attachedHere?.sessionName === row.name ? attachedHere.phase : undefined
+                      }
+                      onPress={() => open(row.name)}
+                      onDisconnect={disconnect}
+                    />
+                  </LogMenu>
                   <SwipeActions.Actions>
                     {/* Not destructive, and deliberately not red: this drops
                         Muxify's memory of the Session and leaves it running. */}
@@ -319,17 +370,18 @@ export default function HostScreen() {
             ) : null}
 
             {collapse(available, showEveryAvailable).map((session) => (
-              <Button
-                key={session.name}
-                onPress={() => open(session.name)}
-                modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${session.name}`)]}>
-                <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-                  <Image systemName="terminal" size={20} color={palette.rowIcon} />
-                  <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
-                  <Spacer />
-                  <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
-                </HStack>
-              </Button>
+              <LogMenu key={session.name} onCopyLog={copyLog}>
+                <Button
+                  onPress={() => open(session.name)}
+                  modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${session.name}`)]}>
+                  <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+                    <Image systemName="terminal" size={20} color={palette.rowIcon} />
+                    <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
+                    <Spacer />
+                    <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+                  </HStack>
+                </Button>
+              </LogMenu>
             ))}
 
             {available.length > COLLAPSED ? (
@@ -413,6 +465,30 @@ function RecentSessionRow({
         />
       ) : null}
     </HStack>
+  );
+}
+
+/**
+ * The long-press menu on a Session row, and the only thing on it: Copy log.
+ *
+ * A context menu because that is what a long press on a row means on iOS —
+ * more about this thing — and the Log is about the Sessions on this Host more
+ * than about anything else in the app. A tap on the row still opens it; the
+ * menu waits underneath for the press that is held.
+ */
+function LogMenu({ onCopyLog, children }: { onCopyLog: () => void; children: ReactNode }) {
+  return (
+    <ContextMenu>
+      <ContextMenu.Items>
+        <Button
+          label="Copy log"
+          systemImage="doc.on.clipboard"
+          onPress={onCopyLog}
+          modifiers={[accessibilityLabel('Copy log')]}
+        />
+      </ContextMenu.Items>
+      <ContextMenu.Trigger>{children}</ContextMenu.Trigger>
+    </ContextMenu>
   );
 }
 

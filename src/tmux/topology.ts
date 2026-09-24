@@ -1,3 +1,5 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
+
 import type { ControlEvent } from './control-protocol';
 import { parseWindowLayout } from './layout';
 import type { Pane, Window } from './tmux-client';
@@ -84,12 +86,13 @@ export interface TopologyStore {
 export function createTopologyStore(
   reader: TopologyReader,
   sessionName: string,
-  options: { onTrouble?: (error: unknown) => void } = {},
+  options: { onTrouble?: (error: unknown) => void; log?: Log } = {},
 ): TopologyStore {
   let topology: Topology = EMPTY_TOPOLOGY;
   let session = sessionName;
   let disposed = false;
   const listeners = new Set<(topology: Topology) => void>();
+  const say = speakingAs(options.log ?? silentLog, 'topology');
 
   /** A read in flight, and whether another was asked for behind it. */
   let reading = false;
@@ -98,6 +101,10 @@ export function createTopologyStore(
   function publish(next: Topology): Topology {
     topology = next;
     if (disposed) return next;
+    // Every shape the model takes, whoever gave it: a read, a notification
+    // or a tap. The Panes on screen are derived from exactly this, so a Pane
+    // that went blank is a Pane whose line here says what it was drawn from.
+    say(describeTopology(next));
     for (const listener of listeners) listener(next);
     return next;
   }
@@ -252,15 +259,22 @@ export function createTopologyStore(
     refresh: refreshNow,
 
     attachedTo(next: string): void {
+      say(`now the Topology of ${next}`);
       session = next;
     },
 
     apply(event: ControlEvent): void {
       if (disposed) return;
-      if (applyEvent(event) === 'stale') reread();
+      const applied = applyEvent(event);
+      say(`${describeEvent(event)} → ${applied}`);
+      if (applied === 'stale') reread();
     },
 
-    activate: (paneId: string) => activatePane(paneId) !== 'stale',
+    activate(paneId: string): boolean {
+      const applied = activatePane(paneId);
+      say(`activate ${paneId} → ${applied}`);
+      return applied !== 'stale';
+    },
 
     subscribe(listener: (topology: Topology) => void): () => void {
       listeners.add(listener);
@@ -280,4 +294,55 @@ export function createTopologyStore(
 function paneNumber(paneId: string): number {
   const parsed = Number(paneId.replace('%', ''));
   return Number.isFinite(parsed) ? parsed : -1;
+}
+
+/**
+ * A Topology in one line, for the Log and for the head of a report.
+ *
+ * `2 windows, active @0 #0 zoomed; 2 panes: %1* 0,0 49x20 | %2 0,21 49x20` —
+ * the active Pane starred, each Pane at the cells the Layout gives it. Enough
+ * to tell a Window that has no Panes from one whose Panes have no Layout, which
+ * are two different reasons for the same blank screen.
+ */
+export function describeTopology(topology: Topology): string {
+  if (topology.windows.length === 0) return 'no Windows';
+  const active = topology.activeWindow;
+  const window = active
+    ? `${active.id} #${active.index}${active.zoomed ? ' zoomed' : ''}`
+    : 'no active Window';
+  const windows = `${topology.windows.length} ${topology.windows.length === 1 ? 'window' : 'windows'}`;
+  if (topology.panes.length === 0) return `${windows}, active ${window}; no Panes`;
+  const panes = topology.panes
+    .map(
+      (pane) =>
+        `${pane.id}${pane.id === topology.activePane?.id ? '*' : ''} ` +
+        `${pane.left},${pane.top} ${pane.width}x${pane.height}`,
+    )
+    .join(' | ');
+  const count = `${topology.panes.length} ${topology.panes.length === 1 ? 'pane' : 'panes'}`;
+  return `${windows}, active ${window}; ${count}: ${panes}`;
+}
+
+/** A notification as the Log names it: its kind and what it was about. */
+function describeEvent(event: ControlEvent): string {
+  switch (event.kind) {
+    case 'layout-change':
+      return `%layout-change ${event.window} flags=${event.flags || '-'} ${event.layout}`;
+    case 'window-pane-changed':
+      return `%window-pane-changed ${event.window} ${event.pane}`;
+    case 'window-renamed':
+    case 'unlinked-window-renamed':
+      return `%${event.kind} ${event.window} ${event.name}`;
+    case 'session-changed':
+      return `%session-changed ${event.session} ${event.name}`;
+    case 'session-window-changed':
+      return `%session-window-changed ${event.session} ${event.window}`;
+    case 'window-add':
+    case 'window-close':
+    case 'unlinked-window-add':
+    case 'unlinked-window-close':
+      return `%${event.kind} ${event.window}`;
+    default:
+      return `%${event.kind}`;
+  }
 }

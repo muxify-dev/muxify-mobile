@@ -1,3 +1,4 @@
+import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { systemClock } from '@/lib/clock';
@@ -28,7 +29,7 @@ import {
 import type { Extent } from './pane-layout';
 import { createTopologyStore, EMPTY_TOPOLOGY, type Topology, type TopologyStore } from './topology';
 import type { TmuxTransport } from './transport';
-import { TmuxClient, type Grid, type Session } from './tmux-client';
+import { sameGrid, TmuxClient, type Grid, type Session } from './tmux-client';
 
 /**
  * One live Connection to a Host, as Attach needs it.
@@ -165,6 +166,8 @@ export interface AttachOptions {
   openConnection: OpenConnection;
   store: HostStore;
   clock?: Clock;
+  /** Where the Attach says what it did. Silent when nobody asked. */
+  log?: Log;
 }
 
 /**
@@ -205,6 +208,8 @@ export interface AttachOptions {
 export function openAttach(options: AttachOptions): Attach {
   const { host, openConnection, store } = options;
   const clock = options.clock ?? systemClock;
+  const log = options.log ?? silentLog;
+  const say = speakingAs(log, 'attach');
 
   /**
    * Which Connection is current.
@@ -236,6 +241,14 @@ export function openAttach(options: AttachOptions): Attach {
    * same bug the Pane view was deepened to close — only one level up.
    */
   const onScreen = new Map<string, { surface: PaneSurface; grid: Grid | null }>();
+  /**
+   * Panes whose output arrived with no view to take it, once each.
+   *
+   * Only Panes of the Window on screen are worth a line: tmux pushes output
+   * for every Pane in the Session, and the ones in other Windows have no view
+   * on purpose. One that is on screen and has none is a Pane going blank.
+   */
+  const unheard = new Set<string>();
 
   const listeners = new Set<(state: AttachState) => void>();
   let state: AttachState = {
@@ -260,7 +273,7 @@ export function openAttach(options: AttachOptions): Attach {
     // never sent, or it will skip the next request for the same one.
     if (!current) throw new Error('no Client to resize');
     await current.resizeClient(grid);
-  }, { clock, onSettled: (grid) => change({ grid }) });
+  }, { clock, onSettled: (grid) => change({ grid }), log });
 
   function publish(): void {
     for (const listener of [...listeners]) listener(state);
@@ -268,8 +281,40 @@ export function openAttach(options: AttachOptions): Attach {
 
   function change(over: Partial<AttachState>): void {
     if (closed && over.phase?.kind !== 'closed') return;
+    noteChange(over);
     state = { ...state, ...over };
     publish();
+  }
+
+  /**
+   * The facts a subscriber would notice, written down as they change.
+   *
+   * Not every field: the cursor row and the Scrollback position move with
+   * every burst of output, and a Log full of them is a Log with nothing else
+   * left in it.
+   */
+  function noteChange(over: Partial<AttachState>): void {
+    if (over.phase && over.phase.kind !== state.phase.kind) {
+      say(
+        over.phase.kind === 'disconnected'
+          ? `phase disconnected: ${over.phase.reason.kind} — ${over.phase.reason.detail}`
+          : `phase ${over.phase.kind}`,
+      );
+    }
+    if (over.sessionName !== undefined && over.sessionName !== state.sessionName) {
+      say(`Session is now ${over.sessionName}`);
+    }
+    if (over.trouble && over.trouble !== state.trouble) say(`trouble: ${over.trouble}`);
+    if (over.grid && !sameGrid(over.grid, state.grid)) {
+      say(`Client grid ${over.grid.cols}x${over.grid.rows}`);
+    }
+    if (over.mouseTracking !== undefined && over.mouseTracking !== state.mouseTracking) {
+      say(`mouse tracking ${over.mouseTracking ? 'on' : 'off'} in the active Pane`);
+    }
+    if (over.zoomed !== undefined && over.zoomed !== state.zoomed) {
+      say(`Zoom preference ${over.zoomed ? 'on' : 'off'}`);
+    }
+    if (over.keyChanged && !state.keyChanged) say('the Host presented a different key');
   }
 
   /** True when this step began before the current Connection. */
@@ -335,10 +380,17 @@ export function openAttach(options: AttachOptions): Attach {
           if (!stale(mine)) change({ trouble: describeError(error) });
         },
       },
-      { clock },
+      { clock, log },
     );
     views.set(paneId, view);
+    unheard.delete(paneId);
     const shown = onScreen.get(paneId);
+    say(
+      `view for ${paneId} created` +
+        (shown
+          ? `, over a Surface that ${shown.grid ? `reported ${shown.grid.cols}x${shown.grid.rows}` : 'has not reported'}`
+          : ', with no Surface yet'),
+    );
     if (shown) {
       view.setSurface(shown.surface);
       if (shown.grid) view.reportGrid(shown.grid);
@@ -371,6 +423,7 @@ export function openAttach(options: AttachOptions): Attach {
     const wanted = new Set(next.panes.map((pane) => pane.id));
     for (const [id, view] of [...views]) {
       if (wanted.has(id)) continue;
+      say(`${id} left the Topology; its view is released${onScreen.has(id) ? ', Surface kept' : ''}`);
       view.dispose();
       views.delete(id);
     }
@@ -382,6 +435,7 @@ export function openAttach(options: AttachOptions): Attach {
 
   /** Disposes every view but keeps the Surfaces, which the screen still holds. */
   function releaseViews(): void {
+    if (views.size > 0) say(`releasing ${views.size} views; ${onScreen.size} Surfaces kept`);
     for (const view of views.values()) view.dispose();
     views.clear();
   }
@@ -391,12 +445,15 @@ export function openAttach(options: AttachOptions): Attach {
   async function connect(): Promise<void> {
     const mine = generation;
     try {
+      say(`connecting to ${host.displayName} (${host.address}:${host.port}) for ${state.sessionName}`);
       const opened = await openConnection(host);
       if (stale(mine)) {
+        say('Connection opened after it was no longer wanted; closing it');
         await opened.close();
         return;
       }
       connection = opened;
+      say(`Connection open; Host key ${opened.verdict.kind}`);
 
       // Trust on first use: remember the key the first time, and say so loudly
       // when it changes. The Connection is not blocked either way — someone
@@ -414,19 +471,30 @@ export function openAttach(options: AttachOptions): Attach {
       // Surface reports one while the Dock's glass is still being measured and
       // a smaller one once the Dock has taken its height; the first would
       // leave tmux drawing a taller Window than the Surface has.
-      await sizing.settledGrid();
+      if (!sizing.stableGrid()) say('waiting for a grid that has stopped moving');
+      const settled = await sizing.settledGrid();
       if (stale(mine)) return;
+      say(`opening the Control Connection at ${settled.cols}x${settled.rows}`);
 
       // This is Attach: one channel, no PTY, and no Session option touched.
       const opening = await openControlConnection(
         opened.transport,
-        { sessionName: state.sessionName, tmuxExecutablePath: host.tmuxExecutablePath },
+        { sessionName: state.sessionName, tmuxExecutablePath: host.tmuxExecutablePath, log },
         {
           // Straight to the Pane it belongs to. A Window that is not zoomed
           // has a view for each of them, and this is the thing an attached
           // client could not do: its byte stream is one composited Window.
           onOutput: (pane, bytes) => {
-            if (!stale(mine)) views.get(pane)?.receive(bytes);
+            if (stale(mine)) return;
+            const view = views.get(pane);
+            if (view) {
+              view.receive(bytes);
+              return;
+            }
+            // Worth a line only for a Pane that should have one; see unheard.
+            if (unheard.has(pane) || !state.topology.panes.some((each) => each.id === pane)) return;
+            unheard.add(pane);
+            say(`output for ${pane}, which is in the Window but has no view (${bytes.length} bytes)`);
           },
           onNotification: (event) => {
             if (stale(mine)) return;
@@ -455,6 +523,7 @@ export function openAttach(options: AttachOptions): Attach {
         onTrouble: (error) => {
           if (!stale(mine)) change({ trouble: describeError(error) });
         },
+        log,
       });
       // Publishing the Topology is all that is needed: the Surfaces on screen
       // are derived from it, so a split made on the laptop, a Window switch or
@@ -482,11 +551,13 @@ export function openAttach(options: AttachOptions): Attach {
       // arrives with its active Pane filling the Window.
       await client.setZoom(state.sessionName, state.zoomed);
       if (stale(mine)) return;
+      say(`Zoom preference ${state.zoomed ? 'on' : 'off'} applied; reading the Topology`);
       await topology.refresh();
       if (stale(mine)) return;
       refreshSessions();
     } catch (error) {
       if (stale(mine)) return;
+      say(`connect failed: ${describeError(error)}`);
       // Two stages, two vocabularies. Before the Control Connection is open
       // the failure is the SSH library's; after it, it is tmux's own words.
       const reason = connection === null ? reasonForConnectFailure(error) : reasonForAttachFailure(error);
@@ -507,6 +578,10 @@ export function openAttach(options: AttachOptions): Attach {
     source: ReconnectSource | null,
   ): void {
     if (stale(mine)) return;
+    say(
+      `Connection ended: ${reason.kind} — ${reason.detail}` +
+        (source === null ? '; no automatic reconnect' : `; ${source} may reconnect`),
+    );
     // Not awaited: a Connection that has already ended has nothing to wait
     // for, and a reconnect must not be held up by a socket that will not shut.
     void teardown();
@@ -554,8 +629,14 @@ export function openAttach(options: AttachOptions): Attach {
   function tryReconnect(source: ReconnectSource): void {
     if (closed) return;
     if (state.phase.kind !== 'disconnected') return;
-    if (!retryCouldWork(state.phase.reason)) return;
-    if (attempted.has(source)) return;
+    if (!retryCouldWork(state.phase.reason)) {
+      say(`not reconnecting (${source}): trying again could not work`);
+      return;
+    }
+    if (attempted.has(source)) {
+      say(`not reconnecting (${source}): it has had its attempt`);
+      return;
+    }
     attempted.add(source);
     replace(source === 'foreground' ? { kind: 'restoring' } : { kind: 'reconnecting' });
   }
@@ -563,6 +644,7 @@ export function openAttach(options: AttachOptions): Attach {
   /** A fresh Connection under the same Attach. */
   function replace(phase: AttachPhase): void {
     generation += 1;
+    say(`replacing the Connection (generation ${generation})`);
     void teardown();
     connection = null;
     change({ phase });
@@ -581,10 +663,14 @@ export function openAttach(options: AttachOptions): Attach {
         // Checked again on the way back, not only on the way out: a read that
         // was in flight when the app was suspended is a read whose answer
         // nobody is looking at, and publishing it is drawing.
-        if (!stale(mine) && !suspended) change({ sessions: listed });
-      } catch {
+        if (!stale(mine) && !suspended) {
+          say(`${listed.length} Sessions on the Host`);
+          change({ sessions: listed });
+        }
+      } catch (error) {
         // A Session list that will not read is a picker with nothing new in
         // it, not a Connection worth taking down.
+        if (!stale(mine)) say(`the Session list would not read: ${describeError(error)}`);
       }
     })();
   }
@@ -619,6 +705,7 @@ export function openAttach(options: AttachOptions): Attach {
       const mine = generation;
       const current = client;
       if (!current || name === state.sessionName) return;
+      say(`switching to Session ${name}`);
       await current.switchSession(name);
       if (stale(mine)) return;
       topology?.attachedTo(name);
@@ -637,6 +724,7 @@ export function openAttach(options: AttachOptions): Attach {
       const mine = generation;
       const current = client;
       if (!current) return;
+      say(`selecting Window ${index}`);
       await current.selectWindow(state.sessionName, index);
       await settleAfterVerb(mine);
     },
@@ -647,7 +735,21 @@ export function openAttach(options: AttachOptions): Attach {
       const model = topology;
       const pane = state.topology.panes.find((each) => each.id === paneId);
       const windowIndex = state.topology.activeWindow?.index;
-      if (!current || !model || !pane || windowIndex === undefined || pane.active) return;
+      if (!current || !model || !pane || windowIndex === undefined || pane.active) {
+        say(
+          `selecting Pane ${paneId} did nothing: ${
+            !current
+              ? 'no Client'
+              : !pane
+                ? 'not in the Topology'
+                : windowIndex === undefined
+                  ? 'no active Window'
+                  : 'it is already active'
+          }`,
+        );
+        return;
+      }
+      say(`selecting Pane ${paneId} (index ${pane.index}) in Window ${windowIndex}`);
       // Moved here first, then asked for. The cursor, the keyboard and the
       // Panes sheet all follow the Topology, so doing it in this order is the
       // difference between a tap that lands and one that lands a round trip
@@ -677,6 +779,7 @@ export function openAttach(options: AttachOptions): Attach {
       const mine = generation;
       const current = client;
       if (!current) return;
+      say(`splitting ${direction}`);
       await current.splitWindow(state.sessionName, direction);
       await settleAfterVerb(mine);
     },
@@ -685,12 +788,14 @@ export function openAttach(options: AttachOptions): Attach {
       const mine = generation;
       const current = client;
       if (!current) return;
+      say('adding a Window');
       await current.newWindow(state.sessionName);
       await settleAfterVerb(mine);
     },
 
     setZoom(on: boolean): void {
       const mine = generation;
+      say(`Zoom switch → ${on ? 'on' : 'off'}`);
       change({ zoomed: on });
       background(mine, async () => {
         const current = client;
@@ -723,6 +828,7 @@ export function openAttach(options: AttachOptions): Attach {
     refreshTopology(): void {
       const mine = generation;
       if (suspended) return;
+      say('re-reading the Topology for a sheet');
       background(mine, async () => {
         await topology?.refresh();
       });
@@ -730,6 +836,7 @@ export function openAttach(options: AttachOptions): Attach {
 
     reconnect(): void {
       if (closed || state.phase.kind !== 'disconnected') return;
+      say('reconnect asked for by the user');
       // The user asking, so the once-per-source rule does not apply — that is
       // there to stop Muxify looping, not to stop a person trying again.
       replace({ kind: 'reconnecting' });
@@ -740,10 +847,17 @@ export function openAttach(options: AttachOptions): Attach {
     surfaceForPane(paneId: string, surface: PaneSurface | null, grid: Grid | null = null): void {
       if (closed) return;
       if (surface === null) {
+        say(`Surface for ${paneId} left`);
         onScreen.delete(paneId);
         views.get(paneId)?.setSurface(null);
         return;
       }
+      say(
+        `Surface for ${paneId} arrived` +
+          (grid ? `, having reported ${grid.cols}x${grid.rows}` : ', not yet reported') +
+          (views.has(paneId) ? '' : '; no view for it yet') +
+          (state.topology.panes.some((each) => each.id === paneId) ? '' : '; not in the Topology'),
+      );
       // The grid is the Surface's own or nothing: a Surface that has not
       // reported yet says so as soon as it is laid out, and the grid the one
       // before it reported is not this one's.
@@ -762,7 +876,9 @@ export function openAttach(options: AttachOptions): Attach {
       if (closed) return;
       const shown = onScreen.get(paneId);
       if (shown) shown.grid = grid;
-      views.get(paneId)?.reportGrid(grid);
+      const view = views.get(paneId);
+      if (!view) say(`grid ${grid.cols}x${grid.rows} for ${paneId}, which has no view to paint`);
+      view?.reportGrid(grid);
     },
 
     windowGridReported(grid: Grid, surface: Extent): void {
@@ -781,6 +897,7 @@ export function openAttach(options: AttachOptions): Attach {
         // Nothing on the wire, nothing drawn, and no background task: whether
         // the socket survives suspension is iOS's decision, and the foreground
         // check is what answers it. See ADR 0007.
+        say('app in the background; suspended');
         suspended = true;
         for (const view of views.values()) view.setPaused(true);
         return;
@@ -790,6 +907,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (phase !== 'active') return;
       if (!suspended) return;
       suspended = false;
+      say('app active again; resumed');
       for (const view of views.values()) view.setPaused(false);
 
       if (state.phase.kind === 'disconnected') {
@@ -801,7 +919,10 @@ export function openAttach(options: AttachOptions): Attach {
       // Asked of the transport rather than assumed. A Surface that looks
       // connected after a suspension is a Surface that may be talking to
       // nothing, and only the thing underneath can say which.
-      if (control?.isOpen() ?? false) return;
+      if (control?.isOpen() ?? false) {
+        say('the link survived the background');
+        return;
+      }
       ended(
         generation,
         { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
@@ -811,6 +932,7 @@ export function openAttach(options: AttachOptions): Attach {
 
     async close(): Promise<void> {
       if (closed) return;
+      say('closed on purpose');
       closed = true;
       generation += 1;
       sizing.dispose();

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
+import { deviceLog } from '@/diagnostics/device-log';
 import { deviceHostStore } from '@/storage/device-store';
 
 import { openAttach, type Attach, type AttachState, type LifecyclePhase } from './attach';
@@ -25,12 +26,15 @@ const AttachContext = createContext<AttachHolder | null>(null);
 export function AttachProvider({ children }: { children: ReactNode }) {
   const holder = useMemo(
     () =>
-      createAttachHolder((request) =>
-        openAttach({
-          ...request,
-          store: deviceHostStore(),
-          openConnection: sshConnection(deviceHostStore()),
-        }),
+      createAttachHolder(
+        (request) =>
+          openAttach({
+            ...request,
+            store: deviceHostStore(),
+            openConnection: sshConnection(deviceHostStore()),
+            log: deviceLog(),
+          }),
+        deviceLog(),
       ),
     [],
   );

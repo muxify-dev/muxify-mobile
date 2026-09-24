@@ -14,6 +14,8 @@ import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/pi
 import { ThemedText } from '@/components/themed-text';
 import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
 import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
+import { deviceLog } from '@/diagnostics/device-log';
+import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
@@ -34,6 +36,17 @@ import type { Grid, Pane } from '@/tmux/tmux-client';
 
 /** What the Surface uses when the user has not picked a size. */
 const DEFAULT_FONT_SIZE = 13;
+
+/**
+ * The screen's own voice in the Log.
+ *
+ * What it says is what the Attach cannot know: which Surfaces are on screen
+ * and where, what the Dock was asked for and whether there was a Pane to ask
+ * it of, when the keyboard moved. A Pane that went blank is described from
+ * both sides — the Attach's line says what it was told, and this one says
+ * what was drawn.
+ */
+const say = speakingAs(deviceLog(), 'screen');
 
 /**
  * How much Scrollback a finger moves, against how far it travels.
@@ -114,7 +127,9 @@ export default function TerminalScreen() {
    * of a Session that is already attached happens to mean nothing at all.
    */
   useEffect(() => {
+    say(`opened for ${hostId ?? '?'}:${sessionParam ?? '?'}`);
     if (!hostId || !sessionParam) {
+      say('no Host or Session in the route');
       setMissing('No Host was chosen.');
       return;
     }
@@ -125,6 +140,7 @@ export default function TerminalScreen() {
       const host = records.hosts.find((candidate) => candidate.id === hostId);
       if (left) return;
       if (!host) {
+        say('the Host in the route is no longer saved');
         setMissing('This Host is no longer saved.');
         return;
       }
@@ -133,6 +149,7 @@ export default function TerminalScreen() {
     })();
     return () => {
       left = true;
+      say('left');
     };
     // The Zoom preference is what the Session is *opened* with; changing it in
     // Settings must not reopen a Session that is already up.
@@ -193,9 +210,11 @@ export default function TerminalScreen() {
    */
   const [cellSize, setCellSize] = useState<Extent | null>(null);
   const reportCell = useCallback((cell: Extent) => {
-    setCellSize((was) =>
-      was && was.width === cell.width && was.height === cell.height ? was : cell,
-    );
+    setCellSize((was) => {
+      if (was && was.width === cell.width && was.height === cell.height) return was;
+      say(`cell ${cell.width.toFixed(2)}x${cell.height.toFixed(2)} points`);
+      return cell;
+    });
   }, []);
 
   /**
@@ -290,6 +309,34 @@ export default function TerminalScreen() {
   useEffect(() => {
     attach?.spanningSurface(spanning);
   }, [attach, spanning]);
+
+  /**
+   * What is on screen, written to the Log whenever it changes.
+   *
+   * The ruler or the Panes, each at its box — the one fact about a blank Pane
+   * that nothing below this screen can record, because nothing below it knows
+   * what was mounted. Described as a string first so that a render which
+   * changed nothing says nothing.
+   */
+  const onScreen = useMemo(() => {
+    if (slots.length === 0) {
+      return (
+        `the ruler alone at ${Math.round(windowArea.width)}x${Math.round(windowArea.height)}; ` +
+        `the Topology has ${topology?.panes.length ?? 0} Panes, active ${activePaneId || 'none'}`
+      );
+    }
+    return slots
+      .map(
+        (slot) =>
+          `${slot.pane.id}${slot.pane.active ? '*' : ''}${slot.fillsWindow ? ' filling' : ''} at ` +
+          `${Math.round(slot.box.left)},${Math.round(slot.box.top)} ` +
+          `${Math.round(slot.box.width)}x${Math.round(slot.box.height)}, ${slot.rows} rows`,
+      )
+      .join(' | ');
+  }, [slots, windowArea, topology, activePaneId]);
+  useEffect(() => {
+    say(`on screen: ${onScreen}`);
+  }, [onScreen]);
 
   /**
    * Whether a sheet is up, forwarded as it changes.
@@ -470,8 +517,10 @@ export default function TerminalScreen() {
    * listener below only decides which way the Dock's button points.
    */
   const toggleKeyboard = useCallback(() => {
-    void activeView()?.toggleKeyboard();
-  }, [activeView]);
+    const view = activeView();
+    say(view ? `Keyboard button, for ${activePaneId}` : 'Keyboard button, with no active Pane to ask');
+    void view?.toggleKeyboard();
+  }, [activeView, activePaneId]);
 
   /** Puts the active Pane back at the live bottom, and the indicator with it. */
   const jumpToLatest = useCallback(() => {
@@ -573,6 +622,7 @@ export default function TerminalScreen() {
    */
   const openPicker = useCallback(
     (kind: PickerKind) => {
+      say(`${kind} sheet opened`);
       setPicker({
         open: true,
         kind,
@@ -611,6 +661,7 @@ export default function TerminalScreen() {
    */
   const select = useCallback(
     (kind: PickerKind, id: string) => {
+      say(`picked ${kind} ${id}`);
       if (!attach || !state) return;
       void (async () => {
         try {
@@ -639,6 +690,7 @@ export default function TerminalScreen() {
   /** Zoom, split and new-Window: the sheet's bottom bar. */
   const runSheetAction = useCallback(
     (id: string) => {
+      say(`sheet action ${id}`);
       if (!attach) return;
       void (async () => {
         try {
@@ -796,10 +848,12 @@ export default function TerminalScreen() {
     // The action itself goes to the Surface that has focus, which no listener
     // can see — see toggleKeyboard.
     const shown = Keyboard.addListener('keyboardWillShow', () => {
+      say('keyboard will show');
       keyboardUp.current = true;
       setKeyboardVisible(true);
     });
     const hidden = Keyboard.addListener('keyboardWillHide', () => {
+      say('keyboard will hide');
       keyboardUp.current = false;
       setKeyboardVisible(false);
     });
@@ -828,6 +882,10 @@ export default function TerminalScreen() {
         style={[styles.surfaceArea, { backgroundColor: opened.terminal.background }]}
         onLayout={({ nativeEvent }) => {
           const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
+          say(
+            `container ${Math.round(size.width)}x${Math.round(size.height)}` +
+              (keyboardUp.current ? ', keyboard up' : ''),
+          );
           setContainerSize(size);
           // The Window's height is the container's with the keyboard down, and
           // only then; see windowHeight.
@@ -851,7 +909,10 @@ export default function TerminalScreen() {
               cursorColor: opened.terminal.cursor,
               palette: opened.ansi ? [...opened.ansi] : undefined,
             }}
-            onResize={reportWindowGrid}
+            onResize={(event) => {
+              say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
+              reportWindowGrid(event);
+            }}
           />
         ) : null}
 
@@ -909,7 +970,10 @@ export default function TerminalScreen() {
       <PickerSheet
         title={picker.open ? PICKER_TITLES[picker.kind] : ''}
         isPresented={picker.open}
-        onDismiss={() => setPicker({ open: false })}
+        onDismiss={() => {
+          say('sheet dismissed');
+          setPicker({ open: false });
+        }}
         loading={picker.open && picker.loading}
         error={picker.open ? picker.error : undefined}
         emptyMessage={picker.open ? PICKER_EMPTY[picker.kind] : ''}
@@ -1188,6 +1252,7 @@ function PaneSurfaceView({
         }}
         onResize={({ nativeEvent }) => {
           const grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+          say(`Surface for ${slot.pane.id} reported ${grid.cols}x${grid.rows}`);
           reported.current = grid;
           own.current = grid;
           onWindowResize?.({ nativeEvent });
