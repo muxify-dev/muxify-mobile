@@ -49,31 +49,42 @@ the bar can be hidden. Left open deliberately: the brief asked for ctrl/esc/tab,
 the user has asked for the bar to go "for now", and how much its absence grates
 is worth finding out before building a replacement.
 
-## Resolved: the group is built, as a menu, and tmux does the encoding
+## Resolved: the group is built, and tmux does the encoding
 
 The absence grated, and the answer came back as "three groups, the first one
-Meta". So the group exists: one Dock capsule holding a single button that opens
-a SwiftUI `Menu` — esc, tab and enter, the four arrows, and submenus for
-Control, Option and Move.
+the keys". So the group exists: a Key Bar in its own glass capsule at the left
+of the Dock — ctrl, esc, tab, the four arrows, page up and down, alt, home and
+end. Three are on screen and the rest are a sideways swipe away, so the bar
+costs the Surface nothing as it grows.
 
-The encoding worry above turned out to be the wrong worry, and the fix is the
-reason this is worth recording. The ADR assumed a custom group would have to
-**compute bytes itself** — `ctrl+A` → `0x01` — because it could no longer
-borrow ghostty's `ghostty_key_encoder`. That would have been a real second
-input path, and a wrong one: the bytes for a key are not a property of the key.
-Measured on tmux 3.6, Up into a shell is `ESC [ A` and Up into anything that
-has turned DECCKM on is `ESC O A`. Computing them here would mean tracking each
-Pane's cursor-key mode — a second model of tmux's state, which ADR 0006
-declined to keep.
+**A menu was tried first and was the wrong shape.** It closed on every pick, so
+an arrow cost a reopen each time it was pressed, and there is nowhere in a menu
+to show a modifier as *held*. Both are the same observation: modifier keys are
+a state, and a menu has no state.
 
-So nothing is computed. The menu sends tmux the *name* of the key, and
-`send-keys -t %3 Up` lets tmux pick the bytes for whatever that Pane is
-currently running. It is the same path typing already takes, the same command
-with a different argument, and the Pane's mode is tmux's business rather than
-this app's. There is no second input path.
+**The encoding worry above turned out to be the wrong worry**, and the fix is
+the reason this is worth recording. The ADR assumed a custom group would have
+to compute bytes itself — `ctrl+A` to `0x01` — because it could no longer borrow
+ghostty's `ghostty_key_encoder`. That would have been a real second input path,
+and a wrong one: the bytes for a key are not a property of the key. Measured on
+tmux 3.6, `Up` into a shell is `ESC [ A` and `Up` into anything that has turned
+DECCKM on is `ESC O A`. Computing them here would mean tracking each Pane's
+cursor-key mode — a second model of tmux's state, which ADR 0006 declined to
+keep.
 
-What is genuinely new is the cost of the menu shape: a menu closes when you
-pick something, so a key that wants repeating — an arrow, mostly — costs a
-reopen each time. That is the trade for having the keys at all without a
-permanent second row eating the Surface. If repeating turns out to grate the
-way the absence did, the answer is a row that stays up, not a different menu.
+So nothing is computed. Every key is sent by *name*: `send-keys -t %3 Up`, and
+tmux picks the bytes for whatever that Pane is running. It is the same command
+typing already uses with a different argument, so there is no second input path.
+
+This holds for the modifiers too, which is the part that is not obvious. ctrl
+and alt are **sticky** — a phone keyboard cannot hold one key down while
+pressing another — so ctrl is armed with a tap and spent on whatever comes
+next, whether that is another bar key (`C-Left`) or a letter typed on the system
+keyboard (`C-f`). Both end up as one tmux key name. The system keyboard's bytes
+are not transformed; the first key of the batch is replaced by a name and the
+rest is typed as it arrived.
+
+One measured hole, recorded because nothing warns about it: `C-Escape` is not a
+key tmux knows, and `send-keys` does not refuse it — it types the eight
+characters `C-Escape` into the Pane. So Escape is marked as taking no ctrl and
+the modifier is dropped for it. Every other key on the bar takes both.

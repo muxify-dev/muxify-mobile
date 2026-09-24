@@ -1,5 +1,5 @@
 import { isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { Button, ControlGroup, HStack, Host, Menu, Section } from '@expo/ui/swift-ui';
+import { Button, HStack, Host } from '@expo/ui/swift-ui';
 import {
   buttonStyle,
   disabled,
@@ -9,54 +9,34 @@ import {
   padding,
 } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
-
-/** One row of a Dock button's menu. */
-export interface DockMenuItem {
-  id: string;
-  label: string;
-  systemImage?: SFSymbol;
-  onPress: () => void;
-}
-
-/**
- * A run of menu rows, drawn either as a row of icons or as a submenu.
- *
- * `row` is SwiftUI's ControlGroup, which inside a menu lays its children out
- * side by side instead of stacked — four arrows on one line rather than four.
- */
-export interface DockMenuSection {
-  id: string;
-  title?: string;
-  kind: 'row' | 'nested';
-  items: DockMenuItem[];
-}
 
 export interface DockAction {
   /** Stable id, also used as the glass effect identity within the namespace. */
   id: string;
   label: string;
-  /** Omitted for a button that shows its name instead of a glyph. */
-  systemImage?: SFSymbol;
+  systemImage: SFSymbol;
   onPress: () => void;
   disabled?: boolean;
-  /**
-   * When present the button opens this instead of acting.
-   *
-   * A SwiftUI Menu, so the panel that opens is the system's own — glass,
-   * placed by iOS, dismissed the way every other menu on the phone is. Nothing
-   * here draws it.
-   */
-  menu?: DockMenuSection[];
 }
 
 export interface DockProps {
   /** Each group renders as its own merged glass capsule. */
   groups: DockAction[][];
+  /**
+   * A capsule of its own, before the groups, given whatever width they leave.
+   *
+   * The Key Bar, in practice — which is not built from these actions because it
+   * is not a row of buttons: it scrolls, and some of its keys are held down
+   * rather than pressed. See KeyBar for why that is React Native rather than
+   * SwiftUI like the rest of this.
+   */
+  leading?: ReactNode;
 }
 
 /**
@@ -75,7 +55,7 @@ export interface DockProps {
  * rested on the terminal library's own Accessory Bar above the keyboard
  * carrying ctrl, esc and tab already; the bar is turned off by a local patch
  * because it covered the Dock, and with it gone the app had no escape, no tab
- * and no arrows at all. See META_SECTIONS.
+ * and no arrows at all. They live in `leading`. See KeyBar and BAR_KEYS.
  */
 /**
  * Height the Dock must clear to stay tappable.
@@ -104,17 +84,53 @@ function useKeyboardInset(): number {
   return inset;
 }
 
-export function Dock({ groups }: DockProps) {
+/**
+ * How much the leading capsule is raised so the two kinds of glass line up.
+ *
+ * Measured on an iPhone 17 Pro by reading the painted edges out of a
+ * screenshot and comparing them with the frames the accessibility tree
+ * reports: a SwiftUI `Host matchContents` group paints about three points
+ * *above* the box it reports, and the Key Bar, being React Native, paints
+ * exactly on its own. Left alone, the two sit visibly out of line.
+ *
+ */
+const GLASS_LIFT = 2;
+
+/**
+ * How far above its reported box the SwiftUI glass actually paints.
+ *
+ * What the Dock's clearance from the bottom of the screen is measured against,
+ * because what has to stay off the home indicator is where the glass lands
+ * rather than where it claims to be.
+ */
+const GLASS_PAINT_OFFSET = 3;
+
+export function Dock({ groups, leading }: DockProps) {
   // Some iOS 26 betas ship without the underlying effect class and crash on
   // use, so probe the runtime API rather than the design-mode flag — they are
   // different checks and only this one guards the crash.
   const glassAvailable = isGlassEffectAPIAvailable();
   const keyboardInset = useKeyboardInset();
+  const insets = useSafeAreaInsets();
+
+  // Above the home indicator, not over it — measured from where the glass
+  // lands rather than from the box it reports, which is why the lift comes off
+  // again here. With the keyboard up there is no indicator to clear: it is
+  // behind the keyboard, and the Dock sits on that instead.
+  const bottom =
+    keyboardInset > 0 ? BOTTOM_GAP : Math.max(BOTTOM_GAP, insets.bottom - GLASS_PAINT_OFFSET);
 
   return (
     <View
-      style={[styles.dock, keyboardInset > 0 && { marginBottom: keyboardInset }]}
+      style={[
+        styles.dock,
+        { paddingBottom: bottom },
+        keyboardInset > 0 && { marginBottom: keyboardInset },
+      ]}
       pointerEvents="box-none">
+      {/* Raised so it paints on the same line as the glass beside it, which
+          sits higher than it says it does. See GLASS_LIFT. */}
+      {leading ? <View style={styles.leading}>{leading}</View> : null}
       {groups.map((group, index) =>
         glassAvailable ? (
           <GlassGroup key={group[0]?.id ?? index} actions={group} />
@@ -138,69 +154,29 @@ function GlassGroup({ actions }: { actions: DockAction[] }) {
           padding({ horizontal: 6, vertical: 4 }),
           glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
         ]}>
-        {actions.map((action) =>
-          action.menu ? (
-            <Menu
-              key={action.id}
-              label={action.label}
-              modifiers={[
-                frame({ height: 44 }),
-                padding({ horizontal: 10 }),
-                buttonStyle('plain'),
-                disabled(action.disabled ?? false),
-              ]}>
-              {action.menu.map((section) => (
-                <MenuSection key={section.id} section={section} />
-              ))}
-            </Menu>
-          ) : (
-            <Button
-              key={action.id}
-              label={action.label}
-              systemImage={action.systemImage}
-              onPress={action.onPress}
-              modifiers={[
-                // 44pt is the smallest reliably tappable target on iOS, and
-                // also as tight as the buttons can sit without the row reading
-                // as one smudge.
-                frame({ width: 44, height: 44 }),
-                buttonStyle('plain'),
-                // Icon only, but the label stays: it is what the accessibility
-                // tree exposes, and what every e2e suite presses by.
-                labelStyle('iconOnly'),
-                // Actually disabled, not merely inert: a button that looks
-                // pressable and does nothing is worse than one that says so.
-                disabled(action.disabled ?? false),
-              ]}
-            />
-          ),
-        )}
+        {actions.map((action) => (
+          <Button
+            key={action.id}
+            label={action.label}
+            systemImage={action.systemImage}
+            onPress={action.onPress}
+            modifiers={[
+              // 44pt is the smallest reliably tappable target on iOS, and also
+              // as tight as the buttons can sit without the row reading as one
+              // smudge.
+              frame({ width: 42, height: 44 }),
+              buttonStyle('plain'),
+              // Icon only, but the label stays: it is what the accessibility
+              // tree exposes, and what every e2e suite presses by.
+              labelStyle('iconOnly'),
+              // Actually disabled, not merely inert: a button that looks
+              // pressable and does nothing is worse than one that says so.
+              disabled(action.disabled ?? false),
+            ]}
+          />
+        ))}
       </HStack>
     </Host>
-  );
-}
-
-/** One section of a Dock menu: a row of icons, or a submenu of rows. */
-function MenuSection({ section }: { section: DockMenuSection }) {
-  const items = section.items.map((item) => (
-    <Button
-      key={item.id}
-      label={item.label}
-      systemImage={item.systemImage}
-      onPress={item.onPress}
-    />
-  ));
-
-  if (section.kind === 'nested') {
-    return <Menu label={section.title ?? ''}>{items}</Menu>;
-  }
-  // Labelless, so the row is the keys and nothing else. iOS lays a
-  // ControlGroup inside a menu out horizontally, which is the whole reason the
-  // arrows are one line rather than four.
-  return (
-    <Section>
-      <ControlGroup>{items}</ControlGroup>
-    </Section>
   );
 }
 
@@ -230,19 +206,35 @@ function PlainGroup({ actions }: { actions: DockAction[] }) {
   );
 }
 
+/** The least clearance under the Dock, when there is no home indicator to clear. */
+const BOTTOM_GAP = 8;
+
 const styles = StyleSheet.create({
   dock: {
     flexDirection: 'row',
     justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
+    // Bottom-aligned rather than centred, so that raising the leading capsule
+    // by GLASS_LIFT moves *it* and nothing else. Centred, the taller row it
+    // made pushed the other capsules down by half as much again, and the two
+    // chased each other a point at a time.
+    alignItems: 'flex-end',
+    // Tight, because the Key Bar gets whatever these leave and three keys is
+    // the least that reads as a row rather than as a fragment of one.
+    gap: 8,
+    paddingHorizontal: 10,
     // Clearance above the capsule as well as below it. A glass group is a
     // `Host matchContents`, and the glass is drawn a little larger than the
     // content it is measured from — so without this the capsule reaches up
     // over the Surface's last row and covers whatever the Pane put there.
     paddingTop: 10,
-    paddingBottom: 8,
+  },
+  leading: {
+    flex: 1,
+    // A row, because the capsule inside sizes itself along the main axis and a
+    // column would read its `flex` as a height instead — which squashed it to
+    // three quarters of its height.
+    flexDirection: 'row',
+    marginBottom: GLASS_LIFT,
   },
   host: {
     alignSelf: 'center',

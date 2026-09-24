@@ -83,6 +83,14 @@ export interface PaneView {
   /** Back to the live bottom, and a repaint to prove it. */
   jumpToLatest(): void;
   /**
+   * Whether the Surface is showing the past rather than the present.
+   *
+   * What a tap means depends on it: a tap on a Pane that has been dragged back
+   * spends itself returning to the bottom, and is not the tap that also wanted
+   * the keyboard.
+   */
+  scrolledBack(): boolean;
+  /**
    * The Surface is a different height now.
    *
    * Only Scrollback captures care: the live view is repainted by tmux itself,
@@ -427,6 +435,7 @@ export function createPaneView(
     type,
     press,
     jumpToLatest,
+    scrolledBack: () => back > 0,
 
     setCursorVisible(visible: boolean): void {
       if (disposed || visible === cursorVisible) return;

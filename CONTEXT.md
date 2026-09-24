@@ -124,18 +124,18 @@ _Avoid_: Terminal, emulator, view
 **Accessory Bar**:
 The modifier-key row (ctrl, esc, tab, arrows) that `expo-libghostty` draws above
 the system keyboard. Supplied by the library, not built by Muxify, and visible
-only while the keyboard is up. Muxify turns it off; the Meta menu is what stands
+only while the keyboard is up. Muxify turns it off; the Key Bar is what stands
 in its place.
 _Avoid_: Toolbar, key bar (reserved for the Dock)
 
 **Dock**:
 Muxify's own Liquid Glass bar pinned to the bottom of the Terminal Screen. Three
-groups: Meta, the Session/Window/Pane pickers, and Home/Keyboard.
+capsules: the Key Bar, the Session/Window/Pane pickers, and Home/Keyboard.
 _Avoid_: Toolbar, tab bar, bottom bar
 
-**Meta**:
-The Dock's first group: one button opening a menu of the keys a phone keyboard
-does not have — esc, tab, enter, the arrows, and the Control, Option and Move
-groups. Named for what it offers rather than for any one modifier, since none of
-them is a modifier here: each entry is a whole key, sent by name.
-_Avoid_: Modifiers, hotkeys, special keys
+**Key Bar**:
+The Dock's first capsule: the keys a phone keyboard does not have — ctrl, esc,
+tab, the arrows, page up and down, alt, home and end. Three are on screen and
+the rest are a sideways swipe away. ctrl and alt are *sticky*: armed by a tap,
+and spent on the next key from either the bar or the system keyboard.
+_Avoid_: Accessory Bar (that is the library's), toolbar, modifiers

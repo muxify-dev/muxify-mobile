@@ -33,8 +33,12 @@ wait 8000
 is "text" "id=\"connection-status\"" "Connected"
 
 # The Dock's Sessions button opens the sheet.
+#
+# Waited for by the sheet's own close button, not by the text "Sessions": the
+# Dock has a button of that name and it is on screen the whole time, so that
+# wait returned at once and everything after it raced the sheet's first frame.
 press "label=\"Sessions\""
-wait "text" "Sessions" 8000
+wait "label=\"Close Sessions\"" 15000
 
 # The sheet is up with its own chrome. The Sessions themselves are asserted in
 # e2e/pickers.sh, which can set up the Host's Topology first — this Host's

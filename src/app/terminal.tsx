@@ -7,17 +7,19 @@ import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Dock, type DockAction, type DockMenuSection } from '@/components/dock';
+import { Dock, type DockAction } from '@/components/dock';
+import { KeyBar } from '@/components/key-bar';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
-import type { TerminalPalette } from '@/constants/app-theme';
-import { META_SECTIONS } from '@/constants/meta-keys';
+import { paletteFor, type TerminalPalette } from '@/constants/app-theme';
+import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
 import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
+import { applyModifiers, NO_MODIFIERS, type Modifiers } from '@/lib/modifier-keys';
 import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
@@ -162,6 +164,17 @@ export default function TerminalScreen() {
   const [paneTrouble, setPaneTrouble] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   /**
+   * The sticky modifiers the Key Bar is holding down.
+   *
+   * A phone keyboard cannot hold a key while another is pressed, so ctrl is
+   * armed by a tap and spent on whatever comes next — from the bar or from the
+   * system keyboard. See modifier-keys.
+   */
+  const [armed, setArmed] = useState<Modifiers>(NO_MODIFIERS);
+  /** The same, where the Surface's input callback can read it without rebuilding. */
+  const armedRef = useRef<Modifiers>(NO_MODIFIERS);
+  armedRef.current = armed;
+  /**
    * Whether the application in the Pane is listening for the mouse.
    *
    * It decides what a tap is for. When nothing is listening a tap belongs to
@@ -284,7 +297,17 @@ export default function TerminalScreen() {
    */
   const handleTapCell = useCallback(
     (column: number, row: number) => {
-      activeView()?.click(column, row);
+      const view = activeView();
+      if (!view) return;
+      const wasScrolled = view.scrolledBack();
+      view.click(column, row);
+      // And the keyboard, because a tap on a terminal means both. This layer
+      // takes the touch away from the Surface, which would otherwise have
+      // raised it — so an application listening for the mouse, which is to say
+      // Claude Code, was a Pane you could click but never type into. A tap
+      // that only got as far as leaving the Scrollback is not that tap: it
+      // spent itself coming back to the present.
+      if (!wasScrolled) void surfaces.current.get(activePaneRef.current)?.focus();
     },
     [activeView],
   );
@@ -847,14 +870,29 @@ export default function TerminalScreen() {
    * Aimed at the Surface that had first responder, which is the only one the
    * keyboard was ever talking to — so a split needs no routing of its own.
    */
-  const handlePaneInput = useCallback((paneId: string, data: string) => {
-    // `data` is base64. The sibling `text` field must not be used: a
-    // multi-byte character split across reads is corrupted by text decoding.
-    //
-    // What comes out of the Surface is not quite what a shell expects — every
-    // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-    views.current.get(paneId)?.type(toShellInput(base64ToBytes(data)));
-  }, []);
+  const handlePaneInput = useCallback(
+    (paneId: string, data: string) => {
+      const view = views.current.get(paneId);
+      if (!view) return;
+      // `data` is base64. The sibling `text` field must not be used: a
+      // multi-byte character split across reads is corrupted by text decoding.
+      //
+      // What comes out of the Surface is not quite what a shell expects — every
+      // keystroke arrives wrapped as a bracketed paste. See toShellInput.
+      const typed = toShellInput(base64ToBytes(data));
+
+      // Whatever the Key Bar is holding down applies to the first key of this
+      // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
+      // of a fast typist's burst behind it as ordinary input.
+      const { key, rest } = applyModifiers(typed, armedRef.current);
+      if (key !== undefined) {
+        view.press(key);
+        setArmed(NO_MODIFIERS);
+      }
+      if (rest.length > 0) view.type(rest);
+    },
+    [],
+  );
 
   /**
    * Shows or hides the system keyboard.
@@ -1008,55 +1046,36 @@ export default function TerminalScreen() {
    */
   const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
 
-  /** A key from the Meta menu, into the Pane that has the keyboard. */
-  const pressMetaKey = useCallback(
-    (key: string) => {
-      activeView()?.press(key);
-    },
-    [activeView],
-  );
+  /** The Theme's chrome colours, which the Key Bar draws its own labels in. */
+  const chrome = useMemo(() => paletteFor(settings.theme), [settings.theme]);
 
   /**
-   * What the Meta button offers, as the Dock wants it.
+   * A key from the Key Bar, into the Pane that has the keyboard.
    *
-   * The keys themselves are in META_SECTIONS, which knows nothing about the
-   * Dock or about this screen — it is a list of tmux key names and what to
-   * call them.
+   * Carries whatever is armed with it, so ctrl and then the left arrow is
+   * `C-Left` — one key, named, for tmux to encode. The modifiers are spent
+   * either way: a key that cannot take them still clears them, or ctrl tapped
+   * by mistake would stay on until something happened to use it.
    */
-  const metaMenu: DockMenuSection[] = useMemo(
-    () =>
-      META_SECTIONS.map((section) => ({
-        id: section.id,
-        title: section.title,
-        kind: section.kind,
-        items: section.keys.map((each) => ({
-          id: each.key,
-          label: each.label,
-          systemImage: each.systemImage,
-          onPress: () => pressMetaKey(each.key),
-        })),
-      })),
-    [pressMetaKey],
+  const pressBarKey = useCallback(
+    (key: BarKey) => {
+      activeView()?.press(barKeyName(key, armed));
+      setArmed(NO_MODIFIERS);
+    },
+    [activeView, armed],
   );
+
+  /** ctrl or alt tapped: on if it was off, and off if it was on. */
+  const armModifier = useCallback((modifier: 'ctrl' | 'alt') => {
+    setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
+  }, []);
 
   const dockGroups: DockAction[][] = useMemo(() => {
     const connected = status.phase === 'connected';
-    // Three capsules, because there are three kinds of button here: the keys
-    // the phone's keyboard does not have, the things the Session is made of,
-    // and the way out. One long row said none of that.
+    // Two groups here and the Key Bar before them, because there are three
+    // kinds of thing: the keys the phone's keyboard does not have, the things
+    // the Session is made of, and the way out. One long row said none of that.
     return [
-      [
-        {
-          id: 'meta',
-          label: 'Meta',
-          // No glyph: this one says what it is. Every other Dock button is a
-          // familiar shape — a house, a keyboard — and there is no familiar
-          // shape for "the keys your keyboard is missing".
-          onPress: () => {},
-          menu: metaMenu,
-          disabled: !connected,
-        },
-      ],
       [
         {
           id: 'sessions',
@@ -1101,7 +1120,7 @@ export default function TerminalScreen() {
         },
       ],
     ];
-  }, [router, toggleKeyboard, keyboardVisible, openPicker, status.phase, metaMenu]);
+  }, [router, toggleKeyboard, keyboardVisible, openPicker, status.phase]);
 
   useEffect(() => {
     // Only so the Dock can show which way its keyboard button points.
@@ -1266,7 +1285,19 @@ export default function TerminalScreen() {
         />
       ) : null}
 
-      <Dock groups={dockGroups} />
+      <Dock
+        groups={dockGroups}
+        leading={
+          <KeyBar
+            keys={BAR_KEYS}
+            armed={armed}
+            onPress={pressBarKey}
+            onArm={armModifier}
+            disabled={status.phase !== 'connected'}
+            palette={chrome}
+          />
+        }
+      />
 
       {/* Below the status bar, not behind it: the container's padding does not
           push an absolutely positioned child down, so the grid ended up
