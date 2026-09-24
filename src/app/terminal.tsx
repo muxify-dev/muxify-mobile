@@ -2,7 +2,7 @@ import { connect, type SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Keyboard, StyleSheet, TextInput, View } from 'react-native';
 
 import { Dock, type DockAction } from '@/components/dock';
 import { ThemedText } from '@/components/themed-text';
@@ -26,6 +26,7 @@ type Status =
 export default function TerminalScreen() {
   const router = useRouter();
   const surface = useRef<TerminalViewRef>(null);
+  const focusTrap = useRef<TextInput>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
   const grid = useRef<Grid | null>(null);
@@ -129,6 +130,28 @@ export default function TerminalScreen() {
     shell.current?.write(base64ToBytes(nativeEvent.data));
   }, []);
 
+  /**
+   * Dismisses the keyboard the Surface raised.
+   *
+   * `Keyboard.dismiss()` alone does nothing here: it blurs whatever React
+   * Native's own registry believes is focused, and the Surface is a native text
+   * input that made itself first responder without RN's knowledge. Briefly
+   * focusing a real RN input takes first responder away from the Surface, and
+   * blurring that input then closes the keyboard for good.
+   */
+  const dismissKeyboard = useCallback(() => {
+    const trap = focusTrap.current;
+    if (!trap) {
+      Keyboard.dismiss();
+      return;
+    }
+    trap.focus();
+    requestAnimationFrame(() => {
+      trap.blur();
+      Keyboard.dismiss();
+    });
+  }, []);
+
   const dockGroups: DockAction[][] = useMemo(
     () => [
       [
@@ -141,15 +164,15 @@ export default function TerminalScreen() {
         {
           id: 'keyboard',
           label: 'Keyboard',
-          // Dismiss only. `expo-libghostty` exposes no focus API, so the
-          // keyboard cannot be raised programmatically — tapping the Surface is
+          // Dismiss only: `expo-libghostty` exposes no focus API, so the
+          // keyboard cannot be raised again from here — tapping the Surface is
           // the only way back. See findings.md.
           systemImage: 'keyboard.chevron.compact.down',
-          onPress: () => Keyboard.dismiss(),
+          onPress: dismissKeyboard,
         },
       ],
     ],
-    [router],
+    [router, dismissKeyboard],
   );
 
   useEffect(() => {
@@ -188,6 +211,15 @@ export default function TerminalScreen() {
           onInput={handleInput}
         />
       </View>
+
+      <TextInput
+        ref={focusTrap}
+        style={styles.focusTrap}
+        caretHidden
+        showSoftInputOnFocus={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      />
 
       <Dock groups={dockGroups} />
 
@@ -265,6 +297,12 @@ const styles = StyleSheet.create({
   },
   surfaceArea: {
     flex: 1,
+  },
+  focusTrap: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    opacity: 0,
   },
   surface: {
     flex: 1,

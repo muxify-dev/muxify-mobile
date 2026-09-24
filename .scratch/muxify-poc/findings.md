@@ -176,14 +176,29 @@ the Surface produced a genuine second grid, and it propagated: the Surface went
 38x32 -> 38x30 and `tmux list-clients` reported `[38x30 xterm-256color]`.
 Focusing the Surface shrank it further to 38x27 and tmux reflowed again.
 
-## The keyboard can be dismissed but not raised (ticket 07)
+## `Keyboard.dismiss()` does nothing to the Surface (ticket 07)
 
-`expo-libghostty` exposes no focus API — only `write`, `writeText` and `finish`.
-So the Dock's keyboard button can call `Keyboard.dismiss()` but cannot bring the
-keyboard back; only tapping the Surface does that. Since the Accessory Bar exists
-only while the Surface is focused, dismissing the keyboard also removes the only
-route to ctrl, esc and tab.
+The Dock's keyboard button initially did nothing at all, and an earlier version
+of this log wrongly recorded it as working — that claim was reasoned about, not
+verified.
 
-This is the concrete cost of ADR 0003, and it is the strongest argument found so
-far for revisiting that decision: a Dock group that writes bytes straight to the
-Shell Channel would not depend on focus at all.
+**Cause.** `Keyboard.dismiss()` blurs whatever React Native's own
+`TextInputState` registry believes is focused. The Surface is a native
+`UITextInput` that `expo-libghostty` makes first responder on its own, so RN
+holds no record of it and there is nothing for `dismiss()` to blur. Any RN API
+that works through that registry has the same blind spot.
+
+**Fix.** Keep a zero-sized RN `TextInput` on the screen as a focus trap. Focusing
+it takes first responder away from the Surface; blurring it immediately after
+closes the keyboard. Verified: accessory-bar buttons in the accessibility tree
+went 5 to 0, and the grid reflowed 38x27 back to 38x30 with tmux redrawing.
+
+**Still impossible: raising the keyboard.** `expo-libghostty` exposes no focus
+API — only `write`, `writeText` and `finish` — so nothing can make the Surface
+first responder except a tap on it. Since the Accessory Bar exists only while the
+Surface is focused, dismissing the keyboard also removes the only route to ctrl,
+esc and tab until the user taps the terminal again.
+
+That asymmetry is the concrete cost of ADR 0003 and the strongest argument found
+for revisiting it: a Dock group writing bytes straight to the Shell Channel would
+not depend on focus at all.
