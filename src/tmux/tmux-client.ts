@@ -1,10 +1,12 @@
 import {
   attachSessionCommand,
+  listClientsCommand,
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
   manualWindowSizeCommand,
   readStatusLineCommand,
+  redrawClientCommand,
   resizeWindowCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -58,6 +60,8 @@ export interface TmuxClientOptions {
  */
 export class TmuxClient {
   private readonly tmuxExecutablePath?: string;
+  /** Sessions already switched to manual window sizing. */
+  private readonly sizedByHand = new Set<string>();
 
   constructor(
     private readonly transport: TmuxTransport,
@@ -169,18 +173,72 @@ export class TmuxClient {
    * through a Control Command uses the exec channel, which is reliable.
    *
    * Switches the Session to manual window sizing first, without which tmux
-   * sizes the Window from its attached clients and ignores the resize. Failures
-   * are swallowed: a wrong size is a bad experience, but an exception here
-   * would take down a Session that is otherwise working.
+   * sizes the Window from its attached clients and ignores the resize. That
+   * only has to happen once per Session, and it is worth remembering: while a
+   * resize is in flight the Surface is showing rows tmux has padded, so a
+   * needless extra round trip is time spent looking at dots.
+   *
+   * Failures are swallowed: a wrong size is a bad experience, but an exception
+   * here would take down a Session that is otherwise working.
    */
   async setWindowSize(sessionName: string, grid: Grid): Promise<void> {
     try {
-      await this.transport.exec(manualWindowSizeCommand(sessionName, this.tmuxExecutablePath));
+      if (!this.sizedByHand.has(sessionName)) {
+        const result = await this.transport.exec(
+          manualWindowSizeCommand(sessionName, this.tmuxExecutablePath),
+        );
+        // Only remember it when tmux accepted it, so a transient failure does
+        // not leave the Session stuck ignoring every later resize.
+        if (result.exitCode === 0) this.sizedByHand.add(sessionName);
+      }
       await this.transport.exec(
         resizeWindowCommand(sessionName, grid.cols, grid.rows, this.tmuxExecutablePath),
       );
     } catch {
       // Best effort; the Session stays usable at its previous size.
+    }
+  }
+
+  /**
+   * The tty of the Session's most recently attached Client.
+   *
+   * Called straight after an Attach, when the newest Client is ours. Other
+   * Clients of the same Session are none of Muxify's business, so a redraw has
+   * to know which one to aim at. Undefined when tmux will not say, which the
+   * caller should treat as "redraw whichever Client tmux likes".
+   */
+  async newestClient(sessionName: string): Promise<string | undefined> {
+    let result: TmuxExecResult;
+    try {
+      result = await this.transport.exec(listClientsCommand(sessionName, this.tmuxExecutablePath));
+    } catch {
+      return undefined;
+    }
+    if (result.exitCode !== 0) return undefined;
+
+    let newest: { created: number; tty: string } | undefined;
+    for (const line of nonEmptyLines(result.stdout)) {
+      const fields = splitFields(line, 2);
+      if (!fields) continue;
+      const [created, tty] = fields;
+      const at = Number(created);
+      if (!Number.isFinite(at) || tty === '') continue;
+      if (!newest || at >= newest.created) newest = { created: at, tty };
+    }
+    return newest?.tty;
+  }
+
+  /**
+   * Makes a Client repaint everything, clearing what a resize left behind.
+   *
+   * See redrawClientCommand for why the debris exists. Best effort: a dirty
+   * Surface is ugly, not broken, and one more failure path here would be worse.
+   */
+  async redrawClient(clientTty?: string): Promise<void> {
+    try {
+      await this.transport.exec(redrawClientCommand(clientTty, this.tmuxExecutablePath));
+    } catch {
+      // Best effort.
     }
   }
 

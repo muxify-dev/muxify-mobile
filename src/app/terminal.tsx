@@ -3,12 +3,15 @@ import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, StyleSheet, View } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Dock, type DockAction } from '@/components/dock';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 import { readDevHost } from '@/dev/dev-host';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
+import { createResizeScheduler } from '@/tmux/resize-scheduler';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { TmuxShell } from '@/tmux/transport';
@@ -25,11 +28,17 @@ type Status =
 
 export default function TerminalScreen() {
   const router = useRouter();
+  // The screen draws its own chrome: no navigation header, so the Surface
+  // background runs to the top of the display and only the inset keeps text
+  // clear of the status bar. Going Home is the Dock's job, not a back button's.
+  const insets = useSafeAreaInsets();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
   const tmux = useRef<TmuxClient | null>(null);
   const sessionName = useRef<string>('');
+  /** The tty of our own tmux Client, used to aim a redraw at it. */
+  const clientTty = useRef<string | undefined>(undefined);
   /** The Session's own status setting, restored when we detach. */
   const originalStatusLine = useRef<string | undefined>(undefined);
   const grid = useRef<Grid | null>(null);
@@ -39,6 +48,24 @@ export default function TerminalScreen() {
   const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  /**
+   * Owns every remote resize, so a keyboard animation cannot flood the Host
+   * with Control Commands that land out of order. See createResizeScheduler.
+   */
+  const remoteSize = useMemo(
+    () =>
+      createResizeScheduler(async (next) => {
+        const client = tmux.current;
+        if (!client) return;
+        await client.setWindowSize(sessionName.current, next);
+        // A resize leaves rows tmux padded with dots and will not clean up on
+        // its own, so every size change ends with a repaint. See
+        // redrawClientCommand.
+        await client.redrawClient(clientTty.current);
+      }),
+    [],
+  );
 
   const start = useCallback(async (initial: Grid) => {
     const config = readDevHost();
@@ -102,8 +129,11 @@ export default function TerminalScreen() {
       // Bring the remote to the Surface's real size immediately on attach, and
       // hide tmux's status line — the Dock already shows Session, Window and
       // Pane, and a phone has no rows to spare.
+      remoteSize.request(grid.current ?? current);
       void (async () => {
-        await client.setWindowSize(config.host.sessionName, grid.current ?? current);
+        // Ours is the Client that just attached; a redraw aimed anywhere else
+        // would leave this Surface dirty.
+        clientTty.current = await client.newestClient(config.host.sessionName);
         originalStatusLine.current = await client.readStatusLine(config.host.sessionName);
         await client.setStatusLine(config.host.sessionName, 'off');
       })();
@@ -118,7 +148,7 @@ export default function TerminalScreen() {
         setStatus({ phase: 'failed', message: describe(error) });
       }
     }
-  }, []);
+  }, [remoteSize]);
 
   const handleResize = useCallback(
     ({ nativeEvent }: { nativeEvent: Grid }) => {
@@ -131,7 +161,7 @@ export default function TerminalScreen() {
         // the library ever starts sending the window-change request.
         shell.current.resize(next.cols, next.rows);
         // The resize that actually lands. See TmuxClient.setWindowSize.
-        void tmux.current?.setWindowSize(sessionName.current, next);
+        remoteSize.request(next);
         return;
       }
 
@@ -140,7 +170,7 @@ export default function TerminalScreen() {
         void start(next);
       }
     },
-    [start],
+    [start, remoteSize],
   );
 
   const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
@@ -227,7 +257,9 @@ export default function TerminalScreen() {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <StatusBar style="light" />
+
       <View style={styles.surfaceArea}>
         <TerminalView
           ref={surface}

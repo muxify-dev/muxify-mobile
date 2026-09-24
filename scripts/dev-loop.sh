@@ -13,10 +13,12 @@
 #
 # Reports the three numbers that matter for the resize path in one line:
 #   surface  what the Surface says its grid is
-#   sent     what the app handed to the transport
-#   tmux     what the remote PTY actually has
-# A mismatch between surface and sent is a bug in the app; a mismatch between
-# sent and tmux is a bug below the seam.
+#   window   the size tmux actually draws the Window at
+#   client   the size tmux believes the attached Client is
+# surface and window must agree: that is the resize path working. client lags
+# one resize behind and there is nothing to be done about it — the SSH
+# library's window-change request is one behind, and its core ships prebuilt.
+# That lag is why every resize ends with a redraw; see redrawClientCommand.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -35,11 +37,12 @@ snap()  { agent-device snapshot -i 2>/dev/null; }
 tsize() { vm "tmux list-clients -t 0 -F '#{client_width}x#{client_height}'"; }
 wsize() { vm "tmux display-message -p -t 0 '#{window_width}x#{window_height}'"; }
 asize() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
-ssize() { snap | grep -oE '\[text\] "sent [0-9a-z]+x?[0-9]*"' | head -1 | sed 's/.*sent //;s/"//'; }
+# Rows tmux padded and left behind. Must be 0 once a resize has settled.
+dots() { vm "tmux capture-pane -t 0 -p" | grep -c '·'; }
 kbref() { snap | grep -E '^@e[0-9]+ \[button\] "Keyboard"' | head -1 | awk '{print $1}'; }
 
-report() { printf '%-18s surface=%-8s sent=%-8s window=%-8s client=%s\n' \
-  "$1" "$(asize)" "$(ssize)" "$(wsize)" "$(tsize)"; }
+report() { printf '%-18s surface=%-8s window=%-8s client=%-8s dots=%s\n' \
+  "$1" "$(asize)" "$(wsize)" "$(tsize)" "$(dots)"; }
 
 attach() {
   agent-device close >/dev/null 2>&1

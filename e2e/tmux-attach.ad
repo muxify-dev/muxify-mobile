@@ -19,7 +19,10 @@ open "dev.muxify.app" --relaunch
 wait "text" "No Hosts yet" 15000
 
 press "label=\"Open Surface smoke test\""
-wait "text" "Terminal" 8000
+# The Terminal Screen has no navigation header to wait for — it draws the
+# Surface to the top of the display, and the Dock's Home button replaces the
+# back button — so the status indicator is what says the screen is up.
+wait "id=\"connection-status\"" 8000
 
 # The Surface laid out and reported a grid.
 is "visible" "id=\"surface-grid\""

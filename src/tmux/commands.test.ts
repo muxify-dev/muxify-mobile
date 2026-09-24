@@ -1,5 +1,7 @@
 import {
   attachSessionCommand,
+  listClientsCommand,
+  redrawClientCommand,
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
@@ -162,6 +164,40 @@ describe('window sizing', () => {
   it('honours the Host tmux path', () => {
     expect(resizeWindowCommand('main', 38, 14, '/usr/bin/tmux')).toBe(
       "'/usr/bin/tmux' resize-window -t 'main' -x 38 -y 14",
+    );
+  });
+});
+
+describe('listClientsCommand', () => {
+  it('asks for each Client of a Session with its creation time and tty', () => {
+    expect(listClientsCommand('main')).toBe(
+      "tmux list-clients -t 'main' -F '#{client_created}\t#{client_tty}'",
+    );
+  });
+
+  it('quotes a Session name containing a space', () => {
+    expect(listClientsCommand('my work')).toContain("-t 'my work'");
+  });
+});
+
+describe('redrawClientCommand', () => {
+  it('redraws one Client, addressed by its tty', () => {
+    expect(redrawClientCommand('/dev/pts/3')).toBe("tmux refresh-client -t '/dev/pts/3'");
+  });
+
+  it('falls back to whichever Client tmux considers best', () => {
+    expect(redrawClientCommand()).toBe('tmux refresh-client');
+  });
+
+  it('never asks tmux to resize the Client, which only control mode allows', () => {
+    // `refresh-client -C` is control-mode only (ADR 0001), and silently does
+    // nothing for an attached Client — verified against tmux 3.6.
+    expect(redrawClientCommand('/dev/pts/3')).not.toContain('-C');
+  });
+
+  it('honours the Host tmux path', () => {
+    expect(redrawClientCommand('/dev/pts/3', '/usr/bin/tmux')).toBe(
+      "'/usr/bin/tmux' refresh-client -t '/dev/pts/3'",
     );
   });
 });

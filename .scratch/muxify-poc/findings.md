@@ -316,3 +316,81 @@ teardown, leaving the Host as it was found.
 This is a small, concrete cost of the ADR 0001 decision: every piece of tmux
 chrome that control mode would simply never render has to be turned off by hand,
 and each one mutates a Session that may be shared.
+
+## The resize is one behind, and the leftovers are what you see
+
+Reported as: "sometimes when I open/close the keyboard, tmux resize flicks —
+for a moment I see dots of resizing the tmux screen."
+
+Two things turned out to be true, and only the second one causes the dots.
+
+**The SSH library's resize is not dead, it is one behind.** The earlier finding
+above says the window-change request never lands. Measuring the Client size
+across a keyboard cycle shows something more specific:
+
+```
+attached        surface=38x32   window=38x32   client=38x34
+keyboard up     surface=38x16   window=38x16   client=38x32
+keyboard down   surface=38x32   window=38x32   client=38x16
+```
+
+The Client is always the *previous* Surface size — a resize call appears to send
+the one before it. Calling `resize()` twice in the same tick does not flush it;
+neither does a duplicate 300ms later (it moved one sample and not the next), nor
+a keystroke, nor waiting. `refresh-client -C`, which sets a Client's size
+directly, is control-mode only and silently does nothing for an attached Client
+(verified against tmux 3.6). So this stays worked around, not fixed.
+
+**The dots are debris, not a live mismatch.** tmux pads the rows between the
+Window and the Client with `·` whenever the Window is the smaller of the two.
+Forcing `window=38x8` against `client=38x16` reproduces it exactly: eight rows
+of content, a separator, then eight rows of dots.
+
+That gives the mechanism. The keyboard opens, the Window shrinks, and tmux pads
+the rows below it — rows that are off the bottom of the now-short Surface, so
+they are painted where nobody can see them. The keyboard closes, the Surface
+grows, and those already-painted rows scroll into view. tmux will not clean them
+up, because it believes the Client is still the old size and those rows are not
+its to draw. The dots then sit there until something forces a full redraw.
+
+Worth stressing: at the moment the dots are visible the geometry is already
+correct. A screenshot showing a screen full of dots had `surface == window`.
+Chasing the sizes further would have found nothing.
+
+**Fix, in two parts:**
+
+1. `refresh-client` after every size change, aimed at our own Client. This is
+   what actually clears the debris — verified by forcing a dirty screen and
+   watching a bare `refresh-client` wipe it. Our Client is found by taking the
+   newest from `list-clients` straight after attaching, because a Session may
+   have others and a redraw aimed at the wrong one leaves this Surface dirty.
+2. Coalesce the resizes. The Surface reports a new grid on every frame of the
+   keyboard animation and each one used to become its own pair of Control
+   Commands, landing out of order. Now at most one is in flight with only the
+   newest queued behind it, and `window-size manual` is sent once per Session
+   rather than on every resize.
+
+The coalescing deliberately has no timer: the first request of a burst goes
+immediately, because a *late* resize is exactly what shows the padding, and the
+round trip is the debounce window. A slow Host coalesces harder, a fast one
+barely at all, and neither needs a tuned delay.
+
+Measured after: `surface == window` in both directions and zero dots left on the
+pane across a full keyboard cycle. `dots` is now a column in `scripts/dev-loop.sh`
+so a regression shows up without a screenshot.
+
+## Removing the navigation header (user request)
+
+The Terminal Screen now draws no navigation header: the Surface background runs
+to the top of the display and a safe-area inset keeps it clear of the status
+bar. The back button was redundant — the Dock's Home button already leaves the
+screen, and tears the Connection down with it.
+
+Worth 2 rows: the Surface went from 38x30 to 38x32 on this device. On a phone
+that is real estate, and it is the kind of thing a terminal app should spend
+chrome on carefully.
+
+One e2e consequence: both `.ad` suites waited on the header title "Terminal" to
+know the screen was up. That signal is gone, so they now wait on the
+`connection-status` indicator instead — which is a better signal anyway, since
+it belongs to the screen rather than to the navigator.

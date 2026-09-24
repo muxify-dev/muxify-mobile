@@ -158,3 +158,36 @@ export function setStatusLineCommand(
 ): string {
   return `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} status ${shellQuote(value)}`;
 }
+
+/**
+ * Control Command listing the Session's Clients, newest last: creation time
+ * and tty, tab separated.
+ *
+ * The tty is how a Client is addressed. Muxify needs its own, because a
+ * Session may have other Clients — the whole point of tmux — and a redraw
+ * aimed at the wrong one leaves the Surface dirty.
+ */
+export function listClientsCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return (
+    `${tmux(tmuxExecutablePath)} list-clients -t ${shellQuote(sessionName)} ` +
+    "-F '#{client_created}\t#{client_tty}'"
+  );
+}
+
+/**
+ * Control Command forcing a Client to repaint everything it is showing.
+ *
+ * Needed because a resize leaves debris. While the tmux Window is smaller than
+ * the Client, tmux pads the rows it is not drawing with dots; those rows are
+ * off the bottom of a shrunken Surface, so they are painted unseen and then
+ * revealed the moment the Surface grows back. tmux will not clean them up on
+ * its own — it believes the Client is still the old size and those rows are
+ * not its to draw — so the padding stays until something forces a full redraw.
+ *
+ * Without a tty tmux picks whichever Client it considers best, which is right
+ * only when the Session has exactly one.
+ */
+export function redrawClientCommand(clientTty?: string, tmuxExecutablePath?: string): string {
+  const command = `${tmux(tmuxExecutablePath)} refresh-client`;
+  return clientTty === undefined ? command : `${command} -t ${shellQuote(clientTty)}`;
+}

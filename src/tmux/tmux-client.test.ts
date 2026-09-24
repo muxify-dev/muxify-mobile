@@ -203,3 +203,125 @@ describe('attach', () => {
     expect(transport.shellOptions?.command).toBe("'/usr/bin/tmux' attach-session -t 'main'");
   });
 });
+
+describe('setWindowSize', () => {
+  it('makes the Session sizeable by hand before resizing it', async () => {
+    const transport = new FakeTransport();
+
+    await new TmuxClient(transport).setWindowSize('main', { cols: 38, rows: 14 });
+
+    expect(transport.commands).toEqual([
+      "tmux set-option -t 'main' window-size manual",
+      "tmux resize-window -t 'main' -x 38 -y 14",
+    ]);
+  });
+
+  it('only sets manual sizing once per Session, so a resize costs one round trip', async () => {
+    const transport = new FakeTransport();
+    const client = new TmuxClient(transport);
+
+    await client.setWindowSize('main', { cols: 38, rows: 14 });
+    await client.setWindowSize('main', { cols: 38, rows: 30 });
+
+    // Every extra Control Command is latency the Surface spends showing tmux's
+    // padding, so the repeat must carry nothing but the resize.
+    expect(transport.commands).toEqual([
+      "tmux set-option -t 'main' window-size manual",
+      "tmux resize-window -t 'main' -x 38 -y 14",
+      "tmux resize-window -t 'main' -x 38 -y 30",
+    ]);
+  });
+
+  it('sets manual sizing again for a Session it has not sized before', async () => {
+    const transport = new FakeTransport();
+    const client = new TmuxClient(transport);
+
+    await client.setWindowSize('main', { cols: 38, rows: 14 });
+    await client.setWindowSize('other', { cols: 38, rows: 14 });
+
+    expect(transport.commands.filter((c) => c.includes('window-size manual'))).toEqual([
+      "tmux set-option -t 'main' window-size manual",
+      "tmux set-option -t 'other' window-size manual",
+    ]);
+  });
+
+  it('retries manual sizing when it failed, rather than assuming it took', async () => {
+    const transport = new FakeTransport({ 'window-size manual': { exitCode: 1 } });
+    const client = new TmuxClient(transport);
+
+    await client.setWindowSize('main', { cols: 38, rows: 14 });
+    await client.setWindowSize('main', { cols: 38, rows: 30 });
+
+    expect(transport.commands.filter((c) => c.includes('window-size manual'))).toHaveLength(2);
+  });
+
+  it('keeps the Session usable when the Host refuses the resize', async () => {
+    const transport: TmuxTransport = {
+      exec: async () => {
+        throw new Error('channel closed');
+      },
+      openShell: async () => {
+        throw new Error('not used');
+      },
+    };
+
+    await expect(
+      new TmuxClient(transport).setWindowSize('main', { cols: 38, rows: 14 }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('newestClient', () => {
+  it('returns the tty of the most recently attached Client, which is ours', async () => {
+    const transport = new FakeTransport({
+      'list-clients': { stdout: '1700000000\t/dev/pts/1\n1700000009\t/dev/pts/3\n' },
+    });
+
+    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBe('/dev/pts/3');
+  });
+
+  it('is undefined when the Session has no Clients', async () => {
+    const transport = new FakeTransport({ 'list-clients': { stdout: '' } });
+
+    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBeUndefined();
+  });
+
+  it('is undefined when tmux will not say, rather than a failure', async () => {
+    const transport = new FakeTransport({
+      'list-clients': { exitCode: 1, stderr: 'no server running' },
+    });
+
+    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBeUndefined();
+  });
+
+  it('skips a line it cannot read rather than returning a nonsense tty', async () => {
+    const transport = new FakeTransport({
+      'list-clients': { stdout: 'nonsense\n1700000009\t/dev/pts/3\n' },
+    });
+
+    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBe('/dev/pts/3');
+  });
+});
+
+describe('redrawClient', () => {
+  it('asks the Client to repaint everything', async () => {
+    const transport = new FakeTransport();
+
+    await new TmuxClient(transport).redrawClient('/dev/pts/3');
+
+    expect(transport.commands).toEqual(["tmux refresh-client -t '/dev/pts/3'"]);
+  });
+
+  it('keeps the Session usable when the redraw fails', async () => {
+    const transport: TmuxTransport = {
+      exec: async () => {
+        throw new Error('channel closed');
+      },
+      openShell: async () => {
+        throw new Error('not used');
+      },
+    };
+
+    await expect(new TmuxClient(transport).redrawClient('/dev/pts/3')).resolves.toBeUndefined();
+  });
+});

@@ -51,6 +51,13 @@ _Avoid_: Layout, tree, structure
 Binding the Shell Channel to an existing Session. Muxify only ever attaches —
 it does not create, rename, or kill Sessions.
 
+**Client**:
+tmux's own term for what an Attach creates: the thing tmux draws a Session for,
+identified by the tty of the Shell Channel. A Session can have several, one per
+attached terminal, and tmux keeps each one's size separately — so a Client's
+size is not the Session's size and not the Surface's.
+_Avoid_: viewer, terminal, connection
+
 ### Terminal
 
 **Shell Channel**:
