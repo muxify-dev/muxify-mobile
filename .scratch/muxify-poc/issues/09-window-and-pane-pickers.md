@@ -14,11 +14,17 @@ of it.
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Windows and Panes buttons complete the Dock's first group
-- [ ] Each opens a glass sheet listing the current Topology, read on open
-- [ ] The active Window and the active Pane are indicated
-- [ ] Selecting a Window or Pane moves the attached client to it
-- [ ] Each button is disabled when there is nothing to pick
-- [ ] The terminal redraws after a selection
+- [x] Windows and Panes buttons complete the Dock's first group
+- [x] Each opens a glass sheet listing the current Topology, read on open
+- [x] The active Window and the active Pane are indicated
+- [x] Selecting a Window or Pane moves the attached client to it
+- [x] Each button is disabled when there is nothing to pick
+- [x] The terminal redraws after a selection
+
+**Notes:** Selecting a row cannot be driven by agent-device (see ticket 08), so
+`e2e/pickers.sh` covers everything up to the row: the Host's real Topology
+reaching both sheets, the current Window and Pane being marked, and a button
+with nothing to offer being genuinely disabled. It drives the Host's Topology
+itself and puts it back, so it does not depend on how the VM was left.

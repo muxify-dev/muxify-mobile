@@ -1,6 +1,12 @@
 import { isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { Button, GlassEffectContainer, HStack, Host, Namespace } from '@expo/ui/swift-ui';
-import { buttonStyle, frame, glassEffect, glassEffectId } from '@expo/ui/swift-ui/modifiers';
+import {
+  buttonStyle,
+  disabled,
+  frame,
+  glassEffect,
+  glassEffectId,
+} from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { useEffect, useId, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
@@ -97,13 +103,16 @@ function GlassGroup({ actions }: { actions: DockAction[] }) {
                 key={action.id}
                 label={action.label}
                 systemImage={action.systemImage}
-                onPress={action.disabled ? () => {} : action.onPress}
+                onPress={action.onPress}
                 modifiers={[
                   // 44pt is the smallest reliably tappable target on iOS.
                   frame({ width: 52, height: 44 }),
                   buttonStyle('glass'),
                   glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
                   glassEffectId(action.id, namespace),
+                  // Actually disabled, not merely inert: a button that looks
+                  // pressable and does nothing is worse than one that says so.
+                  disabled(action.disabled ?? false),
                 ]}
               />
             ))}

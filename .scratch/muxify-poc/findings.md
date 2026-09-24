@@ -450,3 +450,38 @@ Two traps, both now covered by tests:
 
 Both are consequences of ADR 0001 rather than accidents: a real client sees real
 session options, where control mode would have rendered no chrome to hide.
+
+## The Dock was faking disabled (ticket 09)
+
+The Dock has carried a `disabled` flag since ticket 07, and it did this with it:
+
+```tsx
+onPress={action.disabled ? () => {} : action.onPress}
+```
+
+Which swallows the press and changes nothing else. The button looks exactly as
+pressable as a working one, and tapping it does nothing without saying why —
+the worst of both. It went unnoticed because nothing used the flag until the
+Windows and Panes pickers, which need it: a picker with one Window has nothing
+to offer, and an empty sheet is a bad answer.
+
+Now a real `disabled` modifier, so SwiftUI greys it out. Worth noting it was
+invisible to every test until something asked the question: the accessibility
+tree reported `enabled=True`, which is exactly what a faked disable looks like.
+
+That flag is also the one part of ticket 09 that automation can assert, since
+`agent-device is` has no `enabled` predicate but the snapshot JSON carries the
+flag — which is what `e2e/pickers.sh` reads.
+
+## Knowing there is nothing to pick means reading the Topology anyway
+
+"Disable the button when there is nothing to pick" sounds like a UI detail, but
+it needs an answer to a question only the Host can answer, and ADR 0001 says
+Muxify holds no live model of the Host.
+
+The compromise: read the Topology at the moments it can change under us —
+Attach, a Session switch, and after any selection — and use that reading only
+to decide whether a button is pressable. Every picker still re-reads on open, so
+nothing the user sees comes from a cache. A stale count can at worst leave a
+button pressable that opens a one-row sheet, which is a much smaller lie than
+showing a stale list.
