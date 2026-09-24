@@ -26,6 +26,17 @@ export interface ControlChannelEvents {
 
 export interface ControlChannel {
   write(bytes: Uint8Array): void;
+  /**
+   * Whether the channel is still there.
+   *
+   * The one question this seam gained for the lifecycle policy. iOS suspends
+   * an app without telling it whether its socket survived, so a Surface that
+   * looks connected on the way back may be talking to nothing — and the only
+   * honest way to find out is to ask the thing underneath. The SSH adapter
+   * answers from the library's own connected and open flags; the local one
+   * from whether the child process is alive. Neither sends anything.
+   */
+  isOpen(): boolean;
   close(): Promise<void>;
 }
 

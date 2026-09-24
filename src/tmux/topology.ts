@@ -22,7 +22,7 @@ export interface Topology {
 export const EMPTY_TOPOLOGY: Topology = { windows: [], panes: [] };
 
 /**
- * What a notification did to the model.
+ * What a notification did to the model, as far as this file is concerned.
  *
  * `stale` is the honest answer to most of them: `%window-add @3` says a Window
  * exists and nothing else — not its index, not its name, not what it is
@@ -30,21 +30,24 @@ export const EMPTY_TOPOLOGY: Topology = { windows: [], panes: [] };
  * tmux's state, kept in step by hand, which is exactly the reconciler ADR 0006
  * declined to port. So the notification says *that* something changed and the
  * Topology is read again, once, rather than every time a picker opens.
+ *
+ * Internal. It used to be the answer `apply` gave its caller, which meant
+ * every caller had to know what `'stale'` obliged it to do; the store reads
+ * again itself now.
  */
-export type Applied = 'unchanged' | 'changed' | 'stale';
+type Applied = 'unchanged' | 'changed' | 'stale';
 
 export interface TopologyStore {
   current(): Topology;
   /** Reads the whole Topology from the Host. */
-  refresh(sessionName: string): Promise<Topology>;
+  refresh(): Promise<Topology>;
+  /** The Session this is the Topology of, which a switch moves. */
+  attachedTo(sessionName: string): void;
   /**
-   * Folds one notification in.
-   *
-   * Returns `changed` when the model is now right, `stale` when the caller
-   * should read again, and `unchanged` when the notification was about
-   * something this Session does not hold.
+   * Folds one notification in, and reads again if the notification did not
+   * carry enough to be acted on.
    */
-  apply(event: ControlEvent): Applied;
+  apply(event: ControlEvent): void;
   /**
    * Moves the active Pane here, ahead of the Host being told.
    *
@@ -52,10 +55,14 @@ export interface TopologyStore {
    * it, and a highlight that waits for both lands a beat after the finger. The
    * move is small and the Host is about to agree, so it is made here first;
    * whichever of the two comes back changes nothing further.
+   *
+   * Answers whether the Pane was there to move to.
    */
-  activate(paneId: string): Applied;
+  activate(paneId: string): boolean;
   /** Called whenever the model changes, however it changed. */
   subscribe(listener: (topology: Topology) => void): () => void;
+  /** Nothing more is wanted: no listener fires and no refresh is started. */
+  dispose(): void;
 }
 
 /**
@@ -74,14 +81,69 @@ export interface TopologyStore {
  * now exists, so it marks the model stale and the caller reads again — once,
  * when it happened, rather than every time somebody looks.
  */
-export function createTopologyStore(reader: TopologyReader): TopologyStore {
+export function createTopologyStore(
+  reader: TopologyReader,
+  sessionName: string,
+  options: { onTrouble?: (error: unknown) => void } = {},
+): TopologyStore {
   let topology: Topology = EMPTY_TOPOLOGY;
+  let session = sessionName;
+  let disposed = false;
   const listeners = new Set<(topology: Topology) => void>();
+
+  /** A read in flight, and whether another was asked for behind it. */
+  let reading = false;
+  let again = false;
 
   function publish(next: Topology): Topology {
     topology = next;
+    if (disposed) return next;
     for (const listener of listeners) listener(next);
     return next;
+  }
+
+  /**
+   * Reads again, coalescing the burst of notifications one change produces.
+   *
+   * A `split-window` on the laptop pushes a `%layout-change`, a `%window-add`
+   * and a `%window-pane-changed` in the same breath. Each one that cannot be
+   * acted on asks for a read, and three reads for one split is three round
+   * trips where one would do — so the round trip is the debounce, exactly as
+   * it is for a Pane's repaint.
+   */
+  function reread(): void {
+    if (disposed) return;
+    if (reading) {
+      again = true;
+      return;
+    }
+    reading = true;
+    void refreshNow()
+      .catch((error: unknown) => options.onTrouble?.(error))
+      .finally(() => {
+        reading = false;
+        if (!again) return;
+        again = false;
+        reread();
+      });
+  }
+
+  async function refreshNow(): Promise<Topology> {
+    const windows = await reader.listWindows(session);
+    if (disposed) return topology;
+    // tmux always marks one, but a Session read mid-change may not have one
+    // yet; the first Window is a better guess than giving up.
+    const activeWindow = windows.find((window) => window.active) ?? windows[0];
+    if (!activeWindow) return publish({ windows, panes: [] });
+
+    const panes = await reader.listPanes(session, activeWindow.index);
+    if (disposed) return topology;
+    return publish({
+      windows,
+      activeWindow,
+      panes,
+      activePane: panes.find((pane) => pane.active) ?? panes[0],
+    });
   }
 
   /** The one place the active Pane moves, whoever asked for it. */
@@ -94,26 +156,7 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
     return 'changed';
   }
 
-  return {
-    current: () => topology,
-
-    async refresh(sessionName: string): Promise<Topology> {
-      const windows = await reader.listWindows(sessionName);
-      // tmux always marks one, but a Session read mid-change may not have one
-      // yet; the first Window is a better guess than giving up.
-      const activeWindow = windows.find((window) => window.active) ?? windows[0];
-      if (!activeWindow) return publish({ windows, panes: [] });
-
-      const panes = await reader.listPanes(sessionName, activeWindow.index);
-      return publish({
-        windows,
-        activeWindow,
-        panes,
-        activePane: panes.find((pane) => pane.active) ?? panes[0],
-      });
-    },
-
-    apply(event: ControlEvent): Applied {
+  function applyEvent(event: ControlEvent): Applied {
       switch (event.kind) {
         case 'window-renamed':
         case 'unlinked-window-renamed': {
@@ -196,20 +239,39 @@ export function createTopologyStore(reader: TopologyReader): TopologyStore {
           // Each says a thing exists or is current, and nothing about it.
           return 'stale';
 
-        default:
-          // `%sessions-changed`, `%pane-mode-changed`, everything tmux adds
-          // later: none of it is about this Session's shape.
-          return 'unchanged';
-      }
+      default:
+        // `%sessions-changed`, `%pane-mode-changed`, everything tmux adds
+        // later: none of it is about this Session's shape.
+        return 'unchanged';
+    }
+  }
+
+  return {
+    current: () => topology,
+
+    refresh: refreshNow,
+
+    attachedTo(next: string): void {
+      session = next;
     },
 
-    activate: activatePane,
+    apply(event: ControlEvent): void {
+      if (disposed) return;
+      if (applyEvent(event) === 'stale') reread();
+    },
+
+    activate: (paneId: string) => activatePane(paneId) !== 'stale',
 
     subscribe(listener: (topology: Topology) => void): () => void {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
+    },
+
+    dispose(): void {
+      disposed = true;
+      listeners.clear();
     },
   };
 }

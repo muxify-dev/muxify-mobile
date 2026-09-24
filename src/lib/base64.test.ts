@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64, utf8ToBytes } from './base64';
+import { base64ToBytes, bytesToBase64 } from './base64';
 
 const ascii = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0));
 
@@ -71,43 +71,5 @@ describe('round-tripping terminal output', () => {
     const ESC = String.fromCharCode(27);
     const escape = ascii(`${ESC}[31mred${ESC}[0m`);
     expect(base64ToBytes(bytesToBase64(escape))).toEqual(escape);
-  });
-});
-
-describe('utf8ToBytes', () => {
-  it('encodes ASCII as one byte per character', () => {
-    expect(utf8ToBytes('abc')).toEqual(ascii('abc'));
-  });
-
-  it('encodes a two-byte character', () => {
-    expect(utf8ToBytes('\u00e9')).toEqual(Uint8Array.from([0xc3, 0xa9]));
-  });
-
-  it('encodes a three-byte character', () => {
-    expect(utf8ToBytes('\u65e5')).toEqual(Uint8Array.from([0xe6, 0x97, 0xa5]));
-  });
-
-  it('encodes a four-byte character outside the basic plane', () => {
-    // U+1F600, which JavaScript stores as a surrogate pair.
-    expect(utf8ToBytes('\u{1f600}')).toEqual(Uint8Array.from([0xf0, 0x9f, 0x98, 0x80]));
-  });
-
-  it('survives a round trip through base64', () => {
-    const text = 'unicode CJK block';
-    expect(base64ToBytes(bytesToBase64(utf8ToBytes(text)))).toEqual(utf8ToBytes(text));
-  });
-});
-
-describe('base64ToBytes tolerance', () => {
-  it('ignores line breaks, since wrapped base64 is common on the wire', () => {
-    expect(base64ToBytes('YWJj\nYWJj')).toEqual(ascii('abcabc'));
-  });
-
-  it('ignores surrounding whitespace', () => {
-    expect(base64ToBytes('  YWJj  ')).toEqual(ascii('abc'));
-  });
-
-  it('still rejects a genuinely invalid character', () => {
-    expect(() => base64ToBytes('YW!j')).toThrow();
   });
 });

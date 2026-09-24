@@ -3,11 +3,17 @@ import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 
 import { SettingsProvider, useSettings } from '@/settings/settings-context';
+import { AttachProvider } from '@/tmux/attach-context';
 
 export default function RootLayout() {
   return (
     <SettingsProvider>
-      <AppStack />
+      {/* Above the navigator on purpose: the attached Session outlives every
+          screen, so the thing that holds it cannot be inside one. Going Home
+          changes what is on top and nothing else. See ADR 0007. */}
+      <AttachProvider>
+        <AppStack />
+      </AttachProvider>
     </SettingsProvider>
   );
 }

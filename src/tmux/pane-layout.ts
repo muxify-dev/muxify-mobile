@@ -1,5 +1,17 @@
 import type { Pane } from './tmux-client';
 
+/**
+ * A size in points: what a container or a Surface was laid out at.
+ *
+ * Here rather than written out at each of the half-dozen places that take one,
+ * because a width and a height travelling together this often is a type asking
+ * to exist.
+ */
+export interface Extent {
+  width: number;
+  height: number;
+}
+
 /** Where one Pane's Surface goes, in points. */
 export interface PaneBox {
   left: number;
@@ -54,7 +66,7 @@ export function windowGridOf(panes: Pane[]): WindowGrid | undefined {
  */
 export function paneBoxes(
   panes: Pane[],
-  container: { width: number; height: number },
+  container: Extent,
 ): Map<string, PaneBox> {
   const boxes = new Map<string, PaneBox>();
   const grid = windowGridOf(panes);
@@ -112,8 +124,8 @@ function edge(
  * the cell size instead, which the font fixes and a resize does not change.
  */
 export function gridForContainer(
-  cell: { width: number; height: number },
-  container: { width: number; height: number },
+  cell: Extent,
+  container: Extent,
 ): WindowGrid | undefined {
   if (cell.width <= 0 || cell.height <= 0) return undefined;
   const cols = Math.floor(container.width / cell.width);
@@ -124,8 +136,8 @@ export function gridForContainer(
 /** The size of one cell, from a container known to hold exactly this grid. */
 export function cellSizeOf(
   grid: WindowGrid,
-  container: { width: number; height: number },
-): { width: number; height: number } | undefined {
+  container: Extent,
+): Extent | undefined {
   if (grid.cols <= 0 || grid.rows <= 0) return undefined;
   if (container.width <= 0 || container.height <= 0) return undefined;
   return { width: container.width / grid.cols, height: container.height / grid.rows };

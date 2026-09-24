@@ -45,6 +45,11 @@ export function sshTmuxTransport(connection: SshConnection): TmuxTransport {
 
       return {
         write: (bytes) => shell.write(bytes),
+        // Both halves, because either can go without the other noticing: the
+        // transport can drop while the channel object still says it is open,
+        // and a channel can be closed by the far end over a connection that is
+        // perfectly alive. Neither flag costs a round trip.
+        isOpen: () => connection.isConnected && shell.isOpen,
         close: () => shell.close(),
       };
     },

@@ -20,8 +20,11 @@ any Host so one credential can serve several.
 _Avoid_: Credential, auth, login, key (when the record rather than the key material is meant)
 
 **Connection**:
-One live SSH link to a Host. Torn down when the Terminal Screen is left, and
-re-established on return.
+One live SSH link to a Host. Held by the app rather than by a screen: leaving
+the Terminal Screen, going Home and backgrounding Muxify all leave it up. It
+ends when the user disconnects it, when another Session is opened, or when the
+transport is lost and cannot be restored. Muxify holds one at a time. See ADR
+0007.
 _Avoid_: SSH session, link, socket
 
 **Fingerprint**:
@@ -80,9 +83,16 @@ Scrollback over the Surface and puts the live Pane back at the bottom.
 _Avoid_: history (which is the shell's), buffer
 
 **Attach**:
-Opening a Control Connection onto a Session. Attach itself only ever attaches,
-never creates — but Muxify can make a Session first, from the Host Screen's
-**+**. Rename and kill are still refused. See ADR 0005.
+Opening a Control Connection onto a Session, and the thing that holds it
+afterwards. Attach itself only ever attaches, never creates — but Muxify can
+make a Session first, from the Host Screen's **+**. Rename and kill are still
+refused. See ADR 0005.
+
+It is what the *app* holds, not what a screen does: one Attach owns the
+Connection, the Control Connection, the Client and its size, the Topology, the
+Session name and a view per Pane, and it outlives every screen that draws it.
+The Terminal Screen subscribes to whichever one is current; the Host Screen
+shows its phase and offers to end it. See ADR 0007.
 
 **Recent Session**:
 Muxify's memory of a Session this phone has opened, and when it last did. Not

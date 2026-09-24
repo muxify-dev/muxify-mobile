@@ -37,6 +37,9 @@ import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
+import type { AttachPhase } from '@/tmux/attach';
+import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
+import { phaseLabel } from '@/tmux/attach-labels';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient, type Session } from '@/tmux/tmux-client';
@@ -75,6 +78,20 @@ export default function HostScreen() {
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
   // thumb, and the screen is short-lived enough that it will not go stale.
   const [openedAt] = useState(() => new Date());
+
+  /**
+   * Which Session, if any, this phone is attached to right now.
+   *
+   * A Connection is the app's and not a screen's, so this screen is a *reader*
+   * of it: the row for an attached Session says what it is doing and offers to
+   * end it, and tapping it goes back to the Terminal Screen without touching
+   * the Connection. See ADR 0007.
+   */
+  const holder = useAttachHolder();
+  const attach = useCurrentAttach();
+  const attachState = useAttachState(attach);
+  const attachedHere =
+    attach && attach.hostId === id && attachState ? attachState : null;
 
   const readRecords = useCallback(async () => {
     const store = deviceHostStore();
@@ -126,10 +143,17 @@ export default function HostScreen() {
 
   const open = useCallback(
     (name: string) => {
+      // Always navigation. Whether anything is opened, and whether the Session
+      // that is already attached is left alone, is the holder's decision — see
+      // createAttachHolder.
       router.push({ pathname: '/terminal', params: { hostId: id, session: name } });
     },
     [router, id],
   );
+
+  const disconnect = useCallback(() => {
+    void holder.disconnect();
+  }, [holder]);
 
   const forget = useCallback(
     (name: string) => {
@@ -211,7 +235,9 @@ export default function HostScreen() {
                     row={row}
                     palette={palette}
                     openedAt={openedAt}
+                    attached={attachedHere?.sessionName === row.name ? attachedHere.phase : undefined}
                     onPress={() => open(row.name)}
+                    onDisconnect={disconnect}
                   />
                   <SwipeActions.Actions>
                     {/* Not destructive, and deliberately not red: this drops
@@ -310,37 +336,73 @@ export default function HostScreen() {
   );
 }
 
-/** A remembered Session: what it is called, when you last opened it, who is on it. */
+/**
+ * A remembered Session: what it is called, when you last opened it, who is on it.
+ *
+ * The one that is attached says so where the "Opened 2 hr ago" line would be,
+ * and carries the way to end it. Nothing here starts or stops a Connection:
+ * Disconnect asks the root, and the row itself is navigation.
+ */
 function RecentSessionRow({
   row,
   palette,
   openedAt,
+  attached,
   onPress,
+  onDisconnect,
 }: {
   row: RecentRow;
   palette: Appearance;
   openedAt: Date;
+  /** The phase of the Attach on this Session, or undefined when it is not. */
+  attached?: AttachPhase;
   onPress: () => void;
+  onDisconnect: () => void;
 }) {
   const opened = timeAgoFrom(row.lastOpenedAt, openedAt);
   return (
-    <Button
-      onPress={onPress}
-      modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
-      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-        <Image systemName="terminal" size={20} color={palette.rowIcon} />
-        <VStack spacing={2} alignment="leading">
-          <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
-          {opened === undefined ? null : (
-            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
-              {`Opened ${opened}`}
-            </Text>
+    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+      <Button
+        onPress={onPress}
+        modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+        <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+          <Image
+            systemName="terminal"
+            size={20}
+            color={attached ? palette.controlAccent : palette.rowIcon}
+          />
+          <VStack spacing={2} alignment="leading">
+            <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
+            {attached ? (
+              <Text
+                modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>
+                {phaseLabel(attached)}
+              </Text>
+            ) : opened === undefined ? null : (
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+                {`Opened ${opened}`}
+              </Text>
+            )}
+          </VStack>
+          <Spacer />
+          {attached ? null : (
+            <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
           )}
-        </VStack>
-        <Spacer />
-        <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
-      </HStack>
-    </Button>
+        </HStack>
+      </Button>
+      {attached ? (
+        <Button
+          label="Disconnect"
+          onPress={onDisconnect}
+          modifiers={[
+            buttonStyle('plain'),
+            font({ size: 15 }),
+            foregroundColor(palette.destructive),
+            accessibilityLabel(`Disconnect ${row.name}`),
+          ]}
+        />
+      ) : null}
+    </HStack>
   );
 }
 

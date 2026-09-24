@@ -1,5 +1,13 @@
-import { createPaneView, type PaneReader, type ScrollPosition } from './pane-view';
-import type { PaneState } from './tmux-client';
+import { createTestClock } from '@/lib/test-clock';
+
+import {
+  createPaneView,
+  PAINT_SETTLE_MS,
+  type PaneReader,
+  type PaneSurface,
+  type ScrollPosition,
+} from './pane-view';
+import type { Grid, PaneState } from './tmux-client';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const shown = (written: Uint8Array[]) =>
@@ -7,6 +15,10 @@ const shown = (written: Uint8Array[]) =>
     .map((chunk) => Array.from(chunk, (byte) => String.fromCharCode(byte)).join(''))
     .join('')
     .replace(//g, '<ESC>');
+
+const GRID: Grid = { cols: 80, rows: 24 };
+/** What a Surface says before it has been laid out. */
+const PRE_LAYOUT: Grid = { cols: 32, rows: 11 };
 
 const paneState = (over: Partial<PaneState> = {}): PaneState => ({
   cursorColumn: 0,
@@ -76,143 +88,336 @@ function fakePane(state: PaneState = paneState()) {
   };
 }
 
-function viewOn(host: ReturnType<typeof fakePane>) {
+/**
+ * A Surface that records everything written to it, and whether it has the
+ * keyboard.
+ *
+ * The second of the two adapters the seam is there for: `expo-libghostty` in
+ * production, this in the tests. It is what makes "the ref arrived after the
+ * grid" a test case rather than a device session.
+ */
+function fakeSurface() {
   const written: Uint8Array[] = [];
-  const positions: (ScrollPosition | null)[] = [];
-  const errors: unknown[] = [];
-  const mouse: boolean[] = [];
-  let clock = 0;
+  const keyboard: string[] = [];
+  let focused = false;
 
-  const view = createPaneView(
-    host.reader,
-    {
-      write: (data) => written.push(data),
-      onScroll: (position) => positions.push(position),
-      onError: (error) => errors.push(error),
-      onMouseTracking: (wanted) => mouse.push(wanted),
+  const surface: PaneSurface = {
+    write: (data) => written.push(data),
+    focus: () => {
+      focused = true;
+      keyboard.push('focus');
     },
-    { now: () => clock },
-  );
+    blur: () => {
+      focused = false;
+      keyboard.push('blur');
+    },
+    isFocused: () => Promise.resolve(focused),
+  };
 
   return {
-    view,
+    surface,
     written,
-    positions,
-    errors,
-    mouse,
-    tick: (ms: number) => {
-      clock += ms;
+    keyboard,
+    focused: () => focused,
+    /** The keyboard moving to some other Surface, as far as this one can tell. */
+    lose(): void {
+      focused = false;
     },
   };
 }
 
-describe('showing a Pane', () => {
-  it('paints what is already on the screen, not an empty one', async () => {
+function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
+  const positions: (ScrollPosition | null)[] = [];
+  const errors: unknown[] = [];
+  const mouse: boolean[] = [];
+  const paints: number[] = [];
+  const clock = createTestClock();
+  const screen = fakeSurface();
+
+  const view = createPaneView(
+    paneId,
+    host.reader,
+    {
+      onScroll: (position) => positions.push(position),
+      onError: (error) => errors.push(error),
+      onMouseTracking: (wanted) => mouse.push(wanted),
+      onPainted: () => paints.push(clock.now()),
+    },
+    { clock },
+  );
+
+  return {
+    view,
+    screen,
+    written: screen.written,
+    positions,
+    errors,
+    mouse,
+    paints,
+    clock,
+    tick: (ms: number) => clock.advance(ms),
+  };
+}
+
+/** The ordinary way a Pane comes up: a Surface, a grid, and the library's moment. */
+async function paints(kit: ReturnType<typeof viewOn>, grid: Grid = GRID): Promise<void> {
+  kit.view.setSurface(kit.screen.surface);
+  kit.view.reportGrid(grid);
+  kit.clock.advance(PAINT_SETTLE_MS);
+  await settle();
+}
+
+/** Lets every queued promise run. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
+}
+
+describe('deciding when a Pane may be painted', () => {
+  it('paints once it has a Surface and then a grid', async () => {
     const host = fakePane();
     host.screen = ['first line', 'second line'];
-    const { view, written } = viewOn(host);
+    const kit = viewOn(host, '%2');
 
-    await view.show('%2', 24);
+    kit.view.setSurface(kit.screen.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
 
-    expect(shown(written)).toContain('first line\r\nsecond line');
+    expect(shown(kit.written)).toContain('first line\r\nsecond line');
     expect(host.asked).toContain('capture %2');
   });
 
+  it('paints just as readily when the grid arrived before the Surface', async () => {
+    // The bug: one Pane of a split had its grid before its ref, and so was
+    // never painted at all. Whichever comes last has to do the painting.
+    const host = fakePane();
+    host.screen = ['it painted'];
+    const kit = viewOn(host);
+
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(1000);
+    expect(kit.written).toHaveLength(0);
+
+    kit.view.setSurface(kit.screen.surface);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    expect(shown(kit.written)).toContain('it painted');
+  });
+
+  it('writes nothing until the library has had its moment after mounting', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+
+    kit.view.setSurface(kit.screen.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS - 1);
+    await settle();
+    expect(kit.written).toHaveLength(0);
+
+    kit.clock.advance(1);
+    await settle();
+    expect(kit.written.length).toBeGreaterThan(0);
+  });
+
+  it('paints once, at the real grid, when the pre-layout one came first', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+
+    kit.view.setSurface(kit.screen.surface);
+    kit.view.reportGrid(PRE_LAYOUT);
+    kit.clock.advance(6);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    // One capture, and the Scrollback it is cut to is the real one's.
+    expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
+    kit.view.scroll(4, GRID);
+    await settle();
+    expect(host.asked).toContain('scrollback %0 -4..19');
+  });
+
+  it('repaints when a later grid is a real change', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    host.asked.length = 0;
+
+    kit.view.reportGrid({ cols: 80, rows: 12 });
+    kit.clock.advance(1);
+    await settle();
+
+    expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
+  });
+
+  it('says nothing about a grid it is already painted at', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    host.asked.length = 0;
+
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    expect(host.asked).toEqual([]);
+  });
+});
+
+describe('a Pane that loses its Surface and gains another', () => {
+  it('writes nothing while it has none', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
+
+    kit.view.setSurface(null);
+    kit.view.receive(bytes('output while away'));
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.written).toHaveLength(0);
+  });
+
+  it('resyncs from a fresh capture when a new one arrives', async () => {
+    // Home, and back again. The Attach never went away, so the Connection is
+    // not remade — but the Surface is new and blank, and what is on the Pane
+    // now is the truth rather than what was on it when the screen left.
+    const host = fakePane();
+    host.screen = ['as it was'];
+    const kit = viewOn(host);
+    await paints(kit);
+
+    kit.view.setSurface(null);
+    host.screen = ['as it is now'];
+    const second = fakeSurface();
+
+    kit.view.setSurface(second.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    expect(shown(second.written)).toContain('as it is now');
+  });
+
+  it('does not paint the new Surface with the screen the old one asked for', async () => {
+    const host = fakePane();
+    host.screen = ['for the first'];
+    const release = host.hold();
+    const kit = viewOn(host);
+
+    kit.view.setSurface(kit.screen.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+
+    const second = fakeSurface();
+    kit.view.setSurface(second.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+
+    host.screen = ['for the second'];
+    release();
+    await settle();
+
+    expect(shown(second.written)).not.toContain('for the first');
+    expect(shown(second.written)).toContain('for the second');
+  });
+});
+
+describe('the app going to the background', () => {
+  it('writes nothing to a Surface nobody is looking at', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
+
+    kit.view.setPaused(true);
+    kit.view.receive(bytes('output while suspended'));
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.written).toHaveLength(0);
+  });
+
+  it('resyncs on the way back rather than replaying what was missed', async () => {
+    const host = fakePane();
+    host.screen = ['before'];
+    const kit = viewOn(host);
+    await paints(kit);
+
+    kit.view.setPaused(true);
+    host.screen = ['after'];
+    kit.view.setPaused(false);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    expect(shown(kit.written)).toContain('after');
+  });
+});
+
+describe('showing a Pane', () => {
   it('puts the cursor back where tmux says it is', async () => {
     const host = fakePane(paneState({ cursorColumn: 12, cursorRow: 3 }));
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    expect(shown(written)).toContain('<ESC>[4;13H');
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(shown(kit.written)).toContain('<ESC>[4;13H');
   });
 
   it('reads the screen and the cursor in one round trip', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
     // Both written before either is answered, which is what makes it one.
     expect(host.asked.slice(0, 2).sort()).toEqual(['capture %0', 'state %0']);
   });
 
   it('streams output once the repaint has landed', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
 
-    view.receive('%0', bytes('after'));
-    expect(shown(written)).toBe('after');
+    kit.view.receive(bytes('after'));
+    expect(shown(kit.written)).toBe('after');
   });
 
   it('holds output that arrives mid-repaint, and writes it on top', async () => {
     const host = fakePane();
     host.screen = ['painted'];
     const release = host.hold();
-    const { view, written } = viewOn(host);
+    const kit = viewOn(host);
 
-    const showing = view.show('%0', 24);
-    view.receive('%0', bytes('while painting'));
-    expect(written).toHaveLength(0);
+    kit.view.setSurface(kit.screen.surface);
+    kit.view.reportGrid(GRID);
+    kit.clock.advance(PAINT_SETTLE_MS);
+    await settle();
+
+    kit.view.receive(bytes('while painting'));
+    expect(kit.written).toHaveLength(0);
 
     release();
-    await showing;
+    await settle();
 
-    const text = shown(written);
+    const text = shown(kit.written);
     expect(text.indexOf('painted')).toBeLessThan(text.indexOf('while painting'));
   });
 
-  it('does not let one repaint release another’s held output', async () => {
-    // Two Pane switches in quick succession: the first repaint finishing must
-    // not write out what the second one is still holding.
+  it('tells the Screen a repaint landed, which is what clears a line of trouble', async () => {
     const host = fakePane();
-    const release = host.hold();
-    const { view, written } = viewOn(host);
-
-    const first = view.show('%0', 24);
-    const second = view.show('%1', 24);
-    view.receive('%1', bytes('for the second'));
-    expect(written).toHaveLength(0);
-
-    release();
-    await Promise.all([first, second]);
-
-    // Held output belongs to the Pane it was held for, and lands after it.
-    const text = shown(written);
-    expect(text).toContain('for the second');
-    expect(text.indexOf('for the second')).toBeGreaterThan(text.lastIndexOf('<ESC>[2J'));
-  });
-
-  it('drops output for a Pane nobody is looking at', async () => {
-    const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
-
-    view.receive('%3', bytes('somewhere else'));
-    expect(written).toHaveLength(0);
-  });
-
-  it('repaints from the new Pane when the view is pointed at one', async () => {
-    const host = fakePane();
-    host.screen = ['first pane'];
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-
-    host.screen = ['second pane'];
-    written.length = 0;
-    await view.show('%1', 24);
-
-    expect(shown(written)).toContain('second pane');
-    expect(view.paneId()).toBe('%1');
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.paints).toHaveLength(1);
   });
 });
 
 describe('typing', () => {
   it('sends what was typed to the Pane', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%4', 24);
+    const kit = viewOn(host, '%4');
+    await paints(kit);
 
-    view.type(bytes('hi'));
+    kit.view.type(bytes('hi'));
     await settle();
 
     expect(host.sent.map((data) => shown([data]))).toEqual(['hi']);
@@ -221,14 +426,14 @@ describe('typing', () => {
 
   it('batches a burst into one command rather than one per keystroke', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
     // The first goes at once — a Surface waiting for its own echo feels
     // broken — and everything typed during that round trip follows as one.
-    view.type(bytes('a'));
-    view.type(bytes('b'));
-    view.type(bytes('c'));
+    kit.view.type(bytes('a'));
+    kit.view.type(bytes('b'));
+    kit.view.type(bytes('c'));
     await settle();
 
     expect(host.sent.map((data) => shown([data]))).toEqual(['a', 'bc']);
@@ -236,10 +441,10 @@ describe('typing', () => {
 
   it('carries bytes no keyboard has, unchanged', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.type(Uint8Array.of(0x1b, 0x5b, 0x41, 0xff));
+    kit.view.type(Uint8Array.of(0x1b, 0x5b, 0x41, 0xff));
     await settle();
 
     expect([...host.sent[0]]).toEqual([0x1b, 0x5b, 0x41, 0xff]);
@@ -247,27 +452,27 @@ describe('typing', () => {
 
   it('spends a keystroke getting back to the bottom, and does not forward it', async () => {
     const host = fakePane();
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(2, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(2, GRID);
     await settle();
     host.sent.length = 0;
 
-    view.type(bytes('x'));
+    kit.view.type(bytes('x'));
     await settle();
 
     expect(host.sent).toHaveLength(0);
-    expect(positions[positions.length - 1]).toBeNull();
+    expect(kit.positions[kit.positions.length - 1]).toBeNull();
   });
 });
 
-describe('a key from the Meta menu', () => {
+describe('a key from the Key Bar', () => {
   it('sends tmux the name, not the bytes', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%4', 24);
+    const kit = viewOn(host, '%4');
+    await paints(kit);
 
-    view.press('Up');
+    kit.view.press('Up');
     await settle();
 
     expect(host.asked).toContain('key %4 Up');
@@ -278,13 +483,13 @@ describe('a key from the Meta menu', () => {
     // the two share one queue. Sending it straight out would put an arrow
     // pressed mid-burst *before* the letters typed ahead of it.
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.type(bytes('a'));
-    view.type(bytes('b'));
-    view.press('C-c');
-    view.type(bytes('c'));
+    kit.view.type(bytes('a'));
+    kit.view.type(bytes('b'));
+    kit.view.press('C-c');
+    kit.view.type(bytes('c'));
     await settle();
 
     expect(host.asked.filter((each) => each.startsWith('key') || each === 'keys %0')).toEqual([
@@ -298,17 +503,68 @@ describe('a key from the Meta menu', () => {
 
   it('spends itself getting back to the bottom, like a keystroke', async () => {
     const host = fakePane();
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(2, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(2, GRID);
     await settle();
     host.asked.length = 0;
 
-    view.press('Up');
+    kit.view.press('Up');
     await settle();
 
     expect(host.asked.some((each) => each.startsWith('key '))).toBe(false);
-    expect(positions[positions.length - 1]).toBeNull();
+    expect(kit.positions[kit.positions.length - 1]).toBeNull();
+  });
+});
+
+describe('the keyboard, which belongs to the Surface', () => {
+  it('raises it on a Pane whose Surface does not have it', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+
+    await kit.view.toggleKeyboard();
+
+    expect(kit.screen.keyboard).toEqual(['focus']);
+    await expect(kit.view.keyboardFocused()).resolves.toBe(true);
+  });
+
+  it('dismisses it on one that does', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.focusKeyboard();
+    kit.screen.keyboard.length = 0;
+
+    await kit.view.toggleKeyboard();
+
+    expect(kit.screen.keyboard).toEqual(['blur']);
+  });
+
+  it('asks the Surface rather than believing a listener that never saw it', async () => {
+    // React Native's keyboard registry never heard of this view, so a global
+    // "the keyboard is up" is about some other Surface as often as this one.
+    // Toggling on that answer blurred a Surface that was not focused.
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.focusKeyboard();
+
+    // The keyboard moves to the other half of a split. The phone still says a
+    // keyboard is up; this Surface knows it is not the one with it.
+    kit.screen.lose();
+    kit.screen.keyboard.length = 0;
+
+    await kit.view.toggleKeyboard();
+
+    expect(kit.screen.keyboard).toEqual(['focus']);
+  });
+
+  it('does nothing at all for a Pane with no Surface', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await kit.view.toggleKeyboard();
+    await expect(kit.view.keyboardFocused()).resolves.toBe(false);
   });
 });
 
@@ -316,88 +572,88 @@ describe('scrolling a shell’s Scrollback', () => {
   it('paints the Scrollback tmux is holding, without entering copy-mode', async () => {
     const host = fakePane();
     host.scrollback = ['older output'];
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
 
-    view.scroll(10, { cols: 80, rows: 24 });
+    kit.view.scroll(10, GRID);
     await settle();
 
     // Ten lines back, a screen's worth from there.
     expect(host.asked).toContain('scrollback %0 -10..13');
-    expect(shown(written)).toContain('older output');
+    expect(shown(kit.written)).toContain('older output');
     expect(host.sent).toHaveLength(0);
   });
 
   it('says how far back it is, and how much Scrollback there is', async () => {
     const host = fakePane(paneState({ scrollbackLines: 240 }));
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(15, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(15, GRID);
     await settle();
 
-    expect(positions[positions.length - 1]).toEqual({ back: 15, scrollbackLines: 240 });
+    expect(kit.positions[kit.positions.length - 1]).toEqual({ back: 15, scrollbackLines: 240 });
   });
 
   it('stops where tmux ran out of Scrollback', async () => {
     const host = fakePane(paneState({ scrollbackLines: 7 }));
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(250, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(250, GRID);
     await settle();
 
-    expect(positions[positions.length - 1]).toEqual({ back: 7, scrollbackLines: 7 });
+    expect(kit.positions[kit.positions.length - 1]).toEqual({ back: 7, scrollbackLines: 7 });
   });
 
   it('reaches the bottom cleanly, cursor and all', async () => {
     const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
-    const { view, written, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(10, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(10, GRID);
     await settle();
-    written.length = 0;
+    kit.written.length = 0;
 
-    view.scroll(-50, { cols: 80, rows: 24 });
+    kit.view.scroll(-50, GRID);
     await settle();
 
-    expect(positions[positions.length - 1]).toBeNull();
-    expect(shown(written)).toContain('<ESC>[2;6H');
+    expect(kit.positions[kit.positions.length - 1]).toBeNull();
+    expect(shown(kit.written)).toContain('<ESC>[2;6H');
   });
 
   it('jumps back to the live bottom on request', async () => {
     const host = fakePane();
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(20, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(20, GRID);
     await settle();
 
-    view.jumpToLatest();
+    kit.view.jumpToLatest();
     await settle();
 
-    expect(positions[positions.length - 1]).toBeNull();
+    expect(kit.positions[kit.positions.length - 1]).toBeNull();
   });
 
   it('holds the past still while the Pane keeps writing', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(10, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(10, GRID);
     await settle();
-    written.length = 0;
+    kit.written.length = 0;
 
-    view.receive('%0', bytes('live output'));
-    expect(written).toHaveLength(0);
+    kit.view.receive(bytes('live output'));
+    expect(kit.written).toHaveLength(0);
   });
 
   it('paints only where the flick ended, not everywhere it passed', async () => {
     const host = fakePane();
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
     host.asked.length = 0;
 
-    view.scroll(5, { cols: 80, rows: 24 });
-    view.scroll(5, { cols: 80, rows: 24 });
-    view.scroll(5, { cols: 80, rows: 24 });
+    kit.view.scroll(5, GRID);
+    kit.view.scroll(5, GRID);
+    kit.view.scroll(5, GRID);
     await settle();
 
     const captures = host.asked.filter((each) => each.startsWith('scrollback'));
@@ -407,25 +663,25 @@ describe('scrolling a shell’s Scrollback', () => {
 
   it('has nowhere to go in a Pane with no Scrollback', async () => {
     const host = fakePane(paneState({ scrollbackLines: 0 }));
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    positions.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.positions.length = 0;
 
-    view.scroll(15, { cols: 80, rows: 24 });
+    kit.view.scroll(15, GRID);
     await settle();
 
     expect(host.asked.filter((each) => each.startsWith('scrollback'))).toHaveLength(0);
-    expect(positions).toEqual([]);
+    expect(kit.positions).toEqual([]);
   });
 });
 
 describe('scrolling a full-screen application', () => {
   it('hands the wheel to one that asked for the mouse', async () => {
     const host = fakePane(paneState({ alternate: true, wantsMouse: true }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.scroll(10, { cols: 80, rows: 24 });
+    kit.view.scroll(10, GRID);
     await settle();
 
     // Ten lines is two notches of the wheel, aimed at the middle of the
@@ -438,10 +694,10 @@ describe('scrolling a full-screen application', () => {
     // `less` and `man` read nothing else; tmux 3.6 dropped the option that
     // used to do this translation.
     const host = fakePane(paneState({ alternate: true, wantsMouse: false }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.scroll(5, { cols: 80, rows: 24 });
+    kit.view.scroll(5, GRID);
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[A'.repeat(5));
@@ -452,24 +708,24 @@ describe('scrolling a full-screen application', () => {
     // the remainder away is a slow drag over `less` that moves nothing at all
     // — and a flick whose last, smallest frames count for nothing.
     const host = fakePane(paneState({ alternate: true, wantsMouse: true }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.scroll(4, { cols: 80, rows: 24 });
+    kit.view.scroll(4, GRID);
     await settle();
     expect(host.sent).toHaveLength(0);
 
-    view.scroll(2, { cols: 80, rows: 24 });
+    kit.view.scroll(2, GRID);
     await settle();
     expect(shown(host.sent)).toBe('<ESC>[<64;40;12M');
   });
 
   it('scrolls down as readily as up', async () => {
     const host = fakePane(paneState({ alternate: true, wantsMouse: true }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    view.scroll(-5, { cols: 80, rows: 24 });
+    kit.view.scroll(-5, GRID);
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[<65;40;12M');
@@ -477,24 +733,24 @@ describe('scrolling a full-screen application', () => {
 
   it('follows the Pane changing what it is running', async () => {
     const host = fakePane(paneState({ alternate: false, scrollbackLines: 0 }));
-    const { view, tick } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
     // `less` starts, which nothing tells this view about.
     host.state = paneState({ alternate: true, wantsMouse: false });
 
     // A gesture while the reading is still fresh is routed by what was true
     // when it was taken.
-    view.scroll(5, { cols: 80, rows: 24 });
+    kit.view.scroll(5, GRID);
     await settle();
     expect(host.sent).toHaveLength(0);
 
     // Once it has gone stale, the gesture that finds it so asks again — so the
     // drag is routed by its second frame rather than by the next drag.
-    tick(2000);
-    view.scroll(5, { cols: 80, rows: 24 });
+    kit.tick(2000);
+    kit.view.scroll(5, GRID);
     await settle();
-    view.scroll(5, { cols: 80, rows: 24 });
+    kit.view.scroll(5, GRID);
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[A'.repeat(5));
@@ -502,34 +758,31 @@ describe('scrolling a full-screen application', () => {
 });
 
 describe('a view that has been let go', () => {
-  it('writes nothing more', async () => {
+  it('writes nothing more, and leaves no timer behind', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
 
-    view.dispose();
-    view.receive('%0', bytes('too late'));
-    view.type(bytes('x'));
+    kit.view.dispose();
+    kit.view.receive(bytes('too late'));
+    kit.view.type(bytes('x'));
+    kit.clock.advance(1000);
 
     await settle();
-    expect(written).toHaveLength(0);
+    expect(kit.written).toHaveLength(0);
     expect(host.sent).toHaveLength(0);
+    expect(kit.clock.pending()).toBe(0);
   });
 });
-
-/** Lets every queued promise run. */
-async function settle(): Promise<void> {
-  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
-}
 
 describe('tapping a Pane', () => {
   it('sends a click to an application that asked for the mouse', async () => {
     const host = fakePane(paneState({ wantsMouse: true }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    expect(view.click(12, 5)).toBe(true);
+    expect(kit.view.click(12, 5)).toBe(true);
     await settle();
 
     // Press and release together, so nothing is left held down.
@@ -538,73 +791,73 @@ describe('tapping a Pane', () => {
 
   it('sends nothing to a shell, which would only see the escape as text', async () => {
     const host = fakePane(paneState({ wantsMouse: false }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
-    expect(view.click(12, 5)).toBe(false);
+    expect(kit.view.click(12, 5)).toBe(false);
     await settle();
     expect(host.sent).toHaveLength(0);
   });
 
   it('spends a tap getting back to the bottom rather than clicking the past', async () => {
     const host = fakePane(paneState({ wantsMouse: true }));
-    const { view, positions } = viewOn(host);
-    await view.show('%0', 24);
-    view.scroll(2, { cols: 80, rows: 24 });
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.scroll(2, GRID);
     await settle();
     host.sent.length = 0;
 
-    expect(view.click(12, 5)).toBe(true);
+    expect(kit.view.click(12, 5)).toBe(true);
     await settle();
 
     expect(host.sent).toHaveLength(0);
-    expect(positions[positions.length - 1]).toBeNull();
+    expect(kit.positions[kit.positions.length - 1]).toBeNull();
   });
 
-  it('says nothing about a Pane it is not showing', () => {
+  it('says nothing about a Pane it has never read', () => {
     const host = fakePane(paneState({ wantsMouse: true }));
-    const { view } = viewOn(host);
-    expect(view.click(1, 1)).toBe(false);
+    const kit = viewOn(host);
+    expect(kit.view.click(1, 1)).toBe(false);
   });
 });
 
 describe('telling the Screen what a tap should mean', () => {
-  it('reports mouse tracking when the Pane is first shown', async () => {
+  it('reports mouse tracking when the Pane is first painted', async () => {
     const host = fakePane(paneState({ wantsMouse: true }));
-    const { view, mouse } = viewOn(host);
-    await view.show('%0', 24);
-    expect(mouse).toEqual([true]);
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.mouse).toEqual([true]);
   });
 
   it('says nothing for a Pane that never wanted it', async () => {
     const host = fakePane(paneState({ wantsMouse: false }));
-    const { view, mouse } = viewOn(host);
-    await view.show('%0', 24);
-    expect(mouse).toEqual([]);
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.mouse).toEqual([]);
   });
 
   it('notices an application turning it on, from output alone', async () => {
     // Nothing in the control protocol announces mouse tracking: an application
     // turns it on by writing to its own screen. Output is the only sign.
     const host = fakePane(paneState({ wantsMouse: false }));
-    const { view, mouse, tick } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
     host.state = paneState({ wantsMouse: true });
-    tick(2000);
-    view.receive('%0', bytes('claude starting'));
+    kit.tick(2000);
+    kit.view.receive(bytes('claude starting'));
     await settle();
 
-    expect(mouse).toEqual([true]);
+    expect(kit.mouse).toEqual([true]);
   });
 
   it('does not ask again for every byte of a chatty Pane', async () => {
     const host = fakePane(paneState({ wantsMouse: false }));
-    const { view } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
     host.asked.length = 0;
 
-    for (let at = 0; at < 20; at += 1) view.receive('%0', bytes('noise'));
+    for (let at = 0; at < 20; at += 1) kit.view.receive(bytes('noise'));
     await settle();
 
     expect(host.asked.filter((each) => each.startsWith('state'))).toHaveLength(0);
@@ -612,99 +865,102 @@ describe('telling the Screen what a tap should mean', () => {
 
   it('reports it turning off again', async () => {
     const host = fakePane(paneState({ wantsMouse: true }));
-    const { view, mouse, tick } = viewOn(host);
-    await view.show('%0', 24);
+    const kit = viewOn(host);
+    await paints(kit);
 
     host.state = paneState({ wantsMouse: false });
-    tick(2000);
-    view.receive('%0', bytes('claude exited'));
+    kit.tick(2000);
+    kit.view.receive(bytes('claude exited'));
     await settle();
 
-    expect(mouse).toEqual([true, false]);
+    expect(kit.mouse).toEqual([true, false]);
   });
 });
 
 describe('which Pane draws a cursor', () => {
   it('draws one by default, because a single Pane is the Pane', async () => {
     const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    expect(shown(written)).toContain('<ESC>[2;6H');
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(shown(kit.written)).toContain('<ESC>[2;6H');
   });
 
   it('hides it the moment the Pane stops being the one being typed in', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
 
-    view.setCursorVisible(false);
+    kit.view.setActive(false);
 
-    expect(shown(written)).toBe('<ESC>[?25l');
+    expect(shown(kit.written)).toBe('<ESC>[?25l');
   });
 
   it('keeps it hidden through a repaint, rather than letting it back', async () => {
     const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    view.setCursorVisible(false);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.setActive(false);
+    kit.written.length = 0;
 
-    await view.show('%0', 24);
+    // A resize, which is what makes tmux redraw and this view repaint.
+    kit.view.reportGrid({ cols: 80, rows: 30 });
+    kit.clock.advance(1);
+    await settle();
 
     // Put where tmux has it all the same — see ScreenPaint.cursorVisible. A
     // hidden cursor that is nowhere in particular is one that reappears in the
     // wrong place the moment the Pane is tapped.
-    expect(shown(written)).toContain('<ESC>[2;6H');
-    expect(shown(written)).not.toContain('<ESC>[?25h');
+    expect(shown(kit.written)).toContain('<ESC>[2;6H');
+    expect(shown(kit.written)).not.toContain('<ESC>[?25h');
   });
 
   it('brings it back when the Pane takes the keyboard again', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    view.setCursorVisible(false);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.setActive(false);
+    kit.written.length = 0;
 
-    view.setCursorVisible(true);
+    kit.view.setActive(true);
 
-    expect(shown(written)).toBe('<ESC>[?25h');
+    expect(shown(kit.written)).toBe('<ESC>[?25h');
   });
 
   it('puts it back down when the application in the Pane asks for it back', async () => {
-    // The real source of a second cursor, and the one setCursorVisible alone
+    // The real source of a second cursor, and the one a single instruction
     // could not close: an unattended Pane is still running something, and
     // anything that redraws — a TUI, a shell drawing its prompt — ends its
     // redraw with its own `?25h`. Told once at the start, the Pane simply had
     // its cursor handed back a moment later.
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    view.setCursorVisible(false);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.setActive(false);
+    kit.written.length = 0;
 
-    view.receive('%0', bytes('\u001b[?25hhello'));
+    kit.view.receive(bytes('[?25hhello'));
 
-    expect(shown(written)).toBe('<ESC>[?25hhello<ESC>[?25l');
+    expect(shown(kit.written)).toBe('<ESC>[?25hhello<ESC>[?25l');
   });
 
   it('leaves the output of the Pane that has the keyboard alone', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
 
-    view.receive('%0', bytes('hello'));
+    kit.view.receive(bytes('hello'));
 
-    expect(shown(written)).toBe('hello');
+    expect(shown(kit.written)).toBe('hello');
   });
 
   it('says nothing when asked for what it already does', async () => {
     const host = fakePane();
-    const { view, written } = viewOn(host);
-    await view.show('%0', 24);
-    written.length = 0;
-    view.setCursorVisible(true);
-    expect(written).toHaveLength(0);
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
+    kit.view.setActive(true);
+    expect(kit.written).toHaveLength(0);
   });
 });

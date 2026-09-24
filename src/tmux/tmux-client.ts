@@ -105,6 +105,19 @@ export interface Grid {
 }
 
 /**
+ * Whether two grids are the same shape.
+ *
+ * Beside the type rather than in each of the three modules that asks: the
+ * sizing module, the scheduler inside it and the Pane view all decide whether
+ * something is worth acting on by exactly this comparison, and three copies of
+ * it is three places for one of them to start comparing by reference.
+ */
+export function sameGrid(a: Grid | null | undefined, b: Grid | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.cols === b.cols && a.rows === b.rows;
+}
+
+/**
  * Speaks tmux over a CommandRunner.
  *
  * The runner is the Control Connection once a Session is open, and a one-shot

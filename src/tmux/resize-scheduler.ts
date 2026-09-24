@@ -1,17 +1,18 @@
-import type { Grid } from './tmux-client';
+import { sameGrid, type Grid } from './tmux-client';
 
 /** Pushes one size to the remote Session. Resolves when the Host has it. */
 export type ApplyGrid = (grid: Grid) => Promise<void>;
 
 export interface ResizeScheduler {
-  /** Asks for the remote Session to be this size, eventually. */
-  request(grid: Grid): void;
   /**
-   * Forgets what has been applied, so the next request is sent even if the
-   * size has not changed. For when the target has: a Session switched to has
-   * its own Window, sized for whoever attached to it last.
+   * Asks for the remote Session to be this size, eventually.
+   *
+   * `force` sends it even when it is the size already applied, for when the
+   * *target* has changed rather than the size: a Session switched into has its
+   * own Window, sized for whoever attached to it last, and a Window reshaped
+   * behind a sheet has been laid out for whatever Client last spoke.
    */
-  reset(): void;
+  request(grid: Grid, force?: boolean): void;
 }
 
 /**
@@ -28,6 +29,11 @@ export interface ResizeScheduler {
  * mid-flight collapses into a single follow-up. The round trip is the debounce
  * window, which is why there is no timer here: a slow Host coalesces harder, a
  * fast one barely at all, and neither needs a tuned delay.
+ *
+ * Implementation of `createClientSizing`, which is the only thing that builds
+ * one. It used to be reached for directly by the Terminal Screen, which meant
+ * every caller had to know it dedups in order to defeat the dedup — see the
+ * `force` flag, which is the whole of what `reset()` used to be.
  */
 export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
   let inFlight = false;
@@ -61,7 +67,8 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
   }
 
   return {
-    request(grid: Grid): void {
+    request(grid: Grid, force = false): void {
+      if (force) applied = null;
       if (inFlight) {
         pending = grid;
         return;
@@ -69,14 +76,5 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
       if (sameGrid(grid, applied)) return;
       run(grid);
     },
-
-    reset(): void {
-      applied = null;
-      pending = null;
-    },
   };
-}
-
-function sameGrid(a: Grid, b: Grid | null): boolean {
-  return b !== null && a.cols === b.cols && a.rows === b.rows;
 }

@@ -60,12 +60,12 @@ export interface DockProps {
 /**
  * Height the Dock must clear to stay tappable.
  *
- * The terminal library's Accessory Bar is an input accessory view, so it sits
- * at the bottom of the screen on top of everything else whenever the Surface is
- * focused — directly over the Dock. Without this the Dock is covered exactly
- * when the terminal is in use, and taps land on ctrl/alt/cmd instead. iOS
- * reports the accessory bar's height as part of the keyboard frame, so one
- * listener covers both.
+ * The system keyboard, and nothing else. This was written when the terminal
+ * library's Accessory Bar was still up — an input accessory view sitting over
+ * the Dock whenever the Surface was focused — and iOS reports that bar's
+ * height as part of the keyboard frame, so one listener covered both. The bar
+ * is turned off by a local patch now; the keyboard alone is reason enough, and
+ * the reading is the same either way.
  */
 function useKeyboardInset(): number {
   const [inset, setInset] = useState(0);

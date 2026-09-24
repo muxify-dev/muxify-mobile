@@ -26,6 +26,11 @@ const pane = (over: Partial<Pane> = {}): Pane => ({
   ...over,
 });
 
+/** Lets every queued promise run, which is where a self-refresh happens. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
+}
+
 /** A Host whose answers the test sets, and which counts what it was asked. */
 function fakeReader(windows: Window[], panes: Record<number, Pane[]> = {}) {
   const asked: string[] = [];
@@ -48,8 +53,8 @@ describe('reading a Topology', () => {
       [window({ id: '@0', index: 0, active: false }), window({ id: '@1', index: 1, active: true })],
       { 1: [pane({ id: '%5' })] },
     );
-    const store = createTopologyStore(reader);
-    const topology = await store.refresh('work');
+    const store = createTopologyStore(reader, 'work');
+    const topology = await store.refresh();
 
     expect(asked).toEqual(['windows work', 'panes work:1']);
     expect(topology.activeWindow?.id).toBe('@1');
@@ -60,77 +65,137 @@ describe('reading a Topology', () => {
     const { reader } = fakeReader([window({ id: '@7', index: 7, active: false })], {
       7: [pane()],
     });
-    const store = createTopologyStore(reader);
-    expect((await store.refresh('work')).activeWindow?.id).toBe('@7');
+    const store = createTopologyStore(reader, 'work');
+    expect((await store.refresh()).activeWindow?.id).toBe('@7');
   });
 
   it('reads a Session that has gone as no Windows and no Panes', async () => {
     const { reader, asked } = fakeReader([]);
-    const store = createTopologyStore(reader);
-    const topology = await store.refresh('gone');
+    const store = createTopologyStore(reader, 'gone');
+    const topology = await store.refresh();
     expect(topology).toEqual({ windows: [], panes: [] });
     expect(asked).toEqual(['windows gone']);
   });
 
+  it('reads the Session it has been moved to', async () => {
+    const { reader, asked } = fakeReader([window()], { 0: [pane()] });
+    const store = createTopologyStore(reader, 'work');
+    store.attachedTo('play');
+    await store.refresh();
+    expect(asked).toEqual(['windows play', 'panes play:0']);
+  });
+
   it('tells whoever is listening', async () => {
     const { reader } = fakeReader([window()], { 0: [pane()] });
-    const store = createTopologyStore(reader);
+    const store = createTopologyStore(reader, 'work');
     const seen: Topology[] = [];
     store.subscribe((topology) => seen.push(topology));
 
-    await store.refresh('work');
+    await store.refresh();
     expect(seen).toHaveLength(1);
     expect(seen[0]).toBe(store.current());
   });
 
   it('stops telling a listener that has gone away', async () => {
     const { reader } = fakeReader([window()], { 0: [pane()] });
-    const store = createTopologyStore(reader);
+    const store = createTopologyStore(reader, 'work');
     const seen: Topology[] = [];
     const stop = store.subscribe((topology) => seen.push(topology));
     stop();
-    await store.refresh('work');
+    await store.refresh();
     expect(seen).toHaveLength(0);
+  });
+});
+
+describe('a notification the model cannot act on', () => {
+  it('reads again with no caller involved', async () => {
+    // What `'stale'` used to mean, and used to oblige every caller to know:
+    // `%window-add @4` says a Window exists and nothing else — not its index,
+    // not its name, not what it is running.
+    const { reader, asked } = fakeReader([window()], { 0: [pane()] });
+    const store = createTopologyStore(reader, 'work');
+    await store.refresh();
+    asked.length = 0;
+
+    store.apply({ kind: 'window-add', window: '@4' });
+    await settle();
+
+    expect(asked).toEqual(['windows work', 'panes work:0']);
+  });
+
+  it('reads once for the burst of notifications one change produces', async () => {
+    // A split on the laptop pushes a layout change, a window-add and a
+    // pane-changed in the same breath. Three reads for one split is two round
+    // trips nobody asked for.
+    const { reader, asked } = fakeReader([window()], { 0: [pane()] });
+    const store = createTopologyStore(reader, 'work');
+    await store.refresh();
+    asked.length = 0;
+
+    store.apply({ kind: 'window-add', window: '@4' });
+    store.apply({ kind: 'window-add', window: '@5' });
+    store.apply({ kind: 'session-changed', session: '$1', name: 'work' });
+    await settle();
+
+    expect(asked.filter((each) => each.startsWith('windows'))).toHaveLength(2);
+  });
+
+  it('hands a read that failed to whoever wants to know', async () => {
+    const troubles: unknown[] = [];
+    const reader: TopologyReader = {
+      listWindows: () => Promise.reject(new Error('the Pane has gone')),
+      listPanes: () => Promise.resolve([]),
+    };
+    const store = createTopologyStore(reader, 'work', {
+      onTrouble: (error) => troubles.push(error),
+    });
+
+    store.apply({ kind: 'window-add', window: '@4' });
+    await settle();
+
+    expect(String(troubles[0])).toContain('the Pane has gone');
   });
 });
 
 describe('what a notification can settle on its own', () => {
   async function opened(windows = [window()], panes = { 0: [pane()] }) {
     const { reader, asked } = fakeReader(windows, panes);
-    const store = createTopologyStore(reader);
-    await store.refresh('work');
+    const store = createTopologyStore(reader, 'work');
+    await store.refresh();
     asked.length = 0;
     return { store, asked };
   }
 
   it('renames a Window without asking the Host anything', async () => {
     const { store, asked } = await opened();
-    expect(store.apply({ kind: 'window-renamed', window: '@0', name: 'logs' })).toBe('changed');
+    store.apply({ kind: 'window-renamed', window: '@0', name: 'logs' });
+    await settle();
+
     expect(store.current().windows[0].name).toBe('logs');
     expect(store.current().activeWindow?.name).toBe('logs');
     expect(asked).toEqual([]);
   });
 
   it('ignores a rename of a Window this Session does not hold', async () => {
-    const { store } = await opened();
-    expect(store.apply({ kind: 'window-renamed', window: '@9', name: 'other' })).toBe(
-      'unchanged',
-    );
+    const { store, asked } = await opened();
+    store.apply({ kind: 'window-renamed', window: '@9', name: 'other' });
+    await settle();
+    expect(asked).toEqual([]);
   });
 
   it('moves the Panes a layout change describes', async () => {
-    const { store, asked } = await opened(
-      [window({ paneCount: 2 })],
-      { 0: [pane({ id: '%0', index: 0 }), pane({ id: '%2', index: 1, active: false })] },
-    );
-    const applied = store.apply({
+    const { store, asked } = await opened([window({ paneCount: 2 })], {
+      0: [pane({ id: '%0', index: 0 }), pane({ id: '%2', index: 1, active: false })],
+    });
+    store.apply({
       kind: 'layout-change',
       window: '@0',
       layout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
       visibleLayout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
       flags: '*',
     });
-    expect(applied).toBe('changed');
+    await settle();
+
     expect(store.current().panes.map((each) => [each.top, each.height])).toEqual([
       [0, 12],
       [13, 11],
@@ -141,39 +206,40 @@ describe('what a notification can settle on its own', () => {
   it('asks again when a layout mentions a Pane the model has never seen', async () => {
     // A split made elsewhere: the rectangle is in the layout, but what the new
     // Pane is running and where it is are not.
-    const { store } = await opened();
-    expect(
-      store.apply({
-        kind: 'layout-change',
-        window: '@0',
-        layout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
-        visibleLayout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
-        flags: '*',
-      }),
-    ).toBe('stale');
+    const { store, asked } = await opened();
+    store.apply({
+      kind: 'layout-change',
+      window: '@0',
+      layout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
+      visibleLayout: 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]',
+      flags: '*',
+    });
+    await settle();
+
+    expect(asked).toContain('windows work');
   });
 
   it('asks again for a layout it cannot read', async () => {
-    const { store } = await opened();
-    expect(
-      store.apply({
-        kind: 'layout-change',
-        window: '@0',
-        layout: 'nonsense',
-        visibleLayout: 'nonsense',
-        flags: '*',
-      }),
-    ).toBe('stale');
+    const { store, asked } = await opened();
+    store.apply({
+      kind: 'layout-change',
+      window: '@0',
+      layout: 'nonsense',
+      visibleLayout: 'nonsense',
+      flags: '*',
+    });
+    await settle();
+
+    expect(asked).toContain('windows work');
   });
 
   it('follows the active Pane changing', async () => {
-    const { store, asked } = await opened(
-      [window({ paneCount: 2 })],
-      { 0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })] },
-    );
-    expect(store.apply({ kind: 'window-pane-changed', window: '@0', pane: '%2' })).toBe(
-      'changed',
-    );
+    const { store, asked } = await opened([window({ paneCount: 2 })], {
+      0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })],
+    });
+    store.apply({ kind: 'window-pane-changed', window: '@0', pane: '%2' });
+    await settle();
+
     expect(store.current().activePane?.id).toBe('%2');
     expect(store.current().panes.map((each) => each.active)).toEqual([false, true]);
     expect(asked).toEqual([]);
@@ -183,81 +249,68 @@ describe('what a notification can settle on its own', () => {
     // A tap on a Pane travels to the Host and back, and the notification that
     // confirms it arrives later still. Waiting for either is a Pane that
     // highlights a beat after the finger left it.
-    const { store, asked } = await opened(
-      [window({ paneCount: 2 })],
-      { 0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })] },
-    );
-    expect(store.activate('%2')).toBe('changed');
+    const { store, asked } = await opened([window({ paneCount: 2 })], {
+      0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })],
+    });
+    expect(store.activate('%2')).toBe(true);
     expect(store.current().activePane?.id).toBe('%2');
-    expect(asked).toEqual([]);
+
     // And tmux's own word for it, when it comes, is no longer news.
-    expect(store.apply({ kind: 'window-pane-changed', window: '@0', pane: '%2' })).toBe(
-      'unchanged',
-    );
+    store.apply({ kind: 'window-pane-changed', window: '@0', pane: '%2' });
+    await settle();
+    expect(asked).toEqual([]);
   });
 
-  it('says nothing changed for the Pane that is already active', async () => {
-    const { store } = await opened(
-      [window({ paneCount: 2 })],
-      { 0: [pane({ id: '%0' }), pane({ id: '%2', index: 1, active: false })] },
-    );
-    expect(store.activate('%0')).toBe('unchanged');
-  });
-
-  it('asks again for a Pane it does not hold', async () => {
+  it('says a Pane it does not hold cannot be moved to', async () => {
     const { store } = await opened();
-    expect(store.activate('%9')).toBe('stale');
+    expect(store.activate('%9')).toBe(false);
   });
 
   it('drops a Window that closed, and asks what is active now', async () => {
-    const { store } = await opened([
+    const { store, asked } = await opened([
       window({ id: '@0', index: 0 }),
       window({ id: '@1', index: 1, active: false }),
     ]);
-    expect(store.apply({ kind: 'window-close', window: '@1' })).toBe('stale');
+    store.apply({ kind: 'window-close', window: '@1' });
     expect(store.current().windows.map((each) => each.id)).toEqual(['@0']);
+    await settle();
+    expect(asked).toContain('windows work');
   });
 
   it('drops a Window tmux unlinked before killing it', async () => {
     // tmux unlinks a Window from its Session first, so the Window the user was
     // just looking at arrives as an *unlinked* close.
     const { store } = await opened([window({ id: '@0' }), window({ id: '@1', active: false })]);
-    expect(store.apply({ kind: 'unlinked-window-close', window: '@1' })).toBe('stale');
+    store.apply({ kind: 'unlinked-window-close', window: '@1' });
     expect(store.current().windows.map((each) => each.id)).toEqual(['@0']);
   });
 
   it('ignores a Window closing somewhere else entirely', async () => {
-    const { store } = await opened();
-    expect(store.apply({ kind: 'unlinked-window-close', window: '@9' })).toBe('unchanged');
-  });
-
-  it('asks again when a Window appears, because the notification says nothing else', async () => {
-    const { store } = await opened();
-    expect(store.apply({ kind: 'window-add', window: '@4' })).toBe('stale');
-  });
-
-  it('asks again when the Session under the Client changes', async () => {
-    const { store } = await opened();
-    expect(store.apply({ kind: 'session-changed', session: '$1', name: 'play' })).toBe('stale');
+    const { store, asked } = await opened();
+    store.apply({ kind: 'unlinked-window-close', window: '@9' });
+    await settle();
+    expect(asked).toEqual([]);
   });
 
   it('is not troubled by notifications about something else', async () => {
-    const { store } = await opened();
+    const { store, asked } = await opened();
     const irrelevant: ControlEvent[] = [
       { kind: 'sessions-changed' },
       { kind: 'pane-mode-changed', pane: '%0' },
       { kind: 'client-detached', client: '/dev/ttys004' },
       { kind: 'unlinked-window-add', window: '@8' },
     ];
-    for (const event of irrelevant) expect(store.apply(event)).toBe('unchanged');
+    for (const event of irrelevant) store.apply(event);
+    await settle();
+    expect(asked).toEqual([]);
   });
 });
 
 describe('zoom, which rides along in a layout change', () => {
   async function opened(windows: Window[], panes: Record<number, Pane[]>) {
     const { reader } = fakeReader(windows, panes);
-    const store = createTopologyStore(reader);
-    await store.refresh('work');
+    const store = createTopologyStore(reader, 'work');
+    await store.refresh();
     return store;
   }
 
@@ -274,14 +327,14 @@ describe('zoom, which rides along in a layout change', () => {
 
   it('reads a Window becoming zoomed', async () => {
     const store = await opened([window({ paneCount: 2, zoomed: false })], TWO_PANES);
-    expect(store.apply(layout('*Z'))).toBe('changed');
+    store.apply(layout('*Z'));
     expect(store.current().activeWindow?.zoomed).toBe(true);
     expect(store.current().windows[0].zoomed).toBe(true);
   });
 
   it('reads it being turned off again', async () => {
     const store = await opened([window({ paneCount: 2, zoomed: true })], TWO_PANES);
-    expect(store.apply(layout('*'))).toBe('changed');
+    store.apply(layout('*'));
     expect(store.current().activeWindow?.zoomed).toBe(false);
   });
 
@@ -298,5 +351,24 @@ describe('zoom, which rides along in a layout change', () => {
 
     expect(store.current().panes.map((each) => [each.top, each.height])).toEqual(before);
     expect(store.current().activeWindow?.zoomed).toBe(true);
+  });
+});
+
+describe('a store that has been let go', () => {
+  it('tells nobody and reads nothing more', async () => {
+    const { reader, asked } = fakeReader([window()], { 0: [pane()] });
+    const store = createTopologyStore(reader, 'work');
+    const seen: Topology[] = [];
+    store.subscribe((topology) => seen.push(topology));
+    await store.refresh();
+    asked.length = 0;
+    seen.length = 0;
+
+    store.dispose();
+    store.apply({ kind: 'window-add', window: '@4' });
+    await settle();
+
+    expect(asked).toEqual([]);
+    expect(seen).toEqual([]);
   });
 });

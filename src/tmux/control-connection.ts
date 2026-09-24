@@ -44,6 +44,18 @@ export interface CommandRunner {
   runAll(commands: TmuxArgv[]): Promise<CommandReply[]>;
 }
 
+/**
+ * Why a Control Connection ended, which is not the same as what it said.
+ *
+ * The text is tmux's or the library's own and belongs in front of the user;
+ * this says which *kind* of ending it was, which is what decides whether
+ * anything should be tried again. `exit` is tmux letting go — the Session was
+ * killed, the server went — `channel` is the link underneath disappearing, and
+ * `local` is this app closing it on purpose. Only the middle one is worth a
+ * reconnect. See the Attach's reconnect policy.
+ */
+export type ClosedCause = 'exit' | 'channel' | 'local';
+
 export interface ControlConnectionEvents {
   /** Bytes a Pane wrote. The hot path, and the reason this exists. */
   onOutput: (pane: string, bytes: Uint8Array) => void;
@@ -54,12 +66,20 @@ export interface ControlConnectionEvents {
    */
   onNotification: (event: ControlEvent) => void;
   /** The Connection is finished, for whatever reason. Fires at most once. */
-  onClosed: (reason: string) => void;
+  onClosed: (reason: string, cause: ClosedCause) => void;
 }
 
 export interface ControlConnection extends CommandRunner {
   /** Runs one command and returns its lines, throwing TmuxError on `%error`. */
   command(argv: TmuxArgv): Promise<Uint8Array[]>;
+  /**
+   * Whether the channel underneath is still there.
+   *
+   * Asked when the app comes back to the foreground, and answered without
+   * sending anything: a round trip to find out whether a round trip is
+   * possible is a round trip that hangs when the answer is no.
+   */
+  isOpen(): boolean;
   close(): Promise<void>;
 }
 
@@ -100,6 +120,16 @@ export async function openControlConnection(
   let ready = false;
   let closed: string | null = null;
   let channel: ControlChannel | null = null;
+  /**
+   * What came up the channel that was not protocol, before the attach answered.
+   *
+   * A shell channel with no pty keeps stderr separate and the SSH adapter
+   * merges it into this stream, so a `tmux` that is not there, or a
+   * `tmux -C attach` the shell could not run, says so here and nowhere else.
+   * Kept only until the attach is answered: after that the Connection is up
+   * and stray text is not what ended it.
+   */
+  const notices: string[] = [];
 
   let opened!: (connection: ControlConnection) => void;
   let refused!: (error: Error) => void;
@@ -127,7 +157,7 @@ export async function openControlConnection(
   }
 
   /** Ends the Connection, telling everyone still waiting why. */
-  function finish(reason: string): void {
+  function finish(reason: string, cause: ClosedCause): void {
     if (closed !== null) return;
     closed = reason;
     const stranded = [...pending, ...waiting];
@@ -135,10 +165,17 @@ export async function openControlConnection(
     waiting.length = 0;
     for (const entry of stranded) entry.fail(new TmuxError(reason));
     if (!ready) refused(new TmuxError(reason));
-    events.onClosed(reason);
+    events.onClosed(reason, cause);
   }
 
   function receive(event: ControlEvent): void {
+    if (event.kind === 'notice') {
+      // Bounded: a Host that floods the channel with text must not be able to
+      // grow this without limit, and the first few lines are the message.
+      if (!ready && notices.length < 8) notices.push(event.text);
+      return;
+    }
+
     if (event.kind === 'output') {
       events.onOutput(event.pane, event.bytes);
       return;
@@ -152,7 +189,10 @@ export async function openControlConnection(
         // attach to, which is a Connection that never opened rather than a
         // command that failed — so `ready` stays false and `finish` refuses it.
         if (!reply.ok) {
-          finish(reply.text.join(' ').trim() || 'Could not attach');
+          // tmux refusing the attach is tmux talking, not the link failing:
+          // "no sessions", "can't find session work". Its own words are the
+          // most useful thing a Connection that never opened has to say.
+          finish(reply.text.join(' ').trim() || 'Could not attach', 'exit');
           return;
         }
         ready = true;
@@ -170,7 +210,7 @@ export async function openControlConnection(
     }
 
     if (event.kind === 'exit') {
-      finish(event.reason === '' ? 'The Session was detached' : event.reason);
+      finish(event.reason === '' ? 'The Session was detached' : event.reason, 'exit');
       return;
     }
 
@@ -196,8 +236,10 @@ export async function openControlConnection(
       return reply.lines;
     },
 
+    isOpen: () => closed === null && (channel?.isOpen() ?? false),
+
     async close(): Promise<void> {
-      finish('The Connection was closed');
+      finish('The Connection was closed', 'local');
       await channel?.close();
     },
   };
@@ -229,7 +271,13 @@ export async function openControlConnection(
       onData: (data) => {
         for (const event of parser.push(new Uint8Array(data))) receive(event);
       },
-      onClosed: () => finish('The Connection to the Host was closed'),
+      // A channel that closes before the attach was answered did not lose a
+      // Connection — it never opened one, and whatever tmux wrote to stderr on
+      // the way out is the reason.
+      onClosed: () =>
+        ready || notices.length === 0
+          ? finish('The Connection to the Host was closed', 'channel')
+          : finish(notices.join(' ').trim(), 'exit'),
     },
   );
   // The attach's own reply may already have arrived and set `ready`; nothing is

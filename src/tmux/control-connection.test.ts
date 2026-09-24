@@ -27,6 +27,7 @@ function fakeHost() {
         write: (bytes) => {
           written.push(bytesToUtf8(bytes));
         },
+        isOpen: () => !closed,
         close: async () => {
           closed = true;
         },
@@ -79,7 +80,7 @@ async function connected(host: ReturnType<typeof fakeHost>, sessionName = 'work'
     {
       onOutput: (pane, bytes) => output.push({ pane, text: bytesToUtf8(bytes) }),
       onNotification: (event) => notifications.push(event),
-      onClosed: (reason) => closures.push(reason),
+      onClosed: (reason, cause) => closures.push(`${cause}: ${reason}`),
     },
   );
   // Let the transport resolve before tmux answers, as it does on a real Host.
@@ -293,7 +294,7 @@ describe('a Connection that ends', () => {
 
     await expect(first).rejects.toThrow(TmuxError);
     await expect(second).rejects.toThrow(TmuxError);
-    expect(closures).toEqual(['The Connection to the Host was closed']);
+    expect(closures).toEqual(['channel: The Connection to the Host was closed']);
   });
 
   it('rejects a command asked for after it has gone', async () => {
@@ -309,7 +310,7 @@ describe('a Connection that ends', () => {
     const asked = connection.command(['list-sessions']);
     host.say('%exit server exited\n');
     await expect(asked).rejects.toThrow('server exited');
-    expect(closures).toEqual(['server exited']);
+    expect(closures).toEqual(['exit: server exited']);
   });
 
   it('closes the channel when asked, and only says so once', async () => {
@@ -319,5 +320,66 @@ describe('a Connection that ends', () => {
     await connection.close();
     expect(host.closed).toBe(true);
     expect(closures).toHaveLength(1);
+  });
+});
+
+describe('why a Connection ended, and whether it is still there', () => {
+  it('says the channel went when the link underneath disappeared', async () => {
+    const host = fakeHost();
+    const { closures } = await connected(host);
+    host.drop();
+    expect(closures).toEqual(['channel: The Connection to the Host was closed']);
+  });
+
+  it('says this app closed it when this app closed it', async () => {
+    const host = fakeHost();
+    const { connection, closures } = await connected(host);
+    await connection.close();
+    expect(closures).toEqual(['local: The Connection was closed']);
+  });
+
+  it('carries tmux’s own stderr out of a Connection that never opened', async () => {
+    // The loose end this settles. A shell channel with no pty keeps stderr
+    // separate and the SSH adapter merges it into this stream — but the parser
+    // drops every line outside a reply block that does not start with `%`, so
+    // a `tmux` that is not there used to close the channel saying nothing at
+    // all. It is the most useful thing a failed attach has to say.
+    const host = fakeHost();
+    const closures: string[] = [];
+    const opening = openControlConnection(
+      host.transport,
+      { sessionName: 'work' },
+      { onOutput: () => {}, onNotification: () => {}, onClosed: (r, c) => closures.push(`${c}: ${r}`) },
+    );
+    await Promise.resolve();
+    host.say('sh: /usr/bin/tmux: not found\n');
+    host.drop();
+
+    await expect(opening).rejects.toThrow('not found');
+    expect(closures).toEqual(['exit: sh: /usr/bin/tmux: not found']);
+  });
+
+  it('does not mistake a reply line for stderr once the Connection is up', async () => {
+    const host = fakeHost();
+    const { connection, closures } = await connected(host);
+    const asked = connection.run(['capture-pane']);
+    // A captured zsh prompt, which is not a notification and not stderr.
+    host.reply(2, ['user@host ~ %']);
+    expect((await asked).text).toEqual(['user@host ~ %']);
+
+    host.drop();
+    expect(closures).toEqual(['channel: The Connection to the Host was closed']);
+  });
+
+  it('answers whether the channel is still there, without sending anything', async () => {
+    const host = fakeHost();
+    const { connection } = await connected(host);
+    const before = host.written.length;
+
+    expect(connection.isOpen()).toBe(true);
+    expect(host.written).toHaveLength(before);
+
+    host.drop();
+    expect(connection.isOpen()).toBe(false);
   });
 });

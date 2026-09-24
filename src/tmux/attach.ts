@@ -1,0 +1,790 @@
+import type { Clock } from '@/lib/clock';
+import { describeError } from '@/lib/describe-error';
+import { systemClock } from '@/lib/clock';
+import type { KeyVerdict } from '@/ssh/host-key';
+import type { Host } from '@/storage/records';
+import type { HostStore } from '@/storage/store';
+
+import { createClientSizing, type ClientSizing } from './client-sizing';
+import {
+  openControlConnection,
+  type ClosedCause,
+  type ControlConnection,
+} from './control-connection';
+import {
+  retryCouldWork,
+  reasonForAttachFailure,
+  reasonForClosure,
+  reasonForConnectFailure,
+  type DisconnectReason,
+  type ReconnectSource,
+} from './disconnect-reason';
+import {
+  createPaneView,
+  type PaneSurface,
+  type PaneView,
+  type ScrollPosition,
+} from './pane-view';
+import type { Extent } from './pane-layout';
+import { createTopologyStore, EMPTY_TOPOLOGY, type Topology, type TopologyStore } from './topology';
+import type { TmuxTransport } from './transport';
+import { TmuxClient, type Grid, type Session } from './tmux-client';
+
+/**
+ * One live Connection to a Host, as Attach needs it.
+ *
+ * The transport seam, plus the one thing a Connection knows that a transport
+ * does not: which key the Host presented. The SSH adapter is `sshConnection`;
+ * the control-mode harness supplies a local process instead, and the unit
+ * tests a fake.
+ */
+export interface HostConnection {
+  transport: TmuxTransport;
+  fingerprint: string;
+  verdict: KeyVerdict;
+  close(): Promise<void>;
+}
+
+/** Opens one. Where the SSH library lives, and the one thing tests replace. */
+export type OpenConnection = (host: Host) => Promise<HostConnection>;
+
+/** What the app is doing, as React Native reports it. */
+export type LifecyclePhase = 'active' | 'inactive' | 'background';
+
+export type AttachPhase =
+  | { kind: 'connecting' }
+  | { kind: 'connected' }
+  /** A reconnect the foreground check asked for. */
+  | { kind: 'restoring' }
+  /** A reconnect a lost transport asked for. */
+  | { kind: 'reconnecting' }
+  | { kind: 'disconnected'; reason: DisconnectReason }
+  | { kind: 'closed' };
+
+/** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
+export interface AttachState {
+  phase: AttachPhase;
+  /** Which Session is attached, held once and published from here. */
+  sessionName: string;
+  fingerprint: string;
+  /**
+   * Whether the Host's key is not the one last seen. Never blocks.
+   *
+   * A flag rather than a record: the Host's name is on the Attach and the key
+   * it presented is the `fingerprint` beside this, so anything else here would
+   * be the same two values written down twice.
+   */
+  keyChanged: boolean;
+  topology: Topology;
+  /** The Host's Sessions as of the last `%sessions-changed`, or null unread. */
+  sessions: Session[] | null;
+  /** Captured Pane text by target, filled in behind an already-open sheet. */
+  previews: Map<string, string[]>;
+  /** The last thing that went wrong that nobody was waiting on. */
+  trouble: string | null;
+  /** Whether the active Pane should fill the Window on its own. */
+  zoomed: boolean;
+  /** The grid the Client is sized to, for the screen's own overlay. */
+  grid: Grid | null;
+  /**
+   * How far back the active Pane is being viewed, or null at the live bottom.
+   *
+   * Only the active Pane's: the others are on screen but nobody is driving
+   * them, and an indicator per Pane says otherwise.
+   */
+  scrolled: ScrollPosition | null;
+  /** Whether the application in the active Pane is listening for the mouse. */
+  mouseTracking: boolean;
+}
+
+export interface Attach {
+  readonly hostId: string;
+  readonly hostName: string;
+  state(): AttachState;
+  /** Called on every change, and once with the current state on subscribing. */
+  subscribe(listener: (state: AttachState) => void): () => void;
+
+  // The verbs the Dock and the pickers need. Each re-applies the Zoom
+  // preference and refreshes the Topology itself.
+  switchSession(name: string): Promise<void>;
+  selectWindow(index: number): Promise<void>;
+  /** Optimistic: moves the Pane here first and puts it back if refused. */
+  selectPane(paneId: string): void;
+  split(direction: 'right' | 'down'): Promise<void>;
+  newWindow(): Promise<void>;
+  setZoom(on: boolean): void;
+  /** Fills in the previews for a sheet that is already open. */
+  capturePreviews(targets: string[]): void;
+  /** Re-reads the Host's Session list, which no notification describes. */
+  refreshSessions(): void;
+  /** Reads the Topology again. For a sheet correcting itself behind its own back. */
+  refreshTopology(): void;
+  /** The user asking for another go, from a disconnected phase. */
+  reconnect(): void;
+
+  // Per-Pane, for the views the screen puts Surfaces into.
+  view(paneId: string): PaneView;
+  /** A Surface for a Pane came or went. */
+  surfaceForPane(paneId: string, surface: PaneSurface | null): void;
+  /** A Pane's Surface reported its grid. */
+  paneGridReported(paneId: string, grid: Grid): void;
+
+  // The facts the screen and the root feed it.
+  windowGridReported(grid: Grid, surface: Extent): void;
+  containerLaidOut(container: Extent): void;
+  spanningSurface(present: boolean): void;
+  sheetPresented(open: boolean): void;
+  lifecycleChanged(phase: LifecyclePhase): void;
+
+  /** Ends it on purpose. Nothing fires afterwards. */
+  close(): Promise<void>;
+}
+
+export interface AttachOptions {
+  host: Host;
+  sessionName: string;
+  /** The Zoom preference this Session is opened with. */
+  zoomed: boolean;
+  openConnection: OpenConnection;
+  store: HostStore;
+  clock?: Clock;
+}
+
+/**
+ * One Session, attached.
+ *
+ * Owns the SSH Connection, the trust-on-first-use verdict, the Control
+ * Connection, the Client, the Client's size, the Topology store, the Session
+ * name, the Zoom preference and one Pane view per Pane. Publishes all of it
+ * through one subscription, takes facts and verbs, and ends with one
+ * `close()` after which nothing fires.
+ *
+ * **It outlives the Terminal Screen.** The screen subscribes on mount and
+ * unsubscribes on unmount and starts and stops nothing; going Home leaves the
+ * Session attached and coming back repaints it from a fresh capture. What
+ * ends an Attach is the user disconnecting, another Session being opened, or
+ * a transport that was lost and could not be restored. See ADR 0007.
+ *
+ * **The order of an Attach is a property of this module.** Connect, read the
+ * key verdict, wait for a grid that has stopped moving, open the Control
+ * Connection with no PTY, make the Client and the Topology store, *size
+ * first*, apply Zoom, read the Topology, read the Session list. Size first
+ * because the capture that follows must be of a Pane the size of the Surface;
+ * that used to be a comment above five lines in a component.
+ *
+ * **Cancellation is one number.** Every async step remembers the generation it
+ * began in and does nothing if the Attach has been closed or replaced since.
+ * That is the whole of what twenty `disposed` checks and a `background()` sink
+ * used to do, and it is what makes "nothing fires after `close()`" a test
+ * rather than a hope.
+ *
+ * **A reconnect is a replacement, not a repair.** The Connection, Control
+ * Connection, Client and Topology store are closed and remade and the Pane
+ * views re-created; the new Client is sized from the last *stable* grid, and
+ * the Zoom preference is re-applied. To a subscriber it is a phase change.
+ * Copied from `remux`, which makes a new runtime with a new instance id for
+ * exactly this reason: nothing from the dead Connection survives to be believed.
+ */
+export function openAttach(options: AttachOptions): Attach {
+  const { host, openConnection, store } = options;
+  const clock = options.clock ?? systemClock;
+
+  /**
+   * Which Connection is current.
+   *
+   * Bumped by `close()` and by every replacement. An async step that began in
+   * an earlier generation has nothing left to tell and nobody to tell it to.
+   */
+  let generation = 0;
+  let closed = false;
+  /** Whether the app is in the background, which gates every read and write. */
+  let suspended = false;
+
+  let connection: HostConnection | null = null;
+  let control: ControlConnection | null = null;
+  let client: TmuxClient | null = null;
+  let topology: TopologyStore | null = null;
+
+  /** Which automatic sources have already had their one attempt. */
+  const attempted = new Set<ReconnectSource>();
+
+  const views = new Map<string, PaneView>();
+  /**
+   * What the screen has put on screen for each Pane: its Surface, and the last
+   * grid that Surface reported.
+   *
+   * Kept here rather than in the screen because a replacement re-creates every
+   * view, and a fresh view knows neither. Both halves or neither: a view given
+   * a Surface and never told a grid is a view that waits forever, which is the
+   * same bug the Pane view was deepened to close — only one level up.
+   */
+  const onScreen = new Map<string, { surface: PaneSurface; grid: Grid | null }>();
+
+  const listeners = new Set<(state: AttachState) => void>();
+  let state: AttachState = {
+    phase: { kind: 'connecting' },
+    sessionName: options.sessionName,
+    fingerprint: '',
+    keyChanged: false,
+    topology: EMPTY_TOPOLOGY,
+    sessions: null,
+    previews: new Map(),
+    trouble: null,
+    zoomed: options.zoomed,
+    grid: null,
+    scrolled: null,
+    mouseTracking: false,
+  };
+
+  const sizing: ClientSizing = createClientSizing(async (grid) => {
+    const current = client;
+    // Thrown, not shrugged off: the sizing module must not record a size it
+    // never sent, or it will skip the next request for the same one.
+    if (!current) throw new Error('no Client to resize');
+    await current.resizeClient(grid);
+  }, { clock, onSettled: (grid) => change({ grid }) });
+
+  function publish(): void {
+    for (const listener of [...listeners]) listener(state);
+  }
+
+  function change(over: Partial<AttachState>): void {
+    if (closed && over.phase?.kind !== 'closed') return;
+    state = { ...state, ...over };
+    publish();
+  }
+
+  /** True when this step began before the current Connection. */
+  function stale(mine: number): boolean {
+    return closed || mine !== generation;
+  }
+
+  /**
+   * Runs something nobody is waiting on, and owns how it can fail.
+   *
+   * Every one of these is a round trip started and then stopped caring about,
+   * and a Control Command rejects when the channel is gone — that is the
+   * contract. Once closed or replaced there is nothing left to tell, so it is
+   * dropped. While the Attach is up, a command that failed is worth the same
+   * quiet line as one typed into a Pane that has gone.
+   */
+  function background(mine: number, work: () => Promise<unknown>): void {
+    void work().catch((error: unknown) => {
+      if (stale(mine)) return;
+      change({ trouble: describeError(error) });
+    });
+  }
+
+  // ---------------------------------------------------------------- Pane views
+
+  function viewFor(paneId: string): PaneView {
+    const existing = views.get(paneId);
+    if (existing) return existing;
+
+    const mine = generation;
+    /** The Client as it is now, refused once this view's Connection is over. */
+    const reading = () => {
+      if (stale(mine) || !client) throw new Error('the Connection has gone');
+      return client;
+    };
+    const active = () => paneId === state.topology.activePane?.id;
+
+    const view = createPaneView(
+      paneId,
+      {
+        paneState: (id) => reading().paneState(id),
+        capturePane: (id) => reading().capturePane(id),
+        captureScrollback: (id, start, end) => reading().captureScrollback(id, start, end),
+        sendKeys: (id, bytes) => reading().sendKeys(id, bytes),
+        sendKey: (id, key) => reading().sendKey(id, key),
+      },
+      {
+        onScroll: (position) => {
+          if (!stale(mine) && active()) change({ scrolled: position });
+        },
+        onMouseTracking: (wanted) => {
+          if (!stale(mine) && active()) change({ mouseTracking: wanted });
+        },
+        // A Pane that painted is a Pane that is talking to the Host again,
+        // which is the honest moment to take a line of trouble down.
+        onPainted: () => {
+          if (!stale(mine)) change({ trouble: null });
+        },
+        onError: (error) => {
+          if (!stale(mine)) change({ trouble: describeError(error) });
+        },
+      },
+      { clock },
+    );
+    views.set(paneId, view);
+    const shown = onScreen.get(paneId);
+    if (shown) {
+      view.setSurface(shown.surface);
+      if (shown.grid) view.reportGrid(shown.grid);
+    }
+    view.setPaused(suspended);
+    view.setActive(active());
+    return view;
+  }
+
+  /**
+   * Brings the views into line with the Panes the Topology now has.
+   *
+   * Three things at once, because they are one question — which Panes are on
+   * screen. A Pane that has left (a Window switch, a kill on the laptop)
+   * releases its view and its Surface. A Pane that is still there and has a
+   * Surface but no view *gets one*, which is what re-creates every view after
+   * a replacement: the Surfaces belong to the screen and did not go anywhere,
+   * so a fresh view over the same Surface resyncs it from a fresh capture
+   * exactly as a first paint does. And one cursor, in the Pane the keyboard is
+   * in — remembered by each view so a repaint does not bring a second one back.
+   */
+  function pruneViews(next: Topology): void {
+    const wanted = new Set(next.panes.map((pane) => pane.id));
+    for (const [id, view] of [...views]) {
+      if (wanted.has(id)) continue;
+      view.dispose();
+      views.delete(id);
+      onScreen.delete(id);
+    }
+    for (const id of onScreen.keys()) {
+      if (wanted.has(id)) viewFor(id);
+    }
+    for (const [id, view] of views) view.setActive(id === next.activePane?.id);
+  }
+
+  /** Disposes every view but keeps the Surfaces, which the screen still holds. */
+  function releaseViews(): void {
+    for (const view of views.values()) view.dispose();
+    views.clear();
+  }
+
+  // ------------------------------------------------------------------- Attach
+
+  async function connect(): Promise<void> {
+    const mine = generation;
+    try {
+      const opened = await openConnection(host);
+      if (stale(mine)) {
+        await opened.close();
+        return;
+      }
+      connection = opened;
+
+      // Trust on first use: remember the key the first time, and say so loudly
+      // when it changes. The Connection is not blocked either way — someone
+      // who has just rebuilt a machine still has to reach it.
+      if (opened.verdict.kind === 'first-sight') {
+        await store.rememberFingerprint(host.id, opened.fingerprint);
+      }
+      if (stale(mine)) return;
+      change({
+        fingerprint: opened.fingerprint,
+        keyChanged: opened.verdict.kind === 'changed',
+      });
+
+      // Sized from a grid that has stopped moving, not merely the latest. The
+      // Surface reports one while the Dock's glass is still being measured and
+      // a smaller one once the Dock has taken its height; the first would
+      // leave tmux drawing a taller Window than the Surface has.
+      await sizing.settledGrid();
+      if (stale(mine)) return;
+
+      // This is Attach: one channel, no PTY, and no Session option touched.
+      const opening = await openControlConnection(
+        opened.transport,
+        { sessionName: state.sessionName, tmuxExecutablePath: host.tmuxExecutablePath },
+        {
+          // Straight to the Pane it belongs to. A Window that is not zoomed
+          // has a view for each of them, and this is the thing an attached
+          // client could not do: its byte stream is one composited Window.
+          onOutput: (pane, bytes) => {
+            if (!stale(mine)) views.get(pane)?.receive(bytes);
+          },
+          onNotification: (event) => {
+            if (stale(mine)) return;
+            if (event.kind === 'session-changed') {
+              topology?.attachedTo(event.name);
+              change({ sessionName: event.name });
+            }
+            if (event.kind === 'sessions-changed') refreshSessions();
+            topology?.apply(event);
+          },
+          // A Connection lost while nobody is looking is the foreground check's
+          // business rather than the transport-loss policy's: reconnecting
+          // into a suspended app costs the Host a Connection nothing draws.
+          onClosed: (detail, cause) =>
+            ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss'),
+        },
+      );
+      if (stale(mine)) {
+        await opening.close();
+        return;
+      }
+
+      control = opening;
+      client = new TmuxClient(opening);
+      topology = createTopologyStore(client, state.sessionName, {
+        onTrouble: (error) => {
+          if (!stale(mine)) change({ trouble: describeError(error) });
+        },
+      });
+      // Publishing the Topology is all that is needed: the Surfaces on screen
+      // are derived from it, so a split made on the laptop, a Window switch or
+      // somebody else's `select-pane` all arrive the same way.
+      topology.subscribe((next) => {
+        if (stale(mine)) return;
+        pruneViews(next);
+        change({ topology: next });
+      });
+
+      change({ phase: { kind: 'connected' } });
+      // A Connection that reached here has cleared whatever ended the last
+      // one, so both automatic sources get their attempt again.
+      attempted.clear();
+
+      // Stamped on a Session that actually opened, not on one that was only
+      // tapped: the Host Screen's order is a record of where you have been,
+      // and a Session that refused to attach is not somewhere you have been.
+      void store.rememberSession(host.id, state.sessionName).catch(() => {});
+
+      // Size first, so the capture that follows is of a Pane the size of the
+      // Surface rather than of whatever the last Client left it.
+      sizing.attached();
+      // A phone is too narrow for side-by-side Panes, so a split Session
+      // arrives with its active Pane filling the Window.
+      await client.setZoom(state.sessionName, state.zoomed);
+      if (stale(mine)) return;
+      await topology.refresh();
+      if (stale(mine)) return;
+      refreshSessions();
+    } catch (error) {
+      if (stale(mine)) return;
+      // Two stages, two vocabularies. Before the Control Connection is open
+      // the failure is the SSH library's; after it, it is tmux's own words.
+      const reason = connection === null ? reasonForConnectFailure(error) : reasonForAttachFailure(error);
+      ended(mine, reason, suspended ? null : 'transport-loss');
+    }
+  }
+
+  /**
+   * The Connection is over.
+   *
+   * Everything belonging to it is closed and let go before the phase is
+   * published, so a subscriber that reacts by reconnecting cannot find a
+   * half-open Connection underneath.
+   */
+  function ended(
+    mine: number,
+    reason: DisconnectReason,
+    source: ReconnectSource | null,
+  ): void {
+    if (stale(mine)) return;
+    // Not awaited: a Connection that has already ended has nothing to wait
+    // for, and a reconnect must not be held up by a socket that will not shut.
+    void teardown();
+    change({ phase: { kind: 'disconnected', reason } });
+    if (source !== null) tryReconnect(source);
+  }
+
+  /**
+   * Closes the Connection and everything made from it. Keeps the sizing.
+   *
+   * Answers when the socket is actually shut, which `close()` waits for and a
+   * replacement does not: the holder promises that a Session is gone before
+   * the next one is opened, and a Host with two Clients sizing it is exactly
+   * what holding one Attach at a time is meant to prevent.
+   */
+  function teardown(): Promise<void> {
+    const closingControl = control;
+    const closingConnection = connection;
+    control = null;
+    client = null;
+    topology?.dispose();
+    topology = null;
+    releaseViews();
+    // Errors on the way out go nowhere on purpose: this Connection is already
+    // over, and a Host that will not be said goodbye to politely is a Host the
+    // socket drops anyway.
+    return (async () => {
+      try {
+        await closingControl?.close();
+      } finally {
+        await closingConnection?.close();
+      }
+    })().catch(() => {});
+  }
+
+  /**
+   * One automatic attempt per source, until the next connected phase.
+   *
+   * `remux`'s rule exactly, and the reason it is a rule rather than an
+   * emergent loop: two sources can fire for the same drop — the channel
+   * closing and the app coming back to find it closed — and a retry that
+   * forgets it has already tried is a Muxify that hammers a Host which is
+   * refusing.
+   */
+  function tryReconnect(source: ReconnectSource): void {
+    if (closed) return;
+    if (state.phase.kind !== 'disconnected') return;
+    if (!retryCouldWork(state.phase.reason)) return;
+    if (attempted.has(source)) return;
+    attempted.add(source);
+    replace(source === 'foreground' ? { kind: 'restoring' } : { kind: 'reconnecting' });
+  }
+
+  /** A fresh Connection under the same Attach. */
+  function replace(phase: AttachPhase): void {
+    generation += 1;
+    void teardown();
+    connection = null;
+    change({ phase });
+    void connect();
+  }
+
+  // ------------------------------------------------------------------- Reading
+
+  function refreshSessions(): void {
+    const mine = generation;
+    const current = client;
+    if (!current || suspended) return;
+    void (async () => {
+      try {
+        const listed = await current.listSessions();
+        // Checked again on the way back, not only on the way out: a read that
+        // was in flight when the app was suspended is a read whose answer
+        // nobody is looking at, and publishing it is drawing.
+        if (!stale(mine) && !suspended) change({ sessions: listed });
+      } catch {
+        // A Session list that will not read is a picker with nothing new in
+        // it, not a Connection worth taking down.
+      }
+    })();
+  }
+
+  /** Re-applies the Zoom preference and reads the Topology. Every verb ends here. */
+  async function settleAfterVerb(mine: number): Promise<void> {
+    const current = client;
+    if (!current || stale(mine)) return;
+    // Selecting a Pane drops tmux out of zoom, and moving to another Window
+    // lands on one nobody has zoomed, so the preference is re-applied rather
+    // than assumed to have survived.
+    await current.setZoom(state.sessionName, state.zoomed);
+    if (stale(mine)) return;
+    await topology?.refresh();
+  }
+
+  const attach: Attach = {
+    hostId: host.id,
+    hostName: host.displayName,
+
+    state: () => state,
+
+    subscribe(listener: (next: AttachState) => void): () => void {
+      listeners.add(listener);
+      listener(state);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+
+    async switchSession(name: string): Promise<void> {
+      const mine = generation;
+      const current = client;
+      if (!current || name === state.sessionName) return;
+      await current.switchSession(name);
+      if (stale(mine)) return;
+      topology?.attachedTo(name);
+      change({ sessionName: name });
+      // Switching lands in a Session just as arriving does, so it counts the
+      // same on the Host Screen. Without this the order would only remember
+      // how a visit started, not where it went.
+      void store.rememberSession(host.id, name).catch(() => {});
+      // The Session switched into has its own Window, sized for whoever
+      // attached to it last.
+      sizing.sessionSwitched();
+      await settleAfterVerb(mine);
+    },
+
+    async selectWindow(index: number): Promise<void> {
+      const mine = generation;
+      const current = client;
+      if (!current) return;
+      await current.selectWindow(state.sessionName, index);
+      await settleAfterVerb(mine);
+    },
+
+    selectPane(paneId: string): void {
+      const mine = generation;
+      const current = client;
+      const model = topology;
+      const pane = state.topology.panes.find((each) => each.id === paneId);
+      const windowIndex = state.topology.activeWindow?.index;
+      if (!current || !model || !pane || windowIndex === undefined || pane.active) return;
+      // Moved here first, then asked for. The cursor, the keyboard and the
+      // Panes sheet all follow the Topology, so doing it in this order is the
+      // difference between a tap that lands and one that lands a round trip
+      // later. tmux's own `%window-pane-changed` arrives after and agrees.
+      model.activate(paneId);
+      void (async () => {
+        try {
+          await current.selectPane(state.sessionName, windowIndex, pane.index);
+        } catch (error) {
+          if (stale(mine)) return;
+          change({ trouble: describeError(error) });
+          // The move was made on a guess the Host has just refused, so the
+          // guess is thrown away rather than left showing.
+          await model.refresh();
+        }
+      })();
+    },
+
+    async split(direction: 'right' | 'down'): Promise<void> {
+      const mine = generation;
+      const current = client;
+      if (!current) return;
+      await current.splitWindow(state.sessionName, direction);
+      await settleAfterVerb(mine);
+    },
+
+    async newWindow(): Promise<void> {
+      const mine = generation;
+      const current = client;
+      if (!current) return;
+      await current.newWindow(state.sessionName);
+      await settleAfterVerb(mine);
+    },
+
+    setZoom(on: boolean): void {
+      const mine = generation;
+      change({ zoomed: on });
+      background(mine, async () => {
+        const current = client;
+        if (!current) return;
+        await current.setZoom(state.sessionName, on);
+        if (stale(mine)) return;
+        await topology?.refresh();
+      });
+    },
+
+    capturePreviews(targets: string[]): void {
+      const mine = generation;
+      const current = client;
+      if (!current || targets.length === 0 || suspended) return;
+      void (async () => {
+        try {
+          const fresh = await current.capturePanes(targets);
+          if (stale(mine) || suspended || fresh.size === 0) return;
+          change({ previews: new Map([...state.previews, ...fresh]) });
+        } catch {
+          // Previews that will not read leave the sheet showing the ones it
+          // opened with, which is the same thing it shows before any land.
+          // Not worth a line of trouble over, and not the Connection's fault.
+        }
+      })();
+    },
+
+    refreshSessions,
+
+    refreshTopology(): void {
+      const mine = generation;
+      if (suspended) return;
+      background(mine, async () => {
+        await topology?.refresh();
+      });
+    },
+
+    reconnect(): void {
+      if (closed || state.phase.kind !== 'disconnected') return;
+      // The user asking, so the once-per-source rule does not apply — that is
+      // there to stop Muxify looping, not to stop a person trying again.
+      replace({ kind: 'reconnecting' });
+    },
+
+    view: viewFor,
+
+    surfaceForPane(paneId: string, surface: PaneSurface | null): void {
+      if (closed) return;
+      if (surface === null) {
+        onScreen.delete(paneId);
+        views.get(paneId)?.setSurface(null);
+        return;
+      }
+      // A new Surface has reported nothing yet, so the grid it replaces is not
+      // its own — it says so as soon as it is laid out.
+      onScreen.set(paneId, { surface, grid: null });
+      viewFor(paneId).setSurface(surface);
+    },
+
+    paneGridReported(paneId: string, grid: Grid): void {
+      if (closed) return;
+      const shown = onScreen.get(paneId);
+      if (shown) shown.grid = grid;
+      views.get(paneId)?.reportGrid(grid);
+    },
+
+    windowGridReported(grid: Grid, surface: Extent): void {
+      if (closed) return;
+      sizing.windowGridReported(grid, surface);
+      change({ grid: sizing.stableGrid() });
+    },
+
+    containerLaidOut: (extent: Extent) => sizing.containerLaidOut(extent),
+    spanningSurface: (present: boolean) => sizing.spanningSurface(present),
+    sheetPresented: (open: boolean) => sizing.sheetPresented(open),
+
+    lifecycleChanged(phase: LifecyclePhase): void {
+      if (closed) return;
+      if (phase === 'background') {
+        // Nothing on the wire, nothing drawn, and no background task: whether
+        // the socket survives suspension is iOS's decision, and the foreground
+        // check is what answers it. See ADR 0007.
+        suspended = true;
+        for (const view of views.values()) view.setPaused(true);
+        return;
+      }
+      // `inactive` is the moment between — a notification shade, the app
+      // switcher — and means nothing has happened yet.
+      if (phase !== 'active') return;
+      if (!suspended) return;
+      suspended = false;
+      for (const view of views.values()) view.setPaused(false);
+
+      if (state.phase.kind === 'disconnected') {
+        // It died while nobody was looking. Coming back is the opportunity.
+        tryReconnect('foreground');
+        return;
+      }
+      if (state.phase.kind !== 'connected') return;
+      // Asked of the transport rather than assumed. A Surface that looks
+      // connected after a suspension is a Surface that may be talking to
+      // nothing, and only the thing underneath can say which.
+      if (control?.isOpen() ?? false) return;
+      ended(
+        generation,
+        { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
+        'foreground',
+      );
+    },
+
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      generation += 1;
+      sizing.dispose();
+      onScreen.clear();
+      listeners.clear();
+      state = { ...state, phase: { kind: 'closed' } };
+      // Awaited, so that "this Session is gone" is true by the time this
+      // resolves. The holder opens the next one on the strength of it.
+      await teardown();
+    },
+  };
+
+  // Opened, not merely constructed: an Attach with a Session name and a Host
+  // is already on its way, and a caller that had to remember to start it is a
+  // caller that can forget to.
+  void connect();
+
+  return attach;
+}

@@ -25,7 +25,7 @@ function recorder() {
 }
 
 describe('createResizeScheduler', () => {
-  it('re-sends a size after a reset, because the Session it targets has changed', async () => {
+  it('re-sends a forced size, because the Session it targets has changed', async () => {
     const { applied, flights, resize } = recorder();
     const scheduler = createResizeScheduler(resize);
 
@@ -33,8 +33,7 @@ describe('createResizeScheduler', () => {
     flights[0].settle();
     await flush();
 
-    scheduler.reset();
-    scheduler.request({ cols: 38, rows: 32 });
+    scheduler.request({ cols: 38, rows: 32 }, true);
 
     expect(applied).toHaveLength(2);
   });

@@ -45,7 +45,18 @@ export type ControlEvent =
   | { kind: 'unlinked-window-renamed'; window: string; name: string }
   | { kind: 'client-detached'; client: string }
   /** The control client is finished. Nothing more will arrive. */
-  | { kind: 'exit'; reason: string };
+  | { kind: 'exit'; reason: string }
+  /**
+   * A line that is not part of the protocol at all.
+   *
+   * tmux never writes one: outside a reply block every line it produces starts
+   * with `%`. So anything arriving here came up the channel from somewhere
+   * else — which, for a shell channel with no pty, means stderr. That is where
+   * `tmux: command not found` and a failing `tmux -C attach` write, and it is
+   * the most useful thing a Connection that never opened has to say. Dropped
+   * silently until it was measured; see ADR 0007.
+   */
+  | { kind: 'notice'; text: string };
 
 export interface ControlParser {
   /** Reads whatever has arrived, and returns every event it completed. */
@@ -80,7 +91,11 @@ export function createControlParser(): ControlParser {
       return;
     }
 
-    if (line.length === 0 || line[0] !== 0x25 /* % */) return;
+    if (line.length === 0) return;
+    if (line[0] !== 0x25 /* % */) {
+      events.push({ kind: 'notice', text: bytesToUtf8(line) });
+      return;
+    }
 
     // The name is read from the bytes rather than from a decoded line: output
     // is the hot path, and its payload must not be decoded to find out that it

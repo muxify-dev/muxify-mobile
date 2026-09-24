@@ -37,6 +37,7 @@ import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
+import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 
 /**
  * The Hosts list: the app's front door.
@@ -52,6 +53,15 @@ export default function HostsScreen() {
   const router = useRouter();
   const { appearance, palette } = useSettings();
   const [hosts, setHosts] = useState<HostRecord[] | null>(null);
+  /**
+   * Which Host, if any, has the attached Session.
+   *
+   * Going Home leaves the Session attached, so the list has to say so — a
+   * Connection nobody can see is a Connection nobody remembers to end. See
+   * ADR 0007.
+   */
+  const attach = useCurrentAttach();
+  const attached = useAttachState(attach);
 
   const reload = useCallback(async () => {
     const records = await deviceHostStore().load();
@@ -128,7 +138,9 @@ export default function HostsScreen() {
               tint(palette.controlAccent),
             ]}>
             <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-              {hosts.map((host) => (
+              {hosts.map((host) => {
+                const attachedHere = attach?.hostId === host.id ? attached : null;
+                return (
                 <SwipeActions key={host.id}>
                   <Button
                     onPress={() =>
@@ -136,7 +148,11 @@ export default function HostsScreen() {
                     }
                     modifiers={[buttonStyle('plain'), accessibilityLabel(host.displayName)]}>
                     <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-                      <Image systemName="server.rack" size={20} color={palette.rowIcon} />
+                      <Image
+                        systemName="server.rack"
+                        size={20}
+                        color={attachedHere ? palette.controlAccent : palette.rowIcon}
+                      />
                       <VStack spacing={2} alignment="leading">
                         <Text modifiers={[font({ size: 17 })]}>{host.displayName}</Text>
                         <Text
@@ -146,6 +162,18 @@ export default function HostsScreen() {
                           ]}>
                           {`${host.address}:${host.port}`}
                         </Text>
+                        {/* Added rather than substituted: the address is what
+                            tells two Hosts of the same name apart, and it is
+                            wanted most on the row that is doing something. */}
+                        {attachedHere ? (
+                          <Text
+                            modifiers={[
+                              font({ size: 13 }),
+                              foregroundColor(palette.controlAccent),
+                            ]}>
+                            {`Attached to ${attachedHere.sessionName}`}
+                          </Text>
+                        ) : null}
                       </VStack>
                       <Spacer />
                       <Image
@@ -166,7 +194,8 @@ export default function HostsScreen() {
                     />
                   </SwipeActions.Actions>
                 </SwipeActions>
-              ))}
+                );
+              })}
             </Section>
           </List>
         </Host>

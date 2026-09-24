@@ -9,7 +9,9 @@
  *
  * Implemented in plain JS rather than reaching for `btoa`/`atob` or `Buffer`:
  * neither is guaranteed on Hermes, and the global `btoa` is defined over
- * latin-1 code units, which silently mangles bytes above 0x7f.
+ * latin-1 code units, which silently mangles bytes above 0x7f. `TextEncoder`
+ * is a different matter — Hermes has it, and `utf8.ts` says why the decoder
+ * still has to be written out while the encoder does not.
  */
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -93,49 +95,4 @@ export function base64ToBytes(base64: string): Uint8Array {
   }
 
   return bytes.subarray(0, byte);
-}
-
-/**
- * Encodes a JavaScript string as UTF-8 bytes.
- *
- * Hand-rolled rather than using `TextEncoder`, which is not guaranteed on
- * Hermes. Surrogate pairs are combined so characters outside the basic plane
- * encode to four bytes rather than two broken three-byte sequences.
- */
-export function utf8ToBytes(text: string): Uint8Array {
-  const bytes: number[] = [];
-
-  for (let i = 0; i < text.length; i += 1) {
-    let codePoint = text.charCodeAt(i);
-
-    // Combine a surrogate pair into the single code point it represents.
-    if (codePoint >= 0xd800 && codePoint <= 0xdbff && i + 1 < text.length) {
-      const low = text.charCodeAt(i + 1);
-      if (low >= 0xdc00 && low <= 0xdfff) {
-        codePoint = (codePoint - 0xd800) * 0x400 + (low - 0xdc00) + 0x10000;
-        i += 1;
-      }
-    }
-
-    if (codePoint < 0x80) {
-      bytes.push(codePoint);
-    } else if (codePoint < 0x800) {
-      bytes.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f));
-    } else if (codePoint < 0x10000) {
-      bytes.push(
-        0xe0 | (codePoint >> 12),
-        0x80 | ((codePoint >> 6) & 0x3f),
-        0x80 | (codePoint & 0x3f),
-      );
-    } else {
-      bytes.push(
-        0xf0 | (codePoint >> 18),
-        0x80 | ((codePoint >> 12) & 0x3f),
-        0x80 | ((codePoint >> 6) & 0x3f),
-        0x80 | (codePoint & 0x3f),
-      );
-    }
-  }
-
-  return Uint8Array.from(bytes);
 }
