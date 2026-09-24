@@ -31,6 +31,15 @@ import {
 
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
+import {
+  answered,
+  asking,
+  lastAnswer,
+  refused,
+  waitingOnFirstAnswer,
+  UNASKED,
+  type Listing,
+} from '@/domain/host-listing';
 import { hostSessions, type RecentRow } from '@/domain/host-sessions';
 import { timeAgoFrom } from '@/lib/relative-time';
 import { useSettings } from '@/settings/settings-context';
@@ -42,16 +51,10 @@ import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach
 import { phaseLabel } from '@/tmux/attach-labels';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
-import { TmuxClient, type Session } from '@/tmux/tmux-client';
+import { TmuxClient } from '@/tmux/tmux-client';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
-
-/** What the Host has to say for itself, once asked. */
-type Listing =
-  | { phase: 'reading' }
-  | { phase: 'read'; sessions: Session[] }
-  | { phase: 'failed'; message: string };
 
 /**
  * A Host and its Sessions.
@@ -72,7 +75,7 @@ export default function HostScreen() {
 
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
-  const [listing, setListing] = useState<Listing>({ phase: 'reading' });
+  const [listing, setListing] = useState<Listing>(UNASKED);
   const [showEveryRecent, setShowEveryRecent] = useState(false);
   const [showEveryAvailable, setShowEveryAvailable] = useState(false);
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
@@ -100,13 +103,20 @@ export default function HostScreen() {
     setRecent(await store.recentSessionsFor(id));
   }, [id]);
 
+  /**
+   * Asks the Host what Sessions it has, without taking down the last answer.
+   *
+   * Every return to this screen asks again — and most of them are returns from
+   * a sheet that had nothing to do with the Host's Sessions. See host-listing
+   * for why the question is invisible until it has a better answer to give.
+   */
   const readHost = useCallback(async () => {
-    setListing({ phase: 'reading' });
+    setListing(asking);
     const store = deviceHostStore();
     const records = await store.load();
     const found = records.hosts.find((candidate) => candidate.id === id);
     if (!found) {
-      setListing({ phase: 'failed', message: 'This Host is no longer saved.' });
+      setListing(refused('This Host is no longer saved.'));
       return;
     }
 
@@ -123,12 +133,12 @@ export default function HostScreen() {
         );
         // A Host with no tmux server is a Host with no Sessions, which the
         // client already forgives — it must not read as a failure here.
-        setListing({ phase: 'read', sessions: await client.listSessions() });
+        setListing(answered(await client.listSessions()));
       } finally {
         await connection.disconnect();
       }
     } catch (error) {
-      setListing({ phase: 'failed', message: describeConnectionFailure(error) });
+      setListing(refused(describeConnectionFailure(error)));
     }
   }, [id]);
 
@@ -165,10 +175,7 @@ export default function HostScreen() {
     [id, readRecords],
   );
 
-  const { recent: rows, available } = hostSessions(
-    recent,
-    listing.phase === 'read' ? listing.sessions : undefined,
-  );
+  const { recent: rows, available } = hostSessions(recent, lastAnswer(listing));
   return (
     <View style={styles.fill}>
       <Stack.Screen
@@ -224,7 +231,7 @@ export default function HostScreen() {
             modifiers={[listRowBackground(palette.rowSurface)]}>
             {rows.length === 0 ? (
               <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-                {listing.phase === 'reading'
+                {waitingOnFirstAnswer(listing)
                   ? 'Nothing opened on this Host yet.'
                   : 'Nothing opened on this Host yet. Pick one below to start.'}
               </Text>
@@ -272,7 +279,10 @@ export default function HostScreen() {
               ) : undefined
             }
             modifiers={[listRowBackground(palette.rowSurface)]}>
-            {listing.phase === 'reading' ? (
+            {/* Only ever the first question. A later one is answered from what
+                is already on screen while it is in flight, so there is nothing
+                here to see — which is the whole point. */}
+            {waitingOnFirstAnswer(listing) ? (
               <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
                 <ProgressView />
                 <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
@@ -302,7 +312,7 @@ export default function HostScreen() {
               </VStack>
             ) : null}
 
-            {listing.phase === 'read' && available.length === 0 ? (
+            {lastAnswer(listing) !== undefined && available.length === 0 ? (
               <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
                 No other Sessions on this Host.
               </Text>
@@ -475,7 +485,9 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
  * How the Connection section describes the Host in one line.
  *
  * Silent until the Host has actually answered: a count assembled from memory
- * alone would say "2 sessions" about a machine that has nine.
+ * alone would say "2 sessions" about a machine that has nine. The answer it
+ * gave last stands while it is being asked again, so the count does not blink
+ * to a dash and back every time a sheet closes over this screen.
  *
  * It no longer says how many are attached. That was a warning, not a status —
  * joining a Session somebody was watching used to shrink their Window, because
@@ -483,7 +495,7 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
  * nothing, so there is nothing left to warn about. See ADR 0006.
  */
 function sessionSummary(total: number, listing: Listing): string {
-  if (listing.phase !== 'read') return '—';
+  if (lastAnswer(listing) === undefined) return '—';
   return `${total} ${total === 1 ? 'session' : 'sessions'}`;
 }
 

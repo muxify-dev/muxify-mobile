@@ -109,6 +109,15 @@ memory. The distinction matters on the Host Screen, where a Session that exists
 but has never been opened here is a different row in a different section.
 _Avoid_: workspace, saved session, history
 
+**Listing**:
+What a Host last said its Sessions were. The Host Screen asks again every time
+it comes back into focus — a sheet closing over it, a return from the Terminal
+Screen — and the asking is invisible: the answer it is holding stays on screen
+until a better one arrives. Only the first question has nothing to show and a
+spinner to stand in for it. A refusal is the exception and drops the list,
+because a Host that cannot be reached has no Sessions to offer.
+_Avoid_: sessions (which are the Sessions themselves), fetch, cache
+
 **Client**:
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A
