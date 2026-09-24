@@ -1,16 +1,18 @@
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Banner, Presence } from '@/components/banner';
 import { Dock, type DockCapsule } from '@/components/dock';
 import { KeyBar } from '@/components/key-bar';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
-import { paletteFor, type TerminalPalette } from '@/constants/app-theme';
+import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
 import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
@@ -929,57 +931,74 @@ export default function TerminalScreen() {
         }
       />
 
-      {keyWarning && !keyWarningSeen ? (
-        <HostKeyWarning
-          hostName={keyWarning}
-          onAccept={() => {
-            setKeyWarningSeen(true);
-            const accepted = state?.fingerprint;
-            void (async () => {
-              if (hostId && accepted) {
-                await deviceHostStore().rememberFingerprint(hostId, accepted);
-              }
-            })();
-          }}
-          onDismiss={() => setKeyWarningSeen(true)}
-        />
-      ) : null}
-
       <Dock capsules={dockCapsules} palette={chrome} />
 
-      {/* Below the status bar, not behind it: the container's padding does not
-          push an absolutely positioned child down, so the grid ended up
-          underneath the battery where nobody could read it. */}
-      <View style={[styles.overlay, { top: insets.top + 8 }]} pointerEvents="none">
-        {/* Always rendered, so its value can be asserted rather than its
-            absence. `surface-grid` appears only once the Surface has reported a
-            grid, so its presence is the signal that layout and `onResize`
-            completed; the value is device-specific, so select on the id. */}
-        <ThemedText type="code" style={dimText} testID="connection-status">
-          {status.label}
-        </ThemedText>
-        {visibleGrid ? (
-          <ThemedText type="code" style={dimText} testID="surface-grid">
-            {visibleGrid.cols}x{visibleGrid.rows}
-          </ThemedText>
-        ) : null}
-        {state?.sessionName ? (
-          <ThemedText type="code" style={dimText} testID="attached-session">
-            {state.sessionName}
-          </ThemedText>
-        ) : null}
-        {state?.trouble ? (
-          <ThemedText type="code" style={styles.troubleText} testID="pane-trouble">
-            {state.trouble}
-          </ThemedText>
-        ) : null}
-      </View>
+      {/* Everything the screen has to say sits under the status bar, the way iOS
+          delivers a notification: the Banners first, then the quiet overlay
+          lines beneath them. Below the bar, not behind it: the container's
+          padding does not push an absolutely positioned child down, so the grid
+          used to end up underneath the battery. */}
+      <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
+        <Presence shown={keyWarning !== null && !keyWarningSeen}>
+          {keyWarning ? (
+            <HostKeyWarning
+              hostName={keyWarning}
+              appearance={appearance}
+              palette={chrome}
+              onAccept={() => {
+                setKeyWarningSeen(true);
+                const accepted = state?.fingerprint;
+                void (async () => {
+                  if (hostId && accepted) {
+                    await deviceHostStore().rememberFingerprint(hostId, accepted);
+                  }
+                })();
+              }}
+              onDismiss={() => setKeyWarningSeen(true)}
+            />
+          ) : null}
+        </Presence>
 
-      <StatusBanner
-        status={status}
-        palette={opened.terminal}
-        onReconnect={attach ? () => attach.reconnect() : undefined}
-      />
+        <Presence shown={!status.quiet}>
+          <StatusBanner
+            status={status}
+            appearance={appearance}
+            palette={chrome}
+            onReconnect={attach ? () => attach.reconnect() : undefined}
+          />
+        </Presence>
+
+        <View style={styles.overlay} pointerEvents="none">
+          {/* Always rendered, so its value can be asserted rather than its
+              absence. `surface-grid` appears only once the Surface has reported
+              a grid, so its presence is the signal that layout and `onResize`
+              completed; the value is device-specific, so select on the id. */}
+          <ThemedText type="code" style={dimText} testID="connection-status">
+            {status.label}
+          </ThemedText>
+          {visibleGrid ? (
+            <ThemedText type="code" style={dimText} testID="surface-grid">
+              {visibleGrid.cols}x{visibleGrid.rows}
+            </ThemedText>
+          ) : null}
+          {state?.sessionName ? (
+            <ThemedText type="code" style={dimText} testID="attached-session">
+              {state.sessionName}
+            </ThemedText>
+          ) : null}
+          {state?.trouble ? (
+            // Loud enough to notice over whatever the Session is painting, quiet
+            // enough not to be a Banner: the Connection is fine, one command was
+            // not.
+            <ThemedText
+              type="code"
+              style={[styles.troubleText, { color: chrome.destructive }]}
+              testID="pane-trouble">
+              {state.trouble}
+            </ThemedText>
+          ) : null}
+        </View>
+      </View>
     </View>
   );
 }
@@ -999,13 +1018,32 @@ type Status = {
   offerReconnect: boolean;
   quiet: boolean;
   detail?: string;
+  /** What the Banner leads with when it is not busy. */
+  symbol: SFSymbol;
+};
+
+/** Something is being waited on: the Banner leads with a spinner. */
+const WAITING: Omit<Status, 'label'> = {
+  busy: true,
+  offerReconnect: false,
+  quiet: false,
+  symbol: 'antenna.radiowaves.left.and.right',
 };
 
 function statusOf(state: AttachState | null, missing: string | null): Status {
-  if (missing) return { label: `Failed: ${missing}`, busy: false, offerReconnect: false, quiet: false };
+  if (missing) {
+    return {
+      label: 'Failed',
+      detail: missing,
+      busy: false,
+      offerReconnect: false,
+      quiet: false,
+      symbol: 'exclamationmark.triangle.fill',
+    };
+  }
   // Nothing attached yet, which from here is indistinguishable from an Attach
   // that has not answered — and is the same word either way.
-  if (!state) return { label: 'Connecting', busy: true, offerReconnect: false, quiet: false };
+  if (!state) return { label: 'Connecting', ...WAITING };
   return statusForPhase(state.phase);
 }
 
@@ -1013,24 +1051,27 @@ function statusForPhase(phase: AttachPhase): Status {
   const label = phaseLabel(phase);
   switch (phase.kind) {
     case 'connected':
-      return { label, busy: false, offerReconnect: false, quiet: true };
+      return { label, busy: false, offerReconnect: false, quiet: true, symbol: 'checkmark' };
     case 'connecting':
     case 'restoring':
     case 'reconnecting':
-      return { label, busy: true, offerReconnect: false, quiet: false };
-    case 'disconnected':
+      return { label, ...WAITING };
+    case 'disconnected': {
+      // Offered for a lost transport and nothing else: a wrong password and a
+      // Session that has ended would both fail again in exactly the same way,
+      // and a button that cannot work is worse than none.
+      const offerReconnect = retryCouldWork(phase.reason);
       return {
         label,
         detail: phase.reason.detail,
         busy: false,
-        // Offered for a lost transport and nothing else: a wrong password and
-        // a Session that has ended would both fail again in exactly the same
-        // way, and a button that cannot work is worse than none.
-        offerReconnect: retryCouldWork(phase.reason),
+        offerReconnect,
         quiet: false,
+        symbol: offerReconnect ? 'wifi.slash' : 'exclamationmark.triangle.fill',
       };
+    }
     case 'closed':
-      return { label, busy: false, offerReconnect: false, quiet: false };
+      return { label, busy: false, offerReconnect: false, quiet: false, symbol: 'xmark.circle.fill' };
   }
 }
 
@@ -1461,39 +1502,38 @@ function ScrollBackIndicator({
 }
 
 /**
- * The loud banner, shown only while something needs the user's attention.
+ * The Banner for the Attach's phase, shown while it is anything but connected.
  *
  * It carries the Reconnect action, and only where trying again could work: a
- * lost transport, and nothing else. The quiet always-present indicator above
- * carries the same label for assertions.
+ * lost transport, and nothing else. The quiet always-present indicator beneath
+ * it carries the same label for assertions.
  */
 function StatusBanner({
   status,
+  appearance,
   palette,
   onReconnect,
 }: {
   status: Status;
-  palette: TerminalPalette;
+  appearance: 'light' | 'dark';
+  palette: Appearance;
   onReconnect?: () => void;
 }) {
-  if (status.quiet) return null;
-
   return (
-    <View
-      style={[styles.banner, { backgroundColor: palette.black, borderColor: palette.grey }]}
-      accessibilityLabel={status.label}>
-      {status.busy ? <ActivityIndicator size="small" color={palette.foreground} /> : null}
-      <ThemedText type="small" style={[styles.bannerText, { color: palette.foreground }]}>
-        {status.detail ? `${status.label}: ${status.detail}` : status.label}
-      </ThemedText>
-      {status.offerReconnect && onReconnect ? (
-        <Pressable onPress={onReconnect} accessibilityRole="button" accessibilityLabel="Reconnect">
-          <ThemedText type="smallBold" style={{ color: palette.foreground }} testID="reconnect">
-            Reconnect
-          </ThemedText>
-        </Pressable>
-      ) : null}
-    </View>
+    <Banner
+      title={status.label}
+      body={status.detail}
+      leading={status.busy ? { busy: true } : { symbol: status.symbol }}
+      tone={status.busy ? 'neutral' : 'warning'}
+      actions={
+        status.offerReconnect && onReconnect
+          ? [{ id: 'reconnect', label: 'Reconnect', onPress: onReconnect, testID: 'reconnect' }]
+          : undefined
+      }
+      appearance={appearance}
+      palette={palette}
+      accessibilityLabel={status.label}
+    />
   );
 }
 
@@ -1546,34 +1586,31 @@ function plural(count: number, word: string): string {
  */
 function HostKeyWarning({
   hostName,
+  appearance,
+  palette,
   onAccept,
   onDismiss,
 }: {
   hostName: string;
+  appearance: 'light' | 'dark';
+  palette: Appearance;
   onAccept: () => void;
   onDismiss: () => void;
 }) {
   return (
-    <View style={styles.keyWarning} accessibilityLabel={`Host key changed for ${hostName}`}>
-      <ThemedText type="smallBold" style={styles.keyWarningTitle}>
-        {`${hostName} presented a different host key`}
-      </ThemedText>
-      <ThemedText type="small" style={styles.keyWarningBody}>
-        It may have been rebuilt, or something may be intercepting the connection.
-      </ThemedText>
-      <View style={styles.keyWarningActions}>
-        <Pressable onPress={onAccept} accessibilityRole="button" accessibilityLabel="Accept new key">
-          <ThemedText type="smallBold" style={styles.keyWarningAccept}>
-            Accept new key
-          </ThemedText>
-        </Pressable>
-        <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="Keep warning">
-          <ThemedText type="small" style={styles.keyWarningBody}>
-            Not now
-          </ThemedText>
-        </Pressable>
-      </View>
-    </View>
+    <Banner
+      title={`${hostName} presented a different host key`}
+      body="It may have been rebuilt, or something may be intercepting the connection."
+      leading={{ symbol: 'exclamationmark.shield.fill' }}
+      tone="warning"
+      actions={[
+        { id: 'dismiss', label: 'Not now', onPress: onDismiss, prominent: false },
+        { id: 'accept', label: 'Accept new key', onPress: onAccept },
+      ]}
+      appearance={appearance}
+      palette={palette}
+      accessibilityLabel={`Host key changed for ${hostName}`}
+    />
   );
 }
 
@@ -1650,58 +1687,20 @@ const styles = StyleSheet.create({
   surface: {
     flex: 1,
   },
-  overlay: {
+  top: {
     position: 'absolute',
-    right: 12,
+    // Inset from the sides as far as the Dock is from the bottom.
+    left: 8,
+    right: 8,
+    gap: 8,
+  },
+  overlay: {
     alignItems: 'flex-end',
     gap: 2,
+    paddingRight: 4,
   },
   troubleText: {
-    // Loud enough to notice over whatever the Session is painting, quiet
-    // enough not to be a banner: the Connection is fine, one command was not.
-    color: '#ffb4b4',
     maxWidth: 260,
     textAlign: 'right',
-  },
-  keyWarning: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    top: 12,
-    gap: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: '#5b1d1d',
-  },
-  keyWarningTitle: {
-    color: '#ffd9d9',
-  },
-  keyWarningBody: {
-    color: '#f3c7c7',
-  },
-  keyWarningActions: {
-    flexDirection: 'row',
-    gap: 18,
-    paddingTop: 6,
-  },
-  keyWarningAccept: {
-    color: '#ffffff',
-  },
-  banner: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  bannerText: {
-    flexShrink: 1,
   },
 });

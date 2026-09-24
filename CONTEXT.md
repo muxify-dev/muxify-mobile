@@ -201,3 +201,14 @@ four-letter label shrinks rather than widening its key. ctrl and alt are
 *sticky*: armed by a tap, and spent on the next key from either the bar or the
 system keyboard.
 _Avoid_: Accessory Bar (that is the library's), toolbar, modifiers
+
+**Banner**:
+The Terminal Screen's one kind of notice: a Liquid Glass card that slides in
+under the status bar, the way iOS delivers a notification over whatever is on
+screen. It says what the Attach is doing while that is anything other than
+connected — Connecting, Reconnecting, a disconnect reason with Reconnect where
+retrying could work — and it is where the changed-host-key warning is shown.
+Drawn in the Theme's appearance, not the phone's, so a light phone never puts a
+white card over a Mocha terminal. Not a toast: it stays while the thing it
+reports is true and leaves when it stops, rather than timing out.
+_Avoid_: toast, notification, snackbar, alert (that is the system's modal)
