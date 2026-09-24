@@ -12,8 +12,8 @@ import {
   listWindowsCommand,
   selectPaneCommand,
   selectWindowCommand,
-  manualWindowSizeCommand,
-  resizeWindowCommand,
+  readWindowSizingCommand,
+  setWindowSizingCommand,
   shellQuote,
   switchSessionCommand,
 } from './commands';
@@ -111,8 +111,8 @@ describe('listWindowsCommand', () => {
 describe('listPanesCommand', () => {
   it('targets a specific Window inside a Session', () => {
     expect(listPanesCommand('main', 2)).toBe(
-      "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_current_command}\t#{pane_active}" +
-        "\t#{pane_title}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}'",
+      "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_id}\t#{pane_current_command}" +
+        "\t#{pane_active}\t#{pane_title}\t#{window_layout}'",
     );
   });
 
@@ -148,31 +148,31 @@ describe('switchSessionCommand', () => {
 });
 
 describe('window sizing', () => {
-  it('switches the Session to manual window sizing', () => {
-    expect(manualWindowSizeCommand('main')).toBe("tmux set-option -t 'main' window-size manual");
+  it('reads how the Session sizes its Windows, so it can be put back', () => {
+    expect(readWindowSizingCommand('main')).toBe("tmux show-options -t 'main' -v window-size");
   });
 
-  it('resizes the Window to an explicit grid', () => {
-    expect(resizeWindowCommand('main', 38, 14)).toBe("tmux resize-window -t 'main' -x 38 -y 14");
-  });
-
-  it('never asks for a zero or negative size, which tmux rejects', () => {
-    expect(resizeWindowCommand('main', 0, -5)).toBe("tmux resize-window -t 'main' -x 1 -y 1");
-  });
-
-  it('floors fractional sizes', () => {
-    expect(resizeWindowCommand('main', 38.7, 14.2)).toBe("tmux resize-window -t 'main' -x 38 -y 14");
+  it('keeps the Window no bigger than the Surface, which is what stops the padding', () => {
+    expect(setWindowSizingCommand('main', 'smallest')).toBe(
+      "tmux set-option -t 'main' window-size 'smallest'",
+    );
   });
 
   it('quotes the Session name so it cannot break out of the command', () => {
-    expect(resizeWindowCommand("'; id; '", 10, 10)).toBe(
-      "tmux resize-window -t ''\\''; id; '\\''' -x 10 -y 10",
+    expect(setWindowSizingCommand("'; id; '", 'smallest')).toBe(
+      "tmux set-option -t ''\\''; id; '\\''' window-size 'smallest'",
+    );
+  });
+
+  it('quotes the value, which comes back off the Host', () => {
+    expect(setWindowSizingCommand('main', '; id; ')).toBe(
+      "tmux set-option -t 'main' window-size '; id; '",
     );
   });
 
   it('honours the Host tmux path', () => {
-    expect(resizeWindowCommand('main', 38, 14, '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' resize-window -t 'main' -x 38 -y 14",
+    expect(setWindowSizingCommand('main', 'latest', '/usr/bin/tmux')).toBe(
+      "'/usr/bin/tmux' set-option -t 'main' window-size 'latest'",
     );
   });
 });

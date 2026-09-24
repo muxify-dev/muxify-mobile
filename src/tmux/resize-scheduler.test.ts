@@ -25,20 +25,6 @@ function recorder() {
 }
 
 describe('createResizeScheduler', () => {
-  it('tells the apply what the previous size was, so it can order the halves', async () => {
-    const seen: (string | null)[] = [];
-    const scheduler = createResizeScheduler(async (grid, previous) => {
-      seen.push(previous === null ? null : `${previous.cols}x${previous.rows}`);
-    });
-
-    scheduler.request({ cols: 38, rows: 32 });
-    await flush();
-    scheduler.request({ cols: 38, rows: 19 });
-    await flush();
-
-    expect(seen).toEqual([null, '38x32']);
-  });
-
   it('re-sends a size after a reset, because the Session it targets has changed', async () => {
     const { applied, flights, resize } = recorder();
     const scheduler = createResizeScheduler(resize);

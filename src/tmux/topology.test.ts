@@ -26,6 +26,7 @@ function window(index: number, name: string, active: boolean): Window {
 function pane(index: number, active: boolean): Pane {
   return {
     index,
+    id: index,
     command: 'bash',
     active,
     title: 'host',

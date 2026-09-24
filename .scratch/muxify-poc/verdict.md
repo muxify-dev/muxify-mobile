@@ -62,10 +62,11 @@ in a tick, with an outbound write, with inbound output — the remote did not mo
 once in eighteen seconds. It occasionally lands when made alongside other channel
 traffic, which is a race, not a feature.
 
-The cost: the remote's size is driven through tmux instead (`window-size manual`
-plus `resize-window` over the exec channel), and the Client size is treated as
-unknowable. This works, and it is the single largest workaround in the project.
-The Rust core ships prebuilt, so unlike the terminal library it cannot be patched
+The cost: the Client's pty is resized from the Host instead — `stty` on the tty
+tmux is attached to, over the exec channel — with the Session on `window-size
+smallest` so tmux moves the Window to match. One command per resize, and it
+works; it is still a workaround for a request the library will not send. The
+Rust core ships prebuilt, so unlike the terminal library it cannot be patched
 locally. **This needs an upstream report.**
 
 **tmux itself: entirely reliable**, and the right place to put the hard parts.

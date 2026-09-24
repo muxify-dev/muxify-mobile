@@ -1,11 +1,7 @@
 import type { Grid } from './tmux-client';
 
-/**
- * Pushes one size to the remote Session, told what the previous one was so it
- * can decide which half of the resize to do first. Resolves when the Host has
- * it.
- */
-export type ApplyGrid = (grid: Grid, previous: Grid | null) => Promise<void>;
+/** Pushes one size to the remote Session. Resolves when the Host has it. */
+export type ApplyGrid = (grid: Grid) => Promise<void>;
 
 export interface ResizeScheduler {
   /** Asks for the remote Session to be this size, eventually. */
@@ -19,20 +15,19 @@ export interface ResizeScheduler {
 }
 
 /**
- * Coalesces remote resizes so a burst of them cannot flicker the Surface.
+ * Coalesces remote resizes so a burst of them cannot flood the Host.
  *
  * The Surface reports a new grid on every frame of the keyboard animation, and
- * each one used to become its own Control Command. Those land out of order and
- * at their own pace, so tmux bounces between sizes; while its Window is smaller
- * than the Surface, tmux pads the rows it is not drawing and the user sees them
- * fill with dots.
+ * each one would otherwise become its own Control Command — dozens of round
+ * trips for one gesture, landing out of order, tmux reflowing for every size
+ * the Surface passed through on its way to the one it settled at.
  *
  * So: at most one resize in flight, and only the newest size behind it. The
- * first request of a burst goes immediately — a resize that is late is exactly
- * what shows the padding, so growth must never be deferred — and everything
- * that arrives mid-flight collapses into a single follow-up. The round trip is
- * the debounce window, which is why there is no timer here: a slow Host
- * coalesces harder, a fast one barely at all, and neither needs a tuned delay.
+ * first request of a burst goes immediately, because a Surface waiting for its
+ * size is a Surface showing the wrong thing, and everything that arrives
+ * mid-flight collapses into a single follow-up. The round trip is the debounce
+ * window, which is why there is no timer here: a slow Host coalesces harder, a
+ * fast one barely at all, and neither needs a tuned delay.
  */
 export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
   let inFlight = false;
@@ -40,7 +35,6 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
   let pending: Grid | null = null;
 
   function run(grid: Grid): void {
-    const previous = applied;
     inFlight = true;
     applied = grid;
 
@@ -54,7 +48,7 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
 
     // A failed resize must not wedge the scheduler: the Session is still
     // usable, and the next size should still get its chance.
-    apply(grid, previous).then(settle, settle);
+    apply(grid).then(settle, settle);
   }
 
   return {

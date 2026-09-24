@@ -32,8 +32,10 @@ vm() {
 }
 
 snap()  { agent-device snapshot -i 2>/dev/null; }
-# client = the PTY winsize (frozen by the SSH library's resize bug)
-# window = what tmux actually draws at (driven by resize-window)
+# client = the PTY winsize, set from the Host by stty (the SSH library will
+#          not send a window-change, so Muxify sets it from the other end)
+# window  = what tmux actually draws at. On `window-size smallest` it follows
+#           the Client, so these two must agree once a resize has settled.
 tsize() { vm "tmux list-clients -t 0 -F '#{client_width}x#{client_height}'"; }
 wsize() { vm "tmux display-message -p -t 0 '#{window_width}x#{window_height}'"; }
 asize() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }

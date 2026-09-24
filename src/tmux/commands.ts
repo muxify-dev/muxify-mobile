@@ -65,7 +65,16 @@ export function listWindowsCommand(sessionName: string, tmuxExecutablePath?: str
   );
 }
 
-/** Control Command listing the Panes of one Window, same shape as Windows. */
+/**
+ * Control Command listing the Panes of one Window, same shape as Windows.
+ *
+ * Geometry is not asked for. `#{pane_left}` and friends report where a Pane is
+ * being *drawn*, which for a zoomed Pane is the whole Window — and Muxify zooms
+ * by default, so those coordinates would pile every Pane on top of the active
+ * one. `#{window_layout}` describes the arrangement zoom is hiding; it repeats
+ * on every line, which is the price of reading it without a second round trip.
+ * See parseWindowLayout.
+ */
 export function listPanesCommand(
   sessionName: string,
   windowIndex: number,
@@ -73,8 +82,8 @@ export function listPanesCommand(
 ): string {
   return (
     `${tmux(tmuxExecutablePath)} list-panes -t ${windowTarget(sessionName, windowIndex)} ` +
-    "-F '#{pane_index}\t#{pane_current_command}\t#{pane_active}\t#{pane_title}" +
-    "\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}'"
+    "-F '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}" +
+    "\t#{pane_title}\t#{window_layout}'"
   );
 }
 
@@ -109,31 +118,37 @@ export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: s
 }
 
 /**
- * Control Commands that force a Session's Window to an explicit size.
+ * How the Session decides how big its Windows are.
  *
- * Needed because `@osuki-dev/react-native-ssh`'s `resize()` does not reliably
- * send the SSH window-change request, leaving the remote terminal at a stale
- * size. tmux then draws for the size it believes it has, so rows outside the
- * Surface's real grid are never shown. Driving the size through tmux instead
- * uses the exec channel, which is reliable.
+ * Muxify wants `smallest`, which is the only value that makes tmux's padding
+ * structurally impossible. tmux pads the difference whenever a Client is bigger
+ * than the Window, and `smallest` keeps the Window no bigger than the smallest
+ * attached Client — so there is never a difference to pad on the Client Muxify
+ * owns. With one Client attached, which is the usual case, the Window simply
+ * tracks the Surface exactly.
  *
- * `window-size manual` is required: without it tmux sizes the Window from its
- * attached clients and ignores `resize-window`. It is a session option and it
- * persists on the Host after Muxify disconnects.
+ * The rejected alternative was `manual` plus `resize-window`: two sizes, set by
+ * two commands, which can only agree between round trips and pad whenever they
+ * do not. See resizeClientCommand for why the Client's size is now Muxify's to
+ * set, which is what makes one size enough.
+ *
+ * It is a session option, so it is visible to every other Client and outlives
+ * the Connection: read the original first and put it back on teardown. The cost
+ * of `smallest` is real — a desktop Client on the same Session is squeezed down
+ * to the phone — which is exactly why it is borrowed rather than kept.
  */
-export function manualWindowSizeCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} window-size manual`;
+export function readWindowSizingCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v window-size`;
 }
 
-export function resizeWindowCommand(
+export function setWindowSizingCommand(
   sessionName: string,
-  cols: number,
-  rows: number,
+  value: string,
   tmuxExecutablePath?: string,
 ): string {
   return (
-    `${tmux(tmuxExecutablePath)} resize-window -t ${shellQuote(sessionName)} ` +
-    `-x ${Math.max(1, Math.floor(cols))} -y ${Math.max(1, Math.floor(rows))}`
+    `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} ` +
+    `window-size ${shellQuote(value)}`
   );
 }
 
@@ -179,12 +194,15 @@ export function listClientsCommand(sessionName: string, tmuxExecutablePath?: str
 /**
  * Control Command forcing a Client to repaint everything it is showing.
  *
- * Needed because a resize leaves debris. While the tmux Window is smaller than
- * the Client, tmux pads the rows it is not drawing with dots; those rows are
- * off the bottom of a shrunken Surface, so they are painted unseen and then
- * revealed the moment the Surface grows back. tmux will not clean them up on
- * its own — it believes the Client is still the old size and those rows are
- * not its to draw — so the padding stays until something forces a full redraw.
+ * For the moves that change what the Client should be looking at without tmux
+ * knowing the Surface needs it again from the top: switching Session, taking a
+ * Session over, following a Window that was drawn at another size.
+ *
+ * Not for resizes. tmux repaints a Client itself when its pty changes size, and
+ * an extra full repaint on every frame of a keyboard animation is a flash the
+ * user sees. It used to be needed there because the Client's size could not be
+ * changed at all, so tmux never knew a resize had happened — see
+ * resizeClientCommand, which is what removed the need.
  *
  * Without a tty tmux picks whichever Client it considers best, which is right
  * only when the Session has exactly one.
@@ -252,7 +270,9 @@ export function newWindowCommand(sessionName: string, tmuxExecutablePath?: strin
  * Why this matters: tmux pads every row between the Window and the Client with
  * dots, and those rows land past the end of the Surface's grid. A Client size
  * that cannot be changed makes that padding unavoidable; one that can makes it
- * impossible.
+ * impossible — because on `window-size smallest` the Window follows the Client
+ * inside the tmux server, in the same instant, with no second round trip to be
+ * caught halfway through. This is the only size Muxify sets.
  *
  * GNU `stty` takes `-F` and BSD's takes `-f`, and the Host may be either, so
  * the command tries one and falls back to the other.

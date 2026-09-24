@@ -298,6 +298,11 @@ grid change, over the exec channel that is already reliable. Verified: the tmux
 *window* size now tracks the Surface exactly in both directions, 38x30 to 38x14
 and back. The *client* size still lags, which no longer matters.
 
+> **Superseded.** The Client's size does matter, and it turned out to be
+> settable from the Host — see "The Client's size was controllable all along".
+> Setting it is now the only thing Muxify does, and `window-size manual` and
+> `resize-window` are gone: see "One size, not two".
+
 The Rust core ships prebuilt in an xcframework, so unlike expo-libghostty this
 one cannot be patched locally. Worth an upstream report.
 
@@ -364,6 +369,9 @@ Chasing the sizes further would have found nothing.
    watching a bare `refresh-client` wipe it. Our Client is found by taking the
    newest from `list-clients` straight after attaching, because a Session may
    have others and a redraw aimed at the wrong one leaves this Surface dirty.
+   *(Superseded: there is no debris to clear once the Window cannot outgrow the
+   Client, and a repaint per animation frame is its own flicker. The redraw is
+   kept for Session and Window switches. See "One size, not two".)*
 2. Coalesce the resizes. The Surface reports a new grid on every frame of the
    keyboard animation and each one used to become its own pair of Control
    Commands, landing out of order. Now at most one is in flight with only the
@@ -741,6 +749,10 @@ order `applyGrid` decides, and in the gap between them the Client is the
 smaller of the two in either direction — the one state tmux does not pad. The
 padding is not cleaned up faster; it never happens.
 
+> **Amended.** Only the Client is set now. `window-size smallest` makes tmux
+> move the Window to match, which removes the gap rather than ordering it. See
+> "One size, not two".
+
 `shell-resize.ts` is gone with this. Its whole reason for existing was to coax
 a call that does not work.
 
@@ -775,3 +787,86 @@ says what the action below it does — "The only Window. New Window adds another
 Worth keeping in mind: an acceptance criterion written before a feature exists
 can be made obsolete by that feature, and ticking it is not the same as
 checking it still makes sense.
+
+## One size, not two: the padding had a structural fix all along
+
+The finding above — that the Host can resize the Client's pty — was treated as
+the last piece of a two-size problem: set the Window, set the Client, order them
+so the Client is never the larger. It worked. It also kept the problem.
+
+Two sizes set by two Control Commands can only agree *between* round trips, and
+every keyboard animation walks through several. Ordering shrinks the window in
+which they disagree; it cannot close it. And each pair ended in a
+`refresh-client`, a full repaint per animation frame, which is its own flicker —
+the user's report after the ordering fix was that opening the keyboard flickered
+**worse**, not better.
+
+tmux has a session option for exactly this. `window-size smallest` keeps the
+Window no larger than the smallest attached Client, so the Client can never be
+the bigger of the two — which is the only condition under which tmux pads. The
+Window then follows the Client inside the server, in the same instant, with no
+round trip of its own to be caught halfway through.
+
+Measured on a live Host, one `stty` per size and nothing else:
+
+```
+stty 18 -> window 80x18 client 80x18
+stty 24 -> window 80x24 client 80x24
+stty 31 -> window 80x31 client 80x31
+stty 15 -> window 80x15 client 80x15
+```
+
+Padding characters in the Client's raw output across a full shrink-and-grow
+sweep: **none**, against 9832 bytes of repaint traffic for the two-command
+scheme versus 5040 for this one. Half the bytes, because half of them were the
+`refresh-client` repaints that were cleaning up after a state that no longer
+occurs.
+
+What went: `window-size manual`, `resize-window`, `applyGrid` and its ordering
+rule, the redraw after every resize, and the redraw on every keyboard show and
+hide. What arrived: one borrowed session option, restored on teardown beside the
+status line.
+
+The cost is real and worth stating. `smallest` squeezes a desktop Client on the
+same Session down to the phone — which is why it is borrowed rather than set and
+forgotten, and why teardown puts the original back.
+
+The lesson is the same shape as the one above it, one level up. The first fix
+asked "how do I keep these two sizes in step?" and answered it well. The
+question worth asking first was "why are there two?"
+
+## A zoomed Pane lies about where it is
+
+The Panes picker drew its tiles on top of each other: the active Pane covered
+the whole board and its neighbours sat over it.
+
+tmux's `#{pane_left}`, `#{pane_top}`, `#{pane_width}` and `#{pane_height}`
+report where a Pane is being *drawn*. Zooming a Pane draws it over the whole
+Window, so tmux reports it at the Window's full size — while its neighbours keep
+the coordinates they had, because they are not being drawn at all. On a live
+Host, one Window, one command apart:
+
+```
+--- unzoomed ---          --- zoomed ---
+0 L0 T0 W40 H12 A1        0 L0 T0 W80 H24 A1
+1 L0 T13 W40 H11 A0       1 L0 T13 W40 H11 A0
+2 L41 T0 W39 H24 A0       2 L41 T0 W39 H24 A0
+```
+
+Muxify attaches zoomed by default — a phone is too narrow for side-by-side
+Panes — so this was not an edge case. It was the normal state, and the picker
+that exists to show the split was the one thing guaranteed to get it wrong.
+
+`#{window_layout}` is documented as the layout "ignoring zoomed window panes":
+the arrangement zoom is hiding, which is exactly what a preview of the Window
+should draw. It is a small nested grammar, it names Panes by id rather than
+index, and it parses into absolute coordinates in about forty lines.
+
+So the geometry fields are no longer read at all. The Panes picker asks for
+`#{pane_id}` and `#{window_layout}`, and a layout it cannot parse yields nothing
+rather than half an arrangement — a half-parsed layout would place some Panes
+and pile the rest on top of each other, which is the bug it exists to prevent.
+
+The general form: a variable that answers "where is this thing?" may really be
+answering "where is it being drawn?", and those differ exactly when something
+interesting is going on.

@@ -6,19 +6,20 @@ import {
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
-  manualWindowSizeCommand,
   readStatusLineCommand,
+  readWindowSizingCommand,
   redrawClientCommand,
   resizeClientCommand,
-  resizeWindowCommand,
   selectPaneCommand,
   selectWindowCommand,
   newWindowCommand,
   setStatusLineCommand,
+  setWindowSizingCommand,
   splitWindowCommand,
   switchSessionCommand,
   zoomPaneCommand,
 } from './commands';
+import { parseWindowLayout } from './layout';
 import type { TmuxExecResult, TmuxShell, TmuxShellEvents, TmuxTransport } from './transport';
 
 /** A tmux Session on a Host. */
@@ -44,12 +45,19 @@ export interface Window {
 /** A tmux Pane inside a Window. */
 export interface Pane {
   index: number;
+  /** tmux's own handle for the Pane (`%3` reads as 3), which the layout uses. */
+  id: number;
   /** The command currently running in the Pane, as tmux reports it. */
   command: string;
   active: boolean;
   /** The Pane's title, which is usually the Host's name. */
   title: string;
-  /** Where the Pane sits in the Window's grid, in cells. */
+  /**
+   * Where the Pane sits in the Window's grid, in cells, as the Window's layout
+   * has it — which is where it will be once zoom is turned off, not where a
+   * zoomed Pane is currently painted. Zero throughout for a Pane the layout
+   * does not mention, which nothing should try to draw. See parseWindowLayout.
+   */
   left: number;
   top: number;
   width: number;
@@ -86,8 +94,6 @@ export interface TmuxClientOptions {
  */
 export class TmuxClient {
   private readonly tmuxExecutablePath?: string;
-  /** Sessions already switched to manual window sizing. */
-  private readonly sizedByHand = new Set<string>();
 
   constructor(
     private readonly transport: TmuxTransport,
@@ -160,22 +166,27 @@ export class TmuxClient {
       throw failure('list Panes', result);
     }
 
+    const nowhere = { left: 0, top: 0, width: 0, height: 0 };
+    // Every line carries the same layout, so the first one that parses settles
+    // where all of them are. See listPanesCommand for why it is asked for.
+    let layout = new Map<number, typeof nowhere>();
+
     return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 8);
+      const fields = splitFields(line, 6);
       if (!fields) return [];
-      const [index, command, active, title, left, top, width, height] = fields;
+      const [index, id, command, active, title, windowLayout] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
+      if (layout.size === 0) layout = parseWindowLayout(windowLayout);
+      const paneId = countOf(id.replace('%', ''));
       return [
         {
           index: parsed,
+          id: paneId,
           command,
           active: active === '1',
           title,
-          left: countOf(left),
-          top: countOf(top),
-          width: countOf(width),
-          height: countOf(height),
+          ...(layout.get(paneId) ?? nowhere),
         },
       ];
     });
@@ -213,41 +224,6 @@ export class TmuxClient {
       'switch Session',
       switchSessionCommand(sessionName, this.tmuxExecutablePath),
     );
-  }
-
-  /**
-   * Forces the Session's Window to an explicit size.
-   *
-   * The Shell Channel's own resize is the natural way to do this, but the SSH
-   * library does not reliably send the window-change request, so the remote is
-   * left at a stale size and tmux draws rows the Surface never shows. Going
-   * through a Control Command uses the exec channel, which is reliable.
-   *
-   * Switches the Session to manual window sizing first, without which tmux
-   * sizes the Window from its attached clients and ignores the resize. That
-   * only has to happen once per Session, and it is worth remembering: while a
-   * resize is in flight the Surface is showing rows tmux has padded, so a
-   * needless extra round trip is time spent looking at dots.
-   *
-   * Failures are swallowed: a wrong size is a bad experience, but an exception
-   * here would take down a Session that is otherwise working.
-   */
-  async setWindowSize(sessionName: string, grid: Grid): Promise<void> {
-    try {
-      if (!this.sizedByHand.has(sessionName)) {
-        const result = await this.transport.exec(
-          manualWindowSizeCommand(sessionName, this.tmuxExecutablePath),
-        );
-        // Only remember it when tmux accepted it, so a transient failure does
-        // not leave the Session stuck ignoring every later resize.
-        if (result.exitCode === 0) this.sizedByHand.add(sessionName);
-      }
-      await this.transport.exec(
-        resizeWindowCommand(sessionName, grid.cols, grid.rows, this.tmuxExecutablePath),
-      );
-    } catch {
-      // Best effort; the Session stays usable at its previous size.
-    }
   }
 
   /**
@@ -337,6 +313,39 @@ export class TmuxClient {
     try {
       await this.transport.exec(
         setStatusLineCommand(sessionName, value, this.tmuxExecutablePath),
+      );
+    } catch {
+      // Best effort.
+    }
+  }
+
+  /**
+   * Reads how the Session sizes its Windows, so it can be restored.
+   * Returns `undefined` when tmux will not say, in which case leave it alone.
+   */
+  async readWindowSizing(sessionName: string): Promise<string | undefined> {
+    try {
+      const result = await this.transport.exec(
+        readWindowSizingCommand(sessionName, this.tmuxExecutablePath),
+      );
+      if (result.exitCode !== 0) return undefined;
+      const value = result.stdout.trim();
+      return value === '' ? undefined : value;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Sets how the Session sizes its Windows — `smallest` while Muxify is
+   * attached, so the Window can never outgrow the Surface and be padded. See
+   * readWindowSizingCommand. Best effort: getting this wrong means dots, not a
+   * broken Session.
+   */
+  async setWindowSizing(sessionName: string, value: string): Promise<void> {
+    try {
+      await this.transport.exec(
+        setWindowSizingCommand(sessionName, value, this.tmuxExecutablePath),
       );
     } catch {
       // Best effort.

@@ -2,7 +2,7 @@ import { paneFrames, panePreviewTarget, trimPreview, windowPreviewTarget } from 
 import type { Pane } from './tmux-client';
 
 function pane(index: number, left: number, top: number, width: number, height: number): Pane {
-  return { index, command: 'bash', active: false, title: 'host', left, top, width, height };
+  return { index, id: index, command: 'bash', active: false, title: 'host', left, top, width, height };
 }
 
 describe('preview targets', () => {

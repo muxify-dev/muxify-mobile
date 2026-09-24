@@ -14,7 +14,6 @@ import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { toShellInput } from '@/lib/terminal-input';
-import { applyGrid } from '@/tmux/apply-grid';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import {
@@ -68,7 +67,7 @@ export default function TerminalScreen() {
   const shell = useRef<TmuxShell | null>(null);
   const tmux = useRef<TmuxClient | null>(null);
   const sessionName = useRef<string>('');
-  /** The tty of our own tmux Client, used to aim a redraw at it. */
+  /** The tty of our own tmux Client: what a resize and a redraw are aimed at. */
   const clientTty = useRef<string | undefined>(undefined);
   /** Owns every Session Muxify has taken over, and hands them all back. */
   const sessions = useRef<SessionPreparer | null>(null);
@@ -107,29 +106,25 @@ export default function TerminalScreen() {
 
   /**
    * Owns every remote resize, so a keyboard animation cannot flood the Host
-   * with Control Commands that land out of order. See createResizeScheduler.
+   * with Control Commands. See createResizeScheduler.
+   *
+   * One size is set, not two. The Client's pty is resized from the Host side —
+   * the SSH library will not send a window-change, see resizeClientCommand —
+   * and the Session is on `window-size smallest`, so tmux moves the Window to
+   * match inside the server, in the same instant, with no round trip of its own
+   * to be caught halfway through. That is what stops the dots: tmux only pads
+   * when the Client is bigger than the Window, and now it never is.
+   *
+   * Without a tty there is nothing to aim at, which only happens before the
+   * first Topology read; the scheduler is reset once it is known.
    */
   const remoteSize = useMemo(
     () =>
-      createResizeScheduler(async (next, previous) => {
+      createResizeScheduler(async (next) => {
         const client = tmux.current;
-        if (!client) return;
-        await applyGrid(
-          {
-            setWindowSize: (grid) => client.setWindowSize(sessionName.current, grid),
-            // The Client's own pty, resized from the Host side because the
-            // SSH library will not send a window-change; see
-            // resizeClientCommand. Without a tty there is nothing to aim at,
-            // which only happens before the first Topology read.
-            setClientSize: async (grid) => {
-              const tty = clientTty.current;
-              if (tty) await client.setClientSize(tty, grid);
-            },
-            redraw: () => client.redrawClient(clientTty.current),
-          },
-          next,
-          previous,
-        );
+        const tty = clientTty.current;
+        if (!client || !tty) return;
+        await client.setClientSize(tty, next);
       }),
     [],
   );
@@ -264,8 +259,8 @@ export default function TerminalScreen() {
       setVisibleGrid(next);
 
       if (shell.current) {
-        // Both remote sizes go through one place, because the order they are
-        // applied in decides whether tmux paints padding. See applyGrid.
+        // Every remote resize goes through one place, so a keyboard animation
+        // is one round trip rather than thirty. See createResizeScheduler.
         remoteSize.request(next);
         return;
       }
@@ -581,25 +576,16 @@ export default function TerminalScreen() {
   ]);
 
   useEffect(() => {
-    // The keyboard settling is the last word on the Surface's size, and tmux
-    // may have painted padding on the way there. A redraw once the frame has
-    // stopped moving clears whatever it left; the resize path cannot be relied
-    // on for this, because a settled size that repeats one already applied is
-    // dropped as a no-op and takes its redraw with it.
-    const settled = () => void tmux.current?.redrawClient(clientTty.current);
-    const shown = Keyboard.addListener('keyboardDidShow', () => {
-      setKeyboardVisible(true);
-      settled();
-    });
-    const hidden = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardVisible(false);
-      settled();
-    });
+    // Only so the Dock can show which way its keyboard button points. Nothing
+    // is redrawn here: tmux repaints the Client itself when the pty resizes,
+    // and an extra full repaint per keyboard animation is a visible flash.
+    const shown = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
     return () => {
       shown.remove();
       hidden.remove();
     };
-  }, [remoteSize]);
+  }, []);
 
   useEffect(() => {
     disposed.current = false;

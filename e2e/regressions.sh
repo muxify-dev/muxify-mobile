@@ -110,10 +110,13 @@ padding() {
   agent-device screenshot "$SHOT" >/dev/null 2>&1
   magick "$SHOT" -crop 1206x600+0+900 -threshold 45% -format '%[fx:int(mean*w*h)]' info:
 }
-vm "tmux resize-window -t '$SESSION' -x 38 -y 8"
+# Forcing that state now takes `window-size manual`, because Muxify puts the
+# Session on `smallest` precisely so the Window cannot outgrow the Client.
+# Putting it back to `smallest` snaps the Window onto the Client again.
+vm "tmux set-option -t '$SESSION' window-size manual; tmux resize-window -t '$SESSION' -x 38 -y 8"
 sleep 2
 [ "$(padding)" -gt 1000 ] || fail "the padding detector cannot see padding; the check below would pass for the wrong reason"
-vm "tmux resize-window -t '$SESSION' -x 38 -y 19; tmux refresh-client"
+vm "tmux set-option -t '$SESSION' window-size smallest; tmux refresh-client"
 sleep 2
 echo "     detector confirmed against a known-bad state"
 

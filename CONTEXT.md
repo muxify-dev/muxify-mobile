@@ -44,8 +44,15 @@ A tmux pane inside a Window, addressed by index.
 
 **Topology**:
 The current tree of Windows and Panes under a Session, read on demand via
-Control Commands rather than tracked continuously.
-_Avoid_: Layout, tree, structure
+Control Commands rather than tracked continuously. Which Windows and Panes
+exist, not where they sit — that is the Layout.
+_Avoid_: tree, structure
+
+**Layout**:
+Where the Panes of one Window sit, as tmux's `#{window_layout}` string gives
+it. The only honest source: tmux reports a zoomed Pane's own coordinates as the
+whole Window, so a Layout is what the Panes picker draws.
+_Avoid_: Topology (which is what exists, not where it is), geometry
 
 **Zoom**:
 tmux's term for one Pane filling its Window on its own. Muxify attaches zoomed

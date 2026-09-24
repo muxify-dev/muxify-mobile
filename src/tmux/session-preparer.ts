@@ -6,6 +6,8 @@
 export interface SessionChrome {
   readStatusLine(sessionName: string): Promise<string | undefined>;
   setStatusLine(sessionName: string, value: string): Promise<void>;
+  readWindowSizing(sessionName: string): Promise<string | undefined>;
+  setWindowSizing(sessionName: string, value: string): Promise<void>;
   redrawClient(clientTty?: string): Promise<void>;
 }
 
@@ -16,18 +18,34 @@ export interface SessionPreparer {
   restoreAll(): Promise<void>;
 }
 
+/** The Session options Muxify borrows, as they were found. */
+interface Borrowed {
+  /** Undefined means tmux would not say, so there is nothing to put back. */
+  statusLine: string | undefined;
+  windowSizing: string | undefined;
+}
+
 /**
  * Takes a Session over for the Surface, and gives it back afterwards.
  *
- * A Session is not ready to be shown on a phone as found: tmux draws a status
- * line that duplicates what the Dock already shows. It is a session option, so
- * it is visible to every other Client and outlives the Connection — which is
- * the price of attaching a real client rather than using control mode, see
- * ADR 0001.
+ * A Session is not ready to be shown on a phone as found. Two session options
+ * are in the way:
  *
- * Sizing is deliberately not here. It has one owner, the resize scheduler,
- * because two things setting the remote size race each other — which is
- * exactly what left the Window at the size it had before layout settled.
+ * - `status`, a status line duplicating what the Dock already shows, on a
+ *   screen with no rows to spare.
+ * - `window-size`, which by default lets the Window grow past the Surface —
+ *   and tmux pads every row of the difference with dots. `smallest` keeps the
+ *   Window no bigger than the smallest attached Client, so the padding has
+ *   nothing to fill. See readWindowSizingCommand.
+ *
+ * Both are session options, so both are visible to every other Client and
+ * outlive the Connection — the price of attaching a real client rather than
+ * using control mode, see ADR 0001. Hence the borrowing: read first, put back
+ * on teardown.
+ *
+ * Sizing the Window itself is deliberately not here, and is now nobody's job:
+ * with `window-size smallest` the Window follows the Client, and the Client's
+ * pty is the one thing the resize scheduler sets.
  *
  * This exists because Attaching is not the only time it has to happen.
  * Switching Session lands on a Session nobody has prepared, so the same work
@@ -35,18 +53,22 @@ export interface SessionPreparer {
  * on teardown, not just the last one.
  */
 export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
-  /** Session name to the status line it had before Muxify touched it. */
-  const borrowed = new Map<string, string | undefined>();
+  /** Session name to the options it had before Muxify touched it. */
+  const borrowed = new Map<string, Borrowed>();
 
   return {
     async prepare(sessionName: string, clientTty?: string): Promise<void> {
-      // Read before hiding, and only once: coming back to a Session already
-      // prepared would otherwise record 'off' as its original and lose the
-      // user's setting for good.
+      // Read before changing anything, and only once: coming back to a Session
+      // already prepared would otherwise record Muxify's own settings as the
+      // originals and lose the user's for good.
       if (!borrowed.has(sessionName)) {
-        borrowed.set(sessionName, await chrome.readStatusLine(sessionName));
+        borrowed.set(sessionName, {
+          statusLine: await chrome.readStatusLine(sessionName),
+          windowSizing: await chrome.readWindowSizing(sessionName),
+        });
       }
       await chrome.setStatusLine(sessionName, 'off');
+      await chrome.setWindowSizing(sessionName, 'smallest');
 
       await chrome.redrawClient(clientTty);
     },
@@ -55,11 +77,12 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
       const owed = [...borrowed.entries()];
       // Forget as we go: a second teardown must not undo a change made since.
       borrowed.clear();
-      for (const [sessionName, statusLine] of owed) {
-        // Undefined means tmux would not say what it was, so there is nothing
-        // honest to put back.
-        if (statusLine !== undefined) {
-          await chrome.setStatusLine(sessionName, statusLine);
+      for (const [sessionName, original] of owed) {
+        if (original.statusLine !== undefined) {
+          await chrome.setStatusLine(sessionName, original.statusLine);
+        }
+        if (original.windowSizing !== undefined) {
+          await chrome.setWindowSizing(sessionName, original.windowSizing);
         }
       }
     },

@@ -135,13 +135,38 @@ describe('listWindows', () => {
 });
 
 describe('listPanes', () => {
+  // An 80x24 Window split left/right, Panes %6 and %7, exactly as tmux 3.6
+  // writes it. Every line carries the same layout.
+  const SPLIT = '5b1f,80x24,0,0{40x24,0,0,6,39x24,41,0,7}';
+  const TWO_PANES =
+    `0\t%6\tbash\t0\thost\t${SPLIT}\n` + `1\t%7\tvim\t1\thost\t${SPLIT}\n`;
+
   it('parses everything a Pane preview needs, geometry included', async () => {
+    const transport = new FakeTransport({ 'list-panes': { stdout: TWO_PANES } });
+    await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
+      { index: 0, id: 6, command: 'bash', active: false, title: 'host', left: 0, top: 0, width: 40, height: 24 },
+      { index: 1, id: 7, command: 'vim', active: true, title: 'host', left: 41, top: 0, width: 39, height: 24 },
+    ]);
+  });
+
+  it('places a zoomed Pane where it will be, not where tmux is drawing it', async () => {
+    // tmux reports a zoomed Pane at the Window's full size and leaves its
+    // neighbours where they were, so reading #{pane_left} piles every Pane on
+    // top of the active one. The layout ignores zoom, which is the whole point
+    // of reading it.
+    const transport = new FakeTransport({ 'list-panes': { stdout: TWO_PANES } });
+
+    const panes = await new TmuxClient(transport).listPanes('main', 1);
+
+    expect(panes.map((pane) => pane.width)).toEqual([40, 39]);
+  });
+
+  it('leaves a Pane the layout does not mention with no size, rather than a wrong one', async () => {
     const transport = new FakeTransport({
-      'list-panes': { stdout: '0\tbash\t0\thost\t0\t0\t40\t24\n1\tvim\t1\thost\t41\t0\t39\t24\n' },
+      'list-panes': { stdout: `0\t%6\tbash\t1\thost\tnot-a-layout\n` },
     });
     await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, command: 'bash', active: false, title: 'host', left: 0, top: 0, width: 40, height: 24 },
-      { index: 1, command: 'vim', active: true, title: 'host', left: 41, top: 0, width: 39, height: 24 },
+      { index: 0, id: 6, command: 'bash', active: true, title: 'host', left: 0, top: 0, width: 0, height: 0 },
     ]);
   });
 
@@ -219,58 +244,28 @@ describe('attach', () => {
   });
 });
 
-describe('setWindowSize', () => {
-  it('makes the Session sizeable by hand before resizing it', async () => {
+describe('window sizing', () => {
+  it('reads the Session setting, so it can be handed back', async () => {
+    const transport = new FakeTransport({ 'show-options': { stdout: 'latest\n' } });
+
+    await expect(new TmuxClient(transport).readWindowSizing('main')).resolves.toBe('latest');
+  });
+
+  it('reads nothing when tmux will not say, which means leave it alone', async () => {
+    const transport = new FakeTransport({ 'show-options': { exitCode: 1 } });
+
+    await expect(new TmuxClient(transport).readWindowSizing('main')).resolves.toBeUndefined();
+  });
+
+  it('pins the Window to the smallest Client, which is the Surface', async () => {
     const transport = new FakeTransport();
 
-    await new TmuxClient(transport).setWindowSize('main', { cols: 38, rows: 14 });
+    await new TmuxClient(transport).setWindowSizing('main', 'smallest');
 
-    expect(transport.commands).toEqual([
-      "tmux set-option -t 'main' window-size manual",
-      "tmux resize-window -t 'main' -x 38 -y 14",
-    ]);
+    expect(transport.commands).toEqual(["tmux set-option -t 'main' window-size 'smallest'"]);
   });
 
-  it('only sets manual sizing once per Session, so a resize costs one round trip', async () => {
-    const transport = new FakeTransport();
-    const client = new TmuxClient(transport);
-
-    await client.setWindowSize('main', { cols: 38, rows: 14 });
-    await client.setWindowSize('main', { cols: 38, rows: 30 });
-
-    // Every extra Control Command is latency the Surface spends showing tmux's
-    // padding, so the repeat must carry nothing but the resize.
-    expect(transport.commands).toEqual([
-      "tmux set-option -t 'main' window-size manual",
-      "tmux resize-window -t 'main' -x 38 -y 14",
-      "tmux resize-window -t 'main' -x 38 -y 30",
-    ]);
-  });
-
-  it('sets manual sizing again for a Session it has not sized before', async () => {
-    const transport = new FakeTransport();
-    const client = new TmuxClient(transport);
-
-    await client.setWindowSize('main', { cols: 38, rows: 14 });
-    await client.setWindowSize('other', { cols: 38, rows: 14 });
-
-    expect(transport.commands.filter((c) => c.includes('window-size manual'))).toEqual([
-      "tmux set-option -t 'main' window-size manual",
-      "tmux set-option -t 'other' window-size manual",
-    ]);
-  });
-
-  it('retries manual sizing when it failed, rather than assuming it took', async () => {
-    const transport = new FakeTransport({ 'window-size manual': { exitCode: 1 } });
-    const client = new TmuxClient(transport);
-
-    await client.setWindowSize('main', { cols: 38, rows: 14 });
-    await client.setWindowSize('main', { cols: 38, rows: 30 });
-
-    expect(transport.commands.filter((c) => c.includes('window-size manual'))).toHaveLength(2);
-  });
-
-  it('keeps the Session usable when the Host refuses the resize', async () => {
+  it('keeps the Session usable when the Host refuses', async () => {
     const transport: TmuxTransport = {
       exec: async () => {
         throw new Error('channel closed');
@@ -281,7 +276,7 @@ describe('setWindowSize', () => {
     };
 
     await expect(
-      new TmuxClient(transport).setWindowSize('main', { cols: 38, rows: 14 }),
+      new TmuxClient(transport).setWindowSizing('main', 'smallest'),
     ).resolves.toBeUndefined();
   });
 });
