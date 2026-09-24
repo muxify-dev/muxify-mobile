@@ -37,6 +37,11 @@ whole of it.
 
 ## What is given up
 
-The Panes picker can no longer turn zoom off to show a real split: one Surface
-cannot render two Panes. Rendering a split needs a Surface per Pane, which is
-possible later and is not in scope here.
+Nothing that was there. Muxify shows one Pane because it mounts one Surface,
+and `expo-libghostty` will hold several — verified on the simulator. Control
+mode is in fact the thing that makes a real split *possible*, since `%output`
+arrives per Pane; see ticket 08, which is not in scope for the migration.
+
+What stays out of reach is a live screen for a Pane with no view on it, so
+thumbnails of Panes nobody is looking at need remux's forked headless terminal.
+`capture-pane` is the substitute.

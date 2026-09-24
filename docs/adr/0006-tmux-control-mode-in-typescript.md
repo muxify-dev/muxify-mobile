@@ -18,11 +18,13 @@ and that the alternative was porting the fork's parser and topology reconciler
 to TypeScript — "larger than the rest of the app combined".
 
 That conflated two different pieces of work. The fork earns its size by holding
-**a terminal per Pane**: `ghostty_tmux_client_retain_pane_terminal` keeps live
-screen state for every Pane so remux can render a whole split Window, and
-compose thumbnails of Panes nobody is looking at. That is the expensive part,
-and Muxify does not need it, because Muxify has exactly one Surface and shows
-exactly one Pane.
+**a terminal for a Pane with no view on it**:
+`ghostty_tmux_client_retain_pane_terminal` keeps live screen state for every
+Pane, whether or not anything is drawing it, which is how remux composes
+thumbnails of Panes nobody is looking at. That is the expensive part, and it is
+not what rendering a split needs — remux draws a split from ordinary surfaces,
+one per visible Pane. Muxify can do the same, and can substitute `capture-pane`
+for the rest.
 
 What is left, once that is set aside, is a line-oriented text protocol. It was
 measured rather than guessed, against tmux 3.7c:
@@ -93,12 +95,24 @@ rewritten behind the user's back. Nothing is left to restore.
 borrow/restore pairs, and the **Attached** warning on the Host Screen that
 exists to say joining will shrink somebody's Window.
 
-One Surface shows one Pane, so a Window is always effectively zoomed. Muxify
-already attaches zoomed by default because a phone is too narrow for two Panes
-side by side, so this is close to a no-op in practice — but ADR 0004's Panes
-picker can no longer turn zoom *off* to reveal the real split, and will not be
-able to until there is a Surface per Pane. That is the one capability this
-trades away, and the one thing the fork buys that TypeScript does not.
+Muxify shows one Pane at a time, because it mounts one Surface. That is a
+choice, not a limit: `expo-libghostty` builds a surface per mounted view against
+one shared `ghostty_app_t`, and two live Surfaces were verified on the simulator
+rendering at once, each with its own grid, cursor and palette. A real split is
+therefore reachable the way remux reaches it — its shipped
+`GhosttyCompositeViewportView` "hosts every visible pane in the active tmux
+window at its authoritative grid rectangle using one shared, unscaled cell
+metric", which is a Surface per Pane placed by the Layout string. Control mode
+is what makes it possible at all, since `%output` is per-Pane where an attached
+client's byte stream is one composited Window. It is out of scope here and
+wanted most on an iPad; see ticket 08.
+
+What the fork does buy is terminal state for a Pane with *no view*:
+`ghostty_terminal_surface_*` is a headless terminal, so remux can hold live
+screens for Panes nobody is looking at and draw thumbnails of them. Muxify
+cannot, and a Pane it is not showing has no state — which is why ADR 0004's
+picker draws an arrangement rather than a picture, and why switching Pane is a
+`capture-pane` resync.
 
 Input reaches a Pane through `send-keys`, which means tmux's prefix key never
 fires. Every tmux verb has to come from the Dock. That is arguably what a phone
