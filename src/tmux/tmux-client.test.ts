@@ -1,448 +1,360 @@
+import { bytesToUtf8 } from '@/lib/utf8';
+
+import { renderControlCommand, type TmuxArgv } from './commands';
+import type { CommandReply, CommandRunner } from './control-connection';
 import { TmuxClient, TmuxError } from './tmux-client';
-import type { TmuxExecResult, TmuxShell, TmuxShellOptions, TmuxTransport } from './transport';
 
 /**
- * A transport that returns canned tmux output. This is the project's single
- * seam: the SSH library sits behind this interface and is never unit-tested,
- * because asserting that a mock was called proves nothing about whether bytes
- * reach a terminal.
+ * A tmux that answers whatever the test says it does, keyed by the rendered
+ * command line — so a test that gets the command wrong gets no answer, rather
+ * than the answer it wanted.
  */
-class FakeTransport implements TmuxTransport {
-  readonly commands: string[] = [];
-  shellOptions: TmuxShellOptions | null = null;
+function fakeTmux(answers: Record<string, string[] | { error: string[] }>) {
+  const asked: string[] = [];
 
-  constructor(private readonly responses: Record<string, Partial<TmuxExecResult>> = {}) {}
-
-  /** Matches on a substring so tests need not restate the whole command. */
-  private lookup(command: string): Partial<TmuxExecResult> | undefined {
-    const key = Object.keys(this.responses).find((candidate) => command.includes(candidate));
-    return key === undefined ? undefined : this.responses[key];
+  function reply(argv: TmuxArgv): CommandReply {
+    const line = renderControlCommand(argv);
+    asked.push(line);
+    const answer = answers[line];
+    if (answer === undefined) return replyOf(false, [`no such command in this test: ${line}`]);
+    return Array.isArray(answer) ? replyOf(true, answer) : replyOf(false, answer.error);
   }
 
-  async exec(command: string): Promise<TmuxExecResult> {
-    this.commands.push(command);
-    const response = this.lookup(command) ?? {};
-    return { stdout: '', stderr: '', exitCode: 0, ...response };
-  }
+  const runner: CommandRunner = {
+    run: (argv) => Promise.resolve(reply(argv)),
+    runAll: (commands) => Promise.resolve(commands.map(reply)),
+  };
 
-  async openShell(options: TmuxShellOptions): Promise<TmuxShell> {
-    this.shellOptions = options;
-    return {
-      write: () => {},
-      resize: () => {},
-      close: async () => {},
-    };
-  }
+  return { runner, asked, client: new TmuxClient(runner) };
 }
 
-describe('listSessions', () => {
-  it('returns each Session with how many Windows it holds', async () => {
-    const transport = new FakeTransport({
-      'list-sessions': { stdout: '3\tmain\t1\n1\twork\t0\n2\t0\t0\n' },
+function replyOf(ok: boolean, text: string[]): CommandReply {
+  return { ok, lines: text.map((line) => new TextEncoder().encode(line)), text };
+}
+
+const LIST_SESSIONS = renderControlCommand([
+  'list-sessions',
+  '-F',
+  '#{session_name}\t#{session_windows}',
+]);
+
+const listWindows = (session: string) =>
+  renderControlCommand([
+    'list-windows',
+    '-t',
+    session,
+    '-F',
+    '#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}' +
+      '\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}',
+  ]);
+
+const listPanes = (session: string, window: number) =>
+  renderControlCommand([
+    'list-panes',
+    '-t',
+    `${session}:${window}`,
+    '-F',
+    '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}' +
+      '\t#{pane_current_path}\t#{window_layout}',
+  ]);
+
+describe('listing Sessions', () => {
+  it('reads the name and the Window count', async () => {
+    const { client } = fakeTmux({
+      [LIST_SESSIONS]: ['work\t3', 'play\t1'],
     });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
-      { name: 'main', windowCount: 3, attached: true },
-      { name: 'work', windowCount: 1, attached: false },
-      { name: '0', windowCount: 2, attached: false },
+    expect(await client.listSessions()).toEqual([
+      { name: 'work', windowCount: 3 },
+      { name: 'play', windowCount: 1 },
     ]);
   });
 
-  it('reads a Session whose name contains a tab', async () => {
-    // Why the name sits between the two numeric fields in the format: the
-    // parser rejoins overflow into that position, so a tab inside a name
-    // cannot shift the attached flag out from under it.
-    const transport = new FakeTransport({
-      'list-sessions': { stdout: '1\tbuild\tstep\t1\n' },
+  it('keeps a Session name that contains a tab whole', async () => {
+    const { client } = fakeTmux({
+      [LIST_SESSIONS]: ['my\twork\t2'],
     });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
-      { name: 'build\tstep', windowCount: 1, attached: true },
+    expect(await client.listSessions()).toEqual([{ name: 'my\twork', windowCount: 2 }]);
+  });
+
+  it('reads a Host with no tmux server as no Sessions, not as a failure', async () => {
+    const { client } = fakeTmux({
+      [LIST_SESSIONS]: { error: ['no server running on /tmp/tmux-501/default'] },
+    });
+    expect(await client.listSessions()).toEqual([]);
+  });
+
+  it('reports a failure that is not about a missing server', async () => {
+    const { client } = fakeTmux({
+      [LIST_SESSIONS]: { error: ['tmux: command not found'] },
+    });
+    await expect(client.listSessions()).rejects.toThrow(TmuxError);
+  });
+});
+
+describe('listing Windows and Panes', () => {
+  it('reads a Window’s fields', async () => {
+    const { client } = fakeTmux({
+      [listWindows('work')]: ['@0\t0\t1\t2\t1\tshell\tzsh', '@1\t1\t0\t1\t0\tlogs\ttail'],
+    });
+    expect(await client.listWindows('work')).toEqual([
+      { id: '@0', index: 0, name: 'shell', active: true, paneCount: 2, zoomed: true, command: 'zsh' },
+      { id: '@1', index: 1, name: 'logs', active: false, paneCount: 1, zoomed: false, command: 'tail' },
     ]);
   });
 
-  it('ignores blank lines and trailing whitespace', async () => {
-    const transport = new FakeTransport({
-      'list-sessions': { stdout: '  1\tmain\t0  \n\n\n2\twork\t0\n\n' },
+  it('keeps tmux’s own Window handle, which is what notifications name', async () => {
+    const { client } = fakeTmux({
+      [listWindows('work')]: ['@7\t2\t1\t1\t0\tshell\tzsh'],
     });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
-      { name: 'main', windowCount: 1, attached: false },
-      { name: 'work', windowCount: 2, attached: false },
+    const [window] = await client.listWindows('work');
+    expect(window.id).toBe('@7');
+    expect(window.index).toBe(2);
+  });
+
+  it('places Panes by the Window’s layout, not by where a zoomed one is drawn', async () => {
+    const layout = 'b25d,80x24,0,0[80x12,0,0,0,80x11,0,13,2]';
+    const { client } = fakeTmux({
+      [listPanes('work', 0)]: [
+        `0\t%0\tzsh\t1\t/home/user\t${layout}`,
+        `1\t%2\tvim\t0\t/home/user/src\t${layout}`,
+      ],
+    });
+    expect(await client.listPanes('work', 0)).toEqual([
+      {
+        index: 0,
+        id: '%0',
+        command: 'zsh',
+        active: true,
+        path: '/home/user',
+        left: 0,
+        top: 0,
+        width: 80,
+        height: 12,
+      },
+      {
+        index: 1,
+        id: '%2',
+        command: 'vim',
+        active: false,
+        path: '/home/user/src',
+        left: 0,
+        top: 13,
+        width: 80,
+        height: 11,
+      },
     ]);
   });
 
-  it('returns an empty list when no tmux server is running', async () => {
-    // The case that must never read as an error: a Host with tmux installed but
-    // nothing running is simply a Host with no Sessions.
-    const transport = new FakeTransport({
-      'list-sessions': { exitCode: 1, stderr: 'no server running on /tmp/tmux-1000/default' },
+  it('keeps tmux’s own Pane handle, which is what input is aimed at', async () => {
+    const { client } = fakeTmux({
+      [listPanes('work', 0)]: ['0\t%17\tzsh\t1\t/home/user\tbad-layout'],
     });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([]);
+    const [pane] = await client.listPanes('work', 0);
+    expect(pane.id).toBe('%17');
   });
 
-  it('returns an empty list when the tmux socket does not exist', async () => {
-    const transport = new FakeTransport({
-      'list-sessions': {
-        exitCode: 1,
-        stderr: 'error connecting to /tmp/tmux-1000/default (No such file or directory)',
+  it('reads a Session that has gone as nothing, not as a failure', async () => {
+    const { client } = fakeTmux({
+      [listWindows('gone')]: { error: ["can't find session: gone"] },
+      [listPanes('gone', 0)]: { error: ["can't find window: gone:0"] },
+    });
+    expect(await client.listWindows('gone')).toEqual([]);
+    expect(await client.listPanes('gone', 0)).toEqual([]);
+  });
+});
+
+describe('moving the Client', () => {
+  it('reports a refused move rather than doing nothing quietly', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['select-window', '-t', 'work:9'])]: {
+        error: ["can't find window: work:9"],
       },
     });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([]);
-  });
-
-  it('throws when tmux is not installed, which is a real failure', async () => {
-    const transport = new FakeTransport({
-      'list-sessions': { exitCode: 127, stderr: 'bash: tmux: command not found' },
-    });
-    await expect(new TmuxClient(transport).listSessions()).rejects.toBeInstanceOf(TmuxError);
-  });
-
-  it('surfaces the stderr text on failure so the cause is visible', async () => {
-    const transport = new FakeTransport({
-      'list-sessions': { exitCode: 127, stderr: 'bash: tmux: command not found' },
-    });
-    await expect(new TmuxClient(transport).listSessions()).rejects.toThrow(/command not found/);
-  });
-
-  it('uses the Host tmux path when one is configured', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport, { tmuxExecutablePath: '/usr/bin/tmux' }).listSessions();
-    expect(transport.commands[0]).toContain("'/usr/bin/tmux'");
-  });
-});
-
-describe('listWindows', () => {
-  it('parses everything a Window preview needs', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n1\teditor\t0\t1\t0\tfish\n' },
-    });
-    await expect(new TmuxClient(transport).listWindows('main')).resolves.toEqual([
-      { index: 0, name: 'bash', active: true, paneCount: 3, zoomed: true, command: 'vim' },
-      { index: 1, name: 'editor', active: false, paneCount: 1, zoomed: false, command: 'fish' },
-    ]);
-  });
-
-  it('keeps a Window name containing spaces and colons intact', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '2\tvim: src/app.ts\t0\t1\t0\tvim\n' },
-    });
-    const [window] = await new TmuxClient(transport).listWindows('main');
-    expect(window.name).toBe('vim: src/app.ts');
-  });
-
-  it('returns an empty list when the Session has no Windows', async () => {
-    const transport = new FakeTransport({ 'list-windows': { stdout: '' } });
-    await expect(new TmuxClient(transport).listWindows('main')).resolves.toEqual([]);
-  });
-
-  it('skips a malformed line rather than failing the whole read', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t1\t0\tbash\ngarbage\n' },
-    });
-    await expect(new TmuxClient(transport).listWindows('main')).resolves.toHaveLength(1);
-  });
-
-  it('treats a vanished Session as no Windows', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { exitCode: 1, stderr: "can't find session: main" },
-    });
-    await expect(new TmuxClient(transport).listWindows('main')).resolves.toEqual([]);
-  });
-});
-
-describe('listPanes', () => {
-  // An 80x24 Window split left/right, Panes %6 and %7, exactly as tmux 3.6
-  // writes it. Every line carries the same layout.
-  const SPLIT = '5b1f,80x24,0,0{40x24,0,0,6,39x24,41,0,7}';
-  const TWO_PANES =
-    `0\t%6\tbash\t0\t/home/ubuntu\t${SPLIT}\n` +
-    `1\t%7\tvim\t1\t/home/ubuntu/muxify\t${SPLIT}\n`;
-
-  it('parses everything a Pane preview needs, geometry included', async () => {
-    const transport = new FakeTransport({ 'list-panes': { stdout: TWO_PANES } });
-    await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, id: 6, command: 'bash', active: false, path: '/home/ubuntu', left: 0, top: 0, width: 40, height: 24 },
-      { index: 1, id: 7, command: 'vim', active: true, path: '/home/ubuntu/muxify', left: 41, top: 0, width: 39, height: 24 },
-    ]);
-  });
-
-  it('places a zoomed Pane where it will be, not where tmux is drawing it', async () => {
-    // tmux reports a zoomed Pane at the Window's full size and leaves its
-    // neighbours where they were, so reading #{pane_left} piles every Pane on
-    // top of the active one. The layout ignores zoom, which is the whole point
-    // of reading it.
-    const transport = new FakeTransport({ 'list-panes': { stdout: TWO_PANES } });
-
-    const panes = await new TmuxClient(transport).listPanes('main', 1);
-
-    expect(panes.map((pane) => pane.width)).toEqual([40, 39]);
-  });
-
-  it('leaves a Pane the layout does not mention with no size, rather than a wrong one', async () => {
-    const transport = new FakeTransport({
-      'list-panes': { stdout: `0\t%6\tbash\t1\t/home/ubuntu\tnot-a-layout\n` },
-    });
-    await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, id: 6, command: 'bash', active: true, path: '/home/ubuntu', left: 0, top: 0, width: 0, height: 0 },
-    ]);
-  });
-
-  it('targets the requested Window', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).listPanes('main', 3);
-    expect(transport.commands[0]).toContain("-t 'main:3'");
-  });
-});
-
-describe('switching', () => {
-  it('selects a Window', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).selectWindow('main', 2);
-    expect(transport.commands).toEqual(["tmux select-window -t 'main:2'"]);
-  });
-
-  it('selects a Pane', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).selectPane('main', 2, 1);
-    expect(transport.commands).toEqual(["tmux select-pane -t 'main:2.1'"]);
+    await expect(client.selectWindow('work', 9)).rejects.toThrow("can't find window");
   });
 
   it('switches Session', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).switchSession('other');
-    expect(transport.commands).toEqual(["tmux switch-client -t 'other'"]);
-  });
-
-  it('throws when a switch fails, since the user asked for it explicitly', async () => {
-    const transport = new FakeTransport({
-      'select-window': { exitCode: 1, stderr: "can't find window: 9" },
+    const { client, asked } = fakeTmux({
+      [renderControlCommand(['switch-client', '-t', 'play'])]: [],
     });
-    await expect(new TmuxClient(transport).selectWindow('main', 9)).rejects.toBeInstanceOf(
-      TmuxError,
-    );
+    await client.switchSession('play');
+    expect(asked).toEqual(["'switch-client' '-t' 'play'"]);
   });
 });
 
-describe('attach', () => {
-  it('opens a Shell Channel running the attach command at the given grid', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).attach(
-      'main',
-      { cols: 80, rows: 24 },
-      { onData: () => {}, onClosed: () => {} },
-    );
-
-    expect(transport.shellOptions).toEqual({
-      term: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      command: "tmux attach-session -t 'main'",
-    });
+describe('zoom', () => {
+  const zoomed = (flag: string, panes: string) => ({
+    [listWindows('work')]: [`@0\t0\t1\t${panes}\t${flag}\tshell\tzsh`],
+    [renderControlCommand(['resize-pane', '-Z', '-t', 'work:'])]: [],
   });
 
-  it('never creates a Session', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport).attach(
-      'main',
-      { cols: 80, rows: 24 },
-      { onData: () => {}, onClosed: () => {} },
-    );
-    expect(transport.shellOptions?.command).not.toContain('new-session');
+  it('toggles only when the Window is not already the way it is wanted', async () => {
+    const { client, asked } = fakeTmux(zoomed('0', '2'));
+    await client.setZoom('work', true);
+    expect(asked).toContain("'resize-pane' '-Z' '-t' 'work:'");
   });
 
-  it('honours the Host tmux path', async () => {
-    const transport = new FakeTransport();
-    await new TmuxClient(transport, { tmuxExecutablePath: '/usr/bin/tmux' }).attach(
-      'main',
-      { cols: 80, rows: 24 },
-      { onData: () => {}, onClosed: () => {} },
-    );
-    expect(transport.shellOptions?.command).toBe("'/usr/bin/tmux' attach-session -t 'main'");
+  it('does nothing when the Window is already zoomed', async () => {
+    const { client, asked } = fakeTmux(zoomed('1', '2'));
+    await client.setZoom('work', true);
+    expect(asked).not.toContain("'resize-pane' '-Z' '-t' 'work:'");
+  });
+
+  it('does not spend a round trip zooming a Window with one Pane', async () => {
+    const { client, asked } = fakeTmux(zoomed('0', '1'));
+    await client.setZoom('work', true);
+    expect(asked).not.toContain("'resize-pane' '-Z' '-t' 'work:'");
   });
 });
 
-describe('window sizing', () => {
-  it('reads the Session setting, so it can be handed back', async () => {
-    const transport = new FakeTransport({ 'show-options': { stdout: 'latest\n' } });
-
-    await expect(new TmuxClient(transport).readWindowSizing('main')).resolves.toBe('latest');
+describe('sizing the Client', () => {
+  it('asks tmux, and sets no Session option to do it', async () => {
+    const { client, asked } = fakeTmux({
+      [renderControlCommand(['refresh-client', '-C', '40x20'])]: [],
+    });
+    await client.resizeClient({ cols: 40, rows: 20 });
+    expect(asked).toEqual(["'refresh-client' '-C' '40x20'"]);
+    expect(asked.join(' ')).not.toContain('set-option');
   });
 
-  it('reads nothing when tmux will not say, which means leave it alone', async () => {
-    const transport = new FakeTransport({ 'show-options': { exitCode: 1 } });
+  it('reports a refusal rather than swallowing it', async () => {
+    // The resize scheduler must not record a size it never sent.
+    const { client } = fakeTmux({
+      [renderControlCommand(['refresh-client', '-C', '40x20'])]: { error: ['no client'] },
+    });
+    await expect(client.resizeClient({ cols: 40, rows: 20 })).rejects.toThrow(TmuxError);
+  });
+});
 
-    await expect(new TmuxClient(transport).readWindowSizing('main')).resolves.toBeUndefined();
+describe('typing', () => {
+  it('sends bytes to the Pane they were typed at', async () => {
+    const { client, asked } = fakeTmux({
+      [renderControlCommand(['send-keys', '-t', '%4', '-H', '68', '69'])]: [],
+    });
+    await client.sendKeys('%4', Uint8Array.of(0x68, 0x69));
+    expect(asked).toEqual(["'send-keys' '-t' '%4' '-H' '68' '69'"]);
   });
 
-  it('pins the Window to the smallest Client, which is the Surface', async () => {
-    const transport = new FakeTransport();
+  it('does not spend a round trip on nothing', async () => {
+    const { client, asked } = fakeTmux({});
+    await client.sendKeys('%4', new Uint8Array(0));
+    expect(asked).toEqual([]);
+  });
+});
 
-    await new TmuxClient(transport).setWindowSizing('main', 'smallest');
-
-    expect(transport.commands).toEqual(["tmux set-option -t 'main' window-size 'smallest'"]);
+describe('reading a Pane back', () => {
+  it('returns the capture as bytes, so escape sequences survive', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', '%1', '-p', '-e', '-N'])]: ['[31mred'],
+    });
+    const [line] = await client.capturePane('%1');
+    expect([...line.subarray(0, 2)]).toEqual([0x1b, 0x5b]);
   });
 
-  it('keeps the Session usable when the Host refuses', async () => {
-    const transport: TmuxTransport = {
-      exec: async () => {
-        throw new Error('channel closed');
+  it('reads an empty capture from a Pane that has gone, rather than throwing', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', '%9', '-p', '-e', '-N'])]: {
+        error: ["can't find pane: %9"],
       },
-      openShell: async () => {
-        throw new Error('not used');
+    });
+    expect(await client.capturePane('%9')).toEqual([]);
+  });
+
+  it('reads where the cursor is and what kind of screen the Pane is showing', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand([
+        'display-message',
+        '-p',
+        '-t',
+        '%1',
+        '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
+          '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}',
+      ])]: ['43\t2\t1\t120\t80\t24\t1'],
+    });
+    expect(await client.paneState('%1')).toEqual({
+      cursorColumn: 43,
+      cursorRow: 2,
+      alternate: true,
+      scrollbackLines: 120,
+      width: 80,
+      height: 24,
+      wantsMouse: true,
+    });
+  });
+
+  it('says nothing about a Pane tmux will not describe', async () => {
+    const { client } = fakeTmux({});
+    expect(await client.paneState('%9')).toBeUndefined();
+  });
+});
+
+describe('previews', () => {
+  it('captures several Panes in one go, keyed by target', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', 'work:0', '-p'])]: ['first'],
+      [renderControlCommand(['capture-pane', '-t', 'work:1', '-p'])]: ['second', 'lines'],
+    });
+    const previews = await client.capturePanes(['work:0', 'work:1']);
+    expect(previews.get('work:0')).toEqual(['first']);
+    expect(previews.get('work:1')).toEqual(['second', 'lines']);
+  });
+
+  it('leaves out a Pane that would not capture, rather than failing the picker', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', 'work:0', '-p'])]: ['first'],
+      [renderControlCommand(['capture-pane', '-t', 'gone', '-p'])]: {
+        error: ["can't find pane"],
       },
+    });
+    const previews = await client.capturePanes(['work:0', 'gone']);
+    expect(previews.get('work:0')).toEqual(['first']);
+    expect(previews.has('gone')).toBe(false);
+  });
+
+  it('gives up quietly when the whole batch fails', async () => {
+    const runner: CommandRunner = {
+      run: () => Promise.reject(new Error('gone')),
+      runAll: () => Promise.reject(new Error('gone')),
     };
-
-    await expect(
-      new TmuxClient(transport).setWindowSizing('main', 'smallest'),
-    ).resolves.toBeUndefined();
+    expect(await new TmuxClient(runner).capturePanes(['work:0'])).toEqual(new Map());
   });
 });
 
-describe('newestClient', () => {
-  it('returns the tty of the most recently attached Client, which is ours', async () => {
-    const transport = new FakeTransport({
-      'list-clients': { stdout: '1700000000\t/dev/pts/1\n1700000009\t/dev/pts/3\n' },
-    });
-
-    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBe('/dev/pts/3');
+describe('nothing borrows anything', () => {
+  it('has no way to set a Session option at all', () => {
+    const surface = Object.getOwnPropertyNames(TmuxClient.prototype);
+    expect(surface).not.toContain('setStatusLine');
+    expect(surface).not.toContain('setWindowSizing');
+    expect(surface).not.toContain('setMouse');
+    expect(surface).not.toContain('restoreOnDetach');
   });
 
-  it('is undefined when the Session has no Clients', async () => {
-    const transport = new FakeTransport({ 'list-clients': { stdout: '' } });
-
-    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBeUndefined();
-  });
-
-  it('is undefined when tmux will not say, rather than a failure', async () => {
-    const transport = new FakeTransport({
-      'list-clients': { exitCode: 1, stderr: 'no server running' },
+  it('never writes the words a borrow would need', async () => {
+    const { client, asked } = fakeTmux({
+      [LIST_SESSIONS]: ['work\t1'],
+      [listWindows('work')]: ['@0\t0\t1\t1\t0\tshell\tzsh'],
+      [renderControlCommand(['refresh-client', '-C', '40x20'])]: [],
+      [renderControlCommand(['send-keys', '-t', '%0', '-H', '61'])]: [],
     });
+    await client.listSessions();
+    await client.setZoom('work', true);
+    await client.resizeClient({ cols: 40, rows: 20 });
+    await client.sendKeys('%0', Uint8Array.of(0x61));
 
-    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBeUndefined();
-  });
-
-  it('skips a line it cannot read rather than returning a nonsense tty', async () => {
-    const transport = new FakeTransport({
-      'list-clients': { stdout: 'nonsense\n1700000009\t/dev/pts/3\n' },
-    });
-
-    await expect(new TmuxClient(transport).newestClient('main')).resolves.toBe('/dev/pts/3');
+    const everything = asked.join('\n');
+    expect(everything).not.toContain('set-option');
+    expect(everything).not.toContain('set-hook');
+    expect(everything).not.toContain('setw');
   });
 });
 
-describe('redrawClient', () => {
-  it('asks the Client to repaint everything', async () => {
-    const transport = new FakeTransport();
-
-    await new TmuxClient(transport).redrawClient('/dev/pts/3');
-
-    expect(transport.commands).toEqual(["tmux refresh-client -t '/dev/pts/3'"]);
-  });
-
-  it('keeps the Session usable when the redraw fails', async () => {
-    const transport: TmuxTransport = {
-      exec: async () => {
-        throw new Error('channel closed');
-      },
-      openShell: async () => {
-        throw new Error('not used');
-      },
-    };
-
-    await expect(new TmuxClient(transport).redrawClient('/dev/pts/3')).resolves.toBeUndefined();
+describe('what a reply is made of', () => {
+  it('decodes text lines as UTF-8, so a named Session survives', async () => {
+    const { client } = fakeTmux({
+      [LIST_SESSIONS]: ['漢字\t1'],
+    });
+    const [session] = await client.listSessions();
+    expect(session.name).toBe('漢字');
+    expect(bytesToUtf8(new TextEncoder().encode(session.name))).toBe('漢字');
   });
 });
-
-describe('capturePanes', () => {
-  it('reads several Panes in one round trip', async () => {
-    const transport = new FakeTransport({
-      'capture-pane': { stdout: 'one\ntwo\n@@muxify@@\nthree\n' },
-    });
-
-    const previews = await new TmuxClient(transport).capturePanes(['a:0', 'a:1']);
-
-    expect(transport.commands).toHaveLength(1);
-    expect(previews.get('a:0')).toEqual(['one', 'two']);
-    expect(previews.get('a:1')).toEqual(['three']);
-  });
-
-  it('sends nothing at all for no targets', async () => {
-    const transport = new FakeTransport();
-
-    await expect(new TmuxClient(transport).capturePanes([])).resolves.toEqual(new Map());
-    expect(transport.commands).toEqual([]);
-  });
-
-  it('is empty rather than broken when the capture fails', async () => {
-    // A preview is worth nothing when it costs a working picker.
-    const transport = new FakeTransport({ 'capture-pane': { exitCode: 1 } });
-
-    await expect(new TmuxClient(transport).capturePanes(['a:0'])).resolves.toEqual(new Map());
-  });
-});
-
-describe('setZoom', () => {
-  it('zooms the active Window when it is not zoomed', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t3\t0\tvim\n' },
-    });
-
-    await new TmuxClient(transport).setZoom('main', true);
-
-    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(true);
-  });
-
-  it('leaves a Window that is already zoomed alone, since -Z only toggles', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n' },
-    });
-
-    await new TmuxClient(transport).setZoom('main', true);
-
-    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(false);
-  });
-
-  it('does not bother zooming a Window with a single Pane', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t1\t0\tvim\n' },
-    });
-
-    await new TmuxClient(transport).setZoom('main', true);
-
-    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(false);
-  });
-
-  it('unzooms when asked for no zoom', async () => {
-    const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n' },
-    });
-
-    await new TmuxClient(transport).setZoom('main', false);
-
-    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(true);
-  });
-});
-
-describe('setClientSize', () => {
-  it('resizes the Client’s pty from the Host side', async () => {
-    const transport = new FakeTransport();
-
-    await new TmuxClient(transport).setClientSize('/dev/pts/3', { cols: 38, rows: 19 });
-
-    expect(transport.commands[0]).toContain("stty -F '/dev/pts/3' rows 19 cols 38");
-  });
-
-  it('reports a Host that refuses outright', async () => {
-    const transport: TmuxTransport = {
-      exec: async () => {
-        throw new Error('channel closed');
-      },
-      openShell: async () => {
-        throw new Error('not used');
-      },
-    };
-
-    await expect(
-      new TmuxClient(transport).setClientSize('/dev/pts/3', { cols: 38, rows: 19 }),
-    ).rejects.toThrow();
-  });
-});
-

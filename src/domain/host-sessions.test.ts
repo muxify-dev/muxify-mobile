@@ -8,11 +8,7 @@ const remembered = (name: string, lastOpenedAt: string): RecentSession => ({
   lastOpenedAt,
 });
 
-const running = (name: string, attached = false): Session => ({
-  name,
-  windowCount: 1,
-  attached,
-});
+const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
 describe('hostSessions', () => {
   it('keeps a Session out of Available once it is remembered', () => {
@@ -37,13 +33,13 @@ describe('hostSessions', () => {
     expect(available.map((row) => row.name)).toEqual(['aws_terraform', 'game_server']);
   });
 
-  it('carries the attached flag onto the remembered row', () => {
+  it('carries what the Host said onto the remembered row', () => {
     const { recent } = hostSessions(
       [remembered('muxify', '2026-09-15T10:00:00Z')],
-      [running('muxify', true)],
+      [running('muxify', 4)],
     );
 
-    expect(recent[0].attached).toBe(true);
+    expect(recent[0].windowCount).toBe(4);
   });
 
   it('hides a remembered Session the Host no longer has', () => {
@@ -65,7 +61,7 @@ describe('hostSessions', () => {
     );
 
     expect(recent.map((row) => row.name)).toEqual(['muxify', 'cook']);
-    expect(recent.every((row) => row.attached === undefined)).toBe(true);
+    expect(recent.every((row) => row.windowCount === undefined)).toBe(true);
     expect(available).toEqual([]);
   });
 

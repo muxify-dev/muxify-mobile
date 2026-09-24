@@ -7,7 +7,7 @@ what every later ticket stands on.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 Events to recognise: `%begin`/`%end`/`%error` (correlated by the id pair, so a
 command's reply can be awaited), `%output %pane <escaped>`, `%layout-change`,
@@ -24,8 +24,25 @@ Capture a transcript with `tmux -C attach` against a throwaway Session and keep
 it as a fixture; guessing at this protocol from prose is how it goes subtly
 wrong.
 
-- [ ] A fixture transcript from a real tmux drives the tests
-- [ ] Command replies are correlated by id, including `%error`
-- [ ] `%output` decodes to exact bytes, backslash and high bytes included
-- [ ] A line split across two reads is handled, and so is an unknown notification
-- [ ] Nothing in the module imports SSH, React, or anything native
+- [x] A fixture transcript from a real tmux drives the tests
+- [x] Command replies are correlated by id, including `%error`
+- [x] `%output` decodes to exact bytes, backslash and high bytes included
+- [x] A line split across two reads is handled, and so is an unknown notification
+- [x] Nothing in the module imports SSH, React, or anything native
+
+## Comments
+
+Two fixtures, both captured from tmux 3.7c on a throwaway socket:
+`__fixtures__/control-session.txt` is a Session's life — attach, list, a failed
+command, splits, renames, a Session switch, detach — and
+`__fixtures__/control-all-bytes.txt` is all 256 byte values written out of a
+Pane and read back.
+
+The escaping rule in the body above is wrong, and the fixture is why we know.
+tmux escapes bytes **below 0x20** and backslash, as three octal digits; it does
+*not* escape anything above 0x7f. `printf` of `\xff\x80` came back as those
+bytes, raw. Measured inflation is 1.26x, close enough to ADR 0006's 1.29x.
+
+One thing the prose would not have given: a reply line may begin with `%`. A
+`capture-pane` of a zsh prompt does. So only a `%end`/`%error` carrying the
+open command's own id closes a block.

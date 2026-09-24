@@ -22,6 +22,7 @@ import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
+import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
 
@@ -64,9 +65,9 @@ export default function SessionFormScreen() {
       try {
         const { connection } = await connectToHost(host, store);
         try {
-          const client = new TmuxClient(sshTmuxTransport(connection), {
-            tmuxExecutablePath: host.tmuxExecutablePath,
-          });
+          const client = new TmuxClient(
+            execCommandRunner(sshTmuxTransport(connection), host.tmuxExecutablePath),
+          );
           // Loud when the name is taken, rather than silently handing back
           // someone else's Session — see createSessionCommand.
           await client.createSession(wanted);

@@ -1,11 +1,11 @@
 /**
  * The project's single test seam.
  *
- * Everything above this interface — command construction, output parsing,
- * topology reading — is pure logic driven in tests by a fake transport.
- * Everything below it is the SSH library, which is never unit-tested: asserting
- * that a mock was called proves nothing about whether bytes reach a terminal.
- * That half is verified by running the app.
+ * Everything above this interface — command construction, protocol parsing,
+ * topology — is pure logic driven in tests by a fake transport. Everything
+ * below it is the SSH library, which is never unit-tested: asserting that a
+ * mock was called proves nothing about whether bytes reach a terminal. That
+ * half is verified by running the app.
  *
  * Deliberately narrow, and shaped to match what an SSH client already offers so
  * the adapter over the real library stays thin.
@@ -18,29 +18,33 @@ export interface TmuxExecResult {
   exitCode: number;
 }
 
-export interface TmuxShellOptions {
-  term: string;
-  cols: number;
-  rows: number;
-  /** The command the channel runs instead of a login shell. */
-  command: string;
-}
-
-export interface TmuxShellEvents {
-  /** Raw bytes from the remote side. */
+export interface ControlChannelEvents {
+  /** Raw bytes from the remote side, mid-line as often as not. */
   onData: (data: ArrayBuffer) => void;
   onClosed: (exitCode?: number) => void;
 }
 
-export interface TmuxShell {
+export interface ControlChannel {
   write(bytes: Uint8Array): void;
-  resize(cols: number, rows: number): void;
   close(): Promise<void>;
 }
 
 export interface TmuxTransport {
-  /** Run one Control Command and collect its output. No stdin, never interactive. */
+  /**
+   * Runs one command on its own channel and collects its output.
+   *
+   * Only for the screens above the terminal, which have no Session to attach
+   * to and so no Control Connection to ask: listing a Host's Sessions, and
+   * making one. Everything after Attach goes down the Control Connection.
+   */
   exec(command: string): Promise<TmuxExecResult>;
-  /** Open the PTY-backed Shell Channel that carries a Session. */
-  openShell(options: TmuxShellOptions, events: TmuxShellEvents): Promise<TmuxShell>;
+
+  /**
+   * Opens the channel that carries a Control Connection.
+   *
+   * **No PTY.** The channel runs `tmux -C attach`, which needs no terminal —
+   * and that is the whole point: a control client sets no Session option, so
+   * there is nothing to borrow and nothing to give back. See ADR 0006.
+   */
+  openControl(command: string, events: ControlChannelEvents): Promise<ControlChannel>;
 }

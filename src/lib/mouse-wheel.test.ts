@@ -33,7 +33,7 @@ describe('wheelSequence', () => {
 
   it('agrees with what tmux moves for one notch', () => {
     // tmux's copy-mode binding is `send-keys -X -N 5 scroll-up`; if these ever
-    // part company the history travels at the wrong speed for the finger.
+    // part company the Scrollback travels at the wrong speed for the finger.
     expect(LINES_PER_NOTCH).toBe(5);
   });
 });

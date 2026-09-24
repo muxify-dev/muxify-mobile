@@ -49,6 +49,18 @@ export function parseWindowLayout(layout: string): Map<number, PaneRect> {
   return rects;
 }
 
+/**
+ * `%3` as the 3 a layout string names it by.
+ *
+ * tmux writes a Pane id with the `%` everywhere except here, where the layout
+ * gives the bare number — so this is the one conversion between the two, and
+ * it lives beside the parser that needs it.
+ */
+export function paneNumber(paneId: string): number {
+  const parsed = Number(paneId.replace('%', ''));
+  return Number.isFinite(parsed) ? parsed : -1;
+}
+
 const CELL = /^(\d+)x(\d+),(\d+),(\d+)/;
 const PANE_ID = /^,(\d+)/;
 

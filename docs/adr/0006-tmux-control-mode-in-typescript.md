@@ -47,7 +47,9 @@ measured rather than guessed, against tmux 3.7c:
 - The escaping costs almost nothing. tmux octal-escapes control bytes, which
   inflates the stream 1.29x, and a `charCodeAt` loop un-escapes at 571 MB/s on
   V8. Hermes is slower, but not by the order of magnitude that would matter
-  against an SSH channel to a phone.
+  against an SSH channel to a phone. *(Measured again while implementing, by
+  writing all 256 byte values out of a Pane: the rule is bytes below 0x20 and
+  backslash, as three octal digits, and nothing above 0x7f is touched. 1.26x.)*
 
 None of that needs a native change. The parser 0001 declined to write is a few
 hundred lines, not a reimplementation of Zig.
@@ -129,3 +131,24 @@ This is the terminal data path, not an addition to it: `tmux-client.ts`,
 `CONTEXT.md` changes with it — **Control Command**, **Shell Channel**,
 **Attached** and **Scrollback** all describe the attached-client design and stop
 being true as the migration lands.
+
+## What shipped, where it differs
+
+Two things this ADR said were wrong by a hair, and are recorded rather than
+quietly fixed.
+
+**A Control Command is not always on the Control Connection.** The Host Screen
+lists a Host's Sessions, and the new-Session form makes one, and both happen
+before there is a Session to attach to — so there is no Control Connection to
+ask. Those two keep a one-shot channel. It is not a hole in the decision: what
+this ADR objects to is borrowing Session options, and `list-sessions` and
+`new-session -d` borrow nothing and are gone the moment they answer.
+
+**Commands are quoted twice, not once.** A command going to a shell and the
+same command going to tmux need different quoting, and tmux's own rules had to
+be measured too — single quotes are wholly literal to its lexer, including a
+trailing backslash; a value containing one has to go in double quotes with
+`\`, `"` and `$` escaped. So commands are built as argument lists and rendered
+per destination, rather than as strings. Nothing in the decision turns on this,
+but a string built for one destination is wrong for the other in a way nothing
+catches until a Session name has a quote in it.

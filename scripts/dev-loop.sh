@@ -11,14 +11,13 @@
 #   bash scripts/dev-loop.sh sizes     # just report, change nothing
 #   bash scripts/dev-loop.sh shell CMD # run CMD in the Session, report the pane
 #
-# Reports the three numbers that matter for the resize path in one line:
+# Reports the two numbers that matter for the resize path in one line:
 #   surface  what the Surface says its grid is
 #   window   the size tmux actually draws the Window at
-#   client   the size tmux believes the attached Client is
-# surface and window must agree: that is the resize path working. client lags
-# one resize behind and there is nothing to be done about it — the SSH
-# library's window-change request is one behind, and its core ships prebuilt.
-# That lag is why every resize ends with a redraw; see redrawClientCommand.
+# They must agree: the Surface tells tmux its size with `refresh-client -C`,
+# and under tmux's default `window-size latest` the Window follows it. There is
+# no third number any more — the Client used to be a pty sized from the Host
+# by `stty`, and a control client has no pty at all. See ADR 0006.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -32,19 +31,17 @@ vm() {
 }
 
 snap()  { agent-device snapshot -i 2>/dev/null; }
-# client = the PTY winsize, set from the Host by stty (the SSH library will
-#          not send a window-change, so Muxify sets it from the other end)
-# window  = what tmux actually draws at. On `window-size smallest` it follows
-#           the Client, so these two must agree once a resize has settled.
-tsize() { vm "tmux list-clients -t 0 -F '#{client_width}x#{client_height}'"; }
+# window = what tmux actually draws at. It follows whichever Client asked most
+#          recently, which while Muxify is attached is Muxify — so this and the
+#          Surface must agree once a resize has settled.
 wsize() { vm "tmux display-message -p -t 0 '#{window_width}x#{window_height}'"; }
 asize() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
 # Rows tmux padded and left behind. Must be 0 once a resize has settled.
 dots() { vm "tmux capture-pane -t 0 -p" | grep -c '·'; }
 kbref() { snap | grep -E '^@e[0-9]+ \[button\] "Keyboard"' | head -1 | awk '{print $1}'; }
 
-report() { printf '%-18s surface=%-8s window=%-8s client=%-8s dots=%s\n' \
-  "$1" "$(asize)" "$(wsize)" "$(tsize)" "$(dots)"; }
+report() { printf '%-18s surface=%-8s window=%-8s dots=%s\n' \
+  "$1" "$(asize)" "$(wsize)" "$(dots)"; }
 
 attach() {
   agent-device close >/dev/null 2>&1

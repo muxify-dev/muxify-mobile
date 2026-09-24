@@ -43,9 +43,9 @@ A tmux window inside a Session, addressed by index.
 A tmux pane inside a Window, addressed by index.
 
 **Topology**:
-The current tree of Windows and Panes under a Session, read on demand via
-Control Commands rather than tracked continuously. Which Windows and Panes
-exist, not where they sit — that is the Layout.
+The current tree of Windows and Panes under a Session, kept up to date by what
+tmux pushes down the Control Connection rather than read when something needs
+it. Which Windows and Panes exist, not where they sit — that is the Layout.
 _Avoid_: tree, structure
 
 **Layout**:
@@ -72,16 +72,16 @@ skin
 
 **Scrollback**:
 The lines a Pane has scrolled off the top, kept by tmux and bounded by its
-`history-limit`. It belongs to the Host, not to the Surface: tmux paints only
-the visible Window, so there is nothing behind what is on screen for the
-Surface to scroll. Reached by dragging, which puts the Pane into tmux's
-copy-mode and takes it out again at the bottom.
+`history-limit`. It belongs to the Host, not to the Surface: the Surface only
+ever holds what it has been painted, so there is nothing behind what is on
+screen for it to scroll. Reached by dragging, which paints a window of the
+Scrollback over the Surface and puts the live Pane back at the bottom.
 _Avoid_: history (which is the shell's), buffer
 
 **Attach**:
-Binding the Shell Channel to a Session. Attach itself only ever attaches, never
-creates — but Muxify can make a Session first, from the Host Screen's **+**.
-Rename and kill are still refused. See ADR 0005.
+Opening a Control Connection onto a Session. Attach itself only ever attaches,
+never creates — but Muxify can make a Session first, from the Host Screen's
+**+**. Rename and kill are still refused. See ADR 0005.
 
 **Recent Session**:
 Muxify's memory of a Session this phone has opened, and when it last did. Not
@@ -90,36 +90,33 @@ memory. The distinction matters on the Host Screen, where a Session that exists
 but has never been opened here is a different row in a different section.
 _Avoid_: workspace, saved session, history
 
-**Attached**:
-Whether a Session has any Client on it — anyone's, not just Muxify's. Shown on
-the Host Screen as a warning rather than a status: Muxify borrows `window-size
-smallest`, so joining a Session somebody is watching shrinks their Window to the
-size of this phone.
-_Avoid_: Connected (which is about the SSH link, and is Muxify's own)
-
 **Client**:
-tmux's own term for what an Attach creates: the thing tmux draws a Session for,
-identified by the tty of the Shell Channel. A Session can have several, one per
-attached terminal, and tmux keeps each one's size separately — so a Client's
-size is not the Session's size and not the Surface's.
+tmux's own term for what an Attach creates. Muxify's is a *control* client: it
+has no terminal, renders nothing, and holds no Session option of its own. A
+Session can have several Clients and tmux keeps each one's size separately — so
+a Client's size is not the Session's size and not the Surface's.
 _Avoid_: viewer, terminal, connection
 
 ### Terminal
 
-**Shell Channel**:
-The single PTY-backed SSH channel that runs `tmux attach`. Carries terminal
-bytes in both directions and nothing else.
-_Avoid_: PTY, shell, stream
+**Control Connection**:
+The single SSH channel running `tmux -C attach`, carrying Control Commands and
+Pane output in both directions. It asks for no terminal, which is why tmux sets
+no Session option for it. See ADR 0006.
+_Avoid_: Shell Channel, PTY, control mode (which is tmux's protocol, not this
+link)
 
 **Control Command**:
-A one-shot `tmux` invocation run on its own SSH exec channel, out of band from
-the Shell Channel, to read Topology or switch the attached client. Stdout only —
-never interactive.
-_Avoid_: Control mode (which is tmux's `-C` protocol, deliberately not used here)
+One `tmux` command sent down the Control Connection and matched to the reply
+tmux answers it with. The two that happen before there is a Session to attach
+to — listing a Host's Sessions, and making one — are the exception, and go out
+on a channel of their own.
+_Avoid_: exec channel, one-shot
 
 **Surface**:
-The `expo-libghostty` view that renders bytes from the Shell Channel and reports
-typed input back. Owns VT parsing and the keyboard; Muxify only moves bytes.
+The `expo-libghostty` view that renders the bytes Muxify paints it with and
+reports typed input back. Owns VT parsing and the keyboard; Muxify only moves
+bytes.
 _Avoid_: Terminal, emulator, view
 
 **Accessory Bar**:

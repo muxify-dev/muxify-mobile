@@ -1,81 +1,38 @@
 import {
-  attachSessionCommand,
-  CAPTURE_SEPARATOR,
+  capturePaneCommand,
+  captureScrollbackCommand,
   capturePanesCommand,
-  clearRestoreHookCommand,
   createSessionCommand,
-  listClientsCommand,
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
-  readStatusLineCommand,
-  readWindowSizingCommand,
-  redrawClientCommand,
-  restoreOnDetachCommand,
+  newWindowCommand,
+  paneStateCommand,
   resizeClientCommand,
-  readMouseCommand,
-  readScrollStateCommand,
   selectPaneCommand,
   selectWindowCommand,
-  newWindowCommand,
-  setStatusLineCommand,
-  setMouseCommand,
-  setWindowSizingCommand,
+  sendKeysCommand,
   splitWindowCommand,
-  stopScrollingCommand,
   switchSessionCommand,
   zoomPaneCommand,
 } from './commands';
-import { parseWindowLayout } from './layout';
+import type { CommandReply, CommandRunner } from './control-connection';
+import { paneNumber, parseWindowLayout, type PaneRect } from './layout';
+import { TmuxError } from './tmux-error';
 
-import type { TmuxExecResult, TmuxShell, TmuxShellEvents, TmuxTransport } from './transport';
+export { TmuxError };
 
 /** A tmux Session on a Host. */
 export interface Session {
   name: string;
   /** How many Windows it holds, which is all a picker needs to describe it. */
   windowCount: number;
-  /**
-   * Whether any Client is on it — anyone's, not just Muxify's. A Session
-   * someone else is watching is one that Attaching will shrink, because the
-   * Window follows the smallest Client.
-   */
-  attached: boolean;
-}
-
-/**
- * How far back through its history a Pane is being viewed.
- *
- * `back` is zero at the live bottom. `history` is how many lines tmux is
- * holding, which is what `history-limit` allows and not what has been written
- * — scrolling cannot reach further than this.
- */
-export interface ScrollPosition {
-  back: number;
-  history: number;
-}
-
-/**
- * What a scroll gesture should be turned into for the Pane as it stands.
- *
- * - `history`: a shell at a prompt. A wheel event puts tmux into copy-mode and
- *   moves through the scrollback.
- * - `application`: a full-screen application that asked for the mouse — Claude
- *   Code, htop, vim with `mouse=a`. The wheel is handed to it and it scrolls
- *   itself.
- * - `keys`: a full-screen application that did not ask for the mouse — `less`,
- *   `man`. A wheel event reaches it and means nothing, so it gets cursor keys
- *   instead. tmux used to do this itself until `alternate-scroll` was dropped.
- */
-export type ScrollRoute = 'history' | 'application' | 'keys';
-
-export interface ScrollState {
-  position: ScrollPosition | undefined;
-  route: ScrollRoute;
 }
 
 /** A tmux Window inside a Session. */
 export interface Window {
+  /** tmux's own handle, as tmux writes it: `@2`. What notifications name. */
+  id: string;
   index: number;
   name: string;
   active: boolean;
@@ -90,8 +47,8 @@ export interface Window {
 /** A tmux Pane inside a Window. */
 export interface Pane {
   index: number;
-  /** tmux's own handle for the Pane (`%3` reads as 3), which the layout uses. */
-  id: number;
+  /** tmux's own handle for the Pane, as tmux writes it: `%3`. */
+  id: string;
   /** The command currently running in the Pane, as tmux reports it. */
   command: string;
   active: boolean;
@@ -113,43 +70,51 @@ export interface Pane {
   height: number;
 }
 
-/** The Surface's cell grid, used to size the remote terminal. */
+/**
+ * What a Pane is doing, as far as anything outside it can tell.
+ *
+ * Read on Attach and on every switch, because it is what a resync needs and
+ * what decides how a scroll gesture behaves. `alternate` is the whole of that
+ * decision: a full-screen application is handed the wheel and scrolls itself,
+ * and a shell at a prompt has its Scrollback painted from a capture.
+ */
+export interface PaneState {
+  cursorColumn: number;
+  cursorRow: number;
+  alternate: boolean;
+  /**
+   * How many lines of Scrollback tmux is holding above the screen, bounded by
+   * its `history-limit`. tmux's own name for it is `history_size`.
+   */
+  scrollbackLines: number;
+  width: number;
+  height: number;
+  /**
+   * Whether the application in the Pane asked for mouse events. A full-screen
+   * one that did will act on a wheel event; one that did not will ignore it
+   * entirely, and has to be sent cursor keys instead.
+   */
+  wantsMouse: boolean;
+}
+
+/** The Surface's cell grid, used to size the Client. */
 export interface Grid {
   cols: number;
   rows: number;
 }
 
-export class TmuxError extends Error {
-  constructor(
-    message: string,
-    readonly exitCode: number,
-  ) {
-    super(message);
-    this.name = 'TmuxError';
-  }
-}
-
-export interface TmuxClientOptions {
-  /** Absolute path to tmux, for Hosts where it is not on a non-interactive PATH. */
-  tmuxExecutablePath?: string;
-}
-
 /**
- * Speaks tmux over a transport.
+ * Speaks tmux over a CommandRunner.
  *
- * Reads Topology on demand through Control Commands rather than holding a live
- * model of it — see ADR 0001 for why this is not tmux control mode. Every
- * picker re-reads, so nothing is ever stale.
+ * The runner is the Control Connection once a Session is open, and a one-shot
+ * exec runner for the two things that happen before there is one. Neither is
+ * this class's business: it builds commands and reads replies.
+ *
+ * Nothing here reads, sets or restores a Session option. That is not an
+ * omission — it is what the migration to control mode was for. See ADR 0006.
  */
 export class TmuxClient {
-  private readonly tmuxExecutablePath?: string;
-
-  constructor(
-    private readonly transport: TmuxTransport,
-    options: TmuxClientOptions = {},
-  ) {
-    this.tmuxExecutablePath = options.tmuxExecutablePath;
-  }
+  constructor(private readonly runner: CommandRunner) {}
 
   /**
    * The Sessions running on the Host.
@@ -159,18 +124,18 @@ export class TmuxClient {
    * machine look broken.
    */
   async listSessions(): Promise<Session[]> {
-    const result = await this.transport.exec(listSessionsCommand(this.tmuxExecutablePath));
+    const reply = await this.runner.run(listSessionsCommand());
 
-    if (result.exitCode !== 0) {
-      if (meansNoServer(result)) return [];
-      throw failure('list Sessions', result);
+    if (!reply.ok) {
+      if (meansNoServer(reply)) return [];
+      throw failure('list Sessions', reply);
     }
 
-    return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 3);
+    return reply.text.flatMap((line) => {
+      const fields = splitFields(line, 2);
       if (!fields) return [];
-      const [windowCount, name, attached] = fields;
-      return [{ name, windowCount: countOf(windowCount), attached: attached !== '0' }];
+      const [name, windowCount] = fields;
+      return [{ name, windowCount: countOf(windowCount) }];
     });
   }
 
@@ -182,28 +147,27 @@ export class TmuxClient {
    * error. See ADR 0005.
    */
   async createSession(name: string): Promise<void> {
-    await this.run('create Session', createSessionCommand(name, this.tmuxExecutablePath));
+    await this.mustRun('create Session', createSessionCommand(name));
   }
 
   /** The Windows of a Session. A Session that has vanished reads as none. */
   async listWindows(sessionName: string): Promise<Window[]> {
-    const result = await this.transport.exec(
-      listWindowsCommand(sessionName, this.tmuxExecutablePath),
-    );
+    const reply = await this.runner.run(listWindowsCommand(sessionName));
 
-    if (result.exitCode !== 0) {
-      if (meansNoServer(result) || meansMissingTarget(result)) return [];
-      throw failure('list Windows', result);
+    if (!reply.ok) {
+      if (meansNoServer(reply) || meansMissingTarget(reply)) return [];
+      throw failure('list Windows', reply);
     }
 
-    return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 6);
+    return reply.text.flatMap((line) => {
+      const fields = splitFields(line, 7);
       if (!fields) return [];
-      const [index, name, active, paneCount, zoomed, command] = fields;
+      const [id, index, active, paneCount, zoomed, name, command] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
       return [
         {
+          id,
           index: parsed,
           name,
           active: active === '1',
@@ -217,299 +181,138 @@ export class TmuxClient {
 
   /** The Panes of one Window. A Window that has vanished reads as none. */
   async listPanes(sessionName: string, windowIndex: number): Promise<Pane[]> {
-    const result = await this.transport.exec(
-      listPanesCommand(sessionName, windowIndex, this.tmuxExecutablePath),
-    );
+    const reply = await this.runner.run(listPanesCommand(sessionName, windowIndex));
 
-    if (result.exitCode !== 0) {
-      if (meansNoServer(result) || meansMissingTarget(result)) return [];
-      throw failure('list Panes', result);
+    if (!reply.ok) {
+      if (meansNoServer(reply) || meansMissingTarget(reply)) return [];
+      throw failure('list Panes', reply);
     }
 
-    const nowhere = { left: 0, top: 0, width: 0, height: 0 };
+    const nowhere: PaneRect = { left: 0, top: 0, width: 0, height: 0 };
     // Every line carries the same layout, so the first one that parses settles
     // where all of them are. See listPanesCommand for why it is asked for.
-    let layout = new Map<number, typeof nowhere>();
+    let layout = new Map<number, PaneRect>();
 
-    return nonEmptyLines(result.stdout).flatMap((line) => {
+    return reply.text.flatMap((line) => {
       const fields = splitFields(line, 6);
       if (!fields) return [];
       const [index, id, command, active, path, windowLayout] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
       if (layout.size === 0) layout = parseWindowLayout(windowLayout);
-      const paneId = countOf(id.replace('%', ''));
       return [
         {
           index: parsed,
-          id: paneId,
+          id,
           command,
           active: active === '1',
           path,
-          ...(layout.get(paneId) ?? nowhere),
+          ...(layout.get(paneNumber(id)) ?? nowhere),
         },
       ];
     });
   }
 
   /**
-   * Moves the attached client to another Window.
+   * Moves the Client to another Window.
    *
    * Unlike a listing, a failure here is reported: the user asked for this
    * explicitly and silently doing nothing would be worse than an error.
    */
   async selectWindow(sessionName: string, windowIndex: number): Promise<void> {
-    await this.run(
-      'select Window',
-      selectWindowCommand(sessionName, windowIndex, this.tmuxExecutablePath),
-    );
+    await this.mustRun('select Window', selectWindowCommand(sessionName, windowIndex));
   }
 
-  /**
-   * Where the active Pane is in its history, for the label.
-   *
-   * Undefined whenever there is nothing to say: a Pane that is not in
-   * copy-mode, a Session that has gone, or a full-screen application doing its
-   * own scrolling — none of which has a position tmux can report.
-   */
-  async readScrollState(sessionName: string): Promise<ScrollState> {
-    const unknown: ScrollState = { position: undefined, route: 'history' };
-    let result: TmuxExecResult;
-    try {
-      result = await this.transport.exec(
-        readScrollStateCommand(sessionName, this.tmuxExecutablePath),
-      );
-    } catch {
-      return unknown;
-    }
-    if (result.exitCode !== 0) return unknown;
-
-    const [line] = nonEmptyLines(result.stdout);
-    if (line === undefined) return unknown;
-    const fields = splitFields(line, 5);
-    if (!fields) return unknown;
-    const [inMode, back, history, alternate, wantsMouse] = fields;
-
-    const route: ScrollRoute =
-      alternate !== '1' ? 'history' : wantsMouse === '1' ? 'application' : 'keys';
-    const position =
-      inMode === '1' && back !== '' ? { back: countOf(back), history: countOf(history) } : undefined;
-    return { position, route };
-  }
-
-  /** Puts the active Pane back at the live bottom. Best effort. */
-  async stopScrolling(sessionName: string): Promise<void> {
-    try {
-      await this.transport.exec(stopScrollingCommand(sessionName, this.tmuxExecutablePath));
-    } catch {
-      // Nothing to do: the Pane is either already at the bottom or gone.
-    }
-  }
-
-  /** Moves the attached client to another Pane. */
+  /** Moves the Client to another Pane. */
   async selectPane(sessionName: string, windowIndex: number, paneIndex: number): Promise<void> {
-    await this.run(
-      'select Pane',
-      selectPaneCommand(sessionName, windowIndex, paneIndex, this.tmuxExecutablePath),
-    );
+    await this.mustRun('select Pane', selectPaneCommand(sessionName, windowIndex, paneIndex));
   }
 
   /**
-   * Points the attached client at a different Session.
+   * Points the Client at a different Session.
    *
-   * The Shell Channel stays open throughout; the client follows and the Surface
-   * redraws. This is why switching Session does not cost a reconnect.
+   * The Control Connection stays open throughout: tmux answers with
+   * `%session-changed`, the Topology is read again, and the Surface is
+   * resynced from the new Session's Pane. This is why switching Session does
+   * not cost a reconnect.
    */
   async switchSession(sessionName: string): Promise<void> {
-    await this.run(
-      'switch Session',
-      switchSessionCommand(sessionName, this.tmuxExecutablePath),
-    );
+    await this.mustRun('switch Session', switchSessionCommand(sessionName));
   }
 
   /**
-   * The tty of the Session's most recently attached Client.
+   * Tells tmux how big this Client is.
    *
-   * Called straight after an Attach, when the newest Client is ours. Other
-   * Clients of the same Session are none of Muxify's business, so a redraw has
-   * to know which one to aim at. Undefined when tmux will not say, which the
-   * caller should treat as "redraw whichever Client tmux likes".
+   * The only size Muxify sets, and it sets no Session option to do it. Under
+   * tmux's default `window-size latest` the Window follows this Client while
+   * it is the latest to have asked, and goes back when the Client leaves —
+   * ordinary tmux sizing, with nothing to restore. See resizeClientCommand.
    */
-  async newestClient(sessionName: string): Promise<string | undefined> {
-    let result: TmuxExecResult;
-    try {
-      result = await this.transport.exec(listClientsCommand(sessionName, this.tmuxExecutablePath));
-    } catch {
-      return undefined;
-    }
-    if (result.exitCode !== 0) return undefined;
-
-    let newest: { created: number; tty: string } | undefined;
-    for (const line of nonEmptyLines(result.stdout)) {
-      const fields = splitFields(line, 2);
-      if (!fields) continue;
-      const [created, tty] = fields;
-      const at = Number(created);
-      if (!Number.isFinite(at) || tty === '') continue;
-      if (!newest || at >= newest.created) newest = { created: at, tty };
-    }
-    return newest?.tty;
+  async resizeClient(grid: Grid): Promise<void> {
+    await this.mustRun('resize the Client', resizeClientCommand(grid.cols, grid.rows));
   }
 
   /**
-   * Makes a Client repaint everything, clearing what a resize left behind.
+   * Types bytes into a Pane.
    *
-   * See redrawClientCommand for why the debris exists. Best effort: a dirty
-   * Surface is ugly, not broken, and one more failure path here would be worse.
+   * Every keystroke, every wheel notch on the alternate screen, every escape
+   * sequence. `send-keys -H` carries them exactly, and because they go into
+   * the Pane rather than through tmux's key table, tmux's prefix never fires.
    */
-  async redrawClient(clientTty?: string): Promise<void> {
-    try {
-      await this.transport.exec(redrawClientCommand(clientTty, this.tmuxExecutablePath));
-    } catch {
-      // Best effort.
-    }
+  async sendKeys(paneId: string, bytes: Uint8Array): Promise<void> {
+    if (bytes.length === 0) return;
+    await this.mustRun('send input', sendKeysCommand(paneId, bytes));
   }
 
   /**
-   * Sets the size of the Client's pty, from the Host side.
+   * What is already on a Pane's screen, as bytes ready for the Surface.
    *
-   * The SSH library will not send a window-change, so this does the same job
-   * from the other end — see resizeClientCommand. Best effort: a Client whose
-   * size is briefly wrong is a cosmetic problem, and throwing here would take
-   * down a Session that is otherwise working.
+   * The first half of a resync: `%output` carries only what happens next, so
+   * without this an Attach shows an empty screen until something moves.
    */
+  async capturePane(paneId: string): Promise<Uint8Array[]> {
+    const reply = await this.runner.run(capturePaneCommand(paneId));
+    return reply.ok ? reply.lines : [];
+  }
+
   /**
-   * Sets the Client's size from the Host side.
+   * A range of a Pane's Scrollback, as bytes.
    *
-   * Reports a failure rather than swallowing it, because the scheduler must not
-   * record a size it never sent — that was enough, on its own, to disable every
-   * later resize of a Connection.
+   * Line numbers are tmux's: negative is above the top of the screen. This is
+   * how the Scrollback is read now that tmux's copy-mode is not involved — see
+   * ticket 06.
+   */
+  async captureScrollback(
+    paneId: string,
+    startLine: number,
+    endLine: number,
+  ): Promise<Uint8Array[]> {
+    const reply = await this.runner.run(captureScrollbackCommand(paneId, startLine, endLine));
+    return reply.ok ? reply.lines : [];
+  }
+
+  /**
+   * Where the cursor is, what kind of screen the Pane is showing, and how much
+   * Scrollback is behind it.
    *
-   * It cannot confirm the size took. tmux's `#{client_width}` reports the size
-   * from one change ago, at any delay: with the pty at 13 it says 23, and
-   * setting the pty to 15 makes it say 13. So there is nothing here to read
-   * back and compare against, and an assertion built on that field is testing
-   * tmux's bookkeeping rather than the Surface.
+   * Undefined when tmux will not say, which is a Pane that has gone. The
+   * caller should leave things as they are rather than guess.
    */
-  async setClientSize(clientTty: string, grid: Grid): Promise<void> {
-    const result = await this.transport.exec(
-      resizeClientCommand(clientTty, grid.cols, grid.rows, this.tmuxExecutablePath),
-    );
-    if (result.exitCode !== 0) throw failure('resize the Client', result);
-  }
-
-  /**
-   * Asks tmux to put the borrowed options back when Muxify's Client leaves.
-   *
-   * Best effort: a Host whose tmux will not take a hook is still perfectly
-   * usable, and the ordinary teardown still runs.
-   */
-  async restoreOnDetach(
-    sessionName: string,
-    original: { status?: string; windowSize?: string; mouse?: string },
-  ): Promise<void> {
-    try {
-      await this.transport.exec(
-        restoreOnDetachCommand(sessionName, original, this.tmuxExecutablePath),
-      );
-    } catch {
-      // Nothing to do: teardown is still the first line of defence.
-    }
-  }
-
-  /** Takes Muxify's restore hook off a Session. */
-  async clearRestoreHook(sessionName: string): Promise<void> {
-    try {
-      await this.transport.exec(clearRestoreHookCommand(sessionName, this.tmuxExecutablePath));
-    } catch {
-      // Nothing to do.
-    }
-  }
-
-  /** Reads whether tmux is reading mouse events, so it can be restored. */
-  async readMouse(sessionName: string): Promise<string | undefined> {
-    try {
-      const result = await this.transport.exec(
-        readMouseCommand(sessionName, this.tmuxExecutablePath),
-      );
-      if (result.exitCode !== 0) return undefined;
-      const [line] = nonEmptyLines(result.stdout);
-      return line;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Turns tmux's mouse reading on or off for a Session. */
-  async setMouse(sessionName: string, value: string): Promise<void> {
-    await this.run('set mouse', setMouseCommand(sessionName, value, this.tmuxExecutablePath));
-  }
-
-  /**
-   * Reads the Session's current `status` setting, so it can be restored.
-   * Returns `undefined` when tmux will not say, in which case leave it alone.
-   */
-  async readStatusLine(sessionName: string): Promise<string | undefined> {
-    try {
-      const result = await this.transport.exec(
-        readStatusLineCommand(sessionName, this.tmuxExecutablePath),
-      );
-      if (result.exitCode !== 0) return undefined;
-      const value = result.stdout.trim();
-      return value === '' ? undefined : value;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Shows or hides the Session's status line.
-   *
-   * Hidden while Muxify is attached because the Dock already shows the Session,
-   * Window and Pane, and a phone has no rows to spare. Best effort: a Session
-   * that keeps its status line is a cosmetic problem, not a broken one.
-   */
-  async setStatusLine(sessionName: string, value: string): Promise<void> {
-    try {
-      await this.transport.exec(
-        setStatusLineCommand(sessionName, value, this.tmuxExecutablePath),
-      );
-    } catch {
-      // Best effort.
-    }
-  }
-
-  /**
-   * Reads how the Session sizes its Windows, so it can be restored.
-   * Returns `undefined` when tmux will not say, in which case leave it alone.
-   */
-  async readWindowSizing(sessionName: string): Promise<string | undefined> {
-    try {
-      const result = await this.transport.exec(
-        readWindowSizingCommand(sessionName, this.tmuxExecutablePath),
-      );
-      if (result.exitCode !== 0) return undefined;
-      const value = result.stdout.trim();
-      return value === '' ? undefined : value;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Sets how the Session sizes its Windows — `smallest` while Muxify is
-   * attached, so the Window can never outgrow the Surface and be padded. See
-   * readWindowSizingCommand. Best effort: getting this wrong means dots, not a
-   * broken Session.
-   */
-  async setWindowSizing(sessionName: string, value: string): Promise<void> {
-    try {
-      await this.transport.exec(
-        setWindowSizingCommand(sessionName, value, this.tmuxExecutablePath),
-      );
-    } catch {
-      // Best effort.
-    }
+  async paneState(paneId: string): Promise<PaneState | undefined> {
+    const reply = await this.runner.run(paneStateCommand(paneId));
+    if (!reply.ok) return undefined;
+    const fields = splitFields(reply.text[0] ?? '', 7);
+    if (!fields) return undefined;
+    const [column, row, alternate, scrollback, width, height, wantsMouse] = fields;
+    return {
+      cursorColumn: countOf(column),
+      cursorRow: countOf(row),
+      alternate: alternate === '1',
+      scrollbackLines: countOf(scrollback),
+      width: countOf(width),
+      height: countOf(height),
+      wantsMouse: wantsMouse === '1',
+    };
   }
 
   /**
@@ -523,22 +326,16 @@ export class TmuxClient {
     const previews = new Map<string, string[]>();
     if (targets.length === 0) return previews;
 
-    let result: TmuxExecResult;
+    let replies: CommandReply[];
     try {
-      result = await this.transport.exec(capturePanesCommand(targets, this.tmuxExecutablePath));
+      replies = await this.runner.runAll(capturePanesCommand(targets));
     } catch {
       return previews;
     }
-    if (result.exitCode !== 0) return previews;
 
-    const captures = result.stdout.split(CAPTURE_SEPARATOR);
     targets.forEach((target, index) => {
-      const capture = captures[index];
-      if (capture === undefined) return;
-      previews.set(target, capture.split('\n').filter((line, at, all) =>
-        // Keep interior blank lines, drop the ones the separator leaves behind.
-        line.trim() !== '' || (at > 0 && at < all.length - 1),
-      ));
+      const reply = replies[index];
+      if (reply?.ok) previews.set(target, reply.text);
     });
     return previews;
   }
@@ -551,40 +348,22 @@ export class TmuxClient {
     // Zooming a Window with one Pane does nothing in tmux, and asking costs a
     // round trip nobody sees the benefit of.
     if (active.paneCount < 2) return;
-    await this.run('zoom Pane', zoomPaneCommand(sessionName, this.tmuxExecutablePath));
+    await this.mustRun('zoom Pane', zoomPaneCommand(sessionName));
   }
 
   /** Splits the Session's active Pane. */
   async splitWindow(sessionName: string, direction: 'right' | 'down'): Promise<void> {
-    await this.run(
-      'split Window',
-      splitWindowCommand(sessionName, direction, this.tmuxExecutablePath),
-    );
+    await this.mustRun('split Window', splitWindowCommand(sessionName, direction));
   }
 
   /** Adds a Window to the Session, after the current one. */
   async newWindow(sessionName: string): Promise<void> {
-    await this.run('add a Window', newWindowCommand(sessionName, this.tmuxExecutablePath));
+    await this.mustRun('add a Window', newWindowCommand(sessionName));
   }
 
-  /** Opens the Shell Channel and Attaches it to an existing Session. */
-  attach(sessionName: string, grid: Grid, events: TmuxShellEvents): Promise<TmuxShell> {
-    return this.transport.openShell(
-      {
-        term: 'xterm-256color',
-        cols: grid.cols,
-        rows: grid.rows,
-        command: attachSessionCommand(sessionName, this.tmuxExecutablePath),
-      },
-      events,
-    );
-  }
-
-  private async run(what: string, command: string): Promise<void> {
-    const result = await this.transport.exec(command);
-    if (result.exitCode !== 0) {
-      throw failure(what, result);
-    }
+  private async mustRun(what: string, argv: string[]): Promise<void> {
+    const reply = await this.runner.run(argv);
+    if (!reply.ok) throw failure(what, reply);
   }
 }
 
@@ -592,13 +371,6 @@ export class TmuxClient {
 function countOf(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function nonEmptyLines(stdout: string): string[] {
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 /** Splits a tab-separated record, or `null` when it does not have enough fields. */
@@ -617,17 +389,17 @@ function splitFields(line: string, count: number): string[] | null {
 }
 
 /** tmux's way of saying there is nothing running, which is not an error here. */
-function meansNoServer(result: TmuxExecResult): boolean {
-  const text = `${result.stderr} ${result.stdout}`.toLowerCase();
+function meansNoServer(reply: CommandReply): boolean {
+  const text = reply.text.join(' ').toLowerCase();
   return text.includes('no server running') || text.includes('error connecting to');
 }
 
 /** tmux's way of saying the Session or Window is gone. */
-function meansMissingTarget(result: TmuxExecResult): boolean {
-  return `${result.stderr} ${result.stdout}`.toLowerCase().includes("can't find");
+function meansMissingTarget(reply: CommandReply): boolean {
+  return reply.text.join(' ').toLowerCase().includes("can't find");
 }
 
-function failure(what: string, result: TmuxExecResult): TmuxError {
-  const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
-  return new TmuxError(`Could not ${what}: ${detail}`, result.exitCode);
+function failure(what: string, reply: CommandReply): TmuxError {
+  const detail = reply.text.join(' ').trim() || 'tmux refused it';
+  return new TmuxError(`Could not ${what}: ${detail}`, detail);
 }

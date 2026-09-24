@@ -2,14 +2,7 @@ import type { SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  AppState,
-  Keyboard,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -22,47 +15,36 @@ import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
-import { cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
+import { LINES_PER_NOTCH } from '@/lib/mouse-wheel';
 import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
-import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
+import { openControlConnection, type ControlConnection } from '@/tmux/control-connection';
+import { createPaneView, type PaneView, type ScrollPosition } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
-import { readTopology, type Topology } from '@/tmux/topology';
+import {
+  createTopologyStore,
+  EMPTY_TOPOLOGY,
+  type Topology,
+  type TopologyStore,
+} from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
-import { TmuxClient, type ScrollPosition, type ScrollRoute } from '@/tmux/tmux-client';
-import type { TmuxShell } from '@/tmux/transport';
+import { TmuxClient, type Grid, type Session } from '@/tmux/tmux-client';
 
 /** What the Surface uses when the user has not picked a size. */
 const DEFAULT_FONT_SIZE = 13;
 
 /**
- * How long to let the Surface's grid stop moving before the pty is made from
- * it. Short enough to disappear inside the Connection it follows, long enough
- * to outlast a SwiftUI measure pass.
+ * How long to let the Surface's grid stop moving before the Client is sized
+ * from it. Short enough to disappear inside the Connection it follows, long
+ * enough to outlast a SwiftUI measure pass.
  */
 const GRID_SETTLE_MS = 80;
 const GRID_SETTLE_TRIES = 12;
 
-/** How long after the finger stops before asking tmux where it landed. */
-const LABEL_SETTLE_MS = 220;
-
-/** After this long without scrolling, what a scroll should become is re-asked. */
-const ROUTE_STALE_MS = 1500;
-
-/** How long a resize will wait for the Client's tty to be read. */
-const TTY_WAIT_MS = 100;
-const TTY_WAIT_TRIES = 30;
-
-/** The Surface's cell grid. Travels as a unit everywhere it is used. */
-type Grid = { cols: number; rows: number };
-
 /** What a picker is picking. One sheet serves all three. */
 type PickerKind = 'sessions' | 'windows' | 'panes';
-
-/** All of them, for reading ahead. */
-const PICKER_KINDS: PickerKind[] = ['sessions', 'windows', 'panes'];
 
 /** The sheet: closed, or open and showing whatever it has so far. */
 type PickerState =
@@ -80,7 +62,7 @@ type Status =
   | { phase: 'waiting-for-layout' }
   | { phase: 'connecting' }
   | { phase: 'connected'; fingerprint: string }
-  | { phase: 'closed'; exitCode: number | undefined }
+  | { phase: 'closed'; reason: string }
   | { phase: 'failed'; message: string };
 
 export default function TerminalScreen() {
@@ -96,50 +78,50 @@ export default function TerminalScreen() {
   const { settings, terminal, ansi } = useSettings();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
-  const shell = useRef<TmuxShell | null>(null);
+  /** The one channel: commands and Pane output, no PTY. */
+  const control = useRef<ControlConnection | null>(null);
   const tmux = useRef<TmuxClient | null>(null);
+  /** What the Surface is showing: the resync, the stream and the scrolling. */
+  const view = useRef<PaneView | null>(null);
   const sessionName = useRef<string>('');
-  /** The tty of our own tmux Client: what a resize and a redraw are aimed at. */
-  const clientTty = useRef<string | undefined>(undefined);
-  /** Owns every Session Muxify has taken over, and hands them all back. */
-  const sessions = useRef<SessionPreparer | null>(null);
   const grid = useRef<Grid | null>(null);
   /** The Surface's height in points, paired with the grid it produced. */
   const surfaceHeight = useRef(0);
   const hasStarted = useRef(false);
   const disposed = useRef(false);
+  /** Scroll distance not yet worth a notch of the wheel. */
+  const carriedLines = useRef(0);
 
   const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
   /** How far back the Pane is being viewed, or null at the live bottom. */
   const [scrolled, setScrolled] = useState<ScrollPosition | null>(null);
-  /** The same fact where a callback can read it without being rebuilt. */
-  const scrolledBack = useRef(false);
-  /** Scroll distance not yet worth a notch of the wheel. */
-  const carriedLines = useRef(0);
-  const labelRead = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastScrollAt = useRef(0);
-  /** What a scroll gesture should become for the Pane as it stands. */
-  const route = useRef<ScrollRoute>('history');
   /**
-   * The last cards each picker showed, so the next open has something to draw
-   * before the Host has been asked. Emptied whenever Muxify itself changes the
-   * Topology, because a highlight on the Pane you just left is worse than a
-   * spinner.
+   * The last thing that went wrong with the Pane itself, shown quietly.
+   *
+   * Not a Status: a Connection that is up and a Pane that refused one command
+   * are different things, and killing the screen for a `send-keys` into a Pane
+   * that has just gone would be worse than saying so. Cleared by the next
+   * repaint that works.
    */
-  const pickerCache = useRef<Partial<Record<PickerKind, { cards: PreviewCard[]; subtitle: string }>>>(
-    {},
-  );
+  const [paneTrouble, setPaneTrouble] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
+
   /**
-   * Last known Topology, for whether a picker has anything to offer. Null until
-   * the first read: not knowing is not the same as knowing there is nothing,
-   * and a button disabled on a guess is worse than one that opens a short list.
+   * The Session's Windows and Panes, kept by what tmux pushes rather than read
+   * when a sheet opens. See createTopologyStore.
    */
-  const [topology, setTopology] = useState<Topology | null>(null);
-  /** When the Topology was last read, to keep output-driven refreshes rare. */
-  const topologyReadAt = useRef(0);
+  const store = useRef<TopologyStore | null>(null);
+  const [topology, setTopology] = useState<Topology>(EMPTY_TOPOLOGY);
+  /**
+   * The Host's Sessions, as of the last `%sessions-changed`. A picker's list is
+   * never a round trip; only its previews are.
+   */
+  const [sessions, setSessions] = useState<Session[] | null>(null);
+  /** Previews by capture target, filled in behind an already-open sheet. */
+  const [previews, setPreviews] = useState<Map<string, string[]>>(new Map());
+
   /**
    * Whether the attached Pane fills the Window on its own.
    *
@@ -147,6 +129,7 @@ export default function TerminalScreen() {
    * split Session arrives zoomed and the splits are something you step into
    * rather than squint at. Turning it off shows the real layout.
    */
+  const [zoomed, setZoomed] = useState(settings.zoomMultipaneWindows);
   /**
    * The Theme and font size this Session was opened with.
    *
@@ -155,7 +138,6 @@ export default function TerminalScreen() {
    * redrawing mid-session. Settings apply from the next Attach, a step away.
    */
   const [opened] = useState(() => ({ font: settings.fontSize, terminal, ansi }));
-  const [zoomed, setZoomed] = useState(settings.zoomMultipaneWindows);
   /** Rendered in the Dock, so the attached Session survives a switch. */
   const [attachedSession, setAttachedSession] = useState('');
   /** Set when the Host's key is not the one last seen. Never blocks. */
@@ -164,64 +146,54 @@ export default function TerminalScreen() {
   );
 
   /**
-   * Owns every remote resize, so a keyboard animation cannot flood the Host
-   * with Control Commands. See createResizeScheduler.
+   * Owns every remote resize, so a keyboard animation cannot flood the Host.
    *
-   * One size is set, not two. The Client's pty is resized from the Host side —
-   * the SSH library will not send a window-change, see resizeClientCommand —
-   * and the Session is on `window-size smallest`, so tmux moves the Window to
-   * match inside the server, in the same instant, with no round trip of its own
-   * to be caught halfway through. That is what stops the dots: tmux only pads
-   * when the Client is bigger than the Window, and now it never is.
-   *
-   * Waits for the Client's tty rather than giving up without one. The tty is
-   * read from `list-clients` just after Attach, and the keyboard can easily
-   * rise before that answer arrives; a resize dropped in that window used to be
-   * lost for good, leaving tmux drawing a taller Window than the Surface had
-   * until something else happened to move it.
+   * One size, one command, and no Session option. `refresh-client -C` is how a
+   * control client says how big it is; under tmux's default `window-size
+   * latest` the Window follows it while it is the latest to have asked, and
+   * reverts when the Client goes. There is nothing to restore and no tty to
+   * wait for — the Control Connection *is* the Client. See ADR 0006.
    */
   const remoteSize = useMemo(
     () =>
       createResizeScheduler(async (next) => {
         const client = tmux.current;
-        const tty = await knownClientTty();
         // Thrown, not shrugged off: the scheduler must not record a size it
         // never sent, or it will skip the next request for the same one.
-        if (!client || !tty) throw new Error('no Client to resize');
-        await client.setClientSize(tty, next);
+        if (!client) throw new Error('no Client to resize');
+        await client.resizeClient(next);
       }),
     [],
   );
 
-  /**
-   * Asks tmux where the Pane is in its history, once the finger has stopped.
-   *
-   * Only the label needs this. The scrolling itself is bytes on a channel that
-   * is already open, so it costs nothing and needs no coalescing — a Control
-   * Command per frame is exactly what made dragging feel like it was catching
-   * on something.
-   */
-  const readScrollState = useCallback((delayMs: number = LABEL_SETTLE_MS) => {
-    if (labelRead.current !== null) clearTimeout(labelRead.current);
-    labelRead.current = setTimeout(() => {
-      labelRead.current = null;
-      void (async () => {
-        const state = await tmux.current?.readScrollState(sessionName.current);
-        if (disposed.current || !state) return;
-        route.current = state.route;
-        scrolledBack.current = state.position !== undefined;
-        setScrolled(state.position ?? null);
-      })();
-    }, delayMs);
+  /** Reads the Topology from the Host and publishes it to the screen. */
+  const refreshTopology = useCallback(async (): Promise<Topology> => {
+    const model = store.current;
+    if (!model) return EMPTY_TOPOLOGY;
+    return model.refresh(sessionName.current);
   }, []);
 
   /**
-   * One finger on the Surface, moving the Pane through its history.
+   * Points the Surface at whichever Pane tmux says is active.
+   *
+   * A resync rather than a redraw: there is no composited Window to repaint
+   * any more, so moving to another Pane means reading what is on that Pane and
+   * painting it. Does nothing when the Surface is already showing it, which is
+   * what keeps a Topology read from costing a capture it does not need.
+   */
+  const showActivePane = useCallback(async (): Promise<void> => {
+    const pane = store.current?.current().activePane;
+    if (!pane || !view.current || view.current.paneId() === pane.id) return;
+    await view.current.show(pane.id, grid.current?.rows ?? 24);
+  }, []);
+
+  /**
+   * One finger on the Surface, moving the Pane through its Scrollback.
    *
    * The gesture is the library's own — the same pan and the same momentum it
-   * would otherwise spend on ghostty's scrollback, which a Surface painted by
-   * tmux does not have. Points become lines here because only this side knows
-   * both the grid and the height it was laid out at.
+   * would otherwise spend on ghostty's scrollback, which a Surface painted from
+   * a capture does not have. Points become lines here because only this side
+   * knows both the grid and the height it was laid out at.
    *
    * The fraction of a line left over is carried between frames rather than
    * dropped, so a slow drag moves at the speed of the finger instead of
@@ -229,19 +201,9 @@ export default function TerminalScreen() {
    */
   const handleScroll = useCallback(
     ({ nativeEvent }: { nativeEvent: { points: number } }) => {
-      const active = shell.current;
       const size = grid.current;
       const height = surfaceHeight.current;
-      if (!active || !size || size.rows <= 0 || height <= 0) return;
-
-      // A gesture starting after a pause may be the first since the Pane began
-      // running something else entirely, and what a scroll should become
-      // depends on that. Asked for here as well as after the gesture, so a
-      // drag that follows `less` starting is routed by the second notch rather
-      // than the second drag.
-      const now = Date.now();
-      if (now - lastScrollAt.current > ROUTE_STALE_MS) readScrollState(0);
-      lastScrollAt.current = now;
+      if (!view.current || !size || size.rows <= 0 || height <= 0) return;
 
       // A finger moving down pulls older output into view.
       carriedLines.current += nativeEvent.points * (size.rows / height);
@@ -249,118 +211,32 @@ export default function TerminalScreen() {
       if (notches === 0) return;
       carriedLines.current -= notches * LINES_PER_NOTCH;
 
-      const direction = notches > 0 ? 'up' : 'down';
-      const bytes =
-        route.current === 'keys'
-          ? // A full-screen application that never asked for the mouse would
-            // ignore a wheel event entirely, so it gets the keys it does read.
-            cursorKeys(direction, Math.abs(notches) * LINES_PER_NOTCH)
-          : // Aimed at the middle of the Surface: tmux discards a mouse event
-            // whose coordinates fall outside the Pane, and the middle is inside
-            // whichever Pane is filling the Window.
-            wheelSequence(
-              direction,
-              Math.abs(notches),
-              Math.max(1, Math.round(size.cols / 2)),
-              Math.max(1, Math.round(size.rows / 2)),
-            );
-      if (bytes === '') return;
-      active.write(new TextEncoder().encode(bytes));
-      readScrollState();
+      view.current.scroll(notches, size);
     },
-    [readScrollState],
+    [],
   );
 
   /** Puts the Pane back at the live bottom, and the indicator away with it. */
-  const stopScrolling = useCallback(() => {
-    if (labelRead.current !== null) clearTimeout(labelRead.current);
-    labelRead.current = null;
+  const jumpToLatest = useCallback(() => {
     carriedLines.current = 0;
-    scrolledBack.current = false;
-    setScrolled(null);
-    void tmux.current?.stopScrolling(sessionName.current);
+    view.current?.jumpToLatest();
   }, []);
 
   /**
-   * The Client's tty, asking again until tmux will say.
+   * What a picker would show, from the model that is already right.
    *
-   * `list-clients` is run the instant after Attach and tmux has often not
-   * registered the Client yet, so the first answer is an empty list. Reading
-   * it once and keeping the blank was enough to disable every later resize:
-   * the Surface would report a new size, the scheduler would hand it to an
-   * apply with nothing to aim at, and the Window would stay whatever shape it
-   * was made — which is why the keyboard never moved it.
-   *
-   * Bounded, because a Session whose Client never appears must not leave a
-   * resize pending forever.
+   * No round trip for the rows: tmux has been pushing changes all along, so a
+   * Windows or Panes sheet opens on a Topology that is current, and a Sessions
+   * sheet on a list kept by `%sessions-changed`. Previews are the exception —
+   * a picture of a Pane is only worth anything if it is of now — and they fill
+   * in behind an already-open sheet.
    */
-  const knownClientTty = useCallback(async (): Promise<string | undefined> => {
-    for (let attempt = 0; attempt < TTY_WAIT_TRIES; attempt += 1) {
-      if (clientTty.current !== undefined) return clientTty.current;
-      if (disposed.current) return undefined;
-      const found = await tmux.current?.newestClient(sessionName.current);
-      if (found !== undefined) {
-        clientTty.current = found;
-        return found;
-      }
-      await new Promise((resolve) => setTimeout(resolve, TTY_WAIT_MS));
-    }
-    return clientTty.current;
-  }, []);
-
-  /**
-   * Gives the Session's borrowed options back whenever Muxify stops being the
-   * thing on screen, and takes them again on return.
-   *
-   * The two options Muxify borrows are session options, so every other Client
-   * sees them: a laptop attached to the same Session loses its status line and
-   * gets squeezed to the phone's size. That is the documented price of
-   * attaching a real Client — but only while somebody is actually looking at
-   * the phone. Leaving the app in the background holding a Session hostage is
-   * not a price, it is a bug, and it is what leaves a status line missing on
-   * the machine the user walked back to.
-   */
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (next) => {
-      if (disposed.current) return;
-      if (next === 'active') {
-        void sessions.current?.prepare(sessionName.current, clientTty.current);
-        return;
-      }
-      if (next === 'background') {
-        void sessions.current?.restoreAll();
-      }
-    });
-    return () => subscription.remove();
-  }, []);
-
-  /** Re-reads the Session's Windows and Panes, for the Dock and the sheet. */
-  const refreshTopology = useCallback(async (): Promise<Topology> => {
-    const client = tmux.current;
-    if (!client) return EMPTY_TOPOLOGY;
-    topologyReadAt.current = Date.now();
-    const next = await readTopology(client, sessionName.current);
-    setTopology(next);
-    return next;
-  }, []);
-
-  /**
-   * Reads what a picker would show, without a sheet being open.
-   *
-   * Lifted out of opening one so the same work can be done ahead of time. What
-   * it returns is a snapshot, not a subscription: Muxify holds no live model of
-   * the Host — see ADR 0001 — so this is only ever what was true when asked.
-   */
-  const readCards = useCallback(
-    async (kind: PickerKind): Promise<{ cards: PreviewCard[]; subtitle: string }> => {
-      const client = tmux.current;
-      if (!client) throw new Error('Not connected');
-
+  const cardsFor = useCallback(
+    (kind: PickerKind): { cards: PreviewCard[]; subtitle: string } => {
       if (kind === 'sessions') {
-        const sessions = await client.listSessions();
-        const previews = await client.capturePanes(sessions.map((session) => `${session.name}:`));
+        const listed = sessions ?? [];
         return {
-          cards: sessions.map((session) => ({
+          cards: listed.map((session) => ({
             id: session.name,
             title: session.name,
             // The name leads here, unlike a Window's chip: a Session has no
@@ -368,40 +244,34 @@ export default function TerminalScreen() {
             // user guessing which is which.
             detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
             current: session.name === sessionName.current,
-            preview: previewOf(previews, `${session.name}:`, PREVIEW_LINES),
+            preview: previewOf(previews, `${session.name}:`),
           })),
-          subtitle: `${sessions.length} ${plural(sessions.length, 'session')}`,
+          subtitle: `${listed.length} ${plural(listed.length, 'session')}`,
         };
       }
 
-      const next = await refreshTopology();
-      const session = sessionName.current;
-
       if (kind === 'windows') {
-        const previews = await client.capturePanes(
-          next.windows.map((window) => windowPreviewTarget(session, window.index)),
-        );
+        const session = sessionName.current;
         return {
-          cards: next.windows.map((window) => ({
+          cards: topology.windows.map((window) => ({
             id: String(window.index),
             title: window.name,
             detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
             current: window.active,
             badge: String(window.index),
-            preview: previewOf(previews, windowPreviewTarget(session, window.index), PREVIEW_LINES),
+            preview: previewOf(previews, windowPreviewTarget(session, window.index)),
           })),
-          subtitle: `${session} · ${next.windows.length} ${plural(next.windows.length, 'window')}`,
+          subtitle: `${session} · ${topology.windows.length} ${plural(topology.windows.length, 'window')}`,
         };
       }
 
       // No capture here: the Panes are all on screen behind this sheet already,
       // so the question is which one you mean, not what is in it. Where it
       // sits, what directory it is in and what it is running are what tell two
-      // Panes apart; a tile of six-point terminal text does not, and costs a
-      // round trip to draw.
-      const frames = paneTopologyFrames(next.panes);
+      // Panes apart; a tile of six-point terminal text does not.
+      const frames = paneTopologyFrames(topology.panes);
       return {
-        cards: next.panes.map((pane) => ({
+        cards: topology.panes.map((pane) => ({
           id: String(pane.index),
           title: directoryName(pane.path) || `Pane ${pane.index}`,
           detail: pane.command,
@@ -409,46 +279,64 @@ export default function TerminalScreen() {
           frame: frames.get(pane.index),
           preview: [],
         })),
-        subtitle: `${next.panes.length} ${plural(next.panes.length, 'pane')}`,
+        subtitle: `${topology.panes.length} ${plural(topology.panes.length, 'pane')}`,
       };
     },
-    [refreshTopology],
+    [sessions, topology, previews],
   );
 
   /**
-   * Reads all three pickers once, so the first one opened has something to draw.
+   * Corrects an already-open sheet behind itself.
    *
-   * Without it the first open of every Session waits for a round trip and a
-   * `capture-pane`, which is the one that matters — by the second the user has
-   * already formed a view of how fast the app is.
+   * Two things a notification cannot carry. **Previews** are screen content,
+   * and a picture of a Pane is worth nothing unless it is of now. And **what a
+   * Pane is running** — `#{pane_current_command}`, `#{pane_current_path}` —
+   * changes with no notification at all: nothing is pushed when a shell starts
+   * `vim`, so the Windows sheet's detail line and the Panes sheet's title would
+   * otherwise freeze at the last time the Topology changed shape. The polled
+   * design re-read on output for exactly this reason; this is where that went.
+   *
+   * It is why the rows are drawn from the model *first*. The sheet is never
+   * waiting on this — it opens filled and corrects itself a round trip later.
    */
-  const warmPickers = useCallback(() => {
+  const refreshBehindSheet = useCallback(
+    (kind: PickerKind) => {
+      const client = tmux.current;
+      if (!client) return;
+
+      if (kind !== 'sessions') void refreshTopology();
+
+      if (kind === 'panes') return;
+      const targets =
+        kind === 'sessions'
+          ? (sessions ?? []).map((session) => `${session.name}:`)
+          : topology.windows.map((window) =>
+              windowPreviewTarget(sessionName.current, window.index),
+            );
+      if (targets.length === 0) return;
+      void (async () => {
+        const fresh = await client.capturePanes(targets);
+        if (disposed.current || fresh.size === 0) return;
+        setPreviews((previous) => new Map([...previous, ...fresh]));
+      })();
+    },
+    [refreshTopology, sessions, topology.windows],
+  );
+
+  /** Re-reads the Host's Session list, which no notification describes. */
+  const refreshSessions = useCallback(() => {
+    const client = tmux.current;
+    if (!client) return;
     void (async () => {
-      for (const kind of PICKER_KINDS) {
-        try {
-          pickerCache.current[kind] = await readCards(kind);
-        } catch {
-          // A picker nobody has opened yet is not worth reporting a failure
-          // for; opening it will ask again and say so properly.
-          return;
-        }
+      try {
+        const listed = await client.listSessions();
+        if (!disposed.current) setSessions(listed);
+      } catch {
+        // A Session list that will not read is a picker with nothing new in
+        // it, not a Connection worth taking down.
       }
     })();
-  }, [readCards]);
-
-  /**
-   * Re-reads the Topology when the Host has been busy.
-   *
-   * Windows and Panes are not only created through the Dock — the usual way is
-   * a tmux keybinding typed into the terminal, which Muxify sees only as bytes.
-   * Output is the signal that something happened, so it is worth a look, but a
-   * Session running something chatty produces a lot of it: hence the interval,
-   * which keeps this to an occasional read rather than a poll.
-   */
-  const noteOutput = useCallback(() => {
-    if (Date.now() - topologyReadAt.current < TOPOLOGY_REFRESH_MS) return;
-    void refreshTopology();
-  }, [refreshTopology]);
+  }, []);
 
   const start = useCallback(
     async (initial: Grid) => {
@@ -457,8 +345,8 @@ export default function TerminalScreen() {
         return;
       }
 
-      const store = deviceHostStore();
-      const records = await store.load();
+      const hostStore = deviceHostStore();
+      const records = await hostStore.load();
       const host = records.hosts.find((candidate) => candidate.id === hostId);
       if (!host) {
         setStatus({ phase: 'failed', message: 'This Host is no longer saved.' });
@@ -468,7 +356,7 @@ export default function TerminalScreen() {
       setStatus({ phase: 'connecting' });
 
       try {
-        const { connection: conn, fingerprint, verdict } = await connectToHost(host, store);
+        const { connection: conn, fingerprint, verdict } = await connectToHost(host, hostStore);
 
         if (disposed.current) {
           await conn.disconnect();
@@ -480,94 +368,118 @@ export default function TerminalScreen() {
         // loudly when it changes. The Connection is not blocked either way —
         // someone who has just rebuilt a machine still has to reach it.
         if (verdict.kind === 'first-sight') {
-          await store.rememberFingerprint(host.id, fingerprint);
+          await hostStore.rememberFingerprint(host.id, fingerprint);
         } else if (verdict.kind === 'changed') {
           setKeyWarning({ hostName: host.displayName, fingerprint });
         }
 
         // Size from a grid that has stopped moving, not merely the latest.
-        //
         // The Surface reports one while the Dock's glass is still being
         // measured — every group is a `Host matchContents`, which takes its
         // size only after SwiftUI has laid out — and a smaller one once the
-        // Dock has taken its height. The Client's pty is created once, from
-        // whichever value is current, and cannot be resized afterwards (see
-        // resizeClientCommand). Attaching on the first value is what left tmux
-        // painting 34 rows into a Surface that had 32, for the whole life of
-        // the Connection: every line two rows out, the last two off the end.
+        // Dock has taken its height. Sizing the Client from the first value
+        // would leave tmux drawing a taller Window than the Surface has.
         const current = await settle(() => grid.current, initial, {
           same: (a, b) => a.cols === b.cols && a.rows === b.rows,
           everyMs: GRID_SETTLE_MS,
           tries: GRID_SETTLE_TRIES,
         });
 
-        // Everything tmux-shaped goes through the client, which owns command
-        // construction and output parsing behind the transport seam.
-        const client = new TmuxClient(sshTmuxTransport(conn), {
-          tmuxExecutablePath: host.tmuxExecutablePath,
-        });
-        tmux.current = client;
-        sessions.current = createSessionPreparer(client);
         sessionName.current = sessionParam;
-        setAttachedSession(sessionParam);
 
-        const opened = await client.attach(sessionParam, current, {
-          onData: (data) => {
-            surface.current?.write(bytesToBase64(new Uint8Array(data)));
-            noteOutput();
+        // This is Attach: one channel, no PTY, and no Session option touched.
+        const opening = await openControlConnection(
+          sshTmuxTransport(conn),
+          { sessionName: sessionParam, tmuxExecutablePath: host.tmuxExecutablePath },
+          {
+            onOutput: (pane, bytes) => view.current?.receive(pane, bytes),
+            onNotification: (event) => {
+              const model = store.current;
+              if (!model) return;
+              if (event.kind === 'session-changed') {
+                sessionName.current = event.name;
+                setAttachedSession(event.name);
+              }
+              if (event.kind === 'sessions-changed') refreshSessions();
+              const applied = model.apply(event);
+              if (applied === 'stale') void refreshTopology();
+            },
+            onClosed: (reason) => {
+              if (!disposed.current) setStatus({ phase: 'closed', reason });
+            },
           },
-          onClosed: (exitCode) => {
-            shell.current = null;
-            if (!disposed.current) setStatus({ phase: 'closed', exitCode });
-          },
-        });
+        );
 
         if (disposed.current) {
-          await opened.close();
+          await opening.close();
           await conn.disconnect();
           return;
         }
 
-        shell.current = opened;
+        control.current = opening;
+        const client = new TmuxClient(opening);
+        tmux.current = client;
+
+        view.current = createPaneView(client, {
+          write: (bytes) => {
+            surface.current?.write(bytesToBase64(bytes));
+            if (!disposed.current) setPaneTrouble(null);
+          },
+          onScroll: (position) => {
+            if (!disposed.current) setScrolled(position);
+          },
+          // Without this a refused command — typing into a Pane that has just
+          // been killed, most likely — would vanish, and the Surface would sit
+          // there looking connected and ignoring the keyboard.
+          onError: (error) => {
+            if (!disposed.current) setPaneTrouble(describe(error));
+          },
+        });
+
+        const model = createTopologyStore(client);
+        store.current = model;
+        model.subscribe((next) => {
+          if (disposed.current) return;
+          setTopology(next);
+          // tmux moved the active Pane — a split, a Window switch, somebody
+          // else's `select-pane` on the laptop. The Surface follows it from
+          // here, so nothing that changes the Topology has to remember to.
+          void showActivePane();
+        });
+
+        setAttachedSession(sessionParam);
         setStatus({ phase: 'connected', fingerprint });
 
         // Stamped on a Session that actually opened, not on one that was only
         // tapped: the Host Screen's order is a record of where you have been,
         // and a Session that refused to attach is not somewhere you have been.
-        void store.rememberSession(host.id, sessionParam);
+        void hostStore.rememberSession(host.id, sessionParam);
 
-        void (async () => {
-          // Ours is the Client that just attached; a redraw aimed anywhere else
-          // would leave this Surface dirty.
-          clientTty.current = await knownClientTty();
-          // Everything a Session needs before it can be shown on a phone.
-          // Switching Session runs the same thing again.
-          await sessions.current?.prepare(sessionParam, clientTty.current);
-          // The Window's size has one owner. Reset first: this Session's Window
-          // is whatever size its last Client left it, not what the Surface has.
-          remoteSize.reset();
-          remoteSize.request(grid.current ?? current);
-          // A phone is too narrow for side-by-side Panes, so a split Session
-          // arrives with its active Pane filling the Window.
-          await client.setZoom(sessionParam, true);
-          // Read once now so the Dock knows whether there is anything to pick
-          // before the user reaches for a picker, and read the pickers
-          // themselves straight after, so the first one opened is already
-          // filled. Both happen while the user is still looking at the Surface
-          // appearing.
-          await refreshTopology();
-          warmPickers();
-        })();
-
-        // A resize may have landed while connecting; the scheduler picks it up
-        // once the Client's tty is known.
+        // Size first, so the capture that follows is of a Pane the size of the
+        // Surface rather than of whatever the last Client left it.
+        remoteSize.reset();
+        remoteSize.request(grid.current ?? current);
+        // A phone is too narrow for side-by-side Panes, so a split Session
+        // arrives with its active Pane filling the Window.
+        await client.setZoom(sessionParam, zoomed);
+        await refreshTopology();
+        await showActivePane();
+        refreshSessions();
       } catch (error) {
         if (!disposed.current) {
           setStatus({ phase: 'failed', message: describeConnectionFailure(error) });
         }
       }
     },
-    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput, knownClientTty, warmPickers],
+    [
+      hostId,
+      sessionParam,
+      remoteSize,
+      refreshTopology,
+      showActivePane,
+      refreshSessions,
+      zoomed,
+    ],
   );
 
   const handleResize = useCallback(
@@ -575,8 +487,9 @@ export default function TerminalScreen() {
       const next: Grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
       grid.current = next;
       setVisibleGrid(next);
+      view.current?.resize(next.rows);
 
-      if (shell.current) {
+      if (control.current) {
         // Every remote resize goes through one place, so a keyboard animation
         // is one round trip rather than thirty. See createResizeScheduler.
         remoteSize.request(next);
@@ -591,26 +504,14 @@ export default function TerminalScreen() {
     [start, remoteSize],
   );
 
-  const handleInput = useCallback(
-    ({ nativeEvent }: { nativeEvent: { data: string } }) => {
-      // Nobody types into the past on purpose. A key pressed while the Pane is
-      // scrolled back spends itself returning to the bottom and is not
-      // forwarded: copy-mode would otherwise read it as a movement command, and
-      // sending it as well would race the cancel down a different channel with
-      // no ordering between the two.
-      if (scrolledBack.current) {
-        stopScrolling();
-        return;
-      }
-      // `data` is base64. The sibling `text` field must not be used: a
-      // multi-byte character split across reads is corrupted by text decoding.
-      //
-      // What comes out of the Surface is not quite what a shell expects — every
-      // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-      shell.current?.write(toShellInput(base64ToBytes(nativeEvent.data)));
-    },
-    [stopScrolling],
-  );
+  const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
+    // `data` is base64. The sibling `text` field must not be used: a
+    // multi-byte character split across reads is corrupted by text decoding.
+    //
+    // What comes out of the Surface is not quite what a shell expects — every
+    // keystroke arrives wrapped as a bracketed paste. See toShellInput.
+    view.current?.type(toShellInput(base64ToBytes(nativeEvent.data)));
+  }, []);
 
   /**
    * Shows or hides the system keyboard.
@@ -630,62 +531,58 @@ export default function TerminalScreen() {
   }, [keyboardVisible]);
 
   /**
-   * Opens a picker on what was last seen, and corrects it behind.
+   * Opens a picker on a model that is already right.
    *
-   * Muxify holds no live model of the Host, so what is shown first is a memory,
-   * and a Session killed since will be in it. The answer is not to make the
-   * user wait for a round trip and a `capture-pane` before the sheet will
-   * appear: it is to show the memory immediately and replace it the moment the
-   * Host answers, which is what makes opening a picker feel like opening a
-   * drawer rather than asking a question.
+   * There is nothing to wait for and nothing to warm: the rows come from the
+   * Topology tmux has been pushing, so the sheet is drawn filled. What the Host
+   * is asked for — previews, and what each Pane is running — lands behind it
+   * and corrects the sheet in place. See refreshBehindSheet.
    */
   const openPicker = useCallback(
     (kind: PickerKind) => {
-      const remembered = pickerCache.current[kind];
+      const { cards, subtitle } = cardsFor(kind);
       setPicker({
         open: true,
         kind,
-        // Only a picker nothing has ever read has to show a spinner.
-        loading: remembered === undefined,
-        cards: remembered?.cards ?? [],
-        subtitle: remembered?.subtitle ?? '',
+        // Only a Session list that has never been read has nothing to draw.
+        loading: kind === 'sessions' && sessions === null,
+        cards,
+        subtitle,
       });
-      void (async () => {
-        try {
-          const fresh = await readCards(kind);
-          pickerCache.current[kind] = fresh;
-          setPicker((previous) =>
-            previous.open && previous.kind === kind
-              ? { open: true, kind, loading: false, ...fresh }
-              : previous,
-          );
-        } catch (error) {
-          setPicker((previous) =>
-            previous.open && previous.kind === kind
-              ? { ...previous, loading: false, error: describe(error) }
-              : previous,
-          );
-        }
-      })();
+      refreshBehindSheet(kind);
     },
-    [readCards],
+    [cardsFor, refreshBehindSheet, sessions],
   );
+
+  // The sheet follows the model while it is open, so a Window split from the
+  // laptop appears in it without it being closed and opened again.
+  const openKind = picker.open ? picker.kind : null;
+  useEffect(() => {
+    if (openKind === null) return;
+    const { cards, subtitle } = cardsFor(openKind);
+    setPicker((previous) =>
+      previous.open ? { ...previous, loading: false, cards, subtitle } : previous,
+    );
+  }, [cardsFor, openKind]);
+
+  /**
+   * Leaves the sheet up, saying why. Closing it on a failure would leave the
+   * user looking at the Session they tried to leave with no idea what happened.
+   */
+  const showPickerError = useCallback((error: unknown) => {
+    setPicker((previous) => (previous.open ? { ...previous, error: describe(error) } : previous));
+  }, []);
 
   /**
    * Acts on a picked row.
    *
-   * The sheet closes on success and stays up on failure, because closing it
-   * would leave the user looking at the old Session with no idea why. Every
-   * move ends with a redraw: tmux leaves padding behind whenever what it drew
-   * for was a different size, and a Window switch is exactly that.
+   * The sheet closes on success and stays up on failure; see showPickerError.
    */
   const select = useCallback(
     (kind: PickerKind, id: string) => {
       void (async () => {
         const client = tmux.current;
         if (!client) return;
-        // What every picker showed is now out of date by construction.
-        pickerCache.current = {};
         try {
           if (kind === 'sessions') {
             if (id === sessionName.current) {
@@ -700,13 +597,6 @@ export default function TerminalScreen() {
             // the same on the Host Screen. Without this the order would only
             // remember how a visit started, not where it went.
             if (hostId) void deviceHostStore().rememberSession(hostId, id);
-            // The new Session has its own history and its own position in it.
-            carriedLines.current = 0;
-            scrolledBack.current = false;
-            setScrolled(null);
-            // The Session switched to has never been prepared: its Window is
-            // sized for whatever last attached, and its status line is on.
-            await sessions.current?.prepare(id, clientTty.current);
             remoteSize.reset();
             const current = grid.current;
             if (current) remoteSize.request(current);
@@ -714,7 +604,7 @@ export default function TerminalScreen() {
             await client.selectWindow(sessionName.current, Number(id));
             setPicker({ open: false });
           } else {
-            const windowIndex = topology?.activeWindow?.index;
+            const windowIndex = topology.activeWindow?.index;
             if (windowIndex === undefined) return;
             await client.selectPane(sessionName.current, windowIndex, Number(id));
             setPicker({ open: false });
@@ -723,16 +613,22 @@ export default function TerminalScreen() {
           // Window lands on one nobody has zoomed, so the preference is
           // re-applied rather than assumed to have survived.
           await client.setZoom(sessionName.current, zoomed);
-          await client.redrawClient(clientTty.current);
           await refreshTopology();
+          await showActivePane();
         } catch (error) {
-          setPicker((previous) =>
-            previous.open ? { ...previous, error: describe(error) } : previous,
-          );
+          showPickerError(error);
         }
       })();
     },
-    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId],
+    [
+      refreshTopology,
+      showActivePane,
+      showPickerError,
+      topology.activeWindow,
+      zoomed,
+      remoteSize,
+      hostId,
+    ],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */
@@ -741,30 +637,24 @@ export default function TerminalScreen() {
       void (async () => {
         const client = tmux.current;
         if (!client) return;
-        pickerCache.current = {};
         try {
           if (id === 'new-window') {
             await client.newWindow(sessionName.current);
           } else if (id === 'split-right' || id === 'split-down') {
-            await client.splitWindow(
-              sessionName.current,
-              id === 'split-right' ? 'right' : 'down',
-            );
+            await client.splitWindow(sessionName.current, id === 'split-right' ? 'right' : 'down');
             // A fresh split is not what the user is looking at yet, and on a
             // phone two Panes side by side are unreadable.
             await client.setZoom(sessionName.current, zoomed);
           }
           setPicker({ open: false });
-          await client.redrawClient(clientTty.current);
           await refreshTopology();
+          await showActivePane();
         } catch (error) {
-          setPicker((previous) =>
-            previous.open ? { ...previous, error: describe(error) } : previous,
-          );
+          showPickerError(error);
         }
       })();
     },
-    [refreshTopology, zoomed],
+    [refreshTopology, showActivePane, showPickerError, zoomed],
   );
 
   const changeZoom = useCallback(
@@ -774,7 +664,6 @@ export default function TerminalScreen() {
         const client = tmux.current;
         if (!client) return;
         await client.setZoom(sessionName.current, on);
-        await client.redrawClient(clientTty.current);
         await refreshTopology();
       })();
     },
@@ -798,19 +687,19 @@ export default function TerminalScreen() {
           id: 'windows',
           label: 'Windows',
           systemImage: 'macwindow',
-          onPress: () => openPicker('windows'),
           // Never disabled while connected: the sheet is not only a picker,
           // it is the only way to make a Window, and a Session with one Window
           // is exactly when that is wanted.
           disabled: !connected,
+          onPress: () => openPicker('windows'),
         },
         {
           id: 'panes',
           label: 'Panes',
           systemImage: 'rectangle.split.2x1',
-          onPress: () => openPicker('panes'),
           // Same: one Pane is when you reach for Split.
           disabled: !connected,
+          onPress: () => openPicker('panes'),
         },
         {
           id: 'home',
@@ -828,19 +717,10 @@ export default function TerminalScreen() {
         },
       ],
     ];
-  }, [
-    router,
-    toggleKeyboard,
-    keyboardVisible,
-    openPicker,
-    status.phase,
-    topology,
-  ]);
+  }, [router, toggleKeyboard, keyboardVisible, openPicker, status.phase]);
 
   useEffect(() => {
-    // Only so the Dock can show which way its keyboard button points. Nothing
-    // is redrawn here: tmux repaints the Client itself when the pty resizes,
-    // and an extra full repaint per keyboard animation is a visible flash.
+    // Only so the Dock can show which way its keyboard button points.
     const shown = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
     const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
     return () => {
@@ -854,21 +734,23 @@ export default function TerminalScreen() {
     return () => {
       // Connections are ephemeral by design; leaving the screen tears this
       // down and returning re-attaches, which tmux makes cheap.
+      //
+      // Nothing is handed back on the way out, because nothing was borrowed.
+      // A control client sets no Session option, so a force-quit — which runs
+      // none of this — leaves the Session exactly as it was found. That is the
+      // whole of ADR 0006, and it is why this teardown is three lines.
       disposed.current = true;
-      const openShellHandle = shell.current;
+      const openControl = control.current;
       const openConnection = connection.current;
-      const preparer = sessions.current;
-      shell.current = null;
+      view.current?.dispose();
+      view.current = null;
+      control.current = null;
       connection.current = null;
       tmux.current = null;
-      sessions.current = null;
+      store.current = null;
       void (async () => {
         try {
-          // Hand back every Session touched this visit — switching means there
-          // may be more than one — before dropping the Connection, so Muxify
-          // does not leave the Host changed behind it.
-          await preparer?.restoreAll();
-          await openShellHandle?.close();
+          await openControl?.close();
         } finally {
           await openConnection?.disconnect();
         }
@@ -910,9 +792,9 @@ export default function TerminalScreen() {
           }}
           onResize={handleResize}
           onInput={handleInput}
-          // The history is tmux's, so the gesture has to be Muxify's: ghostty
-          // would otherwise spend it on a local scrollback that does not exist
-          // on the alternate screen. Needs the local patch.
+          // The Scrollback is tmux's, so the gesture has to be Muxify's:
+          // ghostty would otherwise spend it on one of its own that does not
+          // exist here. Needs the local patch.
           ownsScrollGesture
           onScroll={handleScroll}
         />
@@ -921,7 +803,7 @@ export default function TerminalScreen() {
           <ScrollBackIndicator
             position={scrolled}
             palette={opened.terminal}
-            onPress={stopScrolling}
+            onPress={jumpToLatest}
           />
         ) : null}
       </View>
@@ -980,6 +862,16 @@ export default function TerminalScreen() {
             {visibleGrid.cols}x{visibleGrid.rows}
           </ThemedText>
         ) : null}
+        {attachedSession ? (
+          <ThemedText type="code" style={styles.statusText} testID="attached-session">
+            {attachedSession}
+          </ThemedText>
+        ) : null}
+        {paneTrouble ? (
+          <ThemedText type="code" style={styles.troubleText} testID="pane-trouble">
+            {paneTrouble}
+          </ThemedText>
+        ) : null}
       </View>
 
       <StatusBanner status={status} />
@@ -988,15 +880,12 @@ export default function TerminalScreen() {
 }
 
 /**
- * The loud banner, shown only while something needs the user's attention. The
- * quiet always-present indicator above carries the same state for assertions.
- */
-/**
  * Says how far back the Pane is being viewed, and takes you back.
  *
- * Shown only while it is true, and it is tmux's own count rather than one this
- * app kept — the two part company as soon as the history runs out under a
- * flick, and a number that is quietly wrong is worse than no number.
+ * Shown only while it is true, and it is tmux's own count of the Scrollback
+ * rather than one this app kept — the two part company as soon as the
+ * Scrollback runs out under a flick, and a number that is quietly wrong is
+ * worse than no number.
  *
  * It doubles as the way out, because the two things a finger wants here are
  * "how far am I" and "take me back", and remux offers neither: its scrolled
@@ -1012,7 +901,7 @@ function ScrollBackIndicator({
   palette: { foreground: string; background: string };
   onPress: () => void;
 }) {
-  const atOldest = position.back >= position.history;
+  const atOldest = position.back >= position.scrollbackLines;
   return (
     <Pressable
       onPress={onPress}
@@ -1022,7 +911,7 @@ function ScrollBackIndicator({
       style={styles.scrollPill}>
       <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>
         {atOldest
-          ? `oldest of ${position.history} lines`
+          ? `oldest of ${position.scrollbackLines} lines`
           : `${position.back} lines back`}
       </ThemedText>
       <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.background }]}>
@@ -1032,6 +921,10 @@ function ScrollBackIndicator({
   );
 }
 
+/**
+ * The loud banner, shown only while something needs the user's attention. The
+ * quiet always-present indicator above carries the same state for assertions.
+ */
 function StatusBanner({ status }: { status: Status }) {
   if (status.phase === 'connected') {
     return null;
@@ -1048,11 +941,6 @@ function StatusBanner({ status }: { status: Status }) {
     </View>
   );
 }
-
-const EMPTY_TOPOLOGY: Topology = { windows: [], panes: [] };
-
-/** How often terminal output may trigger a Topology re-read. */
-const TOPOLOGY_REFRESH_MS = 2500;
 
 const PICKER_TITLES: Record<PickerKind, string> = {
   sessions: 'Sessions',
@@ -1092,12 +980,8 @@ const PICKER_ACTIONS: Record<PickerKind, SheetAction[]> = {
 const PREVIEW_LINES = 14;
 const PREVIEW_COLUMNS = 46;
 
-function previewOf(
-  previews: Map<string, string[]>,
-  target: string,
-  maxLines: number,
-): string[] {
-  return trimPreview(previews.get(target) ?? [], maxLines, PREVIEW_COLUMNS);
+function previewOf(previews: Map<string, string[]>, target: string): string[] {
+  return trimPreview(previews.get(target) ?? [], PREVIEW_LINES, PREVIEW_COLUMNS);
 }
 
 function plural(count: number, word: string): string {
@@ -1154,9 +1038,7 @@ function label(status: Status): string {
     case 'connected':
       return 'Connected';
     case 'closed':
-      return status.exitCode === undefined
-        ? 'Shell closed'
-        : `Shell closed (exit ${status.exitCode})`;
+      return `Detached: ${status.reason}`;
     case 'failed':
       return `Failed: ${status.message}`;
   }
@@ -1213,6 +1095,13 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: SurfacePalette.dim,
+  },
+  troubleText: {
+    // Loud enough to notice over whatever the Session is painting, quiet
+    // enough not to be a banner: the Connection is fine, one command was not.
+    color: '#ffb4b4',
+    maxWidth: 260,
+    textAlign: 'right',
   },
   keyWarning: {
     position: 'absolute',

@@ -1,14 +1,27 @@
 /**
- * Construction of the tmux commands Muxify sends over SSH.
+ * Construction of the tmux commands Muxify sends.
  *
- * Two shapes exist. The Shell Channel runs exactly one long-lived command —
- * an attach — with a PTY. Everything else is a Control Command: a one-shot
- * tmux invocation on its own exec channel, stdout only, never interactive.
- * See ADR 0001 for why this is not tmux control mode.
+ * Two shapes exist, and the difference is who parses the line.
  *
- * Pure string building, no transport. Ticket 06 puts a TmuxClient in front of
- * this; the strings themselves stay testable on their own.
+ * - **Down the Control Connection.** tmux itself reads the line, so it is
+ *   built as an argument list and rendered with tmux's quoting. There is no
+ *   shell anywhere on this path and no `tmux` at the front: the command is
+ *   already inside tmux.
+ * - **On an exec channel.** Only the two things that happen before there is a
+ *   Session to attach to — listing a Host's Sessions and making one. A shell
+ *   reads that line, so it is rendered with shell quoting and the tmux binary
+ *   in front.
+ *
+ * Commands are argument lists rather than strings for exactly that reason: the
+ * same command has to be quoted two different ways, and a string built for one
+ * is wrong for the other in a way nothing catches until a Session name has a
+ * quote in it.
+ *
+ * Pure string building, no transport.
  */
+
+/** One tmux command: the verb and its arguments, unquoted. */
+export type TmuxArgv = string[];
 
 /**
  * Wraps a value in single quotes so a shell treats it as one literal argument.
@@ -22,64 +35,108 @@ export function shellQuote(value: string): string {
   return `'${value.split("'").join("'\\''")}'`;
 }
 
-/** `tmux`, or the Host's explicit path when it provides one. */
-function tmux(executablePath?: string): string {
-  return executablePath ? shellQuote(executablePath) : 'tmux';
+/**
+ * Wraps a value so tmux's own parser treats it as one literal argument.
+ *
+ * Measured against tmux 3.7c, by sending values through as `-t` targets and
+ * reading the name back out of the error tmux answered with.
+ *
+ * Single quotes are wholly literal to tmux's lexer — `$`, `\`, `"`, `#`, `;`
+ * and spaces all pass through untouched, including a backslash at the very
+ * end. So they are used whenever the value has no single quote in it, which is
+ * every Session name anyone has ever typed.
+ *
+ * A value that does contain one has to go in double quotes, where tmux expands
+ * `${...}` and reads `\` as an escape; both are escaped, and `"` with them.
+ *
+ * What quoting cannot do anything about: some commands run their own format
+ * expansion over an argument *after* tmux has lexed it — `new-session -s`
+ * does, so a Session named `a#{b}c` is created as `ac`. That is tmux's
+ * behaviour towards its own user, not something a client can or should undo.
+ */
+export function tmuxQuote(value: string): string {
+  if (!value.includes("'")) return `'${value}'`;
+  return `"${value.replace(/[\\"$]/g, (character) => `\\${character}`)}"`;
 }
 
 /**
- * Control Command listing the Host's Sessions: Window count, name, and whether
- * anything is attached, tab separated.
+ * Every argument is quoted, including the flags and the command name.
  *
- * The name sits second to last because a Session name may contain a tab and
- * the fields around it may not — see splitFields, which rejoins the overflow
- * into that position.
- *
- * `session_attached` is how many Clients a Session has, and it is read for the
- * Host Screen's badge. It says nothing about Muxify: a Session is attached
- * when *anyone* is on it, which is the useful warning, because Muxify borrows
- * `window-size smallest` and taking over a Session someone is watching shrinks
- * their Window to phone size.
- *
- * A Host with no tmux server running exits non-zero here; that is an empty
- * Session list, not a failure, and the caller must treat it as such.
+ * Tempting to leave `-t` and `list-windows` bare for readability, and wrong:
+ * quoting is what stops a *value* being read as syntax, and the way to decide
+ * which is which would have to be a list of known flags. A Session named `-t`
+ * would then match that list and go through unquoted. tmux's own lexer strips
+ * the quotes before `getopt` sees anything, so a quoted flag is still a flag
+ * and a quoted value is still a value — which makes quoting everything both
+ * simpler and the only version with no gap in it.
  */
-export function listSessionsCommand(tmuxExecutablePath?: string): string {
-  return (
-    `${tmux(tmuxExecutablePath)} list-sessions ` +
-    "-F '#{session_windows}\t#{session_name}\t#{session_attached}'"
-  );
+
+/** An argument list as one line for the Control Connection. */
+export function renderControlCommand(argv: TmuxArgv): string {
+  return argv.map(tmuxQuote).join(' ');
+}
+
+/** An argument list as one line for a shell, with the tmux binary in front. */
+export function renderExecCommand(argv: TmuxArgv, tmuxExecutablePath?: string): string {
+  const tmux = tmuxExecutablePath ? shellQuote(tmuxExecutablePath) : 'tmux';
+  return [tmux, ...argv.map(shellQuote)].join(' ');
 }
 
 /**
- * Control Command creating a Session and leaving it running, detached.
+ * The shell command line the Control Connection's channel runs.
  *
- * Detached (`-d`) because the Shell Channel attaches separately a moment later:
- * a Control Command runs on its own exec channel and has no terminal to hand a
- * foreground Session, so creating one attached would hang the channel.
- *
- * `new-session` rather than `new-session -A`, and never as part of Attach: if
- * the name is already taken this must fail loudly rather than silently hand
- * back someone else's Session. See ADR 0005 for why Muxify creates Sessions at
- * all, having spent its first year refusing to.
+ * `-C` is control mode; `attach-session` rather than `new-session -A`, because
+ * Muxify only ever attaches to a Session that already exists and `-A` would
+ * silently create one. No PTY is requested for this channel — see the
+ * transport seam — which is what leaves the Session's options alone.
  */
-export function createSessionCommand(name: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} new-session -d -s ${shellQuote(name)}`;
+export function controlAttachCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return renderExecCommand(['-C', 'attach-session', '-t', sessionName], tmuxExecutablePath);
 }
 
 /**
- * The command the Shell Channel runs to Attach.
+ * Lists Sessions: how many Windows each holds, and its name.
  *
- * `attach-session`, never `new-session -A`: Muxify only ever attaches to a
- * Session that already exists, and the `-A` form would silently create one.
+ * The name comes first because a Session name may contain a tab and the count
+ * beside it may not — see splitFields, which rejoins the overflow into the
+ * field before the last one, which with two fields is the first.
+ *
+ * Whether anyone is attached is deliberately not asked for. It was a warning
+ * that joining would shrink somebody's Window, which was true while Muxify
+ * borrowed `window-size smallest` and is not true of a control client.
+ *
+ * Run on an exec channel from the Host Screen, and down the Control Connection
+ * from the Session picker. The same arguments serve both.
+ *
+ * A Host with no tmux server running fails here; that is an empty Session
+ * list, not a failure, and the caller must treat it as such.
  */
-export function attachSessionCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} attach-session -t ${shellQuote(sessionName)}`;
+export function listSessionsCommand(): TmuxArgv {
+  return [
+    'list-sessions',
+    '-F',
+    '#{session_name}\t#{session_windows}',
+  ];
+}
+
+/**
+ * Creates a Session and leaves it running, detached.
+ *
+ * Detached (`-d`) because attaching is a separate step a moment later, and
+ * because the channel this runs on has no terminal to hand a foreground
+ * Session.
+ *
+ * `new-session` rather than `new-session -A`: if the name is already taken
+ * this must fail loudly rather than silently hand back someone else's Session.
+ * See ADR 0005.
+ */
+export function createSessionCommand(name: string): TmuxArgv {
+  return ['new-session', '-d', '-s', name];
 }
 
 /** Addresses a Window as tmux writes it: `session:window`. */
 function windowTarget(sessionName: string, windowIndex: number): string {
-  return shellQuote(`${sessionName}:${windowIndex}`);
+  return `${sessionName}:${windowIndex}`;
 }
 
 /**
@@ -88,29 +145,41 @@ function windowTarget(sessionName: string, windowIndex: number): string {
  *
  * The trailing colon is load-bearing. A bare name is an *ambiguous* target:
  * tmux will read it as a Session, a Window index or a Pane index depending on
- * what it finds, and tmux's own default Session name is `0` — so `-t '0'`
+ * what it finds, and tmux's own default Session name is `0` — so `-t 0`
  * resolves to Pane 0 and every command aimed at "the current Pane" silently
  * hits the first one instead. The colon forces the Session reading.
  */
 function currentPaneTarget(sessionName: string): string {
-  return shellQuote(`${sessionName}:`);
+  return `${sessionName}:`;
 }
 
 /**
- * Control Command listing the Windows of a Session: index, name and whether it
- * is the active one, tab separated. Tab is the separator because a Window name
- * may contain spaces and colons but not a tab.
+ * Lists the Windows of a Session: tmux's own id, the index, whether it is
+ * active, how many Panes it holds, whether it is zoomed, what its active Pane
+ * is running, and its name.
+ *
+ * The id is what notifications address a Window by — `%window-renamed @2 logs`
+ * — so without it a pushed change could not be applied to the Window it is
+ * about, and every notification would cost a re-read.
+ *
+ * The name sits second to last, as it does in the Sessions listing and for the
+ * same reason: it is the one field that may contain a tab, and splitFields
+ * rejoins the overflow into that position. Tab is the separator because a name
+ * may contain spaces and colons but rarely a tab.
  */
-export function listWindowsCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return (
-    `${tmux(tmuxExecutablePath)} list-windows -t ${shellQuote(sessionName)} ` +
-    "-F '#{window_index}\t#{window_name}\t#{window_active}\t#{window_panes}" +
-    "\t#{window_zoomed_flag}\t#{pane_current_command}'"
-  );
+export function listWindowsCommand(sessionName: string): TmuxArgv {
+  return [
+    'list-windows',
+    '-t',
+    sessionName,
+    '-F',
+    '#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}' +
+      '\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}',
+  ];
 }
 
 /**
- * Control Command listing the Panes of one Window, same shape as Windows.
+ * Lists the Panes of one Window, same shape as Windows.
  *
  * Geometry is not asked for. `#{pane_left}` and friends report where a Pane is
  * being *drawn*, which for a zoomed Pane is the whole Window — and Muxify zooms
@@ -119,248 +188,160 @@ export function listWindowsCommand(sessionName: string, tmuxExecutablePath?: str
  * on every line, which is the price of reading it without a second round trip.
  * See parseWindowLayout.
  */
-export function listPanesCommand(
-  sessionName: string,
-  windowIndex: number,
-  tmuxExecutablePath?: string,
-): string {
-  return (
-    `${tmux(tmuxExecutablePath)} list-panes -t ${windowTarget(sessionName, windowIndex)} ` +
-    "-F '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}" +
-    "\t#{pane_current_path}\t#{window_layout}'"
-  );
+export function listPanesCommand(sessionName: string, windowIndex: number): TmuxArgv {
+  return [
+    'list-panes',
+    '-t',
+    windowTarget(sessionName, windowIndex),
+    '-F',
+    '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}' +
+      '\t#{pane_current_path}\t#{window_layout}',
+  ];
 }
 
-/** Control Command moving the attached client to another Window. */
-export function selectWindowCommand(
-  sessionName: string,
-  windowIndex: number,
-  tmuxExecutablePath?: string,
-): string {
-  return `${tmux(tmuxExecutablePath)} select-window -t ${windowTarget(sessionName, windowIndex)}`;
+/** Moves the Client to another Window. */
+export function selectWindowCommand(sessionName: string, windowIndex: number): TmuxArgv {
+  return ['select-window', '-t', windowTarget(sessionName, windowIndex)];
 }
 
-/** Control Command moving the attached client to another Pane. */
+/** Moves the Client to another Pane. */
 export function selectPaneCommand(
   sessionName: string,
   windowIndex: number,
   paneIndex: number,
-  tmuxExecutablePath?: string,
-): string {
-  const target = shellQuote(`${sessionName}:${windowIndex}.${paneIndex}`);
-  return `${tmux(tmuxExecutablePath)} select-pane -t ${target}`;
+): TmuxArgv {
+  return ['select-pane', '-t', `${sessionName}:${windowIndex}.${paneIndex}`];
 }
 
 /**
- * Control Command pointing the attached client at a different Session.
+ * Points the Client at a different Session.
  *
- * This is how Session switching happens without tearing down the Shell
- * Channel: the client follows, and the Surface simply redraws.
+ * This is how switching Session happens without tearing down the Control
+ * Connection: the client follows, `%session-changed` arrives, and the Surface
+ * is resynced from the new Session's Pane.
  */
-export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} switch-client -t ${shellQuote(sessionName)}`;
+export function switchSessionCommand(sessionName: string): TmuxArgv {
+  return ['switch-client', '-t', sessionName];
 }
 
 /**
- * How the Session decides how big its Windows are.
+ * Tells tmux how big this Client is.
  *
- * Muxify wants `smallest`, which is the only value that makes tmux's padding
- * structurally impossible. tmux pads the difference whenever a Client is bigger
- * than the Window, and `smallest` keeps the Window no bigger than the smallest
- * attached Client — so there is never a difference to pad on the Client Muxify
- * owns. With one Client attached, which is the usual case, the Window simply
- * tracks the Surface exactly.
+ * The one thing a control client has to ask for. Measured against tmux 3.7c:
+ * an unsized control client does not drag the Window at all — one reporting 80
+ * columns sat on a 120x40 Window and left it there — and `refresh-client -C`
+ * is what moves it. So sizing is opt-in, and Muxify has to opt in or the
+ * Window never matches the phone.
  *
- * The rejected alternative was `manual` plus `resize-window`: two sizes, set by
- * two commands, which can only agree between round trips and pad whenever they
- * do not. See resizeClientCommand for why the Client's size is now Muxify's to
- * set, which is what makes one size enough.
- *
- * It is a session option, so it is visible to every other Client and outlives
- * the Connection: read the original first and put it back on teardown. The cost
- * of `smallest` is real — a desktop Client on the same Session is squeezed down
- * to the phone — which is exactly why it is borrowed rather than kept.
+ * This sets no Session option. Under the default `window-size latest` the
+ * Window follows this Client while it is the latest to have asked, and reverts
+ * when the Client goes. Nothing is left behind to restore, which is the whole
+ * of ADR 0006.
  */
-/** Escapes a value for a tmux double-quoted string inside a hook body. */
-function tmuxQuote(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+export function resizeClientCommand(cols: number, rows: number): TmuxArgv {
+  return ['refresh-client', '-C', `${size(cols)}x${size(rows)}`];
+}
+
+function size(value: number): number {
+  return Math.max(1, Math.floor(value));
 }
 
 /**
- * Control Command asking tmux to put the borrowed options back itself, the
- * moment Muxify's Client goes away.
+ * Carries arbitrary bytes into a Pane.
  *
- * Restoring on teardown is not enough, because teardown does not always run. A
- * force-quit, a crash, a dropped Connection — the app gets no chance, and the
- * Session is left with its status line off and its Windows pinned to the size
- * of a phone. Somebody working on the same Session from a laptop then finds
- * their status bar missing, with nothing to tell them why or how to get it
- * back. That is the worst thing this app has done to a Host.
- *
- * A `client-detached` hook survives all of it, because tmux runs it rather than
- * Muxify. It removes itself as its last act, so there is no litter either.
- *
- * The one cost: the hook fires when *any* Client leaves the Session, so a
- * laptop detaching gives the options back while the phone is still attached.
- * The phone gets its status line and its padding back until something prepares
- * the Session again — untidy, where the alternative is permanent.
+ * `-H` takes one hex byte per argument, which is how typed input reaches a
+ * Pane with no PTY anywhere in the path. It is also why tmux's prefix key
+ * never fires: these bytes go *into* the Pane, not through tmux's key table.
+ * Every tmux verb therefore has to come from the Dock. See ADR 0006.
  */
-export function restoreOnDetachCommand(
-  sessionName: string,
-  original: { status?: string; windowSize?: string; mouse?: string },
-  tmuxExecutablePath?: string,
-): string {
-  const target = tmuxQuote(sessionName);
-  const puts = [
-    original.status === undefined
-      ? null
-      : `set-option -t ${target} status ${tmuxQuote(original.status)}`,
-    original.windowSize === undefined
-      ? null
-      : `set-option -t ${target} window-size ${tmuxQuote(original.windowSize)}`,
-    original.mouse === undefined
-      ? null
-      : `set-option -t ${target} mouse ${tmuxQuote(original.mouse)}`,
-    // Its last act, so a Session is never left carrying Muxify's hook.
-    `set-hook -u -t ${target} client-detached`,
-  ].filter((part): part is string => part !== null);
-
-  return (
-    `${tmux(tmuxExecutablePath)} set-hook -t ${shellQuote(sessionName)} ` +
-    `client-detached ${shellQuote(puts.join(' ; '))}`
-  );
-}
-
-/** Control Command taking Muxify's restore hook off a Session. */
-export function clearRestoreHookCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} set-hook -u -t ${shellQuote(sessionName)} client-detached`;
+export function sendKeysCommand(paneId: string, bytes: Uint8Array): TmuxArgv {
+  const hex: string[] = [];
+  for (const byte of bytes) hex.push(byte.toString(16).padStart(2, '0'));
+  return ['send-keys', '-t', paneId, '-H', ...hex];
 }
 
 /**
- * Whether tmux reads mouse events from its Client.
+ * Reads back what is already on a Pane's screen.
  *
- * Muxify needs it on, because that is what makes a wheel event reach tmux at
- * all — and tmux's own wheel binding is the routing this app would otherwise
- * have to write: history for a shell, the event handed straight to the
- * application for anything on the alternate screen or asking for the mouse.
+ * `%output` only carries what happens *next*, so a Surface that has just
+ * attached would show an empty screen until something moved. This is the
+ * missing half: the Pane as it already is.
  *
- * It is a session option like the other two, so it is borrowed the same way:
- * read first, put back on teardown. Muxify never sends a button press, only a
- * wheel, so turning it on does not make taps into clicks.
+ * `-e` keeps the colours as escape sequences, `-N` keeps trailing spaces, and
+ * `-p` writes to the reply rather than a buffer. No `-J`: joining wrapped
+ * lines would reflow the screen to a width that is not the Pane's.
  */
-export function readMouseCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v mouse`;
-}
-
-export function setMouseCommand(
-  sessionName: string,
-  value: string,
-  tmuxExecutablePath?: string,
-): string {
-  return (
-    `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} ` +
-    `mouse ${shellQuote(value)}`
-  );
-}
-
-export function readWindowSizingCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v window-size`;
-}
-
-export function setWindowSizingCommand(
-  sessionName: string,
-  value: string,
-  tmuxExecutablePath?: string,
-): string {
-  return (
-    `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} ` +
-    `window-size ${shellQuote(value)}`
-  );
+export function capturePaneCommand(paneId: string): TmuxArgv {
+  return ['capture-pane', '-t', paneId, '-p', '-e', '-N'];
 }
 
 /**
- * Control Commands for the Session's status line.
+ * The same, over a range of the Pane's Scrollback.
  *
- * remux never needs these: it drives tmux in control mode, where the client
- * renders nothing itself and tmux streams pane content instead, so no status
- * line exists. Muxify attaches a real client (ADR 0001), so tmux draws its full
- * chrome — including a status line that duplicates what the Dock already shows.
- *
- * `status` is a session option, so turning it off is visible to every other
- * client of that Session and outlives the Connection. Read the original value
- * first and put it back on teardown.
+ * Negative line numbers are above the top of the screen: `-S -30 -E -1` is the
+ * thirty lines that have scrolled off. This is how the Scrollback is read now
+ * that tmux's copy-mode is not involved — see ticket 06.
  */
-export function readStatusLineCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v status`;
-}
-
-export function setStatusLineCommand(
-  sessionName: string,
-  value: string,
-  tmuxExecutablePath?: string,
-): string {
-  return `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} status ${shellQuote(value)}`;
+export function captureScrollbackCommand(
+  paneId: string,
+  startLine: number,
+  endLine: number,
+): TmuxArgv {
+  return [
+    'capture-pane',
+    '-t',
+    paneId,
+    '-p',
+    '-e',
+    '-N',
+    '-S',
+    String(Math.floor(startLine)),
+    '-E',
+    String(Math.floor(endLine)),
+  ];
 }
 
 /**
- * Control Command listing the Session's Clients, newest last: creation time
- * and tty, tab separated.
+ * Everything about a Pane that a resync needs and the Layout does not say:
+ * where the cursor is, whether the Pane is on the alternate screen, how much
+ * Scrollback it has (tmux calls that `history_size`), and how big it is.
  *
- * The tty is how a Client is addressed. Muxify needs its own, because a
- * Session may have other Clients — the whole point of tmux — and a redraw
- * aimed at the wrong one leaves the Surface dirty.
+ * The last two decide how a scroll behaves. On the alternate screen the
+ * application is scrolling itself, so the gesture becomes input: wheel bytes
+ * when it asked for the mouse, cursor keys when it did not — `less` and `man`
+ * read nothing else, and tmux 3.6 dropped the `alternate-scroll` option that
+ * used to do that translation. On the normal screen the gesture becomes a
+ * `capture-pane` over the Scrollback instead. See ticket 06.
  */
-export function listClientsCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return (
-    `${tmux(tmuxExecutablePath)} list-clients -t ${shellQuote(sessionName)} ` +
-    "-F '#{client_created}\t#{client_tty}'"
-  );
+export function paneStateCommand(paneId: string): TmuxArgv {
+  return [
+    'display-message',
+    '-p',
+    '-t',
+    paneId,
+    '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
+      '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}',
+  ];
 }
 
 /**
- * Control Command forcing a Client to repaint everything it is showing.
+ * Captures what several Panes are showing, one command each.
  *
- * For the moves that change what the Client should be looking at without tmux
- * knowing the Surface needs it again from the top: switching Session, taking a
- * Session over, following a Window that was drawn at another size.
+ * Written together and answered together, so a picker full of previews costs
+ * one round trip rather than one per Pane — see `runAll`. Control mode is what
+ * makes that possible: each command gets its own `%begin`/`%end`, so the
+ * captures come back already separated. The exec path had to chain them with
+ * `;` and put a marker between them, because a shell hands back one stream.
  *
- * Not for resizes. tmux repaints a Client itself when its pty changes size, and
- * an extra full repaint on every frame of a keyboard animation is a flash the
- * user sees. It used to be needed there because the Client's size could not be
- * changed at all, so tmux never knew a resize had happened — see
- * resizeClientCommand, which is what removed the need.
- *
- * Without a tty tmux picks whichever Client it considers best, which is right
- * only when the Session has exactly one.
+ * No `-e` here, unlike a resync: a preview is drawn as plain text, and colour
+ * escapes would be shown rather than obeyed.
  */
-export function redrawClientCommand(clientTty?: string, tmuxExecutablePath?: string): string {
-  const command = `${tmux(tmuxExecutablePath)} refresh-client`;
-  return clientTty === undefined ? command : `${command} -t ${shellQuote(clientTty)}`;
-}
-
-/** Separates one Pane's captured content from the next in a batched capture. */
-export const CAPTURE_SEPARATOR = '@@muxify@@';
-
-/**
- * Control Command capturing what several Panes are showing, in one round trip.
- *
- * One exec per Pane would be a round trip each, and a picker that takes a
- * second to fill is a picker nobody opens. tmux has no batch form, so the
- * commands are chained with `;` — which every POSIX shell and fish agree on,
- * unlike a pipeline or a loop.
- *
- * `capture-pane -p` gives the visible region, which is exactly what a preview
- * wants: what that Pane looks like right now.
- */
-export function capturePanesCommand(targets: string[], tmuxExecutablePath?: string): string {
-  const tmuxPath = tmux(tmuxExecutablePath);
-  return targets
-    .map((target) => `${tmuxPath} capture-pane -t ${shellQuote(target)} -p`)
-    .join(` ; echo ${shellQuote(CAPTURE_SEPARATOR)} ; `);
+export function capturePanesCommand(targets: string[]): TmuxArgv[] {
+  return targets.map((target) => ['capture-pane', '-t', target, '-p']);
 }
 
 /**
- * Control Command toggling zoom on a Window's active Pane.
+ * Toggles zoom on a Window's active Pane.
  *
  * tmux has no "zoom on" — `-Z` toggles — so the caller has to know the current
  * state, which `listWindowsCommand` reports as the zoomed flag.
@@ -369,98 +350,25 @@ export function capturePanesCommand(targets: string[], tmuxExecutablePath?: stri
  * name does instead, which is zoom the wrong Pane and select it into the
  * bargain.
  */
-export function zoomPaneCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} resize-pane -Z -t ${currentPaneTarget(sessionName)}`;
+export function zoomPaneCommand(sessionName: string): TmuxArgv {
+  return ['resize-pane', '-Z', '-t', currentPaneTarget(sessionName)];
 }
 
 /**
- * Control Command splitting the current Pane, beside it or below it. Aimed with
- * a trailing colon — see currentPaneTarget — or it splits the first Pane rather
- * than the one the user is looking at.
+ * Splits the current Pane, beside it or below it. Aimed with a trailing colon
+ * — see currentPaneTarget — or it splits the first Pane rather than the one
+ * the user is looking at.
  */
-export function splitWindowCommand(
-  sessionName: string,
-  direction: 'right' | 'down',
-  tmuxExecutablePath?: string,
-): string {
-  const flag = direction === 'right' ? '-h' : '-v';
-  return `${tmux(tmuxExecutablePath)} split-window ${flag} -t ${currentPaneTarget(sessionName)}`;
+export function splitWindowCommand(sessionName: string, direction: 'right' | 'down'): TmuxArgv {
+  return [
+    'split-window',
+    direction === 'right' ? '-h' : '-v',
+    '-t',
+    currentPaneTarget(sessionName),
+  ];
 }
 
-/**
- * Control Command asking where the active Pane is in its history.
- *
- * Only for the label. The scrolling itself is wheel bytes on the Shell Channel
- * and costs no round trip; this is asked once after a drag settles, because a
- * count that is quietly wrong is worse than no count and only tmux knows where
- * the history ran out.
- *
- * A Pane that is not in copy-mode — a shell at the bottom, or any full-screen
- * application scrolling itself — reports no position, which is the signal that
- * there is nothing to say.
- *
- * The last two fields say what a scroll gesture should turn into. tmux's wheel
- * binding hands the event to the application whenever the Pane is on the
- * alternate screen or asking for the mouse; an application that asked for the
- * mouse will act on it, and one that did not will ignore it entirely — tmux 3.6
- * dropped `alternate-scroll`, which used to translate it to cursor keys. So
- * that translation has to happen here, or `less` and `man` do not scroll at all.
- */
-export function readScrollStateCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return (
-    `${tmux(tmuxExecutablePath)} display-message -p -t ${currentPaneTarget(sessionName)} ` +
-    "'#{pane_in_mode}\t#{scroll_position}\t#{history_size}" +
-    "\t#{alternate_on}\t#{mouse_any_flag}'"
-  );
-}
-
-/**
- * Control Command putting the Pane back at the live bottom.
- *
- * For the two moments that mean "I am done looking at the past": the jump-back
- * button, and the first key typed while scrolled away — nobody types into
- * history on purpose.
- */
-export function stopScrollingCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} send-keys -X -t ${currentPaneTarget(sessionName)} cancel`;
-}
-
-/** Control Command adding a Window to a Session, after the current one. */
-export function newWindowCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} new-window -a -t ${shellQuote(`${sessionName}:`)}`;
-}
-
-/**
- * Resizes the Client's pseudo-terminal from the Host side.
- *
- * This is the answer to the SSH library not sending window-change requests: it
- * never needed to. The Client's size lives in a pty on the Host, and the Host
- * can set it — `stty` on the tty tmux is attached to sends SIGWINCH to the
- * tmux client, which is exactly what a real terminal emulator's resize does.
- * It goes over the exec channel, which has been reliable all along.
- *
- * Why this matters: tmux pads every row between the Window and the Client with
- * dots, and those rows land past the end of the Surface's grid. A Client size
- * that cannot be changed makes that padding unavoidable; one that can makes it
- * impossible — because on `window-size smallest` the Window follows the Client
- * inside the tmux server, in the same instant, with no second round trip to be
- * caught halfway through. This is the only size Muxify sets.
- *
- * GNU `stty` takes `-F` and BSD's takes `-f`, and the Host may be either, so
- * the command tries one and falls back to the other.
- */
-export function resizeClientCommand(
-  clientTty: string,
-  cols: number,
-  rows: number,
-  tmuxExecutablePath?: string,
-): string {
-  const tty = shellQuote(clientTty);
-  const size = `rows ${Math.max(1, Math.floor(rows))} cols ${Math.max(1, Math.floor(cols))}`;
-  const set = `stty -F ${tty} ${size} 2>/dev/null || stty -f ${tty} ${size}`;
-  // What tmux believes afterwards, not what the pty says. They part company:
-  // tmux re-reads the pty on a signal it does not always act on straight away,
-  // so a size can be set correctly and still not be the size tmux draws for.
-  // The caller compares and asks again.
-  return set;
+/** Adds a Window to a Session, after the current one. */
+export function newWindowCommand(sessionName: string): TmuxArgv {
+  return ['new-window', '-a', '-t', currentPaneTarget(sessionName)];
 }

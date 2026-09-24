@@ -5,8 +5,6 @@ import type { RecentSession } from '@/storage/records';
 export interface RecentRow {
   name: string;
   lastOpenedAt: string;
-  /** Whether a Client is on it now. Unknown until the Host has been read. */
-  attached: boolean | undefined;
   windowCount: number | undefined;
 }
 
@@ -42,7 +40,6 @@ export function hostSessions(
       recent: recent.map((session) => ({
         name: session.name,
         lastOpenedAt: session.lastOpenedAt,
-        attached: undefined,
         windowCount: undefined,
       })),
       available: [],
@@ -60,7 +57,6 @@ export function hostSessions(
         {
           name: session.name,
           lastOpenedAt: session.lastOpenedAt,
-          attached: live.attached,
           windowCount: live.windowCount,
         },
       ];

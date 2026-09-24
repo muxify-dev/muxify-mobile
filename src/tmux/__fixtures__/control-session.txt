@@ -1,0 +1,83 @@
+%begin 1789492369 352 0
+%end 1789492369 352 0
+%session-changed $0 probe
+%begin 1789492370 357 1
+probe
+%end 1789492370 357 1
+%begin 1789492370 358 1
+b25d,80x24,0,0,0
+%end 1789492370 358 1
+%begin 1789492371 359 1
+parse error: unknown command: this-is-not-a-command
+%error 1789492371 359 1
+%begin 1789492371 360 1
+%end 1789492371 360 1
+%output %0 e\010echo hello\033[?2004l\015\015\012
+%output %0 hello\015\012\033[1m\033[7m%\033[27m\033[1m\033[0m                                                                               \015 \015
+%output %0 \015\033[0m\033[27m\033[24m\033[Juser@host project % \033[K\033[?2004h
+%begin 1789492372 361 1
+%end 1789492372 361 1
+%output %0 p\010print
+%output %0 f '\134340\134260\134240\134\134'\033[?2004l\015\015\012
+%output %0 ఠ\134
+%output %0 \033[1m\033[7m%\033[27m\033[1m\033[0m                                                                               \015 \015
+%output %0 \015\033[0m\033[27m\033[24m\033[Juser@host project % \033[K\033[?2004h
+%begin 1789492373 362 1
+%end 1789492373 362 1
+%window-add @1
+%window-renamed @1 tmux
+%output %1 \033[1m\033[7m%\033[27m\033[1m\033[0m                                                                               \015 \015
+%output %1 \015\033[0m\033[27m\033[24m\033[Juser@host project % \033[K\033[?2004h
+%window-renamed @1 zsh
+%begin 1789492374 367 1
+%end 1789492374 367 1
+%layout-change @0 4196,80x24,0,0[80x12,0,0,0,80x11,0,13,2] 4196,80x24,0,0[80x12,0,0,0,80x11,0,13,2] *
+%output %0 \015\015\033[0m\033[27m\033[24m\033[Juser@host project % 
+%output %2 \033[1m\033[7m%\033[27m\033[1m\033[0m                                                                               \015 \015
+%output %2 \015\033[0m\033[27m\033[24m\033[Juser@host project % \033[K\033[?2004h
+%begin 1789492375 369 1
+%end 1789492375 369 1
+%window-renamed @1 renamed
+%begin 1789492376 371 1
+user@host project % echo hello                           
+hello               
+user@host project % printf '\340\260\240\\'              
+ఠ\[1;7m%[0m                                                                             
+user@host project %                                      
+
+
+
+
+
+
+
+%end 1789492376 371 1
+%begin 1789492377 372 1
+%end 1789492377 372 1
+%session-window-changed $0 @1
+%begin 1789492378 376 1
+%end 1789492378 376 1
+%layout-change @0 b7fc,40x20,0,0[40x10,0,0,0,40x9,0,11,2] b7fc,40x20,0,0[40x10,0,0,0,40x9,0,11,2] -
+%layout-change @1 a15e,40x20,0,0,1 a15e,40x20,0,0,1 *
+%output %2 \015\015\033[0m\033[27m\033[24m\033[Juser@host project % 
+%output %0 \015\015\033[0m\033[27m\033[24m\033[Juser@host project % 
+%output %1 \015\015\033[0m\033[27m\033[24m\033[Juser@host project % 
+%begin 1789492379 382 1
+%end 1789492379 382 1
+%session-window-changed $0 @0
+%unlinked-window-close @1
+%begin 1789492380 387 1
+%end 1789492380 387 1
+%unlinked-window-add @2
+%sessions-changed
+%unlinked-window-renamed @2 tmux
+%unlinked-window-renamed @2 zsh
+%begin 1789492381 392 1
+%end 1789492381 392 1
+%session-changed $1 second
+%layout-change @2 a160,40x20,0,0,3 a160,40x20,0,0,3 *
+%output %3 \015\015\033[0m\033[27m\033[24m\033[Juser@host project % 
+%begin 1789492382 398 1
+%end 1789492382 398 1
+%sessions-changed
+%exit

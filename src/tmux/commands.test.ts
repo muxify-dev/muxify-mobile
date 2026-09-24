@@ -1,401 +1,236 @@
 import {
-  attachSessionCommand,
-  resizeClientCommand,
+  capturePaneCommand,
+  captureScrollbackCommand,
   capturePanesCommand,
-  newWindowCommand,
-  splitWindowCommand,
-  zoomPaneCommand,
-  listClientsCommand,
-  redrawClientCommand,
-  listPanesCommand,
+  controlAttachCommand,
   createSessionCommand,
+  listPanesCommand,
   listSessionsCommand,
-  clearRestoreHookCommand,
-  readMouseCommand,
-  readScrollStateCommand,
-  restoreOnDetachCommand,
-  setMouseCommand,
-  stopScrollingCommand,
   listWindowsCommand,
+  newWindowCommand,
+  paneStateCommand,
+  renderControlCommand,
+  renderExecCommand,
+  resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
-  readWindowSizingCommand,
-  setWindowSizingCommand,
+  sendKeysCommand,
   shellQuote,
+  splitWindowCommand,
   switchSessionCommand,
+  tmuxQuote,
+  zoomPaneCommand,
 } from './commands';
 
-describe('shellQuote', () => {
-  it('quotes a plain word', () => {
-    expect(shellQuote('main')).toBe("'main'");
+describe('quoting for a shell', () => {
+  it('wraps a value so no expansion can reach it', () => {
+    expect(shellQuote('work')).toBe("'work'");
+    expect(shellQuote('$HOME; rm -rf /')).toBe("'$HOME; rm -rf /'");
   });
 
-  it('quotes a name containing spaces', () => {
-    expect(shellQuote('my session')).toBe("'my session'");
-  });
-
-  it('escapes an embedded single quote so the command cannot be broken out of', () => {
+  it('survives a single quote in the value', () => {
     expect(shellQuote("it's")).toBe("'it'\\''s'");
   });
+});
 
-  it('neutralises a command-substitution attempt', () => {
-    expect(shellQuote('$(rm -rf /)')).toBe("'$(rm -rf /)'");
+describe('quoting for tmux itself', () => {
+  // Measured against tmux 3.7c by sending each value through as a `-t` target
+  // and reading the name back out of the error tmux answered with.
+  it('single-quotes a value, which tmux reads wholly literally', () => {
+    expect(tmuxQuote('a b"c#{g}h;i$x\\y')).toBe("'a b\"c#{g}h;i$x\\y'");
   });
 
-  it('neutralises a semicolon chain', () => {
-    expect(shellQuote('a; rm -rf /')).toBe("'a; rm -rf /'");
+  it('single-quotes a value ending in a backslash', () => {
+    expect(tmuxQuote('ends-with\\')).toBe("'ends-with\\'");
   });
 
-  it('quotes an empty string', () => {
-    expect(shellQuote('')).toBe("''");
+  it('double-quotes a value that holds a single quote, escaping what tmux reads', () => {
+    expect(tmuxQuote("it's $HOME \\ \"q\"")).toBe('"it\'s \\$HOME \\\\ \\"q\\""');
   });
 });
 
-describe('listSessionsCommand', () => {
-  it('asks tmux for the Window count, the name and whether anything is attached', () => {
-    expect(listSessionsCommand()).toBe(
-      "tmux list-sessions -F '#{session_windows}\t#{session_name}\t#{session_attached}'",
+describe('rendering an argument list', () => {
+  it('quotes every argument, flags and command name included', () => {
+    expect(renderControlCommand(['select-window', '-t', 'work:2'])).toBe(
+      "'select-window' '-t' 'work:2'",
     );
   });
 
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(listSessionsCommand('/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' list-sessions -F '#{session_windows}\t#{session_name}\t#{session_attached}'",
+  it('cannot be fooled by a Session named like a flag', () => {
+    // Quoting is what stops a value being read as syntax, so a Session called
+    // `-t` has to be quoted like any other value — which is why there is no
+    // list of known flags to be absent from.
+    expect(renderControlCommand(['switch-client', '-t', '-t'])).toBe(
+      "'switch-client' '-t' '-t'",
     );
   });
-});
 
-describe('createSessionCommand', () => {
-  it('creates the Session detached, so the exec channel is not left holding it', () => {
-    expect(createSessionCommand('notes')).toBe("tmux new-session -d -s 'notes'");
-  });
-
-  it('quotes a name that would otherwise reach the shell', () => {
-    expect(createSessionCommand("; rm -rf /")).toBe("tmux new-session -d -s '; rm -rf /'");
-  });
-
-  it('never uses -A, which would hand back an existing Session instead of failing', () => {
-    expect(createSessionCommand('taken')).not.toContain('-A');
-  });
-
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(createSessionCommand('notes', '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' new-session -d -s 'notes'",
+  it('puts tmux in front for a shell, and only there', () => {
+    expect(renderExecCommand(['list-sessions'])).toBe("tmux 'list-sessions'");
+    expect(renderExecCommand(['list-sessions'], '/opt/homebrew/bin/tmux')).toBe(
+      "'/opt/homebrew/bin/tmux' 'list-sessions'",
     );
   });
 });
 
-describe('attachSessionCommand', () => {
-  it('attaches to a named Session', () => {
-    expect(attachSessionCommand('0')).toBe("tmux attach-session -t '0'");
+describe('attaching', () => {
+  it('runs tmux in control mode, attaching to a Session that exists', () => {
+    expect(controlAttachCommand('work')).toBe("tmux '-C' 'attach-session' '-t' 'work'");
   });
 
-  it('never creates a Session, only attaches', () => {
-    // Muxify is attach-only; `new-session -A` would silently create one.
-    expect(attachSessionCommand('main')).not.toContain('new-session');
-  });
-
-  it('quotes a Session name containing a space', () => {
-    expect(attachSessionCommand('my work')).toBe("tmux attach-session -t 'my work'");
-  });
-
-  it('escapes a Session name that tries to break out of the command', () => {
-    expect(attachSessionCommand("'; id; '")).toBe("tmux attach-session -t ''\\''; id; '\\'''");
-  });
-
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(attachSessionCommand('0', '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' attach-session -t '0'",
-    );
-  });
-
-  it('quotes a tmux path containing a space', () => {
-    expect(attachSessionCommand('0', '/opt/my tools/tmux')).toBe(
-      "'/opt/my tools/tmux' attach-session -t '0'",
-    );
+  it('never creates a Session on the way in', () => {
+    expect(controlAttachCommand('work')).not.toContain('new-session');
   });
 });
 
-describe('listWindowsCommand', () => {
-  it('asks for what a Window preview needs, tab separated', () => {
-    expect(listWindowsCommand('main')).toBe(
-      "tmux list-windows -t 'main' -F '#{window_index}\t#{window_name}\t#{window_active}" +
-        "\t#{window_panes}\t#{window_zoomed_flag}\t#{pane_current_command}'",
-    );
+describe('reading what is there', () => {
+  it('asks for the fields a Session picker shows', () => {
+    expect(listSessionsCommand()).toEqual([
+      'list-sessions',
+      '-F',
+      '#{session_name}\t#{session_windows}',
+    ]);
   });
 
-  it('quotes a Session name containing a space', () => {
-    expect(listWindowsCommand('my work')).toContain("-t 'my work'");
+  it('never asks whether anyone is attached', () => {
+    // That was a warning that joining would shrink somebody's Window, which a
+    // control client cannot do. See ADR 0006.
+    expect(listSessionsCommand().join(' ')).not.toContain('session_attached');
   });
 
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(listWindowsCommand('main', '/usr/bin/tmux').startsWith("'/usr/bin/tmux' list-windows")).toBe(
-      true,
-    );
-  });
-});
-
-describe('listPanesCommand', () => {
-  it('targets a specific Window inside a Session', () => {
-    expect(listPanesCommand('main', 2)).toBe(
-      "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_id}\t#{pane_current_command}" +
-        "\t#{pane_active}\t#{pane_current_path}\t#{window_layout}'",
-    );
+  it('puts the Session name where a tab in it cannot shift the count', () => {
+    const fields = listSessionsCommand()[2].split('\t');
+    expect(fields[fields.length - 2]).toBe('#{session_name}');
   });
 
-  it('quotes the combined target so a Session name cannot break it', () => {
-    expect(listPanesCommand("a'b", 0)).toContain("-t 'a'\\''b:0'");
-  });
-});
-
-describe('selectWindowCommand', () => {
-  it('selects a Window by index within a Session', () => {
-    expect(selectWindowCommand('main', 3)).toBe("tmux select-window -t 'main:3'");
+  it('asks a Window for its layout rather than its Panes’ coordinates', () => {
+    const format = listPanesCommand('work', 1)[4];
+    expect(format).toContain('#{window_layout}');
+    expect(format).not.toContain('#{pane_left}');
   });
 
-  it('quotes a Session name containing a space', () => {
-    expect(selectWindowCommand('my work', 1)).toBe("tmux select-window -t 'my work:1'");
+  it('addresses a Window as session:index', () => {
+    expect(listWindowsCommand('work')).toEqual([
+      'list-windows',
+      '-t',
+      'work',
+      expect.any(String),
+      expect.any(String),
+    ]);
+    expect(listPanesCommand('work', 3)[2]).toBe('work:3');
   });
 });
 
-describe('selectPaneCommand', () => {
-  it('selects a Pane within a Window within a Session', () => {
-    expect(selectPaneCommand('main', 1, 2)).toBe("tmux select-pane -t 'main:1.2'");
+describe('moving around', () => {
+  it('selects a Window and a Pane by target', () => {
+    expect(selectWindowCommand('work', 2)).toEqual(['select-window', '-t', 'work:2']);
+    expect(selectPaneCommand('work', 2, 1)).toEqual(['select-pane', '-t', 'work:2.1']);
+  });
+
+  it('switches the Client rather than reconnecting', () => {
+    expect(switchSessionCommand('play')).toEqual(['switch-client', '-t', 'play']);
+  });
+
+  it('aims the Session-wide verbs with a trailing colon', () => {
+    // A bare name is ambiguous: tmux's own default Session is called `0`, so
+    // `-t 0` resolves to Pane 0 and every one of these hits the wrong thing.
+    expect(zoomPaneCommand('0')).toEqual(['resize-pane', '-Z', '-t', '0:']);
+    expect(splitWindowCommand('0', 'right')).toEqual(['split-window', '-h', '-t', '0:']);
+    expect(splitWindowCommand('0', 'down')).toEqual(['split-window', '-v', '-t', '0:']);
+    expect(newWindowCommand('0')).toEqual(['new-window', '-a', '-t', '0:']);
+  });
+
+  it('creates a Session detached, and never with -A', () => {
+    expect(createSessionCommand('work')).toEqual(['new-session', '-d', '-s', 'work']);
   });
 });
 
-describe('switchSessionCommand', () => {
-  it('switches the attached client to another Session', () => {
-    expect(switchSessionCommand('other')).toBe("tmux switch-client -t 'other'");
+describe('sizing the Client', () => {
+  it('asks with refresh-client, setting no Session option', () => {
+    expect(resizeClientCommand(40, 20)).toEqual(['refresh-client', '-C', '40x20']);
   });
 
-  it('escapes a Session name that tries to break out', () => {
-    expect(switchSessionCommand("'; id; '")).toBe("tmux switch-client -t ''\\''; id; '\\'''");
-  });
-});
-
-describe('window sizing', () => {
-  it('reads how the Session sizes its Windows, so it can be put back', () => {
-    expect(readWindowSizingCommand('main')).toBe("tmux show-options -t 'main' -v window-size");
-  });
-
-  it('keeps the Window no bigger than the Surface, which is what stops the padding', () => {
-    expect(setWindowSizingCommand('main', 'smallest')).toBe(
-      "tmux set-option -t 'main' window-size 'smallest'",
-    );
-  });
-
-  it('quotes the Session name so it cannot break out of the command', () => {
-    expect(setWindowSizingCommand("'; id; '", 'smallest')).toBe(
-      "tmux set-option -t ''\\''; id; '\\''' window-size 'smallest'",
-    );
-  });
-
-  it('quotes the value, which comes back off the Host', () => {
-    expect(setWindowSizingCommand('main', '; id; ')).toBe(
-      "tmux set-option -t 'main' window-size '; id; '",
-    );
-  });
-
-  it('honours the Host tmux path', () => {
-    expect(setWindowSizingCommand('main', 'latest', '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' set-option -t 'main' window-size 'latest'",
-    );
+  it('never asks for a size tmux would refuse', () => {
+    expect(resizeClientCommand(0, -3)).toEqual(['refresh-client', '-C', '1x1']);
+    expect(resizeClientCommand(40.7, 20.2)).toEqual(['refresh-client', '-C', '40x20']);
   });
 });
 
-describe('listClientsCommand', () => {
-  it('asks for each Client of a Session with its creation time and tty', () => {
-    expect(listClientsCommand('main')).toBe(
-      "tmux list-clients -t 'main' -F '#{client_created}\t#{client_tty}'",
-    );
+describe('typing into a Pane', () => {
+  it('carries bytes as hex, one argument each', () => {
+    expect(sendKeysCommand('%3', Uint8Array.of(0x68, 0x69, 0x0d))).toEqual([
+      'send-keys',
+      '-t',
+      '%3',
+      '-H',
+      '68',
+      '69',
+      '0d',
+    ]);
   });
 
-  it('quotes a Session name containing a space', () => {
-    expect(listClientsCommand('my work')).toContain("-t 'my work'");
-  });
-});
-
-describe('redrawClientCommand', () => {
-  it('redraws one Client, addressed by its tty', () => {
-    expect(redrawClientCommand('/dev/pts/3')).toBe("tmux refresh-client -t '/dev/pts/3'");
-  });
-
-  it('falls back to whichever Client tmux considers best', () => {
-    expect(redrawClientCommand()).toBe('tmux refresh-client');
+  it('pads a byte below sixteen, which tmux would otherwise misread', () => {
+    expect(sendKeysCommand('%0', Uint8Array.of(0x01, 0x1b))).toEqual([
+      'send-keys',
+      '-t',
+      '%0',
+      '-H',
+      '01',
+      '1b',
+    ]);
   });
 
-  it('never asks tmux to resize the Client, which only control mode allows', () => {
-    // `refresh-client -C` is control-mode only (ADR 0001), and silently does
-    // nothing for an attached Client — verified against tmux 3.6.
-    expect(redrawClientCommand('/dev/pts/3')).not.toContain('-C');
-  });
-
-  it('honours the Host tmux path', () => {
-    expect(redrawClientCommand('/dev/pts/3', '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' refresh-client -t '/dev/pts/3'",
-    );
+  it('carries a byte no keyboard has', () => {
+    expect(sendKeysCommand('%0', Uint8Array.of(0xff))).toContain('ff');
   });
 });
 
-describe('capturePanesCommand', () => {
-  it('captures what one Pane is showing', () => {
-    expect(capturePanesCommand(['main:1.0'])).toBe("tmux capture-pane -t 'main:1.0' -p");
+describe('reading a Pane back', () => {
+  it('captures the visible screen with its colours and its spaces', () => {
+    expect(capturePaneCommand('%2')).toEqual(['capture-pane', '-t', '%2', '-p', '-e', '-N']);
   });
 
-  it('chains several captures into one round trip, separated by a marker', () => {
-    // A picker that takes a round trip per Pane is a picker nobody opens.
-    expect(capturePanesCommand(['a:0', 'a:1'])).toBe(
-      "tmux capture-pane -t 'a:0' -p ; echo '@@muxify@@' ; tmux capture-pane -t 'a:1' -p",
-    );
+  it('never joins wrapped lines, which would reflow the screen', () => {
+    expect(capturePaneCommand('%2')).not.toContain('-J');
   });
 
-  it('is empty for no targets, so nothing is sent', () => {
-    expect(capturePanesCommand([])).toBe('');
+  it('captures a range of the Scrollback by tmux’s own line numbers', () => {
+    expect(captureScrollbackCommand('%2', -30, -1)).toEqual([
+      'capture-pane',
+      '-t',
+      '%2',
+      '-p',
+      '-e',
+      '-N',
+      '-S',
+      '-30',
+      '-E',
+      '-1',
+    ]);
   });
 
-  it('quotes a target that tries to break out', () => {
-    expect(capturePanesCommand(["'; id; '"])).toContain("-t ''\\''; id; '\\'''");
-  });
-});
-
-describe('zoomPaneCommand', () => {
-  it('toggles zoom on the Session\'s active Pane', () => {
-    expect(zoomPaneCommand('main')).toBe("tmux resize-pane -Z -t 'main:'");
-  });
-});
-
-describe('ambiguous targets', () => {
-  // tmux names its first Session `0`, and a bare `-t '0'` is read as Pane 0 —
-  // so zoom and split both hit the first Pane and select it, whatever the user
-  // was looking at. The trailing colon forces the Session reading.
-  it('aims zoom at the Session, not at the Pane its name looks like', () => {
-    expect(zoomPaneCommand('0')).toBe("tmux resize-pane -Z -t '0:'");
+  it('asks for what a resync and a scroll both need', () => {
+    const format = paneStateCommand('%2')[4];
+    expect(format).toContain('#{cursor_x}');
+    expect(format).toContain('#{cursor_y}');
+    expect(format).toContain('#{alternate_on}');
+    expect(format).toContain('#{history_size}');
   });
 
-  it('aims a split at the Session, not at the Pane its name looks like', () => {
-    expect(splitWindowCommand('0', 'right')).toBe("tmux split-window -h -t '0:'");
+  it('captures several Panes as several commands, with nothing between them', () => {
+    // Control mode gives every command its own reply, so the captures arrive
+    // already separated — no marker, and no shell to put one there.
+    expect(capturePanesCommand(['work:0', 'work:1'])).toEqual([
+      ['capture-pane', '-t', 'work:0', '-p'],
+      ['capture-pane', '-t', 'work:1', '-p'],
+    ]);
   });
 
-  it('aims a new Window at the Session too', () => {
-    expect(newWindowCommand('0')).toBe("tmux new-window -a -t '0:'");
-  });
-});
-
-describe('splitWindowCommand', () => {
-  it('splits beside the current Pane', () => {
-    expect(splitWindowCommand('main', 'right')).toBe("tmux split-window -h -t 'main:'");
+  it('captures a preview without colour escapes, which a preview would show', () => {
+    expect(capturePanesCommand(['work:0'])[0]).not.toContain('-e');
   });
 
-  it('splits below the current Pane', () => {
-    expect(splitWindowCommand('main', 'down')).toBe("tmux split-window -v -t 'main:'");
-  });
-});
-
-describe('newWindowCommand', () => {
-  it('adds a Window after the current one', () => {
-    expect(newWindowCommand('main')).toBe("tmux new-window -a -t 'main:'");
-  });
-});
-
-describe('resizeClientCommand', () => {
-  it('sets the size of the tty tmux is attached to', () => {
-    expect(resizeClientCommand('/dev/pts/3', 38, 19)).toBe(
-      "stty -F '/dev/pts/3' rows 19 cols 38 2>/dev/null || stty -f '/dev/pts/3' rows 19 cols 38",
-    );
-  });
-
-  it('falls back to the BSD spelling, since the Host may be either', () => {
-    expect(resizeClientCommand('/dev/ttys001', 80, 24)).toContain('stty -f');
-  });
-
-  it('never asks for a zero or negative size', () => {
-    expect(resizeClientCommand('/dev/pts/3', 0, -4)).toContain('rows 1 cols 1');
-  });
-
-  it('floors fractional sizes', () => {
-    expect(resizeClientCommand('/dev/pts/3', 38.9, 19.2)).toContain('rows 19 cols 38');
-  });
-
-  it('quotes a tty that tries to break out of the command', () => {
-    expect(resizeClientCommand("'; id; '", 38, 19)).toContain("''\\''; id; '\\'''");
-  });
-});
-
-describe('readScrollStateCommand', () => {
-  it('asks where in the history the Pane is, and what a scroll should become', () => {
-    expect(readScrollStateCommand('work')).toBe(
-      "tmux display-message -p -t 'work:' " +
-        "'#{pane_in_mode}\t#{scroll_position}\t#{history_size}\t#{alternate_on}\t#{mouse_any_flag}'",
-    );
-  });
-
-  it('aims at the Session, so a bare name cannot be read as a Pane', () => {
-    expect(readScrollStateCommand('0')).toContain("-t '0:'");
-  });
-});
-
-describe('mouse borrowing', () => {
-  it('reads the option so it can be put back', () => {
-    expect(readMouseCommand('work')).toBe("tmux show-options -t 'work' -v mouse");
-  });
-
-  it('sets it on the Session, not the server', () => {
-    // Global would reach every Session on the Host, including ones Muxify has
-    // never attached to.
-    expect(setMouseCommand('work', 'on')).toBe("tmux set-option -t 'work' mouse 'on'");
-    expect(setMouseCommand('work', 'on')).not.toContain('-g');
-  });
-
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(setMouseCommand('work', 'off', '/usr/bin/tmux')).toContain("'/usr/bin/tmux' set-option");
-  });
-});
-
-describe('stopScrollingCommand', () => {
-  it('cancels the mode, which is what puts the Pane back at the bottom', () => {
-    expect(stopScrollingCommand('work')).toBe("tmux send-keys -X -t 'work:' cancel");
-  });
-
-  it('uses an explicit tmux path when the Host provides one', () => {
-    expect(stopScrollingCommand('work', '/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' send-keys -X -t 'work:' cancel",
-    );
-  });
-});
-
-describe('restoreOnDetachCommand', () => {
-  it('puts every borrowed option back and then removes itself', () => {
-    expect(
-      restoreOnDetachCommand('work', { status: 'on', windowSize: 'latest', mouse: 'off' }),
-    ).toBe(
-      "tmux set-hook -t 'work' client-detached " +
-        '\'set-option -t "work" status "on" ; ' +
-        'set-option -t "work" window-size "latest" ; ' +
-        'set-option -t "work" mouse "off" ; ' +
-        'set-hook -u -t "work" client-detached\'',
-    );
-  });
-
-  it('leaves out an option tmux would not say the value of', () => {
-    const command = restoreOnDetachCommand('work', { status: 'on' });
-    expect(command).toContain('status "on"');
-    expect(command).not.toContain('window-size');
-    expect(command).toContain('set-hook -u');
-  });
-
-  it('still removes itself when there was nothing to put back', () => {
-    expect(restoreOnDetachCommand('work', {})).toContain('set-hook -u -t "work" client-detached');
-  });
-
-  it('escapes a Session name that would otherwise end the hook early', () => {
-    const command = restoreOnDetachCommand('we"ird', { status: 'on' });
-    expect(command).toContain('we\\"ird');
-  });
-});
-
-describe('clearRestoreHookCommand', () => {
-  it('takes the hook off the Session', () => {
-    expect(clearRestoreHookCommand('work')).toBe("tmux set-hook -u -t 'work' client-detached");
+  it('captures nothing for nobody', () => {
+    expect(capturePanesCommand([])).toEqual([]);
   });
 });

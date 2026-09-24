@@ -37,6 +37,7 @@ import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
+import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient, type Session } from '@/tmux/tmux-client';
 
@@ -100,9 +101,9 @@ export default function HostScreen() {
         if (verdict.kind === 'first-sight') {
           await store.rememberFingerprint(found.id, fingerprint);
         }
-        const client = new TmuxClient(sshTmuxTransport(connection), {
-          tmuxExecutablePath: found.tmuxExecutablePath,
-        });
+        const client = new TmuxClient(
+          execCommandRunner(sshTmuxTransport(connection), found.tmuxExecutablePath),
+        );
         // A Host with no tmux server is a Host with no Sessions, which the
         // client already forgives — it must not read as a failure here.
         setListing({ phase: 'read', sessions: await client.listSessions() });
@@ -144,11 +145,6 @@ export default function HostScreen() {
     recent,
     listing.phase === 'read' ? listing.sessions : undefined,
   );
-  // Counted from what the Host said, not from the rows above it: a Session
-  // someone is on counts whether or not this phone has ever opened it.
-  const attachedCount =
-    listing.phase === 'read' ? listing.sessions.filter((session) => session.attached).length : 0;
-
   return (
     <View style={styles.fill}>
       <Stack.Screen
@@ -194,7 +190,7 @@ export default function HostScreen() {
               <Text modifiers={[font({ size: 17 })]}>Sessions</Text>
               <Spacer />
               <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
-                {sessionSummary(rows.length + available.length, attachedCount, listing)}
+                {sessionSummary(rows.length + available.length, listing)}
               </Text>
             </HStack>
           </Section>
@@ -295,7 +291,6 @@ export default function HostScreen() {
                   <Image systemName="terminal" size={20} color={palette.rowIcon} />
                   <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
                   <Spacer />
-                  {session.attached ? <AttachedBadge palette={palette} /> : null}
                   <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
                 </HStack>
               </Button>
@@ -343,26 +338,9 @@ function RecentSessionRow({
           )}
         </VStack>
         <Spacer />
-        {row.attached ? <AttachedBadge palette={palette} /> : null}
         <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
       </HStack>
     </Button>
-  );
-}
-
-/**
- * Says that someone is on this Session — anyone, not necessarily Muxify.
- *
- * A warning rather than a status: Muxify borrows `window-size smallest` while
- * attached, so joining a Session someone is watching shrinks their Window to
- * the size of this phone.
- */
-function AttachedBadge({ palette }: { palette: Appearance }) {
-  return (
-    <HStack spacing={5}>
-      <Image systemName="circle.fill" size={8} color={palette.controlAccent} />
-      <Text modifiers={[font({ size: 15 }), foregroundColor(palette.controlAccent)]}>Attached</Text>
-    </HStack>
   );
 }
 
@@ -436,11 +414,15 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
  *
  * Silent until the Host has actually answered: a count assembled from memory
  * alone would say "2 sessions" about a machine that has nine.
+ *
+ * It no longer says how many are attached. That was a warning, not a status —
+ * joining a Session somebody was watching used to shrink their Window, because
+ * Muxify borrowed `window-size smallest` to do it. A control client borrows
+ * nothing, so there is nothing left to warn about. See ADR 0006.
  */
-function sessionSummary(total: number, attached: number, listing: Listing): string {
+function sessionSummary(total: number, listing: Listing): string {
   if (listing.phase !== 'read') return '—';
-  const sessions = `${total} ${total === 1 ? 'session' : 'sessions'}`;
-  return attached > 0 ? `${sessions} · ${attached} attached` : sessions;
+  return `${total} ${total === 1 ? 'session' : 'sessions'}`;
 }
 
 function collapse<T>(items: T[], expanded: boolean): T[] {

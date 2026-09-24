@@ -7,16 +7,15 @@ const BUTTON = { up: 64, down: 65 } as const;
 /**
  * The bytes a terminal sends when a mouse wheel turns, in SGR (1006) form.
  *
- * This is how scrolling reaches tmux without a Control Command: the sequence
- * goes down the Shell Channel that is already open, costing no round trip at
- * all, where `send-keys -X scroll-up` costs a whole new exec channel — which is
- * what made dragging feel like it was catching on something.
+ * Only ever sent to a Pane on the alternate screen, where the application is
+ * scrolling itself. On the normal screen a drag is a `capture-pane` over the
+ * Scrollback instead, so these bytes never go anywhere near tmux's own wheel
+ * binding — which is why the `mouse` option is not set and does not need to be.
+ * See ticket 06.
  *
- * It is also the only form that works for a full-screen application. tmux's own
- * wheel binding routes on what the Pane is doing: history for a shell, and the
- * event passed straight through for anything on the alternate screen or asking
- * for the mouse. So Claude Code, vim and less each scroll themselves, and none
- * of that routing has to be repeated here.
+ * They go in as ordinary input, through `send-keys`, exactly as a keystroke
+ * does. An application that asked for the mouse acts on them; one that did not
+ * would ignore them entirely, and gets cursorKeys below instead.
  *
  * The coordinates are where the pointer is taken to be. They are 1-based and
  * must land inside the Pane, because tmux drops an event pointing outside one.
@@ -54,7 +53,7 @@ export function cursorKeys(direction: WheelDirection, lines: number): string {
  * How many lines one notch of the wheel moves.
  *
  * tmux's own copy-mode binding is `send-keys -X -N 5 scroll-up`, so five is
- * what a notch buys in a shell. Matching it here is what makes the history
+ * what a notch buys in a shell. Matching it here is what makes the Scrollback
  * travel at the speed of the finger rather than five times it.
  */
 export const LINES_PER_NOTCH = 5;

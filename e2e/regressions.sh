@@ -5,16 +5,22 @@
 # Each check here stands for a bug that actually happened:
 #
 #   1  the navigation header, removed so the Surface reaches the top
-#   2  tmux's status line, hidden on attach and put back on the way out
-#   3  the resize, which has broken four separate ways
-#   4  Enter, which for a long time only made a new line
-#   5  the library's own Accessory Bar, hidden by a local patch
-#   6  tmux's padding, which flashed along the bottom edge on every keyboard
+#   2  the library's own Accessory Bar, hidden by a local patch
+#   3  the Session's options, which Muxify used to borrow and now never touches
+#   4  the resize, which has broken four separate ways
+#   5  tmux's padding, which flashed along the bottom edge on every keyboard
+#   6  Enter, which for a long time only made a new line
+#   7  the Session left as it was found, with nothing to put back
+#
+# Checks 3 and 7 changed shape with control mode. They used to assert that the
+# status line was hidden on attach and restored on the way out — the borrowing
+# ADR 0006 removed. What they assert now is stronger and simpler: `show-options`
+# on the Session says exactly the same thing before, during and after, because a
+# control client sets nothing at all.
 #
 # The resize checks are the ones worth explaining. `surface` and `window` must
-# agree: that is the part this app controls, over the exec channel. The Client
-# size is only reported, because the SSH library does not reliably send a
-# window-change at all.
+# agree: the Surface tells tmux its size with `refresh-client -C`, and under
+# tmux's default `window-size latest` the Window follows it.
 #
 # So the thing that actually matters — whether the user sees tmux's padding —
 # is checked by looking at the screen. Reading the pane over SSH does NOT catch
@@ -41,19 +47,16 @@ fail() { echo "FAIL: $1"; exit 1; }
 snap()    { agent-device snapshot -i 2>/dev/null; }
 surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
 window()  { vm "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
-client()  { vm "tmux list-clients -t '$SESSION' -F '#{client_width}x#{client_height}'" | head -1; }
-status()  { vm "tmux show-options -t '$SESSION' -v status"; }
+# Every option the Session carries, sorted so two readings can be compared.
+options() { vm "tmux show-options -t '$SESSION'" | sort; }
+hooks()   { vm "tmux show-hooks -t '$SESSION'" | sort; }
 
 agree() {
-  local what=$1 s w c
-  s=$(surface); w=$(window); c=$(client)
+  local what=$1 s w
+  s=$(surface); w=$(window)
   [ -n "$s" ] || fail "$what: the Surface never reported a grid"
   [ "$s" = "$w" ] || fail "$what: Surface is $s but tmux draws the Window at $w"
-  # The Client's size is reported, not asserted. The SSH library does not
-  # reliably deliver a window-change — measured, it can ignore one entirely —
-  # so it is not something this app can hold to. What the user actually sees is
-  # asserted in the next step, by looking at the screen.
-  echo "     $what: surface=$s window=$w client=$c"
+  echo "     $what: surface=$s window=$w"
 }
 
 attach() {
@@ -74,10 +77,13 @@ attach() {
 }
 
 echo "0/7  putting the Session somewhere known"
-vm "tmux set-option -t '$SESSION' status on; \
-    tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
+vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
+# The baseline every later reading is compared against. Taken before Muxify has
+# been anywhere near this Session.
+BEFORE=$(options)
+BEFORE_HOOKS=$(hooks)
 attach
 
 echo "1/7  the Terminal Screen has no navigation header"
@@ -92,8 +98,16 @@ snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/7  tmux's status line is hidden while attached"
-[ "$(status)" = off ] || fail "status line is '$(status)', expected off"
+echo "3/7  attaching changes no Session option and installs no hook"
+# The whole of ADR 0006. A control client renders nothing, so `status` is not
+# its business; it is sized with `refresh-client -C`, so `window-size` is not
+# either; and scrolling is a capture, so neither is `mouse`.
+[ "$(options)" = "$BEFORE" ] || {
+  diff <(echo "$BEFORE") <(options)
+  fail "attaching changed a Session option"
+}
+[ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
+echo "     show-options is byte-identical while attached"
 
 echo "4/7  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
@@ -110,13 +124,15 @@ padding() {
   agent-device screenshot "$SHOT" >/dev/null 2>&1
   magick "$SHOT" -crop 1206x600+0+900 -threshold 45% -format '%[fx:int(mean*w*h)]' info:
 }
-# Forcing that state now takes `window-size manual`, because Muxify puts the
-# Session on `smallest` precisely so the Window cannot outgrow the Client.
-# Putting it back to `smallest` snaps the Window onto the Client again.
+# Forcing that state takes `window-size manual`, which is the test setting an
+# option rather than the app — and unsetting it below is what keeps check 7
+# honest.
 vm "tmux set-option -t '$SESSION' window-size manual; tmux resize-window -t '$SESSION' -x 38 -y 8"
 sleep 2
 [ "$(padding)" -gt 1000 ] || fail "the padding detector cannot see padding; the check below would pass for the wrong reason"
-vm "tmux set-option -t '$SESSION' window-size smallest; tmux refresh-client"
+# Unset rather than set back to a value: `-u` returns the option to the state
+# it was in, which is what leaves nothing behind for check 7 to find.
+vm "tmux set-option -u -t '$SESSION' window-size"
 sleep 2
 echo "     detector confirmed against a known-bad state"
 
@@ -139,17 +155,30 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "7/7  leaving puts the Session's status line back"
+echo "7/7  leaving finds the Session exactly as it was, bar the zoom"
 agent-device press 'label="Keyboard"' >/dev/null 2>&1
 sleep 2
 agent-device press 'label="Home"' >/dev/null 2>&1
 agent-device wait text "No Hosts yet" 8000 >/dev/null 2>&1
 sleep 2
-[ "$(status)" = on ] || fail "status line left as '$(status)'; Muxify changed the Host and did not put it back"
+[ "$(options)" = "$BEFORE" ] || {
+  diff <(echo "$BEFORE") <(options)
+  fail "Muxify changed the Host and did not put it back"
+}
+[ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "Muxify left a hook on the Session"
+# The one exception, named rather than hidden. Muxify zooms the active Pane on
+# Attach because a phone is too narrow for two side by side — see CONTEXT.md,
+# **Zoom** — and `resize-pane -Z` is a Window flag every other Client sees, not
+# a Session option. It is not restored: the user can turn it off in the Panes
+# picker, and undoing their choice on the way out would be its own surprise.
+# Reported so a reader knows it changed, and so that anything *else* appearing
+# here is a regression.
+echo "     show-options and show-hooks unchanged from before the Attach"
+echo "     zoom is left as Muxify set it: $(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")"
 
 agent-device close >/dev/null 2>&1
 echo
 rm -f "$SHOT"
-echo "PASS: no header, no Accessory Bar, status line hidden and restored,"
-echo "      sizes agree in both keyboard states, no padding on screen, and"
-echo "      Enter runs commands."
+echo "PASS: no header, no Accessory Bar, the Session's options untouched"
+echo "      throughout, sizes agree in both keyboard states, no padding on"
+echo "      screen, and Enter runs commands."
