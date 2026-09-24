@@ -53,6 +53,20 @@ function windowTarget(sessionName: string, windowIndex: number): string {
 }
 
 /**
+ * Addresses whatever is current in a Session: its active Pane, in its current
+ * Window.
+ *
+ * The trailing colon is load-bearing. A bare name is an *ambiguous* target:
+ * tmux will read it as a Session, a Window index or a Pane index depending on
+ * what it finds, and tmux's own default Session name is `0` — so `-t '0'`
+ * resolves to Pane 0 and every command aimed at "the current Pane" silently
+ * hits the first one instead. The colon forces the Session reading.
+ */
+function currentPaneTarget(sessionName: string): string {
+  return shellQuote(`${sessionName}:`);
+}
+
+/**
  * Control Command listing the Windows of a Session: index, name and whether it
  * is the active one, tab separated. Tab is the separator because a Window name
  * may contain spaces and colons but not a tab.
@@ -238,19 +252,27 @@ export function capturePanesCommand(targets: string[], tmuxExecutablePath?: stri
  *
  * tmux has no "zoom on" — `-Z` toggles — so the caller has to know the current
  * state, which `listWindowsCommand` reports as the zoomed flag.
+ *
+ * Aimed with a trailing colon; see currentPaneTarget for what a bare Session
+ * name does instead, which is zoom the wrong Pane and select it into the
+ * bargain.
  */
 export function zoomPaneCommand(sessionName: string, tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} resize-pane -Z -t ${shellQuote(sessionName)}`;
+  return `${tmux(tmuxExecutablePath)} resize-pane -Z -t ${currentPaneTarget(sessionName)}`;
 }
 
-/** Control Command splitting the current Pane, beside it or below it. */
+/**
+ * Control Command splitting the current Pane, beside it or below it. Aimed with
+ * a trailing colon — see currentPaneTarget — or it splits the first Pane rather
+ * than the one the user is looking at.
+ */
 export function splitWindowCommand(
   sessionName: string,
   direction: 'right' | 'down',
   tmuxExecutablePath?: string,
 ): string {
   const flag = direction === 'right' ? '-h' : '-v';
-  return `${tmux(tmuxExecutablePath)} split-window ${flag} -t ${shellQuote(sessionName)}`;
+  return `${tmux(tmuxExecutablePath)} split-window ${flag} -t ${currentPaneTarget(sessionName)}`;
 }
 
 /** Control Command adding a Window to a Session, after the current one. */

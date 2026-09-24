@@ -17,26 +17,31 @@ import {
 import {
   accessibilityLabel,
   background,
-  border,
   buttonStyle,
   clipShape,
+  controlSize,
   cornerRadius,
   environment,
+  fixedSize,
   font,
   foregroundColor,
   frame,
   glassEffect,
+  layoutPriority,
   offset,
   padding,
   presentationBackground,
   presentationDetents,
   presentationDragIndicator,
+  strokeBorder,
   tint,
+  toggleStyle,
 } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { Dimensions, StyleSheet } from 'react-native';
 
 import type { Frame } from '@/tmux/pane-topology';
+import { gridContentHeight } from './sheet-layout';
 
 /** One thing that can be picked, with enough to draw a preview of it. */
 export interface PreviewCard {
@@ -129,6 +134,54 @@ const BOARD_HEIGHT = Math.ceil(CONTENT_WIDTH * 0.75);
 const BOARD_INSET = 6;
 const TILE_GAP = 4;
 
+/** Corner radii, shared by whatever draws the shape and whatever outlines it. */
+const BOARD_RADIUS = 12;
+const CARD_RADIUS = 12;
+
+const HEADER_HEIGHT = 38;
+const CONTEXT_HEIGHT = 16;
+/** Room below the action bar for the home indicator. */
+const SAFE_BOTTOM = 24;
+
+/**
+ * Everything in the sheet that is not the content: the height its cards have to
+ * fit around.
+ */
+const CHROME_HEIGHT =
+  SHEET_PADDING * 2 +
+  HEADER_HEIGHT +
+  TITLE_TO_CONTEXT +
+  CONTEXT_HEIGHT +
+  CONTEXT_TO_CONTENT +
+  CONTENT_TO_ACTIONS +
+  ACTION_BAR_HEIGHT +
+  SAFE_BOTTOM;
+
+/** What is left for cards when the sheet is as tall as it is allowed to get. */
+const CONTENT_BUDGET = Math.max(0, Dimensions.get('window').height * 0.9 - CHROME_HEIGHT);
+
+/**
+ * How tall this sheet should be.
+ *
+ * Measured, never a fraction of the screen: a fraction is the wrong height
+ * twice, too tall for three Windows and too short for nine, and either way the
+ * actions end up marooned below a gap. The Pane diagram is a fixed shape; a
+ * grid takes what its rows need, up to the budget. See gridContentHeight.
+ */
+function sheetHeight(layout: PickerSheetProps['layout'], count: number): number {
+  if (layout === 'panes') return CHROME_HEIGHT + BOARD_HEIGHT;
+  const content = gridContentHeight(
+    {
+      count,
+      perRow: layout === 'grid' ? 2 : 1,
+      cardHeight: layout === 'grid' ? GRID_CARD_HEIGHT : LIST_CARD_HEIGHT,
+      gap: GRID_GAP,
+    },
+    CONTENT_BUDGET,
+  );
+  return CHROME_HEIGHT + content;
+}
+
 /**
  * The glass sheet behind every Dock picker.
  *
@@ -177,7 +230,13 @@ export function PickerSheet({
         }}>
         <Group
           modifiers={[
-            presentationDetents([{ fraction: 0.66 }, 'large']),
+            presentationDetents(
+              layout === 'panes'
+                ? [{ height: sheetHeight(layout, cards.length) }]
+                : // A grid that had to be cut can be dragged open; one that fits
+                  // has nothing to drag to.
+                  [{ height: sheetHeight(layout, cards.length) }, 'large'],
+            ),
             presentationDragIndicator('hidden'),
             // The Surface is always dark, so the sheet is too — otherwise a
             // phone in light mode flashes a white panel over the terminal.
@@ -254,6 +313,24 @@ export function PickerSheet({
   );
 }
 
+/**
+ * A rounded outline that actually follows the corner.
+ *
+ * `border` is SwiftUI's `.border()`, which strokes a **rectangle** — so on a
+ * rounded tile the clip cuts the stroke off at each corner and leaves the
+ * outline looking chewed. `strokeBorder` takes the shape, and draws inside it
+ * rather than astride the edge, so a 2pt selected outline is 2pt of tile rather
+ * than 1pt of tile and 1pt of whatever is behind it.
+ */
+function outline(color: string, lineWidth: number, cornerRadius: number) {
+  return strokeBorder({
+    content: color,
+    style: { lineWidth },
+    shape: 'roundedRectangle',
+    cornerRadius,
+  });
+}
+
 /** A line of explanation where the content would be. */
 function Note({ children }: { children: string }) {
   return (
@@ -269,7 +346,7 @@ function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) 
   return (
     <ZStack>
       <Text modifiers={[font({ size: 17, weight: 'semibold' })]}>{title}</Text>
-      <HStack>
+      <HStack modifiers={[frame({ height: HEADER_HEIGHT })]}>
         <Button
           label=""
           systemImage="xmark"
@@ -312,11 +389,13 @@ function PaneBoard({
     <ZStack
       alignment="topLeading"
       modifiers={[
-        frame({ width: CONTENT_WIDTH, height: BOARD_HEIGHT }),
+        // `alignment` on the stack settles the children against each other;
+        // the frame needs its own, or SwiftUI centres the whole stack inside
+        // it and every offset below is measured from the wrong corner.
+        frame({ width: CONTENT_WIDTH, height: BOARD_HEIGHT, alignment: 'topLeading' }),
         background(PALETTE.well),
-        cornerRadius(12),
-        border({ color: PALETTE.stroke, width: 1 }),
-        clipShape('roundedRectangle'),
+        clipShape('roundedRectangle', BOARD_RADIUS),
+        outline(PALETTE.stroke, 1, BOARD_RADIUS),
       ]}>
       {cards.map((card) => {
         const box = card.frame ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -366,12 +445,8 @@ function PaneTile({
       modifiers={[
         frame({ width, height }),
         background(card.current ? PALETTE.tileSelected : PALETTE.tile),
-        cornerRadius(radius),
-        border({
-          color: card.current ? PALETTE.accent : PALETTE.stroke,
-          width: card.current ? 2 : 1,
-        }),
-        clipShape('roundedRectangle'),
+        clipShape('roundedRectangle', radius),
+        outline(card.current ? PALETTE.accent : PALETTE.stroke, card.current ? 2 : 1, radius),
       ]}>
       <Text
         modifiers={[
@@ -409,12 +484,12 @@ function PreviewButton({
         modifiers={[
           frame({ width, height }),
           background(PALETTE.tile),
-          cornerRadius(12),
-          border({
-            color: card.current ? PALETTE.accent : PALETTE.stroke,
-            width: card.current ? 1.25 : 1,
-          }),
-          clipShape('roundedRectangle'),
+          clipShape('roundedRectangle', CARD_RADIUS),
+          outline(
+            card.current ? PALETTE.accent : PALETTE.stroke,
+            card.current ? 1.25 : 1,
+            CARD_RADIUS,
+          ),
         ]}>
         <PreviewText lines={card.preview} />
 
@@ -522,7 +597,16 @@ function Footer({
             label="Zoom"
             isOn={zoom.on}
             onIsOnChange={zoom.onChange}
-            modifiers={[padding({ horizontal: 11 }), tint(PALETTE.accent)]}
+            modifiers={[
+              toggleStyle('switch'),
+              controlSize('small'),
+              // Otherwise the switch takes an equal share of the bar and the
+              // two Splits are squeezed into the corner.
+              fixedSize({ horizontal: true, vertical: false }),
+              layoutPriority(1),
+              padding({ horizontal: 11 }),
+              tint(PALETTE.accent),
+            ]}
           />
         </>
       ) : null}

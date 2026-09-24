@@ -234,17 +234,34 @@ describe('capturePanesCommand', () => {
 
 describe('zoomPaneCommand', () => {
   it('toggles zoom on the Session\'s active Pane', () => {
-    expect(zoomPaneCommand('main')).toBe("tmux resize-pane -Z -t 'main'");
+    expect(zoomPaneCommand('main')).toBe("tmux resize-pane -Z -t 'main:'");
+  });
+});
+
+describe('ambiguous targets', () => {
+  // tmux names its first Session `0`, and a bare `-t '0'` is read as Pane 0 —
+  // so zoom and split both hit the first Pane and select it, whatever the user
+  // was looking at. The trailing colon forces the Session reading.
+  it('aims zoom at the Session, not at the Pane its name looks like', () => {
+    expect(zoomPaneCommand('0')).toBe("tmux resize-pane -Z -t '0:'");
+  });
+
+  it('aims a split at the Session, not at the Pane its name looks like', () => {
+    expect(splitWindowCommand('0', 'right')).toBe("tmux split-window -h -t '0:'");
+  });
+
+  it('aims a new Window at the Session too', () => {
+    expect(newWindowCommand('0')).toBe("tmux new-window -a -t '0:'");
   });
 });
 
 describe('splitWindowCommand', () => {
   it('splits beside the current Pane', () => {
-    expect(splitWindowCommand('main', 'right')).toBe("tmux split-window -h -t 'main'");
+    expect(splitWindowCommand('main', 'right')).toBe("tmux split-window -h -t 'main:'");
   });
 
   it('splits below the current Pane', () => {
-    expect(splitWindowCommand('main', 'down')).toBe("tmux split-window -v -t 'main'");
+    expect(splitWindowCommand('main', 'down')).toBe("tmux split-window -v -t 'main:'");
   });
 });
 

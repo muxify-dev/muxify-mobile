@@ -493,21 +493,6 @@ export default function TerminalScreen() {
         await client.setZoom(sessionName.current, on);
         await client.redrawClient(clientTty.current);
         await refreshTopology();
-
-        // EXPERIMENT: a scripted resize sequence, timed so an outside observer
-        // can see exactly when each value lands.
-        // 3s: one call. 9s: two in the same tick. 15s: four in the same tick.
-        setTimeout(() => shell.current?.resize(38, 20), 3000);
-        setTimeout(() => {
-          shell.current?.resize(38, 21);
-          shell.current?.resize(38, 20);
-        }, 9000);
-        setTimeout(() => {
-          shell.current?.resize(38, 22);
-          shell.current?.resize(38, 21);
-          shell.current?.resize(38, 22);
-          shell.current?.resize(38, 21);
-        }, 15000);
       })();
     },
     [refreshTopology],
