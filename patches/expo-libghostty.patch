@@ -121,10 +121,63 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..e67b1cb7d748d9d6a015e5995d4501a9
    }
  }
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..8bbb5a9cb49cc0ddae244d8baa4a7e1c37dbd12c 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..04be52758d13f52a42a3c4f846fd5c92c7c19143 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
-@@ -44,6 +44,29 @@ class ExpoLibghosttyView: ExpoView {
+@@ -4,10 +4,51 @@ import GhosttyTerminal
+ // Ghostty-backed terminal view. The JS side owns transport and session
+ // lifecycle; this view only renders bytes pushed via `write` and reports
+ // user input / grid resizes back through events.
+-class ExpoLibghosttyView: ExpoView {
++//
++// Muxify patch: two promises the library does not make on its own, both of
++// which JavaScript has to be able to rely on or a Pane is left blank with no
++// way to notice.
++//
++// **Nothing written is lost.** The library drops output that arrives while it
++// has no ghostty surface to parse it into — before the first one is built,
++// and in the gap while one is torn down and rebuilt — and says so only in a
++// debug log. Bytes that arrive then are held here and written once a surface
++// has both been built and reported its grid, so a caller can write the moment
++// it has a reference and be sure the bytes reach a screen.
++//
++// **Every surface reports its grid.** The library reports a resize once per
++// distinct viewport for the lifetime of the view. A surface rebuilt at the
++// same size — the view leaving and re-entering a window, a configuration
++// change — is a blank surface that says nothing, and a caller painting from a
++// remote capture has no way to know it must paint again. The report is made
++// once per surface per distinct grid instead, so a fresh surface always
++// announces itself. A caller treating every report as "paint me" is right.
++class ExpoLibghosttyView: ExpoView, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate {
+   private let terminalView = TerminalView(frame: .zero)
+   private var session: InMemoryTerminalSession?
+ 
++  /// One grid, as reported across the bridge. Points, not pixels.
++  private struct Report: Equatable {
++    var cols: Int
++    var rows: Int
++    var cellWidth: Double
++    var cellHeight: Double
++  }
++
++  /// Which ghostty surface is under the view. Bumped each time one is built.
++  private var surfaceGeneration = 0
++  /// Whether there is one right now.
++  private var surfaceAttached = false
++  /// The last grid reported, and which surface it was reported for.
++  private var reported: (generation: Int, grid: Report)?
++  /// Output that arrived with nothing to draw it, in the order it arrived.
++  private var pendingOutput: [Data] = []
++  private var pendingOutputBytes = 0
++  /// Past this, what is held is dropped: whoever is painting this view will
++  /// repaint from the truth when the surface reports, and a screenful is all
++  /// a repaint can show anyway.
++  private static let pendingOutputLimit = 2 * 1024 * 1024
++
+   /// Base font size in points (nil → ghostty's default, 14). Changing it on a
+   /// mounted view rebuilds the surface, which resets the grid — set it before
+   /// mounting. Pinch-to-zoom steps from this value.
+@@ -44,6 +85,29 @@ class ExpoLibghosttyView: ExpoView {
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -154,45 +207,160 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..8bbb5a9cb49cc0ddae244d8baa4a7e1c
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -57,7 +80,25 @@ class ExpoLibghosttyView: ExpoView {
+@@ -57,7 +121,15 @@ class ExpoLibghosttyView: ExpoView {
          ])
        },
        resize: { [weak self] viewport in
 -        self?.onResize(["cols": viewport.columns, "rows": viewport.rows])
-+        // Muxify patch: the cell goes out with the grid.
-+        //
-+        // A caller that draws its own overlay over this view has to turn a
-+        // touch into a cell, and the only honest way to do that is the cell
-+        // the font actually gives. Dividing the view by the row count is out
-+        // by the leftover the grid does not fill — measured at one pixel a row
-+        // on an iPhone 17 Pro, which is a whole row by the bottom of the
-+        // screen, which is where a terminal application puts its buttons.
-+        //
-+        // Points, not pixels: everything else across this bridge is points,
-+        // and the scale is this side's business rather than JavaScript's.
-+        let scale = self?.terminalView.contentScaleFactor ?? UIScreen.main.scale
-+        let divisor = scale > 0 ? Double(scale) : 1
-+        self?.onResize([
-+          "cols": viewport.columns,
-+          "rows": viewport.rows,
-+          "cellWidth": Double(viewport.cellWidthPixels) / divisor,
-+          "cellHeight": Double(viewport.cellHeightPixels) / divisor,
-+        ])
++        // The library's own report, which arrives once per distinct viewport
++        // and from whichever thread ghostty resized on. It is one of two ways
++        // a grid reaches `report`; see terminalDidResize for the other.
++        self?.reportOnMain(
++          cols: Int(viewport.columns),
++          rows: Int(viewport.rows),
++          cellWidthPixels: viewport.cellWidthPixels,
++          cellHeightPixels: viewport.cellHeightPixels
++        )
        }
      )
      self.session = session
-@@ -67,6 +108,7 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +138,165 @@ class ExpoLibghosttyView: ExpoView {
+     terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++    // Told when a surface is built and torn down, and its grid every time
++    // the library synchronises one — which, unlike the session's report
++    // above, starts afresh for each surface.
++    terminalView.delegate = self
      addSubview(terminalView)
 +    applyScrollOwnership()
++  }
++
++  // MARK: - Surface lifecycle
++
++  func terminalDidAttachSurface(_ surface: TerminalSurface) {
++    surfaceGeneration += 1
++    surfaceAttached = true
++  }
++
++  func terminalDidDetachSurface() {
++    // Whatever arrives from here on is held, and the next surface to report
++    // a grid takes it. See write.
++    surfaceAttached = false
++  }
++
++  func terminalDidResize(_ size: TerminalGridMetrics) {
++    reportOnMain(
++      cols: Int(size.columns),
++      rows: Int(size.rows),
++      cellWidthPixels: size.cellWidthPixels,
++      cellHeightPixels: size.cellHeightPixels
++    )
++  }
++
++  private func reportOnMain(cols: Int, rows: Int, cellWidthPixels: UInt32, cellHeightPixels: UInt32) {
++    if Thread.isMainThread {
++      report(cols: cols, rows: rows, cellWidthPixels: cellWidthPixels, cellHeightPixels: cellHeightPixels)
++    } else {
++      DispatchQueue.main.async { [weak self] in
++        self?.report(cols: cols, rows: rows, cellWidthPixels: cellWidthPixels, cellHeightPixels: cellHeightPixels)
++      }
++    }
++  }
++
++  /// Sends a grid across the bridge, once per surface per distinct grid.
++  ///
++  /// The cell goes out with the grid. A caller that draws its own overlay over
++  /// this view has to turn a touch into a cell, and the only honest way to do
++  /// that is the cell the font actually gives. Dividing the view by the row
++  /// count is out by the leftover the grid does not fill — measured at one
++  /// pixel a row on an iPhone 17 Pro, which is a whole row by the bottom of
++  /// the screen, which is where a terminal application puts its buttons.
++  ///
++  /// Points, not pixels: everything else across this bridge is points, and
++  /// the scale is this side's business rather than JavaScript's.
++  private func report(cols: Int, rows: Int, cellWidthPixels: UInt32, cellHeightPixels: UInt32) {
++    // Not before the surface is attached. ghostty announces its own default
++    // grid — 32 by 11, with no cell size — from inside surface creation,
++    // before the session has been handed the surface and before the view's
++    // size has been given to it. That is not a grid of this view, and passing
++    // it on was the "pre-layout grid" every caller had to learn to distrust.
++    guard surfaceAttached, cols > 0, rows > 0 else { return }
++    let scale = terminalView.contentScaleFactor
++    let divisor = scale > 0 ? Double(scale) : 1
++    let grid = Report(
++      cols: cols,
++      rows: rows,
++      cellWidth: Double(cellWidthPixels) / divisor,
++      cellHeight: Double(cellHeightPixels) / divisor
++    )
++    if let reported, reported.generation == surfaceGeneration, reported.grid == grid { return }
++    reported = (surfaceGeneration, grid)
++
++    // The surface is built and has a shape, so what waited for one can land.
++    // Before the report rather than after: a caller that answers the report
++    // by repainting must find its repaint on top of what was held, not under.
++    flushPendingOutput()
++
++    onResize([
++      "cols": grid.cols,
++      "rows": grid.rows,
++      "cellWidth": grid.cellWidth,
++      "cellHeight": grid.cellHeight,
++    ])
++  }
++
++  // MARK: - Output
++
++  /// Whether the surface under the view has a grid to lay bytes out on.
++  ///
++  /// A surface that exists but has not reported is one ghostty is still
++  /// sizing, and bytes parsed into it at the default grid would be reflowed
++  /// to the real one — so they wait for the report, exactly as bytes with no
++  /// surface at all do.
++  private var canDraw: Bool {
++    surfaceAttached && reported?.generation == surfaceGeneration
    }
  
    /// Feed PTY output (terminal.output on the wire) into the grid.
-@@ -83,4 +125,33 @@ class ExpoLibghosttyView: ExpoView {
+   func write(_ data: Data) {
++    guard canDraw else {
++      hold(data)
++      return
++    }
+     session?.receive(data)
+   }
+ 
+   /// Feed PTY output as UTF-8 text, for string-based wires.
+   func write(_ text: String) {
+-    session?.receive(text)
++    guard let data = text.data(using: .utf8) else { return }
++    write(data)
++  }
++
++  private func hold(_ data: Data) {
++    if pendingOutputBytes + data.count > Self.pendingOutputLimit {
++      pendingOutput.removeAll()
++      pendingOutputBytes = 0
++    }
++    pendingOutput.append(data)
++    pendingOutputBytes += data.count
++  }
++
++  private func flushPendingOutput() {
++    guard !pendingOutput.isEmpty, let session else { return }
++    let held = pendingOutput
++    pendingOutput.removeAll()
++    pendingOutputBytes = 0
++    for data in held { session.receive(data) }
+   }
+ 
+   /// Mark the underlying PTY as exited (terminal.exit on the wire).
    func finish(exitCode: UInt32) {
      session?.finish(exitCode: exitCode, runtimeMilliseconds: 0)
    }
++
++  // MARK: - Keyboard
 +
 +  /// Make the terminal first responder, raising the system keyboard and its
 +  /// accessory bar. Also tells ghostty's core it has focus.

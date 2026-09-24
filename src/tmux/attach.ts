@@ -132,8 +132,17 @@ export interface Attach {
 
   // Per-Pane, for the views the screen puts Surfaces into.
   view(paneId: string): PaneView;
-  /** A Surface for a Pane came or went. */
-  surfaceForPane(paneId: string, surface: PaneSurface | null): void;
+  /**
+   * A Surface for a Pane came or went, and if it came, the grid it has
+   * already reported, if it has.
+   *
+   * Both at once, because a Surface says its grid once per size and the
+   * screen may be introducing an Attach to a Surface that said it long ago:
+   * the Attach this screen belonged to was replaced under a Surface that did
+   * not move. Told separately, the second Attach would wait for a report the
+   * first one had.
+   */
+  surfaceForPane(paneId: string, surface: PaneSurface | null, grid?: Grid | null): void;
   /** A Pane's Surface reported its grid. */
   paneGridReported(paneId: string, grid: Grid): void;
 
@@ -344,12 +353,19 @@ export function openAttach(options: AttachOptions): Attach {
    *
    * Three things at once, because they are one question — which Panes are on
    * screen. A Pane that has left (a Window switch, a kill on the laptop)
-   * releases its view and its Surface. A Pane that is still there and has a
-   * Surface but no view *gets one*, which is what re-creates every view after
-   * a replacement: the Surfaces belong to the screen and did not go anywhere,
-   * so a fresh view over the same Surface resyncs it from a fresh capture
-   * exactly as a first paint does. And one cursor, in the Pane the keyboard is
-   * in — remembered by each view so a repaint does not bring a second one back.
+   * releases its view. A Pane that is still there and has a Surface but no
+   * view *gets one*, which is what re-creates every view after a replacement:
+   * the Surfaces belong to the screen and did not go anywhere, so a fresh view
+   * over the same Surface resyncs it from a fresh capture exactly as a first
+   * paint does. And one cursor, in the Pane the keyboard is in — remembered by
+   * each view so a repaint does not bring a second one back.
+   *
+   * The Surface itself is *kept* when its Pane leaves. It is the screen's, and
+   * the screen says when it goes — and the screen may not agree that it has:
+   * React folds two Topologies published in one turn into one render, so a
+   * Pane that left and came back between them has a Surface that never
+   * unmounted. Forgetting it here left that Surface with no view, which is a
+   * Pane showing nothing that no tap or byte could ever reach again.
    */
   function pruneViews(next: Topology): void {
     const wanted = new Set(next.panes.map((pane) => pane.id));
@@ -357,7 +373,6 @@ export function openAttach(options: AttachOptions): Attach {
       if (wanted.has(id)) continue;
       view.dispose();
       views.delete(id);
-      onScreen.delete(id);
     }
     for (const id of onScreen.keys()) {
       if (wanted.has(id)) viewFor(id);
@@ -722,17 +737,25 @@ export function openAttach(options: AttachOptions): Attach {
 
     view: viewFor,
 
-    surfaceForPane(paneId: string, surface: PaneSurface | null): void {
+    surfaceForPane(paneId: string, surface: PaneSurface | null, grid: Grid | null = null): void {
       if (closed) return;
       if (surface === null) {
         onScreen.delete(paneId);
         views.get(paneId)?.setSurface(null);
         return;
       }
-      // A new Surface has reported nothing yet, so the grid it replaces is not
-      // its own — it says so as soon as it is laid out.
-      onScreen.set(paneId, { surface, grid: null });
-      viewFor(paneId).setSurface(surface);
+      // The grid is the Surface's own or nothing: a Surface that has not
+      // reported yet says so as soon as it is laid out, and the grid the one
+      // before it reported is not this one's.
+      onScreen.set(paneId, { surface, grid });
+      const existing = views.get(paneId);
+      if (!existing) {
+        // Made from what is on screen, which is both halves at once.
+        viewFor(paneId);
+        return;
+      }
+      existing.setSurface(surface);
+      if (grid) existing.reportGrid(grid);
     },
 
     paneGridReported(paneId: string, grid: Grid): void {

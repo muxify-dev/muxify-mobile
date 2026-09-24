@@ -3,7 +3,7 @@ import { systemClock } from '@/lib/clock';
 import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
 
 import { asciiBytes, clampBack, paintScreen, scrollbackRange } from './pane-screen';
-import { sameGrid, type Grid, type PaneState } from './tmux-client';
+import type { Grid, PaneState } from './tmux-client';
 
 /**
  * The slice of TmuxClient one Pane's view needs.
@@ -97,10 +97,9 @@ export interface PaneView {
   /**
    * A grid the Surface reported.
    *
-   * Told rather than asked, and told every time: the view decides which of
-   * them is worth painting at. A Surface reports its grid before it has been
-   * laid out, and a Pane painted at that one is a Pane eleven rows tall whose
-   * resync wrapped away to nothing.
+   * Told rather than asked, and painted at every time: the Surface speaks once
+   * per grid per surface underneath it, so a report is always news — a new
+   * size, or the same size on a surface the library has rebuilt blank.
    */
   reportGrid(grid: Grid): void;
   /**
@@ -187,19 +186,6 @@ const STATE_STALE_MS = 1500;
 export const OUTPUT_SETTLE_MS = 300;
 
 /**
- * How long a newly mounted Surface is given before anything is written to it.
- *
- * Measured rather than cautious. A Surface that has just mounted reports its
- * grid before it will accept anything written to it: the resync ran, the bytes
- * went out, and the Pane stayed blank — while the Surface that had been on
- * screen all along, the one the split grew out of, painted perfectly. Whatever
- * the library is still doing at that moment, it is done well inside this.
- *
- * Exported so the test that holds it to its value can name it.
- */
-export const PAINT_SETTLE_MS = 250;
-
-/**
  * One Pane, on the Surface it is painted on.
  *
  * Owns four things that used to be spread between the Terminal Screen and
@@ -210,8 +196,16 @@ export const PAINT_SETTLE_MS = 250;
  * **Both halves are needed and neither can be waited for.** A Surface arrives
  * as a ref and reports a grid, in either order: one Pane of a split had its
  * grid before its ref and so was never painted at all. So the view takes both
- * as facts, paints when it has both and the library has had its moment, and
- * reads the grid at the moment it paints rather than when the wait began.
+ * as facts and paints the moment it has both.
+ *
+ * **Every grid report is a reason to paint.** The Surface reports once per
+ * distinct grid *per surface underneath it*, and a surface the library has
+ * rebuilt at the same size is a blank one — so a report of the grid already
+ * painted at is not a repeat, it is news that the picture is gone. There used
+ * to be a wait here as well, a quarter of a second after mounting before the
+ * first write, measured against a Surface that dropped what was written to it
+ * too early. The Surface holds those bytes itself now, so the wait — and the
+ * pre-layout grid it was quietly also protecting against — is gone with it.
  *
  * **Attaching shows the Pane as it is.** `%output` carries only what happens
  * next, so the screen already there is read with `capture-pane` and written
@@ -248,15 +242,11 @@ export function createPaneView(
    * Surface was swapped does not paint the new one with the old one's screen.
    */
   let generation = 0;
-  /** When the current Surface mounted, which is what the settling waits from. */
-  let mountedAt = 0;
-  let paintTimer: Timer | null = null;
   /** The one reading taken after a burst of output stops; see readWhenSettled. */
   let settleTimer: Timer | null = null;
 
-  /** The grid the Surface last reported, and the one it was last painted at. */
+  /** The grid the Surface last reported. */
   let grid: Grid | null = null;
-  let paintedGrid: Grid | null = null;
   let rows = 24;
 
   /** What the Pane was last seen doing, and when that was read. */
@@ -478,27 +468,15 @@ export function createPaneView(
   /**
    * Paints as soon as it is allowed to, and not before.
    *
-   * Allowed means: a Surface, a grid, and the library's settling period since
-   * that Surface mounted. The grid is read when the timer fires rather than
-   * when it was set, which is what keeps the pre-layout value out of the
-   * paint: by then the real one has arrived and replaced it.
+   * Allowed means a Surface and a grid, and nothing else: whichever of the two
+   * arrives last does the painting, and a grid arriving again paints again.
+   * See schedule for why two of these in quick succession cost one capture
+   * and a follow-up rather than two in flight.
    */
   function armPaint(): void {
     if (disposed || paused || surface === null || grid === null) return;
-    if (paintTimer !== null) return;
-    if (paintedGrid !== null && sameGrid(grid, paintedGrid)) return;
-
-    const due = Math.max(0, mountedAt + PAINT_SETTLE_MS - clock.now());
-    paintTimer = clock.after(due, () => {
-      paintTimer = null;
-      if (disposed || paused || surface === null) return;
-      const latest = grid;
-      if (latest === null) return;
-      if (paintedGrid !== null && sameGrid(latest, paintedGrid)) return;
-      paintedGrid = latest;
-      rows = Math.max(1, Math.floor(latest.rows));
-      schedule();
-    });
+    rows = Math.max(1, Math.floor(grid.rows));
+    schedule();
   }
 
   /** Sends the next thing on its way in, as one command. */
@@ -566,29 +544,29 @@ export function createPaneView(
 
     setSurface(next: PaneSurface | null): void {
       if (disposed || next === surface) return;
-      clock.cancel(paintTimer);
-      paintTimer = null;
-      // Everything in flight for the Surface that is going belongs to it.
+      // Everything in flight for the Surface that is going belongs to it — and
+      // so does the grid it reported. The next Surface reports its own, and
+      // is painted then; a grid that arrived before there was any Surface is
+      // for the one about to arrive, and is kept.
       generation += 1;
+      if (surface !== null) grid = null;
       surface = next;
       held = null;
       // A Surface arrives blank, so what it is showing is nothing rather than
       // wherever the last one had been dragged back to.
       back = 0;
-      paintedGrid = null;
       if (next === null) return;
-      mountedAt = clock.now();
       armPaint();
     },
 
     reportGrid(next: Grid): void {
       if (disposed) return;
-      if (grid !== null && sameGrid(next, grid)) return;
       grid = { cols: next.cols, rows: next.rows };
-      // A later grid is a resize. tmux redraws every Pane it resizes, so the
-      // bytes are on their way already — but the capture is what makes a Pane
-      // that was never painted at its real size right, and the rows are what
-      // a Scrollback capture is cut to.
+      // A later grid is a resize, and the same grid again is a Surface that
+      // has been rebuilt blank underneath — see the docblock. Either way the
+      // capture is what makes the Pane right, and the rows are what a
+      // Scrollback capture is cut to. tmux redraws what it resizes, so for a
+      // resize the bytes are on their way as well; the capture lands on top.
       armPaint();
     },
 
@@ -623,15 +601,12 @@ export function createPaneView(
       if (disposed || next === paused) return;
       paused = next;
       if (next) {
-        clock.cancel(paintTimer);
-        paintTimer = null;
         clock.cancel(settleTimer);
         settleTimer = null;
         return;
       }
       // What arrived while nobody was looking is not worth replaying; the
       // capture is the truth, exactly as it is after any resync.
-      paintedGrid = null;
       armPaint();
     },
 
@@ -718,8 +693,6 @@ export function createPaneView(
 
     dispose(): void {
       disposed = true;
-      clock.cancel(paintTimer);
-      paintTimer = null;
       clock.cancel(settleTimer);
       settleTimer = null;
       surface = null;

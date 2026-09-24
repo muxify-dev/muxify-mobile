@@ -14,6 +14,8 @@
 #   7  the delete key, which removed one character however long it was held
 #   8  the bottom row, which a tap could not reach at all
 #   9  the row being typed on, which the keyboard has to stay off
+#  10  a second Session opened from the Host Screen, which used to be handed
+#      a Surface that had already spoken and so could wait for it forever
 #
 # Checks 3 and 7 changed shape with control mode. They used to assert that the
 # status line was hidden on attach and restored on the way out — the borrowing
@@ -61,9 +63,27 @@ MARKER=MUXIFY_ENTER_RUNS
 # is how many of them survive, so anything the shell might expand is out.
 HELD=abcdefghijklmnopqrst
 
+# Runs a command on the VM: through the SSH gateway the app uses, and failing
+# that through OrbStack's own way in.
+#
+# Bounded, because the gateway sometimes accepts a connection and then says
+# nothing for minutes — measured: a run of this suite once sat nineteen minutes
+# on its first `ssh`, and a stalled `send-keys` made check 5 report that Enter
+# had run nothing when nothing had been typed for it to run. Measured too: the
+# app's own SSH library kept connecting through the gateway while OpenSSH from
+# this shell could not, for three minutes of probing every four seconds. So a
+# stall here says nothing about the app, and the command goes in by `orb`
+# instead — the same VM, the same user, the same tmux server.
 vm() {
-  ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -i "$HOME/.orbstack/ssh/id_ed25519" -p 32222 default@127.0.0.1 "$@" 2>/dev/null
+  local out
+  if out=$(perl -e 'alarm 20; exec @ARGV' ssh -F /dev/null \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 \
+    -i "$HOME/.orbstack/ssh/id_ed25519" -p 32222 default@127.0.0.1 "$@" 2>/dev/null); then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  out=$(perl -e 'alarm 20; exec @ARGV' orb -m ubuntu sh -c "$*" 2>/dev/null) || return 1
+  printf '%s\n' "$out"
 }
 
 fail() { echo "FAIL: $1"; exit 1; }
@@ -204,7 +224,7 @@ attach() {
   sleep 3
 }
 
-echo "0/9  putting the Session somewhere known"
+echo "0/10  putting the Session somewhere known"
 vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
@@ -214,14 +234,14 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/9  the Terminal Screen has no navigation header"
+echo "1/10  the Terminal Screen has no navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
 snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
   && fail "a back button is back; Home in the Dock is what leaves this screen"
 echo "     no header, no back button"
 
-echo "2/9  the library's Accessory Bar stays hidden"
+echo "2/10  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Bar offers ctrl, esc and tab
 # — lowercase, which is what keeps this check able to tell the two apart. The
 # library's bar spells them `Control`, `Escape` and `Tab`.
@@ -229,7 +249,7 @@ snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/9  attaching changes no option, on the Session or its Window"
+echo "3/10  attaching changes no option, on the Session or its Window"
 # The whole of ADR 0006. A control client renders nothing, so `status` is not
 # its business; it is sized with `refresh-client -C`, so `window-size` is not
 # either; and scrolling is a capture, so neither is `mouse`.
@@ -240,14 +260,14 @@ echo "3/9  attaching changes no option, on the Session or its Window"
 [ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
 echo "     session and window options byte-identical while attached"
 
-echo "4/9  sizes agree with the keyboard down, and do not change with it up"
+echo "4/10  sizes agree with the keyboard down, and do not change with it up"
 agree "keyboard down"
 DOWN=$(surface)
 toggle_keyboard
 agree "keyboard up"
 [ "$(surface)" = "$DOWN" ] || fail "the keyboard resized the Window from $DOWN to $(surface); see ADR 0008"
 
-echo "5/9  Enter on the device runs the command"
+echo "5/10  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
 #
@@ -266,7 +286,7 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "6/9  holding the delete key removes more than one character"
+echo "6/10  holding the delete key removes more than one character"
 # The other half of the local patch, and the same kind of check as 2. iOS
 # repeats the delete key only while it believes there is something behind the
 # caret to delete, and the terminal's document is the IME's composition buffer
@@ -291,7 +311,7 @@ typed_line | grep -q "${HELD:0:10}" \
 echo "     three seconds of delete took the line back past ten characters"
 vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
 
-echo "7/9  a tap on the bottom row lands on the bottom row"
+echo "7/10  a tap on the bottom row lands on the bottom row"
 # Where a terminal application draws its buttons, and where they could not be
 # pressed. The layer that turns a touch into a cell used to divide the Pane by
 # its grid, which is out by the strip the whole cells do not fill — a quarter
@@ -339,7 +359,7 @@ done
 echo "     the bottom row answers to its own row, $CLICKED of $ROWS"
 vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
 
-echo "8/9  the keyboard covers the Window without resizing it, and stays off the cursor"
+echo "8/10  the keyboard covers the Window without resizing it, and stays off the cursor"
 # ADR 0008. The Window keeps the height it has with the keyboard down and is
 # slid up under the keys just far enough for the row being typed on to clear
 # them. Two readings prove it. tmux's Window height, which must not move — the
@@ -392,7 +412,56 @@ ensure_keyboard away
 [ "$(vm "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard changed the Window on the way down"
 
-echo "9/9  leaving finds the Session exactly as it was, bar the zoom"
+echo "9/10  a second Session, opened from the Host Screen over the first, connects and paints"
+# The Attach is replaced under a Terminal Screen that stays up, and the Surface
+# it measures with is mounted in the beat between the old Attach going and the
+# new one arriving. It reports its grid once, into that beat. The screen used to
+# hand the report to whichever Attach happened to be listening — nobody — and
+# the new Attach waited for a settled grid that had already been said: a
+# Session that showed Connecting and never connected. The screen now tells
+# whichever Attach is current what the Surface has said, so the second Session
+# has to reach Connected, report a grid, and take the keyboard like the first.
+SECOND=muxify-regressions-second
+vm "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
+  || fail "could not make a second Session on the VM"
+ensure_keyboard away
+agent-device press 'label="Home"' >/dev/null 2>&1
+agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
+agent-device press 'label="Dev Host"' >/dev/null 2>&1
+agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
+agent-device press "label=\"Session $SECOND\"" >/dev/null 2>&1
+for _ in $(seq 1 25); do
+  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
+  sleep 1
+done
+agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+  || fail "the second Session never reached Connected"
+agent-device is text 'id="attached-session"' "$SECOND" >/dev/null 2>&1 \
+  || fail "the screen is not showing the second Session"
+sleep 2
+[ -n "$(surface)" ] || fail "the second Session's Surface never reported a grid"
+# The keyboard is the Pane view's word that it holds the Surface: a view with
+# a Surface it was never introduced to raises nothing.
+toggle_keyboard
+[ "$(keyboard_up)" = yes ] || fail "the keyboard did not rise on the second Session"
+ensure_keyboard away
+echo "     second Session connected at $(surface), keyboard rose and fell"
+# Back to the first, the same way round, so what follows leaves it as found.
+agent-device press 'label="Home"' >/dev/null 2>&1
+agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
+agent-device press 'label="Dev Host"' >/dev/null 2>&1
+agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
+agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
+for _ in $(seq 1 25); do
+  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
+  sleep 1
+done
+agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+  || fail "the first Session did not come back"
+vm "tmux kill-session -t '$SECOND'" >/dev/null 2>&1
+sleep 2
+
+echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
 # The keyboard is already away: check 8 put it there, and toggling it again
 # here would only raise it on the way out.
 agent-device press 'label="Home"' >/dev/null 2>&1
@@ -418,5 +487,6 @@ echo
 echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
 echo "      untouched throughout, sizes agree in both keyboard states, Enter"
 echo "      runs commands, a held delete key keeps deleting, a tap on the"
-echo "      bottom row lands on the bottom row, and the keyboard covers the"
-echo "      Window without resizing it or the row being typed on."
+echo "      bottom row lands on the bottom row, the keyboard covers the"
+echo "      Window without resizing it or the row being typed on, and a"
+echo "      second Session opened over the first connects and paints."

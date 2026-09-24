@@ -702,9 +702,8 @@ describe('the Panes on screen', () => {
 
     kit.hosts[0].drop();
     await settle();
-    await connected(kit, 1);
     screen.written.length = 0;
-    kit.clock.advance(1000);
+    await connected(kit, 1);
     await settle();
 
     expect(screen.written.length).toBeGreaterThan(0);
@@ -712,6 +711,51 @@ describe('the Panes on screen', () => {
     await settle();
     const text = screen.written.map((each) => new TextDecoder().decode(each)).join('');
     expect(text).toContain('alive again');
+  });
+
+  it('takes a Surface together with the grid it reported before this Attach existed', async () => {
+    // A Surface says its grid once per size. An Attach introduced to one that
+    // has been on screen a while — the one this screen belonged to was
+    // replaced underneath it — would otherwise wait for a report that went to
+    // its predecessor, and paint nothing.
+    const kit = attachOn();
+    await connected(kit);
+    const surface = fakeSurface();
+
+    kit.attach.surfaceForPane('%0', surface, GRID);
+    await settle();
+
+    expect(surface.written.length).toBeGreaterThan(0);
+  });
+
+  it('keeps a Surface whose Pane leaves the Topology and comes back', async () => {
+    // React folds two Topologies published in one turn into one render, so a
+    // Pane that left and returned between them keeps the Surface it had. The
+    // Attach used to forget that Surface with the Pane, leaving a mounted
+    // Surface no view would ever paint or raise a keyboard on.
+    const kit = attachOn();
+    await connected(kit);
+    const surface = fakeSurface();
+    kit.attach.surfaceForPane('%0', surface, GRID);
+    await settle();
+
+    kit.hosts[0].answering('list-panes', ['0\t%7\tzsh\t1\t/home/user\tb25d,49x41,0,0,7']);
+    kit.hosts[0].notify('%window-add @1');
+    await settle();
+    expect(kit.attach.state().topology.panes.map((pane) => pane.id)).toEqual(['%7']);
+
+    kit.hosts[0].answering('list-panes', ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']);
+    kit.hosts[0].notify('%window-add @2');
+    await settle();
+    expect(kit.attach.state().topology.panes.map((pane) => pane.id)).toEqual(['%0']);
+    surface.written.length = 0;
+
+    kit.hosts[0].notify('%output %0 back again');
+    await settle();
+    const text = surface.written.map((each) => new TextDecoder().decode(each)).join('');
+    expect(text).toContain('back again');
+    await kit.attach.view('%0').toggleKeyboard();
+    expect(await surface.isFocused()).toBe(true);
   });
 
   it('resyncs a Pane that is given a Surface again', async () => {

@@ -79,14 +79,18 @@ export interface ClientSizing {
  * sending. See ADR 0006 for why that is the only command involved and why no
  * Session option is touched.
  *
- * **The pre-layout grid is a lie and is not passed on.** A Surface reports
- * 32x11 on a phone whose Window is 49x41, six milliseconds before it reports
- * the real one. Sent straight through, that first value squashed the Window to
- * eleven rows, tmux redistributed the Panes to fit, and growing back gave a
- * split whose halves bore no relation to the ones the user had set. tmux keeps
- * split sizes across a resize perfectly well; what it cannot do is undo a trip
- * through a size nobody asked for. So a grid is believed only once the next
- * settle window passes without it changing.
+ * **A grid is believed only once it has stopped moving.** A Surface used to
+ * report 32x11 on a phone whose Window is 49x41, six milliseconds before it
+ * reported the real one — ghostty's own default grid, announced from inside
+ * surface creation before the view's size had been given to it. Sent straight
+ * through, that first value squashed the Window to eleven rows, tmux
+ * redistributed the Panes to fit, and growing back gave a split whose halves
+ * bore no relation to the ones the user had set. tmux keeps split sizes across
+ * a resize perfectly well; what it cannot do is undo a trip through a size
+ * nobody asked for. The Surface no longer passes that grid on at all (ADR
+ * 0009), but a Surface being laid out still reports more than once — a
+ * rotation, a sheet closing — so a grid is believed only once the next settle
+ * window passes without it changing.
  *
  * **A split has nothing that spans the Window**, so nothing reports the
  * Window's grid. It is worked out from the cell metric instead, measured while

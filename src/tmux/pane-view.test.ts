@@ -3,7 +3,6 @@ import { createTestClock } from '@/lib/test-clock';
 import {
   createPaneView,
   OUTPUT_SETTLE_MS,
-  PAINT_SETTLE_MS,
   type PaneReader,
   type PaneSurface,
   type ScrollPosition,
@@ -163,11 +162,10 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
   };
 }
 
-/** The ordinary way a Pane comes up: a Surface, a grid, and the library's moment. */
+/** The ordinary way a Pane comes up: a Surface and a grid, in that order. */
 async function paints(kit: ReturnType<typeof viewOn>, grid: Grid = GRID): Promise<void> {
   kit.view.setSurface(kit.screen.surface);
   kit.view.reportGrid(grid);
-  kit.clock.advance(PAINT_SETTLE_MS);
   await settle();
 }
 
@@ -184,7 +182,6 @@ describe('deciding when a Pane may be painted', () => {
 
     kit.view.setSurface(kit.screen.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
     expect(shown(kit.written)).toContain('first line\r\nsecond line');
@@ -203,28 +200,24 @@ describe('deciding when a Pane may be painted', () => {
     expect(kit.written).toHaveLength(0);
 
     kit.view.setSurface(kit.screen.surface);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
     expect(shown(kit.written)).toContain('it painted');
   });
 
-  it('writes nothing until the library has had its moment after mounting', async () => {
+  it('waits on nothing but the two facts: no timer stands between them and the paint', async () => {
+    // There used to be a quarter of a second here, measured against a Surface
+    // that dropped early writes. The Surface holds them itself now, so a
+    // Pane with both halves is a Pane being captured this very turn.
     const host = fakePane();
     const kit = viewOn(host);
 
     kit.view.setSurface(kit.screen.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS - 1);
-    await settle();
-    expect(kit.written).toHaveLength(0);
-
-    kit.clock.advance(1);
-    await settle();
-    expect(kit.written.length).toBeGreaterThan(0);
+    expect(host.asked).toContain('capture %0');
   });
 
-  it('paints once, at the real grid, when the pre-layout one came first', async () => {
+  it('ends up painted at the real grid when the pre-layout one came first', async () => {
     const host = fakePane();
     const kit = viewOn(host);
 
@@ -232,11 +225,9 @@ describe('deciding when a Pane may be painted', () => {
     kit.view.reportGrid(PRE_LAYOUT);
     kit.clock.advance(6);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
-    // One capture, and the Scrollback it is cut to is the real one's.
-    expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
+    // The Scrollback is cut to the real grid's rows, whatever was painted first.
     kit.view.scroll(4, GRID);
     await settle();
     expect(host.asked).toContain('scrollback %0 -4..19');
@@ -255,17 +246,23 @@ describe('deciding when a Pane may be painted', () => {
     expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
   });
 
-  it('says nothing about a grid it is already painted at', async () => {
+  it('repaints when the same grid is reported again, because the Surface underneath is new', async () => {
+    // The Surface reports once per grid per surface the library has built
+    // under it. The same grid twice is therefore never a repeat: it is a
+    // surface rebuilt blank at the old size, and a Pane that shrugged it off
+    // was a Pane showing nothing with no way to notice.
     const host = fakePane();
+    host.screen = ['still here'];
     const kit = viewOn(host);
     await paints(kit);
     host.asked.length = 0;
+    kit.written.length = 0;
 
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
-    expect(host.asked).toEqual([]);
+    expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
+    expect(shown(kit.written)).toContain('still here');
   });
 });
 
@@ -299,10 +296,29 @@ describe('a Pane that loses its Surface and gains another', () => {
 
     kit.view.setSurface(second.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
     expect(shown(second.written)).toContain('as it is now');
+  });
+
+  it('waits for the new Surface to report rather than painting it at the old one’s grid', async () => {
+    // Every Surface reports its grid, so the one arriving will say what it
+    // is. Painting it at the last one's grid first was a capture spent on a
+    // guess — and a wrong one after a rotation while the screen was away.
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.setSurface(null);
+    host.asked.length = 0;
+
+    const second = fakeSurface();
+    kit.view.setSurface(second.surface);
+    await settle();
+    expect(host.asked).toEqual([]);
+
+    kit.view.reportGrid({ cols: 80, rows: 12 });
+    await settle();
+    expect(host.asked.filter((each) => each.startsWith('capture'))).toHaveLength(1);
   });
 
   it('does not paint the new Surface with the screen the old one asked for', async () => {
@@ -313,12 +329,10 @@ describe('a Pane that loses its Surface and gains another', () => {
 
     kit.view.setSurface(kit.screen.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
 
     const second = fakeSurface();
     kit.view.setSurface(second.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
 
     host.screen = ['for the second'];
     release();
@@ -353,7 +367,6 @@ describe('the app going to the background', () => {
     kit.view.setPaused(true);
     host.screen = ['after'];
     kit.view.setPaused(false);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
     expect(shown(kit.written)).toContain('after');
@@ -394,7 +407,6 @@ describe('showing a Pane', () => {
 
     kit.view.setSurface(kit.screen.surface);
     kit.view.reportGrid(GRID);
-    kit.clock.advance(PAINT_SETTLE_MS);
     await settle();
 
     kit.view.receive(bytes('while painting'));

@@ -372,16 +372,17 @@ export default function TerminalScreen() {
     : null;
 
   /**
-   * A Surface for one Pane, arriving or going.
+   * A Surface for one Pane, arriving or going — with the grid it has reported,
+   * if it has, so an Attach meeting a Surface that has been up for a while is
+   * told both halves at once. See PaneSurfaceView for why that matters.
    *
    * The whole of what the screen does about painting. Which Surface belongs to
-   * which Pane, whether both halves have arrived, when the library will accept
-   * a write and what the cursor should do are all the Pane view's, which is
-   * where they can be tested.
+   * which Pane, whether both halves have arrived and what the cursor should do
+   * are all the Pane view's, which is where they can be tested.
    */
   const adoptPaneSurface = useCallback(
-    (paneId: string, ref: TerminalViewRef | null) => {
-      attach?.surfaceForPane(paneId, ref === null ? null : surfaceFor(ref));
+    (paneId: string, ref: TerminalViewRef | null, grid: Grid | null) => {
+      attach?.surfaceForPane(paneId, ref === null ? null : surfaceFor(ref), grid);
     },
     [attach],
   );
@@ -392,6 +393,24 @@ export default function TerminalScreen() {
   );
 
   /**
+   * The last grid a Surface spanning the Window reported, and the area it was
+   * laid out in.
+   *
+   * Remembered so it can be told again. A Surface says its grid once per size,
+   * and which Attach is listening at that moment is an accident of timing: the
+   * holder swaps Attaches with a beat of nothing between them, and the ruler
+   * that mounts in that beat reports into the gap. An Attach that arrives to a
+   * grid nobody passed on waits for a settled grid forever — a Session that
+   * shows Connecting and never connects. So whatever Attach is current is
+   * told the grid on arrival, from here.
+   */
+  const windowGrid = useRef<{ grid: Grid; area: Extent } | null>(null);
+  useEffect(() => {
+    const known = windowGrid.current;
+    if (attach && known) attach.windowGridReported(known.grid, known.area);
+  }, [attach]);
+
+  /**
    * A Surface that fills the Window reporting its grid.
    *
    * Only the single-Pane and zoomed cases go through here, and that is the
@@ -400,13 +419,12 @@ export default function TerminalScreen() {
    */
   const reportWindowGrid = useCallback(
     ({ nativeEvent }: { nativeEvent: Grid }) => {
+      const grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
       // The area the Surface was laid out in, which is the Window's and not
       // the container's: the cell metric is worked out by dividing one by the
       // other, and with the keyboard up the container is the smaller strip.
-      attach?.windowGridReported(
-        { cols: nativeEvent.cols, rows: nativeEvent.rows },
-        windowArea,
-      );
+      windowGrid.current = { grid, area: windowArea };
+      attach?.windowGridReported(grid, windowArea);
     },
     [attach, windowArea],
   );
@@ -1064,7 +1082,8 @@ function PaneSurfaceView({
   font: number;
   terminal: TerminalPalette;
   ansi: readonly string[] | undefined;
-  onRef: (paneId: string, ref: TerminalViewRef | null) => void;
+  /** The Surface arriving or going, with the grid it has reported if any. */
+  onRef: (paneId: string, ref: TerminalViewRef | null, grid: Grid | null) => void;
   onPaneResize: (paneId: string, grid: Grid) => void;
   onWindowResize?: (event: { nativeEvent: Grid }) => void;
   /** How big a cell is, which only the Surface knows. See cellSize. */
@@ -1073,6 +1092,16 @@ function PaneSurfaceView({
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
   onSelect: (paneId: string) => void;
 }) {
+  /**
+   * The grid this Surface last reported, or null before it has.
+   *
+   * Not the Pane's size from tmux, which is a guess about the Surface rather
+   * than the Surface's own word; a Pane view painted at a guess is what the
+   * Pane view was deepened to stop. Kept so the Surface can be introduced to
+   * an Attach with its grid — see register.
+   */
+  const reported = useRef<Grid | null>(null);
+  /** What a scroll is measured against: the Surface's grid, or tmux's until then. */
   const own = useRef<Grid>({ cols: slot.pane.width, rows: slot.rows });
   /** Where a touch on an inactive Pane started, so a drag is not a tap. */
   const from = useRef({ x: 0, y: 0 });
@@ -1085,9 +1114,15 @@ function PaneSurfaceView({
    * unregistered and re-registered on every render. A resync that finished
    * during one of those gaps wrote its bytes to nothing, and the Pane stayed
    * blank until something else happened to write to it.
+   *
+   * It does change identity when the Attach does, and that is the one time it
+   * should: the Surface is then handed to the new Attach — with the grid it
+   * has already reported, because the Surface will not say it again for a
+   * size that has not changed, and an Attach that has a Surface and no grid
+   * paints nothing and raises no keyboard.
    */
   const register = useCallback(
-    (ref: TerminalViewRef | null) => onRef(paneId, ref),
+    (ref: TerminalViewRef | null) => onRef(paneId, ref, reported.current),
     [onRef, paneId],
   );
 
@@ -1111,9 +1146,11 @@ function PaneSurfaceView({
           palette: ansi ? [...ansi] : undefined,
         }}
         onResize={({ nativeEvent }) => {
-          own.current = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+          const grid = { cols: nativeEvent.cols, rows: nativeEvent.rows };
+          reported.current = grid;
+          own.current = grid;
           onWindowResize?.({ nativeEvent });
-          onPaneResize(slot.pane.id, own.current);
+          onPaneResize(slot.pane.id, grid);
           onCell({ width: nativeEvent.cellWidth, height: nativeEvent.cellHeight });
         }}
         onInput={({ nativeEvent }) => onInput(slot.pane.id, nativeEvent.data)}

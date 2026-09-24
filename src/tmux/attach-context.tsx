@@ -67,15 +67,24 @@ export function useCurrentAttach(): Attach | null {
  * nothing.
  */
 export function useAttachState(attach: Attach | null): AttachState | null {
-  const [state, setState] = useState<AttachState | null>(() => attach?.state() ?? null);
+  // Kept with the Attach it came from, and read back only against that
+  // Attach. A state held on its own outlives the Attach by a render: the
+  // holder swaps Attaches, the screen re-renders with the new one and the old
+  // one's Topology, and for that render the old Session's Panes are still on
+  // screen — mounting their Surfaces onto an Attach that has never heard of
+  // them. Nothing here may be a render behind the Attach.
+  const [held, setHeld] = useState<{ of: Attach | null; state: AttachState | null }>(() => ({
+    of: attach,
+    state: attach?.state() ?? null,
+  }));
   useEffect(() => {
     if (!attach) {
-      setState(null);
+      setHeld({ of: null, state: null });
       return;
     }
-    return attach.subscribe(setState);
+    return attach.subscribe((state) => setHeld({ of: attach, state }));
   }, [attach]);
-  return state;
+  return held.of === attach ? held.state : (attach?.state() ?? null);
 }
 
 /**
