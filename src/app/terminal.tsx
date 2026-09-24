@@ -24,7 +24,7 @@ import type { AttachPhase, AttachState } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
-import { paneBoxes, type PaneBox } from '@/tmux/pane-layout';
+import { cellOf, paneBoxes, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
@@ -313,6 +313,22 @@ export default function TerminalScreen() {
     (paneId: string, grid: Grid) => attach?.paneGridReported(paneId, grid),
     [attach],
   );
+
+  /**
+   * How big one cell is, as the Surface that drew it says.
+   *
+   * Only the mouse layer needs it, and it needs it badly: turning a touch into
+   * a cell by dividing the Pane by its grid is out by however much of the Pane
+   * the grid does not fill, and that error is a whole row by the bottom of the
+   * screen — where a terminal application puts its buttons. Every Surface has
+   * the same font, so one reading serves them all.
+   */
+  const [cellSize, setCellSize] = useState<Extent | null>(null);
+  const reportCell = useCallback((cell: Extent) => {
+    setCellSize((was) =>
+      was && was.width === cell.width && was.height === cell.height ? was : cell,
+    );
+  }, []);
 
   /**
    * A Surface that fills the Window reporting its grid.
@@ -751,11 +767,30 @@ export default function TerminalScreen() {
             onRef={adoptPaneSurface}
             onPaneResize={reportPaneGrid}
             onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
+            onCell={reportCell}
             onInput={handlePaneInput}
             onScroll={handlePaneScroll}
             onSelect={(paneId) => attach?.selectPane(paneId)}
           />
         ))}
+
+        {/* Under the Scrollback chrome, and that ordering is the whole of
+            whether the Jump to latest pill can be pressed. The layer covers
+            the Pane and claims every touch in it, so drawn after the pill it
+            took the pill's presses as well — and judged them by a terminal's
+            rules rather than a button's, where ten points of finger travel is
+            a scroll and not a tap. A press that drifted did nothing at all,
+            except scroll further back. Measured: a fourteen-point drag on the
+            pill left it exactly where it was. */}
+        {state?.mouseTracking && activeSlot && mouseGrid ? (
+          <MouseLayer
+            box={activeSlot.box}
+            grid={mouseGrid}
+            cell={cellSize}
+            onTap={handleTapCell}
+            onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
+          />
+        ) : null}
 
         {state?.scrolled ? (
           <>
@@ -770,15 +805,6 @@ export default function TerminalScreen() {
               onPress={jumpToLatest}
             />
           </>
-        ) : null}
-
-        {state?.mouseTracking && activeSlot && mouseGrid ? (
-          <MouseLayer
-            box={activeSlot.box}
-            grid={mouseGrid}
-            onTap={handleTapCell}
-            onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
-          />
         ) : null}
       </View>
 
@@ -951,6 +977,7 @@ function PaneSurfaceView({
   onRef,
   onPaneResize,
   onWindowResize,
+  onCell,
   onInput,
   onScroll,
   onSelect,
@@ -962,6 +989,8 @@ function PaneSurfaceView({
   onRef: (paneId: string, ref: TerminalViewRef | null) => void;
   onPaneResize: (paneId: string, grid: Grid) => void;
   onWindowResize?: (event: { nativeEvent: Grid }) => void;
+  /** How big a cell is, which only the Surface knows. See cellSize. */
+  onCell: (cell: Extent) => void;
   onInput: (paneId: string, data: string) => void;
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
   onSelect: (paneId: string) => void;
@@ -1007,6 +1036,7 @@ function PaneSurfaceView({
           own.current = { cols: nativeEvent.cols, rows: nativeEvent.rows };
           onWindowResize?.({ nativeEvent });
           onPaneResize(slot.pane.id, own.current);
+          onCell({ width: nativeEvent.cellWidth, height: nativeEvent.cellHeight });
         }}
         onInput={({ nativeEvent }) => onInput(slot.pane.id, nativeEvent.data)}
         // The Scrollback is tmux's, so the gesture has to be Muxify's:
@@ -1060,6 +1090,9 @@ function PaneSurfaceView({
 /** How far a finger may travel and still be a tap rather than a drag, in points. */
 const TAP_SLOP = 10;
 
+/** What the Jump to latest pill claims beyond its own edges, to reach 44pt. */
+const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
+
 /**
  * The finger, while an application in the Pane is listening for the mouse.
  *
@@ -1083,11 +1116,14 @@ const TAP_SLOP = 10;
 function MouseLayer({
   box,
   grid,
+  cell,
   onTap,
   onScroll,
 }: {
   box: PaneBox;
   grid: Grid;
+  /** How big a cell is, or null before a Surface has said. See cellOf. */
+  cell: Extent | null;
   onTap: (column: number, row: number) => void;
   onScroll: (lines: number) => void;
 }) {
@@ -1111,13 +1147,14 @@ function MouseLayer({
       if (height <= 0 || grid.rows <= 0) return;
       // A finger moving down pulls older output into view, which is the same
       // sign the Surface's own scroll reports.
-      carried.current += points * (grid.rows / height) * SCROLL_SPEED;
+      const lineHeight = cell && cell.height > 0 ? cell.height : height / grid.rows;
+      carried.current += (points / lineHeight) * SCROLL_SPEED;
       const lines = Math.trunc(carried.current);
       if (lines === 0) return;
       carried.current -= lines;
       onScroll(lines);
     },
-    [grid.rows, onScroll],
+    [cell, grid.rows, onScroll],
   );
 
   const stopCoasting = useCallback(() => {
@@ -1207,8 +1244,8 @@ function MouseLayer({
         }
         if (width <= 0 || height <= 0) return;
         onTap(
-          cellOf(nativeEvent.locationX, width, grid.cols),
-          cellOf(nativeEvent.locationY, height, grid.rows),
+          cellOf(nativeEvent.locationX, cell?.width, width, grid.cols),
+          cellOf(nativeEvent.locationY, cell?.height, height, grid.rows),
         );
       }}
       onResponderTerminate={() => stopCoasting()}
@@ -1216,16 +1253,6 @@ function MouseLayer({
   );
 }
 
-/**
- * Which cell a point lands in, 1-based as SGR counts them.
- *
- * Clamped to the grid: the Surface is rarely an exact number of cells tall, so
- * a tap in the leftover strip at the edge belongs to the last cell rather than
- * to one that is not there.
- */
-function cellOf(point: number, extent: number, cells: number): number {
-  return Math.min(cells, Math.max(1, Math.floor((point / extent) * cells) + 1));
-}
 
 /**
  * A hairline down the right edge saying where in the Scrollback you are.
@@ -1297,6 +1324,12 @@ function ScrollBackIndicator({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Jump to latest"
+      // The pill is as tall as its own text and sits at the very bottom of the
+      // Pane, which makes it the smallest target in the app at around thirty
+      // points. iOS asks for forty-four, and a thumb reaching past the Dock
+      // for it is not aiming carefully. The slop costs nothing: there is
+      // nothing else down there to press.
+      hitSlop={PILL_SLOP}
       // Inverted against the Theme rather than painted a fixed light: the pill
       // has to read over whatever the Session is painting behind it, and a
       // light pill with light text is what a fixed one gave on Latte.

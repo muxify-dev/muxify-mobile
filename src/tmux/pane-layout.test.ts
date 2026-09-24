@@ -1,4 +1,5 @@
 import {
+  cellOf,
   cellSizeOf,
   gridForContainer,
   paneBoxes,
@@ -154,5 +155,48 @@ describe('the cell metric', () => {
 
   it('says nothing for a container too small to hold a cell', () => {
     expect(gridForContainer({ width: 10, height: 10 }, { width: 4, height: 4 })).toBeUndefined();
+  });
+});
+
+describe('cellOf', () => {
+  // The numbers are the ones measured on an iPhone 17 Pro with a Pane 717
+  // points tall at 40 rows: the font's cell is 17.667 points, and dividing the
+  // Pane by its rows says 17.925.
+  const PANE = 717;
+  const ROWS = 40;
+  const CELL = 17.667;
+
+  it('maps a point by the cell, not by dividing the Pane', () => {
+    // A quarter of a point a row is nothing at the top…
+    expect(cellOf(20, CELL, PANE, ROWS)).toBe(2);
+    expect(cellOf(20, undefined, PANE, ROWS)).toBe(2);
+    // …and a whole row by the bottom, which is where a terminal application
+    // puts its buttons.
+    expect(cellOf(698, CELL, PANE, ROWS)).toBe(40);
+    expect(cellOf(698, undefined, PANE, ROWS)).toBe(39);
+  });
+
+  it('can reach the last row at all, which dividing cannot', () => {
+    // The whole of the bug. The grid is 40 cells of 17.667 and stops at 706.7
+    // points; the Pane runs to 717. Dividing spreads that strip over every row
+    // instead of leaving it at the bottom, so the last row — drawn from 689 to
+    // 707 — is only itself for the lower half of its own height.
+    const lastRowDrawn = [690, 695, 700, 705];
+    expect(lastRowDrawn.map((y) => cellOf(y, CELL, PANE, ROWS))).toEqual([40, 40, 40, 40]);
+    expect(lastRowDrawn.map((y) => cellOf(y, undefined, PANE, ROWS))).toEqual([39, 39, 40, 40]);
+  });
+
+  it('clamps to the grid, for the strip the cells do not cover', () => {
+    // 40 cells of 17.667 reach 706.7 points and the Pane is 717, so the last
+    // ten belong to the last row rather than to one that is not there.
+    expect(cellOf(716, CELL, PANE, ROWS)).toBe(ROWS);
+    expect(cellOf(0, CELL, PANE, ROWS)).toBe(1);
+    expect(cellOf(-4, CELL, PANE, ROWS)).toBe(1);
+  });
+
+  it('divides the Pane when no Surface has reported a cell yet', () => {
+    // A frame or two at most, and better than refusing the tap.
+    expect(cellOf(358.5, undefined, PANE, ROWS)).toBe(21);
+    expect(cellOf(358.5, 0, PANE, ROWS)).toBe(21);
   });
 });

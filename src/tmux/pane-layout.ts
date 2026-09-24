@@ -142,3 +142,45 @@ export function cellSizeOf(
   if (container.width <= 0 || container.height <= 0) return undefined;
   return { width: container.width / grid.cols, height: container.height / grid.rows };
 }
+/**
+ * Which cell a point lands in, 1-based as SGR counts them.
+ *
+ * By the cell the Surface reported, never by dividing the Pane by its grid.
+ * That division is the obvious thing and it is wrong, because the grid does
+ * not fill the Pane: it is a whole number of cells and the Pane is whatever
+ * the layout gave it, so there is a strip left over. Dividing spreads that
+ * strip evenly over every row instead of leaving it where it is, and the error
+ * grows with the row number.
+ *
+ * Measured on an iPhone 17 Pro, a Pane 717 points tall at 40 rows: the cell is
+ * 17.67 points and the division says 17.93. A quarter of a point a row, which
+ * is nothing at the top and a whole row by the bottom — so a tap on the last
+ * row landed on the one above it, and a terminal application's buttons, which
+ * are at the bottom, could not be pressed.
+ *
+ * The grid is taken to start at the Pane's top left. It very nearly does:
+ * ghostty keeps a couple of points of its own padding there and puts the rest
+ * of the strip at the far edge — measured, eight pixels at the top against
+ * twenty-three at the bottom — and nothing across the bridge reports which is
+ * which. Ignoring it leaves the same eighth of a cell wrong everywhere rather
+ * than a whole row wrong at the bottom, which is the difference between a
+ * button that can be pressed and one that cannot. Setting ghostty's padding to
+ * zero to make it exact was tried and reverted: the surface it rebuilds comes
+ * back measured at whatever size the view happened to be, and the Pane stuck
+ * at 33x11.
+ *
+ * Falls back to the division before any Surface has reported a cell, which is
+ * a frame or two at most and better than refusing the tap.
+ *
+ * Clamped to the grid: a tap in the leftover strip at the far edge belongs to
+ * the last cell rather than to one that is not there.
+ */
+export function cellOf(
+  point: number,
+  cell: number | undefined,
+  extent: number,
+  cells: number,
+): number {
+  const size = cell && cell > 0 ? cell : extent / cells;
+  return Math.min(cells, Math.max(1, Math.floor(point / size) + 1));
+}

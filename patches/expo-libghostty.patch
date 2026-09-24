@@ -1,8 +1,21 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9faae53f1b5f052f6a65e001046c261dfdecc396 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..1929ce6d793fa1fd83d885c97caab6d00965b9b6 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
-@@ -18,6 +18,12 @@ export type TerminalViewRef = {
+@@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
+     /** New grid size in cells. */
+     cols: number;
+     rows: number;
++    /** How big one cell is, in points. The grid is drawn flush to the view's
++     * top left, so cell (1,1) starts at (0,0) and a point maps to a cell by
++     * dividing. Do not divide the view by the grid instead: the grid does not
++     * fill it, and the remainder is a whole row by the bottom of a phone. */
++    cellWidth: number;
++    cellHeight: number;
+ };
+ export type TerminalViewRef = {
+     /** Feed base64-encoded PTY output into the terminal grid. */
+@@ -18,6 +24,12 @@ export type TerminalViewRef = {
      writeText(text: string): Promise<void>;
      /** Mark the underlying PTY as exited. */
      finish(exitCode: number): Promise<void>;
@@ -15,7 +28,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9faae53f1b5f052f6a65e001046c261d
  };
  export type TerminalTheme = {
      /**
-@@ -52,10 +58,30 @@ export type TerminalViewProps = {
+@@ -52,10 +64,30 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -108,7 +121,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..e67b1cb7d748d9d6a015e5995d4501a9
    }
  }
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fe7214941b4355948953f0cff3b0829840d749c6 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..8bbb5a9cb49cc0ddae244d8baa4a7e1c37dbd12c 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -44,6 +44,29 @@ class ExpoLibghosttyView: ExpoView {
@@ -141,7 +154,34 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fe7214941b4355948953f0cff3b08298
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -67,6 +90,7 @@ class ExpoLibghosttyView: ExpoView {
+@@ -57,7 +80,25 @@ class ExpoLibghosttyView: ExpoView {
+         ])
+       },
+       resize: { [weak self] viewport in
+-        self?.onResize(["cols": viewport.columns, "rows": viewport.rows])
++        // Muxify patch: the cell goes out with the grid.
++        //
++        // A caller that draws its own overlay over this view has to turn a
++        // touch into a cell, and the only honest way to do that is the cell
++        // the font actually gives. Dividing the view by the row count is out
++        // by the leftover the grid does not fill — measured at one pixel a row
++        // on an iPhone 17 Pro, which is a whole row by the bottom of the
++        // screen, which is where a terminal application puts its buttons.
++        //
++        // Points, not pixels: everything else across this bridge is points,
++        // and the scale is this side's business rather than JavaScript's.
++        let scale = self?.terminalView.contentScaleFactor ?? UIScreen.main.scale
++        let divisor = scale > 0 ? Double(scale) : 1
++        self?.onResize([
++          "cols": viewport.columns,
++          "rows": viewport.rows,
++          "cellWidth": Double(viewport.cellWidthPixels) / divisor,
++          "cellHeight": Double(viewport.cellHeightPixels) / divisor,
++        ])
+       }
+     )
+     self.session = session
+@@ -67,6 +108,7 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
      addSubview(terminalView)
@@ -149,7 +189,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fe7214941b4355948953f0cff3b08298
    }
  
    /// Feed PTY output (terminal.output on the wire) into the grid.
-@@ -83,4 +107,33 @@ class ExpoLibghosttyView: ExpoView {
+@@ -83,4 +125,33 @@ class ExpoLibghosttyView: ExpoView {
    func finish(exitCode: UInt32) {
      session?.finish(exitCode: exitCode, runtimeMilliseconds: 0)
    }
@@ -404,10 +444,23 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..1ae13e701215172331b156c50f2d6c2a
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..512af2697ed7e8401652191c9cc204defaad17b9 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..89ed44ec0b67d8b6c054aaf6a390546c38cd6741 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
-@@ -21,6 +21,12 @@ export type TerminalViewRef = {
+@@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
+   /** New grid size in cells. */
+   cols: number;
+   rows: number;
++  /** How big one cell is, in points. The grid is drawn flush to the view's
++   * top left, so cell (1,1) starts at (0,0) and a point maps to a cell by
++   * dividing. Do not divide the view by the grid instead: the grid does not
++   * fill it, and the remainder is a whole row by the bottom of a phone. */
++  cellWidth: number;
++  cellHeight: number;
+ };
+ 
+ export type TerminalViewRef = {
+@@ -21,6 +27,12 @@ export type TerminalViewRef = {
    writeText(text: string): Promise<void>;
    /** Mark the underlying PTY as exited. */
    finish(exitCode: number): Promise<void>;
@@ -420,7 +473,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..512af2697ed7e8401652191c9cc204de
  };
  
  export type TerminalTheme = {
-@@ -59,6 +65,21 @@ export type TerminalViewProps = {
+@@ -59,6 +71,21 @@ export type TerminalViewProps = {
    theme?: TerminalTheme;
    /** User keyboard/IME input to forward to the PTY. */
    onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;

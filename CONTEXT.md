@@ -147,11 +147,19 @@ reports typed input back. Owns VT parsing and the keyboard; Muxify only moves
 bytes. There is one per Pane on screen, so an unzoomed Window has several —
 each with its own grid, cursor and Scrollback.
 
-It runs under a local patch — `patches/expo-libghostty.patch` — for the two
+It runs under a local patch — `patches/expo-libghostty.patch` — for the three
 things the published library does not offer and the app cannot do from outside
-it: hiding the Accessory Bar, which covered the Dock (see ADR 0003), and
-telling UIKit the view has a document behind its caret, without which a held
-delete key removes exactly one character. Each hunk says why in place.
+it: hiding the Accessory Bar, which covered the Dock (see ADR 0003); telling
+UIKit the view has a document behind its caret, without which a held delete key
+removes exactly one character; and reporting the size of a cell with the grid,
+without which nothing outside the Surface can turn a touch into a cell. Each
+hunk says why in place.
+
+It reports its grid in whole cells, and the Pane it is given is not a whole
+number of them — so there is a strip left over, which ghostty keeps at the
+bottom and right. Anything mapping a point to a cell has to divide by the cell
+and not by the Pane: the difference is a quarter of a point a row, which is
+nothing at the top and a whole row by the bottom. See `cellOf`.
 _Avoid_: Terminal, emulator, view
 
 **Accessory Bar**:

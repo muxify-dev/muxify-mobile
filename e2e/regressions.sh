@@ -11,6 +11,7 @@
 #   5  Enter, which for a long time only made a new line
 #   6  the Session left as it was found, with nothing to put back
 #   7  the delete key, which removed one character however long it was held
+#   8  the bottom row, which a tap could not reach at all
 #
 # Checks 3 and 7 changed shape with control mode. They used to assert that the
 # status line was hidden on attach and restored on the way out — the borrowing
@@ -76,6 +77,23 @@ for n in json.load(sys.stdin)['data']['nodes']:
 }
 # The last line the Pane is showing, which is the one being typed on.
 typed_line() { vm "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
+
+# The lowest point in the Pane, which is just above the Dock. The Dock's own
+# padding is what stands between the two, so the Key Bar's capsule locates it.
+pane_bottom() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
+import json, sys
+for n in json.load(sys.stdin)['data']['nodes']:
+    if n['type'] == 'ScrollView':
+        print(round(n['rect']['y']) - 10)
+        break
+"
+}
+
+# The row a click reported, out of the SGR the Pane echoed back.
+clicked_row() {
+  vm "tmux capture-pane -t '$SESSION' -p" | tr -d '\n' | sed -n 's/.*<0;[0-9]*;\([0-9]*\)M.*/\1/p'
+}
 surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
 window()  { vm "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
@@ -104,11 +122,17 @@ agree() {
 toggle_keyboard() {
   local before after
   before=$(surface)
-  agent-device press 'label="Keyboard"' >/dev/null 2>&1
-  for _ in $(seq 1 10); do
-    sleep 1
-    after=$(surface)
-    [ -n "$after" ] && [ "$after" != "$before" ] && return 0
+  # Pressed again rather than once, for the same reason e2e/pickers.sh opens a
+  # sheet in a loop: a press landing while the screen is still settling after
+  # an attach does nothing at all, and one swallowed press here leaves every
+  # later step off by one.
+  for _ in 1 2 3; do
+    agent-device press 'label="Keyboard"' >/dev/null 2>&1
+    for _ in $(seq 1 6); do
+      sleep 1
+      after=$(surface)
+      [ -n "$after" ] && [ "$after" != "$before" ] && return 0
+    done
   done
   fail "the Keyboard button did not move the grid (still $before)"
 }
@@ -130,7 +154,7 @@ attach() {
   sleep 3
 }
 
-echo "0/7  putting the Session somewhere known"
+echo "0/8  putting the Session somewhere known"
 vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the VM"
 sleep 1
@@ -140,14 +164,14 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/7  the Terminal Screen has no navigation header"
+echo "1/8  the Terminal Screen has no navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
 snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
   && fail "a back button is back; Home in the Dock is what leaves this screen"
 echo "     no header, no back button"
 
-echo "2/7  the library's Accessory Bar stays hidden"
+echo "2/8  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Bar offers ctrl, esc and tab
 # — lowercase, which is what keeps this check able to tell the two apart. The
 # library's bar spells them `Control`, `Escape` and `Tab`.
@@ -155,7 +179,7 @@ snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/7  attaching changes no option, on the Session or its Window"
+echo "3/8  attaching changes no option, on the Session or its Window"
 # The whole of ADR 0006. A control client renders nothing, so `status` is not
 # its business; it is sized with `refresh-client -C`, so `window-size` is not
 # either; and scrolling is a capture, so neither is `mouse`.
@@ -166,12 +190,12 @@ echo "3/7  attaching changes no option, on the Session or its Window"
 [ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
 echo "     session and window options byte-identical while attached"
 
-echo "4/7  sizes agree with the keyboard down, and again with it up"
+echo "4/8  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
 toggle_keyboard
 agree "keyboard up"
 
-echo "5/7  Enter on the device runs the command"
+echo "5/8  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
 #
@@ -188,7 +212,7 @@ sleep 3
 vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
-echo "6/7  holding the delete key removes more than one character"
+echo "6/8  holding the delete key removes more than one character"
 # The other half of the local patch, and the same kind of check as 2. iOS
 # repeats the delete key only while it believes there is something behind the
 # caret to delete, and the terminal's document is the IME's composition buffer
@@ -213,9 +237,60 @@ typed_line | grep -q "${HELD:0:10}" \
 echo "     three seconds of delete took the line back past ten characters"
 vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
 
-echo "7/7  leaving finds the Session exactly as it was, bar the zoom"
+echo "7/8  a tap on the bottom row lands on the bottom row"
+# With the keyboard away, because that is when the Pane is at its tallest and
+# the error this stands for is at its worst: it grows with the row number, so
+# forty rows show it and the twenty-four the keyboard leaves do not.
 toggle_keyboard
-sleep 1
+TALL=$(surface)
+# Where a terminal application draws its buttons, and where they could not be
+# pressed. The layer that turns a touch into a cell used to divide the Pane by
+# its grid, which is out by the strip the whole cells do not fill — a quarter
+# of a point a row, nothing at the top and a whole row by the bottom. The last
+# row was not reachable at all. See cellOf.
+#
+# `cat -v` with mouse reporting on is the smallest application that answers
+# the question: it turns the flag on, and echoes back the SGR of whatever is
+# clicked, so the row this asserts is the row the application was told.
+vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; \
+    tmux send-keys -t '$SESSION:' 'clear; printf \"\\033[?1000h\\033[?1006h\"; cat -v' Enter"
+sleep 2
+# A paint, so the mouse flag is read again: nothing in the control protocol
+# announces it, so it is noticed with the rest of the Pane's state.
+vm "tmux send-keys -t '$SESSION:' 'x'"
+sleep 2
+[ "$(vm "tmux display-message -p -t '$SESSION:' '#{mouse_any_flag}'")" = 1 ] \
+  || fail "the Pane never asked for the mouse; nothing below this means anything"
+ROWS=$(vm "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
+BOTTOM=$(pane_bottom)
+[ -n "$BOTTOM" ] || fail "could not find the Dock, so could not find the Pane's bottom"
+# Twice, and the second one is the check. A tap in the last few points of the
+# Pane lands on the last row either way, because both readings clamp there —
+# what tells them apart is a tap on the *upper* part of the last row, which
+# dividing the Pane by its grid calls the row above.
+for OFFSET in 8 24; do
+  # A tap on a Pane raises the keyboard — that is what makes an application
+  # listening for the mouse typeable at all — so the tap before this one has
+  # taken half the Pane away. Put it back before measuring the other half.
+  [ "$(surface)" = "$TALL" ] || toggle_keyboard
+  vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; \
+      tmux send-keys -t '$SESSION:' 'clear; printf \"\\033[?1000h\\033[?1006h\"; cat -v' Enter"
+  sleep 2
+  vm "tmux send-keys -t '$SESSION:' 'x'"
+  sleep 2
+  agent-device press 200 "$((BOTTOM - OFFSET))" >/dev/null 2>&1
+  sleep 2
+  CLICKED=$(clicked_row)
+  [ -n "$CLICKED" ] || fail "a tap $OFFSET points up from the bottom sent no click at all"
+  [ "$CLICKED" = "$ROWS" ] \
+    || fail "a tap $OFFSET points up from the bottom reported row $CLICKED of $ROWS"
+done
+echo "     the bottom row answers to its own row, $CLICKED of $ROWS"
+vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
+
+echo "8/8  leaving finds the Session exactly as it was, bar the zoom"
+# The keyboard is already away: check 7 put it there to get the Pane's full
+# height, and toggling it again here would only raise it on the way out.
 agent-device press 'label="Home"' >/dev/null 2>&1
 agent-device wait text "No Hosts yet" 8000 >/dev/null 2>&1
 sleep 2
@@ -238,4 +313,5 @@ agent-device close >/dev/null 2>&1
 echo
 echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
 echo "      untouched throughout, sizes agree in both keyboard states, Enter"
-echo "      runs commands, and a held delete key keeps deleting."
+echo "      runs commands, a held delete key keeps deleting, and a tap on the"
+echo "      bottom row lands on the bottom row."
