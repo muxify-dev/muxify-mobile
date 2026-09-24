@@ -15,6 +15,7 @@ import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
+import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
 import { createScrollScheduler } from '@/tmux/scroll-scheduler';
@@ -28,6 +29,14 @@ import type { TmuxShell } from '@/tmux/transport';
 
 /** What the Surface uses when the user has not picked a size. */
 const DEFAULT_FONT_SIZE = 13;
+
+/**
+ * How long to let the Surface's grid stop moving before the pty is made from
+ * it. Short enough to disappear inside the Connection it follows, long enough
+ * to outlast a SwiftUI measure pass.
+ */
+const GRID_SETTLE_MS = 80;
+const GRID_SETTLE_TRIES = 12;
 
 /** The Surface's cell grid. Travels as a unit everywhere it is used. */
 type Grid = { cols: number; rows: number };
@@ -266,9 +275,21 @@ export default function TerminalScreen() {
           setKeyWarning({ hostName: host.displayName, fingerprint });
         }
 
-        // Size from the latest grid, not the one captured when this started —
-        // `onResize` fires more than once and the first is a pre-layout value.
-        const current = grid.current ?? initial;
+        // Size from a grid that has stopped moving, not merely the latest.
+        //
+        // The Surface reports one while the Dock's glass is still being
+        // measured — every group is a `Host matchContents`, which takes its
+        // size only after SwiftUI has laid out — and a smaller one once the
+        // Dock has taken its height. The Client's pty is created once, from
+        // whichever value is current, and cannot be resized afterwards (see
+        // resizeClientCommand). Attaching on the first value is what left tmux
+        // painting 34 rows into a Surface that had 32, for the whole life of
+        // the Connection: every line two rows out, the last two off the end.
+        const current = await settle(() => grid.current, initial, {
+          same: (a, b) => a.cols === b.cols && a.rows === b.rows,
+          everyMs: GRID_SETTLE_MS,
+          tries: GRID_SETTLE_TRIES,
+        });
 
         // Everything tmux-shaped goes through the client, which owns command
         // construction and output parsing behind the transport seam.
