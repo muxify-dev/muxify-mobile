@@ -312,7 +312,10 @@ export default function TerminalScreen() {
               sessions.map((session) => ({
                 id: session.name,
                 title: session.name,
-                detail: `${session.windowCount} ${plural(session.windowCount, 'window')}`,
+                // The name leads here, unlike a Window's chip: a Session has
+                // no badge to identify it by, so the preview alone would leave
+                // the user guessing which is which.
+                detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
                 current: session.name === sessionName.current,
                 preview: previewOf(previews, `${session.name}:`, PREVIEW_LINES),
               })),
