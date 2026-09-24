@@ -1,32 +1,57 @@
 /**
  * The app's chrome colours, and the terminal Themes the user can pick between.
  *
- * Taken from remux, whose palette these screens copy. Given as flat hex rather
- * than the system's semantic colours because the app is dark whatever the phone
- * is: the Surface is dark, and a light list behind a dark terminal reads as two
- * apps. The light halves of remux's dynamic colours are therefore dropped.
+ * Taken from remux, whose screens these copy. Both appearances are here because
+ * the chosen Theme decides which one is used: Latte is a light terminal, and a
+ * dark list wrapped around a light terminal reads as two apps stitched
+ * together. The phone's own light/dark setting does not come into it — the
+ * Theme is the setting.
  */
-export const AppPalette = {
+export interface Appearance {
   /** Behind a grouped list. */
-  background: '#262b36',
+  background: string;
   /** A row sitting on it. */
-  rowSurface: '#363b47',
-  /** Between rows. White at 8%, flattened onto rowSurface. */
-  separator: '#484d58',
+  rowSurface: string;
+  /** Between rows. */
+  separator: string;
   /** A section's title, above its rows. */
-  sectionHeader: '#b8bdcc',
+  sectionHeader: string;
   /** Navigation bar buttons and titles. */
-  toolbarTint: '#e8edfa',
+  toolbarTint: string;
   /** Switches, steppers, links: anything the user can act on. */
-  controlAccent: '#63a3ff',
-  /** A row's leading glyph, and the disc behind it. */
-  rowIcon: '#c9d4e8',
-  rowIconSurface: '#424653',
+  controlAccent: string;
+  /** A row's leading glyph. */
+  rowIcon: string;
   /** Secondary text inside a row. */
-  secondaryLabel: '#9aa1b2',
+  secondaryLabel: string;
   /** Something destructive. */
-  destructive: '#ff6b6b',
-} as const;
+  destructive: string;
+}
+
+export const AppPalettes: Record<'light' | 'dark', Appearance> = {
+  dark: {
+    background: '#262b36',
+    rowSurface: '#363b47',
+    separator: '#484d58',
+    sectionHeader: '#b8bdcc',
+    toolbarTint: '#e8edfa',
+    controlAccent: '#63a3ff',
+    rowIcon: '#c9d4e8',
+    secondaryLabel: '#9aa1b2',
+    destructive: '#ff6b6b',
+  },
+  light: {
+    background: '#f2f2f7',
+    rowSurface: '#ffffff',
+    separator: '#c6c6c8',
+    sectionHeader: '#6c6c70',
+    toolbarTint: '#000000',
+    controlAccent: '#007aff',
+    rowIcon: '#6c6c70',
+    secondaryLabel: '#8e8e93',
+    destructive: '#d70015',
+  },
+};
 
 /** What the Surface is painted with. One of these per Theme. */
 export interface TerminalPalette {
@@ -44,6 +69,9 @@ export interface TerminalPalette {
   yellow: string;
   /** Bright black — line numbers, and the right half of the status line. */
   grey: string;
+  /** ANSI 0 and 7: what the sample's status line is written in. */
+  black: string;
+  white: string;
 }
 
 export type ThemeId = 'default' | 'mocha' | 'latte';
@@ -71,6 +99,8 @@ export const Themes: Record<ThemeId, {
       green: '#b5bd68',
       yellow: '#f0c674',
       grey: '#666666',
+      black: '#1d1f21',
+      white: '#c5c8c6',
     },
   },
   mocha: {
@@ -85,6 +115,8 @@ export const Themes: Record<ThemeId, {
       green: '#a6e3a1',
       yellow: '#f9e2af',
       grey: '#585b70',
+      black: '#45475a',
+      white: '#a6adc8',
     },
   },
   latte: {
@@ -99,9 +131,28 @@ export const Themes: Record<ThemeId, {
       green: '#40a02b',
       yellow: '#df8e1d',
       grey: '#6c6f85',
+      black: '#5c5f77',
+      white: '#acb0be',
     },
   },
 };
 
 /** The Themes in picker order. */
 export const THEME_IDS: ThemeId[] = ['default', 'mocha', 'latte'];
+
+/**
+ * Which appearance a Theme wants the app drawn in.
+ *
+ * Latte is the one light terminal, so it is the one light app. This is what
+ * makes the Theme picker a light/dark switch as well: there is no separate
+ * setting for it, because there is no sensible pairing of a light terminal with
+ * dark chrome.
+ */
+export function appearanceFor(theme: ThemeId): 'light' | 'dark' {
+  return theme === 'latte' ? 'light' : 'dark';
+}
+
+/** The chrome colours a Theme is drawn with. */
+export function paletteFor(theme: ThemeId): Appearance {
+  return AppPalettes[appearanceFor(theme)];
+}

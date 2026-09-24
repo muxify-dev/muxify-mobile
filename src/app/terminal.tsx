@@ -10,9 +10,7 @@ import { Dock, type DockAction } from '@/components/dock';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
-import { Themes } from '@/constants/app-theme';
-import { deviceSettingsStore } from '@/settings/device-settings';
-import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
+import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
@@ -65,6 +63,7 @@ export default function TerminalScreen() {
   // background runs to the top of the display and only the inset keeps text
   // clear of the status bar. Going Home is the Dock's job, not a back button's.
   const insets = useSafeAreaInsets();
+  const { settings, terminal } = useSettings();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
@@ -99,15 +98,15 @@ export default function TerminalScreen() {
    * split Session arrives zoomed and the splits are something you step into
    * rather than squint at. Turning it off shows the real layout.
    */
-  const [zoomed, setZoomed] = useState(DEFAULT_SETTINGS.zoomMultipaneWindows);
   /**
-   * The user's terminal settings, read once on arrival.
+   * The Theme and font size this Session was opened with.
    *
-   * Not re-read while attached: changing the font size under a live Surface
-   * would reflow the grid, which means a resize, which means tmux redrawing
-   * mid-session. Settings apply from the next Attach, which is a step away.
+   * Frozen on arrival rather than followed: changing the font under a live
+   * Surface would reflow the grid, which means a resize, which means tmux
+   * redrawing mid-session. Settings apply from the next Attach, a step away.
    */
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [opened] = useState(() => ({ font: settings.fontSize, terminal }));
+  const [zoomed, setZoomed] = useState(settings.zoomMultipaneWindows);
   /** Rendered in the Dock, so the attached Session survives a switch. */
   const [attachedSession, setAttachedSession] = useState('');
   /** Set when the Host's key is not the one last seen. Never blocks. */
@@ -581,14 +580,6 @@ export default function TerminalScreen() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      const stored = await deviceSettingsStore().load();
-      setSettings(stored);
-      setZoomed(stored.zoomMultipaneWindows);
-    })();
-  }, []);
-
-  useEffect(() => {
     disposed.current = false;
     return () => {
       // Connections are ephemeral by design; leaving the screen tears this
@@ -615,15 +606,13 @@ export default function TerminalScreen() {
     };
   }, []);
 
-  const terminalPalette = Themes[settings.theme].palette;
-
   return (
     // The ground the Surface sits on follows the Theme, or the safe-area strip
     // above it shows as a band of a different dark.
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: terminalPalette.background },
+        { paddingTop: insets.top, backgroundColor: opened.terminal.background },
       ]}>
       <StatusBar style="light" />
 
@@ -635,16 +624,16 @@ export default function TerminalScreen() {
         <TerminalView
           ref={surface}
           style={styles.surface}
-          fontSize={settings.fontSize ?? DEFAULT_FONT_SIZE}
+          fontSize={opened.font ?? DEFAULT_FONT_SIZE}
           // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
           // turned off by a local patch. It was the reason ADR 0003 ruled out
           // a modifier group in the Dock, so that decision is now open again —
           // with the bar gone there are no modifier keys at all.
           accessoryBar={false}
           theme={{
-            background: terminalPalette.background,
-            foreground: terminalPalette.foreground,
-            cursorColor: terminalPalette.cursor,
+            background: opened.terminal.background,
+            foreground: opened.terminal.foreground,
+            cursorColor: opened.terminal.cursor,
           }}
           onResize={handleResize}
           onInput={handleInput}

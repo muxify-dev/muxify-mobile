@@ -1,40 +1,55 @@
-import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useMemo } from 'react';
 
-import { AppPalette } from '@/constants/app-theme';
-
-/**
- * Dark whatever the phone is set to.
- *
- * Not a preference: the Surface is a terminal and it is dark, so a light list
- * behind it reads as two different apps stitched together. The one place this
- * shows is a phone in light mode, which would otherwise flash a white
- * navigation bar over the terminal on every push.
- */
-const theme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: AppPalette.background,
-    card: AppPalette.background,
-    text: AppPalette.toolbarTint,
-    primary: AppPalette.controlAccent,
-    border: AppPalette.separator,
-  },
-};
+import { SettingsProvider, useSettings } from '@/settings/settings-context';
 
 export default function RootLayout() {
   return (
+    <SettingsProvider>
+      <AppStack />
+    </SettingsProvider>
+  );
+}
+
+/**
+ * The navigation chrome, painted in whatever the chosen Theme wants.
+ *
+ * Light or dark is not the phone's setting here, it is the Theme's: Latte is a
+ * light terminal, and dark chrome around it would read as two apps. See
+ * appearanceFor.
+ */
+function AppStack() {
+  const { appearance, palette } = useSettings();
+
+  const theme = useMemo(() => {
+    const base = appearance === 'dark' ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        background: palette.background,
+        card: palette.background,
+        text: palette.toolbarTint,
+        primary: palette.controlAccent,
+        border: palette.separator,
+      },
+    };
+  }, [appearance, palette]);
+
+  return (
     <ThemeProvider value={theme}>
+      <StatusBar style={appearance === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: AppPalette.background },
-          headerTintColor: AppPalette.toolbarTint,
-          headerTitleStyle: { color: AppPalette.toolbarTint },
+          headerStyle: { backgroundColor: palette.background },
+          headerTintColor: palette.toolbarTint,
+          headerTitleStyle: { color: palette.toolbarTint },
           headerTitleAlign: 'center',
           // A chevron on its own, as remux has it: the title of the screen you
           // came from is a word the user already read.
           headerBackButtonDisplayMode: 'minimal',
-          contentStyle: { backgroundColor: AppPalette.background },
+          contentStyle: { backgroundColor: palette.background },
         }}>
         <Stack.Screen name="index" options={{ title: 'Muxify' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />

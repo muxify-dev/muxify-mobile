@@ -62,10 +62,13 @@ Panes picker is where it is turned off to see the real split.
 
 **Theme**:
 The colours the Surface paints with, chosen in Settings: Default (Ghostty's
-own), Mocha and Latte (the two Catppuccin palettes). Applied from the next
-Attach, not to a Session already on screen.
-_Avoid_: colour scheme (which is the phone's light/dark setting — Muxify is
-always dark), skin
+own), Mocha and Latte (the two Catppuccin palettes). It decides the app's
+appearance too — Latte is the light one — so the picker is the light/dark
+switch as well; there is no separate setting, because a light terminal in a
+dark app reads as two apps. Applied to the Surface from the next Attach, not to
+a Session already on screen; the chrome follows immediately.
+_Avoid_: colour scheme (which is the phone's setting, and Muxify ignores it),
+skin
 
 **Attach**:
 Binding the Shell Channel to an existing Session. Muxify only ever attaches —

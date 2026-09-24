@@ -18,6 +18,7 @@ import {
   accessibilityLabel,
   background,
   buttonStyle,
+  controlSize,
   environment,
   font,
   foregroundColor,
@@ -31,7 +32,8 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
-import { AppPalette } from '@/constants/app-theme';
+import type { Appearance } from '@/constants/app-theme';
+import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
@@ -48,6 +50,7 @@ import type { Host as HostRecord } from '@/storage/records';
  */
 export default function HostsScreen() {
   const router = useRouter();
+  const { appearance, palette } = useSettings();
   const [hosts, setHosts] = useState<HostRecord[] | null>(null);
 
   const reload = useCallback(async () => {
@@ -91,29 +94,40 @@ export default function HostsScreen() {
             <ToolbarButton
               systemImage="gearshape"
               label="Settings"
+              palette={palette}
               onPress={() => router.push('/settings')}
             />
           ),
           headerRight: () => (
-            <ToolbarButton systemImage="plus" label="Add Host" onPress={addHost} />
+            <ToolbarButton
+              systemImage="plus"
+              label="Add Host"
+              palette={palette}
+              onPress={addHost}
+            />
           ),
         }}
       />
 
       {hosts === null ? null : hosts.length === 0 ? (
-        <EmptyState onAddHost={addHost} onAddDevHost={() => void addDevHost(reload)} />
+        <EmptyState
+          appearance={appearance}
+          palette={palette}
+          onAddHost={addHost}
+          onAddDevHost={() => void addDevHost(reload)}
+        />
       ) : (
         <Host style={styles.fill} matchContents={false}>
           <List
             modifiers={[
               // See settings.tsx: SwiftUI follows the phone, not the app.
-              environment('colorScheme', 'dark'),
+              environment('colorScheme', appearance),
               listStyle('insetGrouped'),
               scrollContentBackground('hidden'),
-              background(AppPalette.background),
-              tint(AppPalette.controlAccent),
+              background(palette.background),
+              tint(palette.controlAccent),
             ]}>
-            <Section modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            <Section modifiers={[listRowBackground(palette.rowSurface)]}>
               {hosts.map((host) => (
                 <SwipeActions key={host.id}>
                   <Button
@@ -122,13 +136,13 @@ export default function HostsScreen() {
                     }
                     modifiers={[buttonStyle('plain'), accessibilityLabel(host.displayName)]}>
                     <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
-                      <Image systemName="server.rack" size={20} color={AppPalette.rowIcon} />
+                      <Image systemName="server.rack" size={20} color={palette.rowIcon} />
                       <VStack spacing={2} alignment="leading">
                         <Text modifiers={[font({ size: 17 })]}>{host.displayName}</Text>
                         <Text
                           modifiers={[
                             font({ size: 13, design: 'monospaced' }),
-                            foregroundColor(AppPalette.secondaryLabel),
+                            foregroundColor(palette.secondaryLabel),
                           ]}>
                           {`${host.address}:${host.port}`}
                         </Text>
@@ -137,7 +151,7 @@ export default function HostsScreen() {
                       <Image
                         systemName="chevron.right"
                         size={13}
-                        color={AppPalette.secondaryLabel}
+                        color={palette.secondaryLabel}
                       />
                     </HStack>
                   </Button>
@@ -171,10 +185,12 @@ export default function HostsScreen() {
 function ToolbarButton({
   systemImage,
   label,
+  palette,
   onPress,
 }: {
   systemImage: SFSymbol;
   label: string;
+  palette: Appearance;
   onPress: () => void;
 }) {
   return (
@@ -186,7 +202,7 @@ function ToolbarButton({
         modifiers={[
           buttonStyle('glass'),
           frame({ width: 38, height: 38 }),
-          tint(AppPalette.toolbarTint),
+          tint(palette.toolbarTint),
           accessibilityLabel(label),
         ]}
       />
@@ -196,9 +212,13 @@ function ToolbarButton({
 
 /** Nothing saved yet: what this app is for, and the one thing to do about it. */
 function EmptyState({
+  appearance,
+  palette,
   onAddHost,
   onAddDevHost,
 }: {
+  appearance: 'light' | 'dark';
+  palette: Appearance;
   onAddHost: () => void;
   onAddDevHost: () => void;
 }) {
@@ -207,12 +227,12 @@ function EmptyState({
       <VStack
         spacing={0}
         modifiers={[
-          environment('colorScheme', 'dark'),
+          environment('colorScheme', appearance),
           frame({ maxWidth: 3000, maxHeight: 3000 }),
         ]}>
         <Spacer />
 
-        <Image systemName="server.rack" size={64} color={AppPalette.secondaryLabel} />
+        <Image systemName="server.rack" size={64} color={palette.secondaryLabel} />
 
         <Text
           modifiers={[font({ size: 22, weight: 'bold' }), padding({ top: 16, bottom: 6 })]}>
@@ -222,7 +242,7 @@ function EmptyState({
         <Text
           modifiers={[
             font({ size: 17 }),
-            foregroundColor(AppPalette.secondaryLabel),
+            foregroundColor(palette.secondaryLabel),
             multilineTextAlignment('center'),
             padding({ horizontal: 40, bottom: 24 }),
           ]}>
@@ -235,9 +255,12 @@ function EmptyState({
           onPress={onAddHost}
           modifiers={[
             buttonStyle('glass'),
+            // The system's own large control metrics, as remux has it: a pill
+            // hand-padded to look right comes out three quarters the height of
+            // one that asks for the size it wants.
+            controlSize('large'),
             font({ size: 17, weight: 'semibold' }),
-            tint(AppPalette.controlAccent),
-            padding({ horizontal: 24, vertical: 12 }),
+            tint(palette.controlAccent),
             accessibilityLabel('Add Host'),
           ]}
         />
@@ -249,7 +272,7 @@ function EmptyState({
             modifiers={[
               buttonStyle('plain'),
               font({ size: 15 }),
-              foregroundColor(AppPalette.secondaryLabel),
+              foregroundColor(palette.secondaryLabel),
               padding({ top: 16 }),
               accessibilityLabel('Add dev Host'),
             ]}

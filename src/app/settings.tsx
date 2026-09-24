@@ -33,14 +33,12 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
-import { AppPalette, Themes, THEME_IDS, type ThemeId } from '@/constants/app-theme';
-import { deviceSettingsStore } from '@/settings/device-settings';
+import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/app-theme';
+import { useSettings } from '@/settings/settings-context';
 import {
   DEFAULT_EXPLICIT_FONT_SIZE,
-  DEFAULT_SETTINGS,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
-  type Settings,
 } from '@/settings/settings';
 
 /** The few lines of code the Theme preview shows. */
@@ -63,22 +61,7 @@ const PREVIEW_LINES: { number: string; text: string }[] = [
  * that is half-entered, so there is nothing to confirm.
  */
 export default function SettingsScreen() {
-  const [settings, setSettings] = useState<Settings | null>(null);
-
-  useEffect(() => {
-    void (async () => setSettings(await deviceSettingsStore().load()))();
-  }, []);
-
-  const update = useCallback((change: Partial<Settings>) => {
-    setSettings((current) => {
-      if (!current) return current;
-      const next = { ...current, ...change };
-      void deviceSettingsStore().save(next);
-      return next;
-    });
-  }, []);
-
-  const value = settings ?? DEFAULT_SETTINGS;
+  const { settings: value, update, appearance, palette } = useSettings();
   const usesDefaultSize = value.fontSize === null;
   const shownSize = value.fontSize ?? DEFAULT_EXPLICIT_FONT_SIZE;
   const theme = Themes[value.theme];
@@ -92,23 +75,23 @@ export default function SettingsScreen() {
             // Dark whatever the phone is set to: SwiftUI reads the system
             // appearance, not React Navigation's theme, so a phone in light
             // mode renders black labels on this dark ground.
-            environment('colorScheme', 'dark'),
+            environment('colorScheme', appearance),
             // The Form paints its own grouped background, which is the system
             // grey; the app is darker than that everywhere else.
             scrollContentBackground('hidden'),
-            background(AppPalette.background),
-            tint(AppPalette.controlAccent),
+            background(palette.background),
+            tint(palette.controlAccent),
           ]}>
           <Section
-            header={<SectionHeader>Font</SectionHeader>}
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            header={<SectionHeader palette={palette}>Font</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
             <Toggle
               label="Use default size"
               isOn={usesDefaultSize}
               onIsOnChange={(on) =>
                 update({ fontSize: on ? null : DEFAULT_EXPLICIT_FONT_SIZE })
               }
-              modifiers={[tint(AppPalette.controlAccent)]}
+              modifiers={[tint(palette.controlAccent)]}
             />
 
             <HStack modifiers={[frame({ maxWidth: 3000 }), disabled(usesDefaultSize)]}>
@@ -118,7 +101,7 @@ export default function SettingsScreen() {
                 modifiers={[
                   monospacedDigit(),
                   foregroundColor(
-                    usesDefaultSize ? AppPalette.secondaryLabel : AppPalette.toolbarTint,
+                    usesDefaultSize ? palette.secondaryLabel : palette.toolbarTint,
                   ),
                   padding({ trailing: 12 }),
                 ]}>
@@ -141,8 +124,8 @@ export default function SettingsScreen() {
           </Section>
 
           <Section
-            header={<SectionHeader>Theme</SectionHeader>}
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            header={<SectionHeader palette={palette}>Theme</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
             <Picker
               label=""
               selection={value.theme}
@@ -155,23 +138,23 @@ export default function SettingsScreen() {
               ))}
             </Picker>
 
-            <ThemePreview themeId={value.theme} displayName={theme.displayName} />
+            <ThemePreview themeId={value.theme} displayName={theme.displayName} palette={palette} />
           </Section>
 
           <Section
-            header={<SectionHeader>Windows &amp; Panes</SectionHeader>}
+            header={<SectionHeader palette={palette}>Windows &amp; Panes</SectionHeader>}
             footer={
-              <Text modifiers={[font({ size: 13 }), foregroundColor(AppPalette.sectionHeader)]}>
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
                 A phone is too narrow to read two Panes side by side, so a split Session arrives
                 with one Pane filling the Window. The Panes sheet turns it off per Session.
               </Text>
             }
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            modifiers={[listRowBackground(palette.rowSurface)]}>
             <Toggle
               label="Zoom multipane windows"
               isOn={value.zoomMultipaneWindows}
               onIsOnChange={(on) => update({ zoomMultipaneWindows: on })}
-              modifiers={[tint(AppPalette.controlAccent)]}
+              modifiers={[tint(palette.controlAccent)]}
             />
           </Section>
         </Form>
@@ -184,35 +167,43 @@ export default function SettingsScreen() {
  * What the chosen Theme looks like: the same five lines remux shows, in the
  * Theme's own colours, down to the editor status line along the bottom.
  */
-function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName: string }) {
-  const palette = Themes[themeId].palette;
+function ThemePreview({
+  themeId,
+  displayName,
+  palette,
+}: {
+  themeId: ThemeId;
+  displayName: string;
+  palette: Appearance;
+}) {
+  const colours = Themes[themeId].palette;
 
   /** One line of the sample, as coloured runs. */
   const lines: { number: string; runs: { text: string; color: string }[] }[] = [
     {
       number: '1',
       runs: [
-        { text: '#include ', color: palette.blue },
-        { text: '<iostream>', color: palette.green },
+        { text: '#include ', color: colours.blue },
+        { text: '<iostream>', color: colours.green },
       ],
     },
     { number: '2', runs: [] },
     {
       number: '3',
       runs: [
-        { text: 'int', color: palette.yellow },
-        { text: ' main() {', color: palette.foreground },
+        { text: 'int', color: colours.yellow },
+        { text: ' main() {', color: colours.foreground },
       ],
     },
     {
       number: '4',
       runs: [
-        { text: '  std::cout << ', color: palette.foreground },
-        { text: '"muxify"', color: palette.green },
-        { text: ';', color: palette.foreground },
+        { text: '  std::cout << ', color: colours.foreground },
+        { text: '"muxify"', color: colours.green },
+        { text: ';', color: colours.foreground },
       ],
     },
-    { number: '5', runs: [{ text: '}', color: palette.foreground }] },
+    { number: '5', runs: [{ text: '}', color: colours.foreground }] },
   ];
 
   return (
@@ -220,7 +211,7 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
       <HStack>
         <Text modifiers={[font({ size: 17, weight: 'semibold' })]}>Preview</Text>
         <Spacer />
-        <Text modifiers={[font({ size: 15 }), foregroundColor(AppPalette.sectionHeader)]}>
+        <Text modifiers={[font({ size: 15 }), foregroundColor(palette.sectionHeader)]}>
           {displayName}
         </Text>
       </HStack>
@@ -230,7 +221,7 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
         alignment="leading"
         modifiers={[
           frame({ maxWidth: 3000 }),
-          background(palette.background),
+          background(colours.background),
           cornerRadius(8),
           clipShape('roundedRectangle', 8),
         ]}>
@@ -241,7 +232,7 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
                 modifiers={[
                   font({ size: 11, design: 'monospaced' }),
                   monospacedDigit(),
-                  foregroundColor(palette.grey),
+                  foregroundColor(colours.grey),
                 ]}>
                 {`${line.number} `}
               </Text>
@@ -268,8 +259,8 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
             modifiers={[
               font({ size: 11, design: 'monospaced' }),
               padding({ horizontal: 6, vertical: 2 }),
-              foregroundColor(palette.background),
-              background(palette.blue),
+              foregroundColor(colours.black),
+              background(colours.blue),
             ]}>
             NORMAL
           </Text>
@@ -277,9 +268,9 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
             modifiers={[
               font({ size: 11, design: 'monospaced' }),
               padding({ horizontal: 6, vertical: 2 }),
-              foregroundColor(palette.foreground),
+              foregroundColor(colours.white),
               frame({ maxWidth: 3000, alignment: 'leading' }),
-              background(palette.grey),
+              background(colours.grey),
             ]}>
             test.cpp
           </Text>
@@ -290,12 +281,12 @@ function ThemePreview({ themeId, displayName }: { themeId: ThemeId; displayName:
 }
 
 /** A section's title, in a grey that is actually legible on this background. */
-function SectionHeader({ children }: { children: string }) {
+function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
   return (
     <Text
       modifiers={[
         font({ size: 13, weight: 'semibold' }),
-        foregroundColor(AppPalette.sectionHeader),
+        foregroundColor(palette.sectionHeader),
       ]}>
       {children}
     </Text>

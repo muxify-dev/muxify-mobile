@@ -32,7 +32,8 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
-import { AppPalette } from '@/constants/app-theme';
+import type { Appearance } from '@/constants/app-theme';
+import { useSettings } from '@/settings/settings-context';
 import {
   emptyHostDraft,
   validateHostDraft,
@@ -101,6 +102,7 @@ function HostForm({
   initial: HostDraft;
 }) {
   const router = useRouter();
+  const { appearance, palette } = useSettings();
   const [errors, setErrors] = useState<Partial<Record<HostDraftField, string>>>({});
   const [identityKind, setIdentityKind] = useState<IdentityKind>(initial.identityKind);
 
@@ -165,24 +167,26 @@ function HostForm({
         options={{
           title: hostId ? 'Edit Host' : 'New Host',
           headerLeft: () => (
-            <ToolbarText label="Cancel" onPress={() => router.back()} />
+            <ToolbarText label="Cancel" palette={palette} onPress={() => router.back()} />
           ),
-          headerRight: () => <ToolbarText label="Save" onPress={save} bold />,
+          headerRight: () => (
+            <ToolbarText label="Save" palette={palette} onPress={save} bold />
+          ),
         }}
       />
 
       <Host style={styles.fill} matchContents={false}>
         <Form
           modifiers={[
-            environment('colorScheme', 'dark'),
+            environment('colorScheme', appearance),
             scrollContentBackground('hidden'),
-            background(AppPalette.background),
-            tint(AppPalette.controlAccent),
+            background(palette.background),
+            tint(palette.controlAccent),
           ]}>
           <Section
-            header={<SectionHeader>Host</SectionHeader>}
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
-            <Field label="Name" placeholder="Mac mini" error={errors.displayName}>
+            header={<SectionHeader palette={palette}>Host</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Field palette={palette} label="Name" placeholder="Mac mini" error={errors.displayName}>
               <TextField
                 text={displayName}
                 placeholder="Mac mini"
@@ -193,7 +197,7 @@ function HostForm({
               />
             </Field>
 
-            <Field label="IP or Hostname" error={errors.address}>
+            <Field palette={palette} label="IP or Hostname" error={errors.address}>
               <TextField
                 text={address}
                 placeholder="server.local or 100.64.0.10"
@@ -207,7 +211,7 @@ function HostForm({
               />
             </Field>
 
-            <Field label="Port" error={errors.port}>
+            <Field palette={palette} label="Port" error={errors.port}>
               <TextField
                 text={port}
                 placeholder="22"
@@ -219,7 +223,7 @@ function HostForm({
               />
             </Field>
 
-            <Field label="User" error={errors.username}>
+            <Field palette={palette} label="User" error={errors.username}>
               <TextField
                 text={username}
                 placeholder="ubuntu"
@@ -234,8 +238,8 @@ function HostForm({
           </Section>
 
           <Section
-            header={<SectionHeader>Authentication</SectionHeader>}
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
+            header={<SectionHeader palette={palette}>Authentication</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
             <Picker
               label=""
               selection={identityKind}
@@ -246,7 +250,7 @@ function HostForm({
             </Picker>
 
             {identityKind === 'password' ? (
-              <Field label="Password" error={errors.password}>
+              <Field palette={palette} label="Password" error={errors.password}>
                 <SecureField
                   text={password}
                   placeholder={keptPlaceholder ?? 'Required'}
@@ -254,7 +258,7 @@ function HostForm({
                 />
               </Field>
             ) : (
-              <Field label="Private Key" error={errors.privateKeyPem}>
+              <Field palette={palette} label="Private Key" error={errors.privateKeyPem}>
                 <TextField
                   text={privateKeyPem}
                   placeholder={keptPlaceholder ?? 'Paste the key'}
@@ -272,14 +276,14 @@ function HostForm({
           </Section>
 
           <Section
-            header={<SectionHeader>tmux</SectionHeader>}
+            header={<SectionHeader palette={palette}>tmux</SectionHeader>}
             footer={
-              <Text modifiers={[font({ size: 13 }), foregroundColor(AppPalette.sectionHeader)]}>
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
                 Only needed when tmux is not on the Host&apos;s non-interactive PATH.
               </Text>
             }
-            modifiers={[listRowBackground(AppPalette.rowSurface)]}>
-            <Field label="Executable Path (Optional)" error={errors.tmuxExecutablePath}>
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Field palette={palette} label="Executable Path (Optional)" error={errors.tmuxExecutablePath}>
               <TextField
                 text={tmuxExecutablePath}
                 placeholder="/absolute/path/to/tmux"
@@ -309,11 +313,13 @@ function HostForm({
 function Field({
   label,
   error,
+  palette,
   children,
 }: {
   label: string;
   placeholder?: string;
   error?: string;
+  palette: Appearance;
   children: React.ReactNode;
 }) {
   return (
@@ -321,13 +327,13 @@ function Field({
       <Text
         modifiers={[
           font({ size: 13, weight: 'semibold' }),
-          foregroundColor(AppPalette.secondaryLabel),
+          foregroundColor(palette.secondaryLabel),
         ]}>
         {label}
       </Text>
       {children}
       {error !== undefined ? (
-        <Text modifiers={[font({ size: 13 }), foregroundColor(AppPalette.destructive)]}>
+        <Text modifiers={[font({ size: 13 }), foregroundColor(palette.destructive)]}>
           {error}
         </Text>
       ) : null}
@@ -335,12 +341,12 @@ function Field({
   );
 }
 
-function SectionHeader({ children }: { children: string }) {
+function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
   return (
     <Text
       modifiers={[
         font({ size: 13, weight: 'semibold' }),
-        foregroundColor(AppPalette.sectionHeader),
+        foregroundColor(palette.sectionHeader),
       ]}>
       {children}
     </Text>
@@ -350,10 +356,12 @@ function SectionHeader({ children }: { children: string }) {
 /** A word in the navigation bar: Cancel on the left, Save on the right. */
 function ToolbarText({
   label,
+  palette,
   onPress,
   bold,
 }: {
   label: string;
+  palette: Appearance;
   onPress: () => void;
   bold?: boolean;
 }) {
@@ -364,7 +372,7 @@ function ToolbarText({
         onPress={onPress}
         modifiers={[
           font({ size: 17, weight: bold ? 'semibold' : 'regular' }),
-          foregroundColor(AppPalette.controlAccent),
+          foregroundColor(palette.controlAccent),
           accessibilityLabel(label),
         ]}
       />
