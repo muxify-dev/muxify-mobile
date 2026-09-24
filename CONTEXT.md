@@ -64,6 +64,13 @@ by default, because a phone is too narrow to read two Panes side by side; the
 Panes picker is where it is turned off, and turning it off shows the real
 split — a Surface per Pane, each laid out where the Layout puts it.
 
+Muxify's is a *preference*, not tmux's flag, and every verb re-applies it —
+picking a Pane included. tmux drops a Window out of zoom the moment another of
+its Panes is selected, so without that the Session comes back drawn as a split
+while the switch is still reading on. What is on screen follows tmux's flag
+rather than the preference, so the two disagreeing is something the user can
+see.
+
 **Theme**:
 The colours the Surface paints with, chosen in Settings: Default (Ghostty's
 own), Mocha and Latte (the two Catppuccin palettes). It decides the app's
@@ -140,12 +147,22 @@ _Avoid_: Toolbar, key bar (reserved for the Dock)
 
 **Dock**:
 Muxify's own Liquid Glass bar pinned to the bottom of the Terminal Screen. Three
-capsules: the Key Bar, the Session/Window/Pane pickers, and Home/Keyboard.
+capsules, left to right: the Session/Window/Pane pickers, the Key Bar, and
+Home/Keyboard. The pickers lead because they are reached for most; the Key Bar
+takes the middle because it is the one that grows into whatever width is left;
+Home sits at the far end from the arrows, because a Home pressed by a thumb
+aiming for an arrow is a Session left by accident.
+
+Each picker's icon is badged with how many things are behind it — the Host's
+Sessions, the Session's Windows, the Window's Panes — and only above one, since
+one is what everything looks like until somebody splits it.
 _Avoid_: Toolbar, tab bar, bottom bar
 
 **Key Bar**:
-The Dock's first capsule: the keys a phone keyboard does not have — ctrl, esc,
+The Dock's middle capsule: the keys a phone keyboard does not have — ctrl, esc,
 tab, the arrows, page up and down, alt, home and end. Three are on screen and
-the rest are a sideways swipe away. ctrl and alt are *sticky*: armed by a tap,
-and spent on the next key from either the bar or the system keyboard.
+the rest are a sideways swipe away. Every key is the same fixed width, so a
+four-letter label shrinks rather than widening its key. ctrl and alt are
+*sticky*: armed by a tap, and spent on the next key from either the bar or the
+system keyboard.
 _Avoid_: Accessory Bar (that is the library's), toolbar, modifiers

@@ -8,9 +8,14 @@
 # which cannot both be exercised in one .ad run because a presented sheet
 # cannot be dismissed from automation (see e2e/session-picker.ad).
 #
-# Selecting a row is still out of reach here and is verified by hand; what this
-# proves is that the Host's real Topology reaches both sheets, that each sheet
-# carries its own actions, and that a button with nothing to offer says so.
+# What this proves is that the Host's real Topology reaches both sheets, that
+# each sheet carries its own actions, that a button with nothing to offer says
+# so, and that the counts the Dock badges its icons with are the Host's own.
+#
+# A Pane card carries its directory rather than a name of its own, so two Panes
+# in one directory are two buttons with the same label and cannot be told apart
+# by one. They are pressed by ref instead, in the order the sheet lists them,
+# which is tmux's Pane order — see `pane_card`.
 #
 # Drives the Host's Topology itself, so it does not depend on how the VM was
 # left. Requires a configured .env.local and a booted simulator.
@@ -71,6 +76,62 @@ else: print('missing')
 # Each card is a Button carrying its Window name or its Pane's directory.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
+# The number badged on a Dock button, or "none" for a button that carries no
+# badge — which is what one of something looks like.
+badge() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
+import json, sys
+label = sys.argv[1]
+nodes = json.load(sys.stdin)['data']['nodes']
+button = next((n for n in nodes if n['type'] == 'Button' and n.get('label') == label), None)
+if button is None:
+    print('missing')
+else:
+    on_it = [n['label'] for n in nodes
+             if n.get('parentIndex') == button['index'] and n['type'] == 'StaticText']
+    print(on_it[0] if on_it else 'none')
+" "$1"
+}
+
+# Same reason as expect_enabled: the counts come from the Topology read that
+# lands a few round trips after Connected.
+expect_badge() {
+  local label=$1 want=$2
+  for _ in $(seq 1 15); do
+    [ "$(badge "$label")" = "$want" ] && return 0
+    sleep 1
+  done
+  fail "the $label button should be badged $want, it is $(badge "$label")"
+}
+
+# The Dock's capsules, left to right, as the accessibility tree orders them.
+# The Key Bar is the scroll view; everything else is a button.
+dock_order() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
+import json, sys
+across = []
+for n in json.load(sys.stdin)['data']['nodes']:
+    if n['type'] == 'Button' and n.get('label') in ('Sessions', 'Windows', 'Panes', 'Home', 'Keyboard'):
+        across.append(n['label'])
+    elif n['type'] == 'ScrollView':
+        across.append('keys')
+print(' '.join(across))
+"
+}
+
+# The ref of the nth Pane card in an open Panes sheet, in tmux's Pane order.
+# Everything else in the sheet is an action with a name of its own.
+pane_card() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
+import json, sys
+want = int(sys.argv[1])
+cards = [n for n in json.load(sys.stdin)['data']['nodes']
+         if n['type'] == 'Button'
+         and not (n.get('label') or '').startswith(('Close', 'Split', 'Zoom'))]
+print('@' + cards[want - 1]['ref'] if len(cards) >= want else '')
+" "$1"
+}
+
 # Waits for a sheet to actually be up.
 #
 # Not `wait text "Panes"`: the Dock has a button of that name too and it is on
@@ -78,7 +139,7 @@ named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] 
 # raced the sheet's first frame. The close button belongs to the sheet alone.
 sheet() { agent-device wait "label=\"Close $1\"" 15000 >/dev/null 2>&1; }
 
-echo "1/4  one Window, one Pane: both pickers still open, to make more"
+echo "1/5  one Window, one Pane: both pickers still open, to make more"
 # Deliberately not disabled. The sheet is the only way to add a Window or a
 # split, and one of something is exactly when that is wanted — an earlier
 # version disabled the buttons here and locked the user out of the action.
@@ -102,8 +163,23 @@ sheet Panes
 # find twice.
 agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
   || fail "the Zoom switch should be offered whatever the Pane count"
+agent-device press 'label="Close Panes"' >/dev/null 2>&1
+sleep 1
 
-echo "2/4  three Windows: the Windows picker opens and lists them"
+# One of something gets no badge. A number there would read as a count worth
+# watching rather than as the "there is more here than you can see" it is.
+expect_badge Windows none
+expect_badge Panes none
+echo "     and neither picker is badged with a count of one"
+
+# Left to right: the things the Session is made of, the keys the phone's
+# keyboard does not have, and the way out. Home sits at the far end from the
+# arrows, because a Home pressed by a thumb aiming for one is a Session left by
+# accident.
+[ "$(dock_order)" = "Sessions Windows Panes keys Home Keyboard" ] \
+  || fail "the Dock's capsules are out of order: $(dock_order)"
+
+echo "2/5  three Windows: the Windows picker opens and lists them"
 vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
     tmux new-window -t '$SESSION:' -n notes 'exec bash'; \
     tmux select-window -t '$SESSION:0'"
@@ -117,8 +193,12 @@ sheet Windows
 # itself unhittable to agent-device even when a finger can press it.
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "the Windows sheet has no New Window action"
+agent-device press 'label="Close Windows"' >/dev/null 2>&1
+sleep 1
+expect_badge Windows 3
+echo "     and the Dock's Windows icon is badged 3"
 
-echo "3/4  two Panes: the Session arrives zoomed, and unzooming shows the split"
+echo "3/5  two Panes: the Session arrives zoomed, and unzooming shows the split"
 vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
     tmux resize-pane -t '$SESSION:0' 2>/dev/null; true"
 attach
@@ -156,12 +236,36 @@ agent-device is exists 'label="Pane 1"' >/dev/null 2>&1 \
   || fail "unzooming should show the other Pane, not one stretched across the split"
 echo "     unzoomed, and both Panes are on screen"
 
-echo "4/4  putting the Host back the way it was found"
+echo "4/5  picking a Pane keeps the Zoom the switch is still asking for"
+# tmux drops a Window out of zoom the moment another of its Panes is selected,
+# so Muxify has to put the preference back — every other verb already did. It
+# did not, and the Session came back drawn as a split with the Zoom switch
+# still reading on: the preference saying one thing and the screen another.
+#
+# A fresh Attach, so the preference is the Setting's again rather than the off
+# check 3 left behind.
+attach
+expect_badge Panes 2
+expect_enabled Panes yes
+agent-device press 'label="Panes"' >/dev/null 2>&1
+sheet Panes
+CARD=$(pane_card 2)
+[ -n "$CARD" ] || fail "the Panes sheet lists no second Pane to pick"
+agent-device press "$CARD" >/dev/null 2>&1
+sleep 4
+[ "$(vm "tmux display-message -p -t '$SESSION:0' '#{pane_index}'")" = 1 ] \
+  || fail "picking the second Pane did not make it the active one"
+[ "$(vm "tmux display-message -p -t '$SESSION:0' '#{window_zoomed_flag}'")" = 1 ] \
+  || fail "picking a Pane left the Window unzoomed while Zoom was still asked for"
+echo "     the picked Pane is active, and it is the one filling the Window"
+
+echo "5/5  putting the Host back the way it was found"
 agent-device close >/dev/null 2>&1
 vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo
 echo "PASS: a split Session arrives zoomed, unzooming shows a Surface per Pane,"
-echo "      Topology reaches both sheets, and both stay reachable with one of"
-echo "      something so more can be made."
+echo "      picking a Pane keeps it zoomed, Topology reaches both sheets and the"
+echo "      Dock's badges, and both sheets stay reachable with one of something"
+echo "      so more can be made."

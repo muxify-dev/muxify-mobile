@@ -6,7 +6,7 @@ import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Dock, type DockAction } from '@/components/dock';
+import { Dock, type DockCapsule } from '@/components/dock';
 import { KeyBar } from '@/components/key-bar';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
@@ -562,7 +562,7 @@ export default function TerminalScreen() {
    */
   const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
 
-  /** The Theme's chrome colours, which the Key Bar draws its own labels in. */
+  /** The Theme's chrome colours: the Key Bar's labels, and the Dock's badges. */
   const chrome = useMemo(() => paletteFor(settings.theme), [settings.theme]);
 
   /**
@@ -586,57 +586,106 @@ export default function TerminalScreen() {
     setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
   }, []);
 
-  const dockGroups: DockAction[][] = useMemo(() => {
-    // Two groups here and the Key Bar before them, because there are three
-    // kinds of thing: the keys the phone's keyboard does not have, the things
-    // the Session is made of, and the way out. One long row said none of that.
+  /**
+   * The Dock's capsules, left to right.
+   *
+   * Three, because there are three kinds of thing: the things the Session is
+   * made of, the keys the phone's keyboard does not have, and the way out. One
+   * long row said none of that.
+   *
+   * The pickers lead because they are what a hand reaches for most; the Key
+   * Bar takes the middle because it is the one that grows into whatever width
+   * is left; and Home sits at the far end from the arrows, because a Home
+   * pressed by a thumb aiming for an arrow is a Session left by accident.
+   */
+  const dockCapsules: DockCapsule[] = useMemo(() => {
     return [
-      [
-        {
-          id: 'sessions',
-          label: 'Sessions',
-          systemImage: 'square.on.square',
-          onPress: () => openPicker('sessions'),
-          disabled: !connected,
-        },
-        {
-          id: 'windows',
-          label: 'Windows',
-          systemImage: 'macwindow',
-          // Never disabled while connected: the sheet is not only a picker,
-          // it is the only way to make a Window, and a Session with one Window
-          // is exactly when that is wanted.
-          disabled: !connected,
-          onPress: () => openPicker('windows'),
-        },
-        {
-          id: 'panes',
-          label: 'Panes',
-          systemImage: 'rectangle.split.2x1',
-          // Same: one Pane is when you reach for Split.
-          disabled: !connected,
-          onPress: () => openPicker('panes'),
-        },
-      ],
-      [
-        {
-          id: 'home',
-          label: 'Home',
-          systemImage: 'house',
-          // All the way to the Hosts list, not back a step: Home means home,
-          // and a step back is the Session list of the Host just left. The
-          // Session stays attached — this is navigation and nothing else.
-          onPress: () => router.dismissTo('/'),
-        },
-        {
-          id: 'keyboard',
-          label: 'Keyboard',
-          systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
-          onPress: toggleKeyboard,
-        },
-      ],
+      {
+        id: 'topology',
+        actions: [
+          {
+            id: 'sessions',
+            label: 'Sessions',
+            systemImage: 'square.on.square',
+            onPress: () => openPicker('sessions'),
+            disabled: !connected,
+            // What is behind the button, not what is in front of it: the Host's
+            // Sessions, this one included. Read once on connecting and kept up
+            // to date by `%sessions-changed`, so it is current without the
+            // sheet ever having been opened.
+            count: state?.sessions?.length ?? 0,
+          },
+          {
+            id: 'windows',
+            label: 'Windows',
+            systemImage: 'macwindow',
+            // Never disabled while connected: the sheet is not only a picker,
+            // it is the only way to make a Window, and a Session with one Window
+            // is exactly when that is wanted.
+            disabled: !connected,
+            onPress: () => openPicker('windows'),
+            count: topology?.windows.length ?? 0,
+          },
+          {
+            id: 'panes',
+            label: 'Panes',
+            systemImage: 'rectangle.split.2x1',
+            // Same: one Pane is when you reach for Split.
+            disabled: !connected,
+            onPress: () => openPicker('panes'),
+            // The Panes of the Window on screen, which is what the sheet shows
+            // — not every Pane in the Session.
+            count: topology?.panes.length ?? 0,
+          },
+        ],
+      },
+      {
+        id: 'keys',
+        content: (
+          <KeyBar
+            keys={BAR_KEYS}
+            armed={armed}
+            onPress={pressBarKey}
+            onArm={armModifier}
+            disabled={!connected}
+            palette={chrome}
+          />
+        ),
+      },
+      {
+        id: 'exit',
+        actions: [
+          {
+            id: 'home',
+            label: 'Home',
+            systemImage: 'house',
+            // All the way to the Hosts list, not back a step: Home means home,
+            // and a step back is the Session list of the Host just left. The
+            // Session stays attached — this is navigation and nothing else.
+            onPress: () => router.dismissTo('/'),
+          },
+          {
+            id: 'keyboard',
+            label: 'Keyboard',
+            systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
+            onPress: toggleKeyboard,
+          },
+        ],
+      },
     ];
-  }, [router, toggleKeyboard, keyboardVisible, openPicker, connected]);
+  }, [
+    router,
+    toggleKeyboard,
+    keyboardVisible,
+    openPicker,
+    connected,
+    state?.sessions,
+    topology,
+    armed,
+    pressBarKey,
+    armModifier,
+    chrome,
+  ]);
 
   useEffect(() => {
     // Only so the Dock can show which way its keyboard button points. The
@@ -774,19 +823,7 @@ export default function TerminalScreen() {
         />
       ) : null}
 
-      <Dock
-        groups={dockGroups}
-        leading={
-          <KeyBar
-            keys={BAR_KEYS}
-            armed={armed}
-            onPress={pressBarKey}
-            onArm={armModifier}
-            disabled={!connected}
-            palette={chrome}
-          />
-        }
-      />
+      <Dock capsules={dockCapsules} palette={chrome} />
 
       {/* Below the status bar, not behind it: the container's padding does not
           push an absolutely positioned child down, so the grid ended up

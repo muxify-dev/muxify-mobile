@@ -635,7 +635,15 @@ export function openAttach(options: AttachOptions): Attach {
           // The move was made on a guess the Host has just refused, so the
           // guess is thrown away rather than left showing.
           await model.refresh();
+          return;
         }
+        // Like every other verb, and for the reason settleAfterVerb gives:
+        // tmux unzooms a Window the moment another of its Panes is selected.
+        // Without this the Session came back as a split while the switch that
+        // asked for zoom still read on — the preference saying one thing and
+        // the screen showing another, which is the one thing the preference
+        // being separate from tmux's flag must not cost.
+        await settleAfterVerb(mine);
       })();
     },
 

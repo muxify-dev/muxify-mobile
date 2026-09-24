@@ -26,7 +26,7 @@ export interface KeyBarProps {
 }
 
 /**
- * The Dock's first capsule: the keys a phone keyboard does not have.
+ * The Dock's middle capsule: the keys a phone keyboard does not have.
  *
  * Built from React Native views over a `GlassView` rather than from SwiftUI
  * like the rest of the Dock, and that is a deliberate exception. Two of the
@@ -36,8 +36,9 @@ export interface KeyBarProps {
  * was tried first and is the wrong shape for this: it closes on every pick, so
  * an arrow costs a reopen each time it is pressed.
  *
- * It fills whatever width the other Dock groups leave and scrolls the rest, so
- * more keys cost nothing: they simply sit past the edge.
+ * It fills whatever width the pickers on its left and the way out on its right
+ * leave, and scrolls the rest — so more keys cost nothing: they simply sit past
+ * the edge.
  */
 export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBarProps) {
   const glass = isGlassEffectAPIAvailable();
@@ -93,8 +94,22 @@ export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBa
                 />
               ) : null}
               <Text
+                // Every key is the same width, so the label is what gives.
+                // `pgup`, `pgdn` and `home` are four characters in the space
+                // an arrow leaves — they fit at 15pt on an iPhone 17 Pro with
+                // little to spare, and a narrower phone or a wider Dock group
+                // would take that away. Shrinking the few that need it keeps
+                // the row a row: a key wider than its neighbours reads as a
+                // different kind of key. The phone's text size is left out of
+                // it for the same reason — it would resize a fixed-width key's
+                // label without resizing the key.
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={MIN_LABEL_SCALE}
+                allowFontScaling={false}
                 style={[
                   styles.label,
+                  { width: keyWidth || undefined },
                   { color: held ? palette.controlAccent : palette.toolbarTint },
                   held ? styles.heldLabel : null,
                   disabled ? styles.dim : null,
@@ -124,6 +139,16 @@ const EDGE = 4;
 /** How tall a key is, and how wide the disc behind a held modifier is. */
 const KEY_HEIGHT = 44;
 const DISC = 36;
+
+/**
+ * How far a label may shrink to stay on one line inside a key's fixed width.
+ *
+ * A floor rather than a target: the four-letter labels fit unshrunk on the
+ * phones measured so far, and this is what keeps them on one line on a narrower
+ * one. Much below it and a `pgdn` stops matching the arrows beside it at a
+ * glance, which is the thing the fixed width exists to protect.
+ */
+const MIN_LABEL_SCALE = 0.7;
 
 const styles = StyleSheet.create({
   capsule: {
@@ -161,6 +186,10 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 15,
     fontWeight: '500',
+    // Centred rather than laid out by the Pressable, because the label is
+    // given the key's whole width: it is what `adjustsFontSizeToFit` measures
+    // against, and a label with no width of its own has nothing to shrink to.
+    textAlign: 'center',
   },
   heldLabel: {
     fontWeight: '600',
