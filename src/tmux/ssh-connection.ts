@@ -1,4 +1,5 @@
 import { connectToHost } from '@/ssh/connect-host';
+import { createUploader } from '@/composer/upload';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
@@ -22,6 +23,7 @@ export function sshConnection(store: HostStore): OpenConnection {
     const { connection, fingerprint, verdict } = await connectToHost(host, store);
     return {
       transport: sshTmuxTransport(connection),
+      upload: createUploader((command, events) => connection.openShell({ term: '', command }, events)),
       fingerprint,
       verdict,
       close: () => connection.disconnect(),

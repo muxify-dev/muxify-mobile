@@ -278,6 +278,33 @@ export class TmuxClient {
     await this.mustRun('send input', sendKeysCommand(paneId, bytes));
   }
 
+  /** tmux supplies bracketed paste only when the destination application asks. */
+  async preparePaste(text: string, name: string, check: () => void): Promise<{
+    paste(paneId: string): Promise<void>;
+    dispose(): Promise<void>;
+  }> {
+    // Small commands stay below tmux's command-line limit. Iterating code points
+    // also keeps surrogate pairs together at the chunk boundary.
+    const points = Array.from(text);
+    const dispose = async () => { await this.runner.run(['delete-buffer', '-b', name]); };
+    try {
+      for (let offset = 0; offset < points.length; offset += 2048) {
+        check();
+        await this.mustRun('prepare paste', [
+          'set-buffer', '-b', name, ...(offset ? ['-a'] : []), '--',
+          points.slice(offset, offset + 2048).join(''),
+        ]);
+      }
+    } catch (error) {
+      await dispose().catch(() => {});
+      throw error;
+    }
+    return {
+      paste: (paneId) => this.mustRun('paste message', ['paste-buffer', '-p', '-r', '-d', '-b', name, '-t', paneId]),
+      dispose,
+    };
+  }
+
   /**
    * Sends one named key into a Pane: `Up`, `Escape`, `C-c`, `M-b`.
    *

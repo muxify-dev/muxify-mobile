@@ -184,7 +184,7 @@ _Avoid_: Toolbar, key bar (reserved for the Dock)
 **Dock**:
 Muxify's own Liquid Glass bar pinned to the bottom of the Terminal Screen. Three
 capsules, left to right: the Session/Window/Pane pickers, the Key Bar, and
-Home/Keyboard. The pickers lead because they are reached for most; the Key Bar
+Home/Compose/Keyboard. The pickers lead because they are reached for most; the Key Bar
 takes the middle because it is the one that grows into whatever width is left;
 Home sits at the far end from the arrows, because a Home pressed by a thumb
 aiming for an arrow is a Session left by accident.
@@ -196,12 +196,31 @@ _Avoid_: Toolbar, tab bar, bottom bar
 
 **Key Bar**:
 The Dock's middle capsule: the keys a phone keyboard does not have — ctrl, esc,
-tab, the arrows, page up and down, alt, home and end. Three are on screen and
-the rest are a sideways swipe away. Every key is the same fixed width, so a
+tab, the arrows, page up and down, alt, home and end. Up to three are on screen,
+as space allows, and the rest are a sideways swipe away. Every visible key has
+the same width, so a
 four-letter label shrinks rather than widening its key. ctrl and alt are
 *sticky*: armed by a tap, and spent on the next key from either the bar or the
 system keyboard.
 _Avoid_: Accessory Bar (that is the library's), toolbar, modifiers
+
+**Composer**:
+The place to prepare a message for a Pane before sending it: multiline text,
+images pasted or chosen from Photos, and files chosen from Files. Opened from
+Compose between Home and Keyboard. Send submits the message and leaves the
+Composer open for the next one; closing it keeps the Draft.
+_Avoid_: terminal input (which sends keystrokes immediately)
+
+**Draft**:
+One Pane's unsent text and Attachments. Follows that Pane across navigation and
+reconnects for the life of its Attach. Switching Panes changes which Draft is
+shown. Successful Send clears it; a failed Send keeps it. Drafts do not survive
+an app restart.
+
+**Attachment**:
+An image or file included in a Draft. Can be previewed when it is an image,
+removed, or retried when preparation fails. Send copies it to the Host and
+includes its remote path in the message delivered to the Pane.
 
 **Banner**:
 The Terminal Screen's one kind of notice: a Liquid Glass card that slides in

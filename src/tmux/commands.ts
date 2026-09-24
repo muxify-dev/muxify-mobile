@@ -55,8 +55,12 @@ export function shellQuote(value: string): string {
  * behaviour towards its own user, not something a client can or should undo.
  */
 export function tmuxQuote(value: string): string {
-  if (!value.includes("'")) return `'${value}'`;
-  return `"${value.replace(/[\\"$]/g, (character) => `\\${character}`)}"`;
+  if (!value.includes("'") && !/[\x00-\x1f\x7f]/.test(value)) return `'${value}'`;
+  return `"${value.replace(/[\x00-\x1f\x7f\\"$]/g, (character) =>
+    /[\x00-\x1f\x7f]/.test(character)
+      ? `\\${character.charCodeAt(0).toString(8).padStart(3, '0')}`
+      : `\\${character}`,
+  )}"`;
 }
 
 /**
@@ -85,6 +89,7 @@ export function renderControlCommand(argv: TmuxArgv): string {
  * `C-c` — is a key and not text, and stays.
  */
 export function describeCommand(argv: TmuxArgv): string {
+  if (argv[0] === 'set-buffer') return `set-buffer (${argv.at(-1)?.length ?? 0} characters)`;
   if (argv[0] !== 'send-keys') return argv.join(' ');
   const target = argv.indexOf('-t');
   const named = target >= 0 ? argv[target + 1] : '?';

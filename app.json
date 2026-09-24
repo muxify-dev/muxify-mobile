@@ -27,6 +27,15 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose images to attach to a terminal message.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "expo-document-picker",
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#0a141e",

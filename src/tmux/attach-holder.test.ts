@@ -1,4 +1,5 @@
 import type { Host } from '@/storage/records';
+import { createComposer } from '@/composer/composer';
 
 import type { Attach, AttachState, LifecyclePhase } from './attach';
 import { createAttachHolder, type AttachRequest } from './attach-holder';
@@ -35,6 +36,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
   return {
     hostId: options.host.id,
     hostName: options.host.displayName,
+    composer: createComposer(() => { throw new Error('no composer destination here'); }),
     state,
     subscribe: () => () => {},
     switchSession: () => Promise.resolve(),

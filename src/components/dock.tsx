@@ -30,6 +30,12 @@ export interface DockAction {
   onPress: () => void;
   disabled?: boolean;
   /**
+   * Whether what this button opens is open now; drawn in the accent, the way
+   * the Key Bar shows a held modifier. For a toggle whose glyph has no natural
+   * opposite — a keyboard can point down, a pencil cannot.
+   */
+  active?: boolean;
+  /**
    * How many things are behind this button, badged on its icon.
    *
    * Only shown above one, because one is the case the badge would be answering
@@ -202,7 +208,7 @@ function GlassGroup({ actions, palette }: { actions: DockAction[]; palette: Appe
           // One piece of glass around the whole row, rather than one per
           // button. Per-button capsules merge into a chain of blobs; the Dock
           // is a single control and should read as one.
-          padding({ horizontal: 6, vertical: 4 }),
+          padding({ horizontal: 4, vertical: 4 }),
           glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
         ]}>
         {actions.map((action) => (
@@ -210,10 +216,11 @@ function GlassGroup({ actions, palette }: { actions: DockAction[]; palette: Appe
             key={action.id}
             onPress={action.onPress}
             modifiers={[
-              // 44pt is the smallest reliably tappable target on iOS, and also
-              // as tight as the buttons can sit without the row reading as one
-              // smudge.
-              frame({ width: 42, height: 44 }),
+              // Full tap height, but narrower than the 44pt iOS asks for: six
+              // of these sit either side of the Key Bar, and at 42 wide they
+              // left it room for two keys on a 402pt phone. At this width three
+              // fit there, and on a 375pt phone too. See BUTTON_WIDTH.
+              frame({ width: BUTTON_WIDTH, height: 44 }),
               buttonStyle('plain'),
               // Actually disabled, not merely inert: a button that looks
               // pressable and does nothing is worse than one that says so.
@@ -244,11 +251,18 @@ function GlassGroup({ actions, palette }: { actions: DockAction[]; palette: Appe
  */
 function DockIcon({ action, palette }: { action: DockAction; palette: Appearance }) {
   const count = action.count ?? 0;
-  if (count <= 1) return <Image systemName={action.systemImage} />;
+  const glyph = (
+    <Image
+      systemName={action.systemImage}
+      size={GLYPH}
+      color={action.active ? palette.controlAccent : undefined}
+    />
+  );
+  if (count <= 1) return glyph;
 
   return (
     <Overlay alignment="topTrailing">
-      <Image systemName={action.systemImage} />
+      {glyph}
       <Overlay.Content>
         <Text
           modifiers={[
@@ -277,6 +291,19 @@ function DockIcon({ action, palette }: { action: DockAction; palette: Appearance
 const BADGE = 16;
 
 /**
+ * How wide one glass button is.
+ *
+ * Sized from the other end of the Dock: the Key Bar gets what the six buttons
+ * leave, and it needs three keys of at least KEY_MIN_WIDTH to read as a row.
+ * On a 375pt phone that is 20 of Dock padding, 16 of gaps, two capsules of
+ * three buttons plus 8 of padding each, and 119 left over — three keys of 37.
+ */
+const BUTTON_WIDTH = 34;
+
+/** The glyph's point size: the body size less two, to sit inside BUTTON_WIDTH. */
+const GLYPH = 15;
+
+/**
  * Fallback for a device whose runtime lacks the glass API. Every target device
  * for this project is iOS 26.4+, so this exists only to keep such a device
  * usable rather than transparent — a GlassView on an unsupported runtime mounts
@@ -293,7 +320,7 @@ function PlainGroup({ actions, palette }: { actions: DockAction[]; palette: Appe
           accessibilityRole="button"
           accessibilityLabel={action.label}
           style={styles.plainButton}>
-          <ThemedText type="small" style={styles.plainLabel}>
+          <ThemedText type="small" style={[styles.plainLabel, action.active && { color: palette.controlAccent }]}>
             {action.label}
           </ThemedText>
           {(action.count ?? 0) > 1 ? (

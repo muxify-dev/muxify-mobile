@@ -10,6 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Banner, Presence } from '@/components/banner';
 import { Dock, type DockCapsule } from '@/components/dock';
 import { KeyBar } from '@/components/key-bar';
+import { ComposerPanel } from '@/composer/composer-panel';
+import type { ComposerInputRef } from '@/composer/native-input';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
@@ -161,6 +163,10 @@ export default function TerminalScreen() {
   /** Scroll distance not yet worth a notch of the wheel. */
   const carriedLines = useRef(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const composerInput = useRef<ComposerInputRef | null>(null);
+  const composerUp = useRef(false);
+  composerUp.current = composerOpen;
   /**
    * The same, readable from a layout callback. The container is measured in
    * one and whether to believe the measurement depends on the other, and a
@@ -517,10 +523,21 @@ export default function TerminalScreen() {
    * listener below only decides which way the Dock's button points.
    */
   const toggleKeyboard = useCallback(() => {
+    if (composerOpen) {
+      if (keyboardVisible) void composerInput.current?.blur();
+      else void composerInput.current?.focus();
+      return;
+    }
     const view = activeView();
     say(view ? `Keyboard button, for ${activePaneId}` : 'Keyboard button, with no active Pane to ask');
     void view?.toggleKeyboard();
-  }, [activeView, activePaneId]);
+  }, [activeView, activePaneId, composerOpen, keyboardVisible]);
+
+  const toggleComposer = useCallback(() => {
+    if (composerOpen) void composerInput.current?.blur();
+    else setArmed(NO_MODIFIERS);
+    setComposerOpen((open) => !open);
+  }, [composerOpen]);
 
   /** Puts the active Pane back at the live bottom, and the indicator with it. */
   const jumpToLatest = useCallback(() => {
@@ -799,7 +816,7 @@ export default function TerminalScreen() {
             armed={armed}
             onPress={pressBarKey}
             onArm={armModifier}
-            disabled={!connected}
+            disabled={!connected || composerOpen}
             palette={chrome}
           />
         ),
@@ -817,6 +834,17 @@ export default function TerminalScreen() {
             onPress: () => router.dismissTo('/'),
           },
           {
+            id: 'compose',
+            label: composerOpen ? 'Close composer' : 'Compose',
+            systemImage: 'square.and.pencil',
+            // Lit in the accent while the Composer is up, the way the Key Bar
+            // shows a held modifier, rather than swapping to a filled disc that
+            // sat in the row like a different kind of button.
+            active: composerOpen,
+            onPress: toggleComposer,
+            disabled: !activePaneId,
+          },
+          {
             id: 'keyboard',
             label: 'Keyboard',
             systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
@@ -828,6 +856,9 @@ export default function TerminalScreen() {
   }, [
     router,
     toggleKeyboard,
+    toggleComposer,
+    composerOpen,
+    activePaneId,
     keyboardVisible,
     openPicker,
     connected,
@@ -889,7 +920,7 @@ export default function TerminalScreen() {
           setContainerSize(size);
           // The Window's height is the container's with the keyboard down, and
           // only then; see windowHeight.
-          if (!keyboardUp.current) setWindowHeight(size.height);
+          if (!keyboardUp.current && !composerUp.current) setWindowHeight(size.height);
         }}>
         {/* Before there is a Topology there are no Panes to place, and nothing
             but a Surface can measure a cell — so one stands in as the ruler.
@@ -995,6 +1026,17 @@ export default function TerminalScreen() {
         }
       />
 
+      {composerOpen && attach && activePaneId ? (
+        <ComposerPanel
+          key={`${attach.hostId}:${activePaneId}`}
+          composer={attach.composer}
+          paneId={activePaneId}
+          connected={connected}
+          palette={chrome}
+          appearance={appearance}
+          inputRef={composerInput}
+        />
+      ) : null}
       <Dock capsules={dockCapsules} palette={chrome} />
 
       {/* Everything the screen has to say sits under the status bar, the way iOS

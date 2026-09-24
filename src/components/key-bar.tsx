@@ -54,7 +54,8 @@ export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBa
    * is not centred, differently on every phone.
    */
   const [width, setWidth] = useState(0);
-  const keyWidth = width > 0 ? (width - EDGE * 2) / KEYS_ON_SCREEN : 0;
+  const visibleKeys = Math.max(1, Math.min(KEYS_ON_SCREEN, Math.floor((width - EDGE * 2) / KEY_MIN_WIDTH)));
+  const keyWidth = width > 0 ? (width - EDGE * 2) / visibleKeys : 0;
 
   return (
     <Capsule
@@ -132,6 +133,17 @@ export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBa
  * what decides how wide a key is on any given phone.
  */
 const KEYS_ON_SCREEN = 3;
+
+/**
+ * The narrowest a key may be before the bar shows one fewer of them.
+ *
+ * Narrower than a finger wants, but a key is only as wide as the bar allows
+ * and the bar only as wide as the Dock's buttons leave it — see BUTTON_WIDTH in
+ * dock.tsx, which is chosen so that three keys of this width fit on the
+ * narrowest phone. The labels already shrink to fit, so a four-letter label
+ * still reads at this width.
+ */
+const KEY_MIN_WIDTH = 36;
 
 /** The gap at each end of the row, which is the same at both by construction. */
 const EDGE = 4;

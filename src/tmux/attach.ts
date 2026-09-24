@@ -1,4 +1,6 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
+import { createComposer, type Composer } from '@/composer/composer';
+import { checkAborted, uniqueId, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { systemClock } from '@/lib/clock';
@@ -41,6 +43,7 @@ import { sameGrid, TmuxClient, type Grid, type Session } from './tmux-client';
  */
 export interface HostConnection {
   transport: TmuxTransport;
+  upload?: Upload;
   fingerprint: string;
   verdict: KeyVerdict;
   close(): Promise<void>;
@@ -109,6 +112,7 @@ export interface AttachState {
 export interface Attach {
   readonly hostId: string;
   readonly hostName: string;
+  readonly composer: Composer;
   state(): AttachState;
   /** Called on every change, and once with the current state on subscribing. */
   subscribe(listener: (state: AttachState) => void): () => void;
@@ -226,6 +230,47 @@ export function openAttach(options: AttachOptions): Attach {
   let control: ControlConnection | null = null;
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
+
+  const composer = createComposer((paneId) => {
+    const mine = generation;
+    const current = client;
+    const link = connection;
+    const check = () => {
+      if (stale(mine) || suspended || !current || client !== current || state.phase.kind !== 'connected') {
+        throw new Error('The Connection changed. Draft kept.');
+      }
+    };
+    check();
+    return {
+      upload: (file, signal, progress) => {
+        check();
+        if (!link?.upload) throw new Error('This Connection cannot upload attachments.');
+        return link.upload(file, signal, progress);
+      },
+      async deliver(text, signal, started) {
+        const valid = () => { checkAborted(signal); check(); };
+        valid();
+        const buffer = await current!.preparePaste(text, `muxify-${uniqueId()}`, valid);
+        try {
+          valid();
+          // Check that the captured Pane still exists, even after switching
+          // Windows or Sessions. The current Topology only lists visible Panes.
+          if (!await current!.paneState(paneId)) throw new Error('The destination Pane has gone. Draft kept.');
+          valid();
+          started();
+          say(`composer delivery to ${paneId} (${text.length} characters)`);
+          await buffer.paste(paneId);
+          // As in remux, let the receiving application settle its pasted text
+          // before the separate Enter. Never replay either after a reconnect.
+          await new Promise<void>((resolve) => setTimeout(resolve, 150));
+          valid();
+          await current!.sendKey(paneId, 'Enter');
+        } finally {
+          await buffer.dispose().catch(() => {});
+        }
+      },
+    };
+  });
 
   /** Which automatic sources have already had their one attempt. */
   const attempted = new Set<ReconnectSource>();
@@ -598,6 +643,7 @@ export function openAttach(options: AttachOptions): Attach {
    * what holding one Attach at a time is meant to prevent.
    */
   function teardown(): Promise<void> {
+    composer.interrupt();
     const closingControl = control;
     const closingConnection = connection;
     control = null;
@@ -690,6 +736,7 @@ export function openAttach(options: AttachOptions): Attach {
   const attach: Attach = {
     hostId: host.id,
     hostName: host.displayName,
+    composer,
 
     state: () => state,
 
@@ -899,6 +946,7 @@ export function openAttach(options: AttachOptions): Attach {
         // check is what answers it. See ADR 0007.
         say('app in the background; suspended');
         suspended = true;
+        composer.interrupt();
         for (const view of views.values()) view.setPaused(true);
         return;
       }
@@ -934,6 +982,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (closed) return;
       say('closed on purpose');
       closed = true;
+      composer.dispose();
       generation += 1;
       sizing.dispose();
       onScreen.clear();

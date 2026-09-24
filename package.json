@@ -10,10 +10,12 @@
     "expo-clipboard": "57.0.2",
     "expo-constants": "57.0.18",
     "expo-device": "57.0.2",
+    "expo-document-picker": "57.0.2",
     "expo-file-system": "57.0.7",
     "expo-font": "57.0.4",
     "expo-glass-effect": "57.0.3",
     "expo-image": "57.0.5",
+    "expo-image-picker": "57.0.19",
     "expo-libghostty": "0.8.1",
     "expo-linking": "57.0.10",
     "expo-router": "57.0.21",
@@ -55,7 +57,8 @@
     "e2e:roundtrip": "bash e2e/ls-round-trip.sh",
     "e2e:pickers": "bash e2e/pickers.sh",
     "e2e:regressions": "bash e2e/regressions.sh",
-    "e2e:control": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/control-mode.test.ts"
+    "e2e:control": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/control-mode.test.ts",
+    "e2e:composer": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/composer.test.ts"
   },
   "private": true,
   "jest": {
