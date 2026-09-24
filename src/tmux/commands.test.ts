@@ -5,6 +5,8 @@ import {
   listWindowsCommand,
   selectPaneCommand,
   selectWindowCommand,
+  manualWindowSizeCommand,
+  resizeWindowCommand,
   shellQuote,
   switchSessionCommand,
 } from './commands';
@@ -131,5 +133,35 @@ describe('switchSessionCommand', () => {
 
   it('escapes a Session name that tries to break out', () => {
     expect(switchSessionCommand("'; id; '")).toBe("tmux switch-client -t ''\\''; id; '\\'''");
+  });
+});
+
+describe('window sizing', () => {
+  it('switches the Session to manual window sizing', () => {
+    expect(manualWindowSizeCommand('main')).toBe("tmux set-option -t 'main' window-size manual");
+  });
+
+  it('resizes the Window to an explicit grid', () => {
+    expect(resizeWindowCommand('main', 38, 14)).toBe("tmux resize-window -t 'main' -x 38 -y 14");
+  });
+
+  it('never asks for a zero or negative size, which tmux rejects', () => {
+    expect(resizeWindowCommand('main', 0, -5)).toBe("tmux resize-window -t 'main' -x 1 -y 1");
+  });
+
+  it('floors fractional sizes', () => {
+    expect(resizeWindowCommand('main', 38.7, 14.2)).toBe("tmux resize-window -t 'main' -x 38 -y 14");
+  });
+
+  it('quotes the Session name so it cannot break out of the command', () => {
+    expect(resizeWindowCommand("'; id; '", 10, 10)).toBe(
+      "tmux resize-window -t ''\\''; id; '\\''' -x 10 -y 10",
+    );
+  });
+
+  it('honours the Host tmux path', () => {
+    expect(resizeWindowCommand('main', 38, 14, '/usr/bin/tmux')).toBe(
+      "'/usr/bin/tmux' resize-window -t 'main' -x 38 -y 14",
+    );
   });
 });

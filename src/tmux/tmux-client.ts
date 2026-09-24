@@ -3,8 +3,12 @@ import {
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
+  manualWindowSizeCommand,
+  readStatusLineCommand,
+  resizeWindowCommand,
   selectPaneCommand,
   selectWindowCommand,
+  setStatusLineCommand,
   switchSessionCommand,
 } from './commands';
 import type { TmuxExecResult, TmuxShell, TmuxShellEvents, TmuxTransport } from './transport';
@@ -154,6 +158,64 @@ export class TmuxClient {
       'switch Session',
       switchSessionCommand(sessionName, this.tmuxExecutablePath),
     );
+  }
+
+  /**
+   * Forces the Session's Window to an explicit size.
+   *
+   * The Shell Channel's own resize is the natural way to do this, but the SSH
+   * library does not reliably send the window-change request, so the remote is
+   * left at a stale size and tmux draws rows the Surface never shows. Going
+   * through a Control Command uses the exec channel, which is reliable.
+   *
+   * Switches the Session to manual window sizing first, without which tmux
+   * sizes the Window from its attached clients and ignores the resize. Failures
+   * are swallowed: a wrong size is a bad experience, but an exception here
+   * would take down a Session that is otherwise working.
+   */
+  async setWindowSize(sessionName: string, grid: Grid): Promise<void> {
+    try {
+      await this.transport.exec(manualWindowSizeCommand(sessionName, this.tmuxExecutablePath));
+      await this.transport.exec(
+        resizeWindowCommand(sessionName, grid.cols, grid.rows, this.tmuxExecutablePath),
+      );
+    } catch {
+      // Best effort; the Session stays usable at its previous size.
+    }
+  }
+
+  /**
+   * Reads the Session's current `status` setting, so it can be restored.
+   * Returns `undefined` when tmux will not say, in which case leave it alone.
+   */
+  async readStatusLine(sessionName: string): Promise<string | undefined> {
+    try {
+      const result = await this.transport.exec(
+        readStatusLineCommand(sessionName, this.tmuxExecutablePath),
+      );
+      if (result.exitCode !== 0) return undefined;
+      const value = result.stdout.trim();
+      return value === '' ? undefined : value;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Shows or hides the Session's status line.
+   *
+   * Hidden while Muxify is attached because the Dock already shows the Session,
+   * Window and Pane, and a phone has no rows to spare. Best effort: a Session
+   * that keeps its status line is a cosmetic problem, not a broken one.
+   */
+  async setStatusLine(sessionName: string, value: string): Promise<void> {
+    try {
+      await this.transport.exec(
+        setStatusLineCommand(sessionName, value, this.tmuxExecutablePath),
+      );
+    } catch {
+      // Best effort.
+    }
   }
 
   /** Opens the Shell Channel and Attaches it to an existing Session. */

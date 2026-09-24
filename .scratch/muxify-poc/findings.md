@@ -263,3 +263,56 @@ back in the Surface, shell returned to a prompt.
 **Consequence for ticket 08 onward:** any e2e that needs to submit a command has
 to use this split. Pickers driven by Dock buttons are unaffected — those press
 fine.
+
+---
+
+## The SSH library does not send window-change, and it broke three things
+
+**The most consequential bug found so far.** `@osuki-dev/react-native-ssh`'s
+`shell.resize()` does not reliably send the SSH window-change request, so the
+remote terminal keeps a stale size.
+
+Isolated with a debug button that called `shell.resize(24, 9)` and nothing else:
+the remote stayed at 38x30. Not a timing problem — it never arrived, across 20
+seconds and a subsequent keystroke. Instrumenting the app showed the Surface
+grid and the size handed to the transport always agreed, so the app was correct
+throughout; what the remote had was consistently one resize behind.
+
+Three user-visible symptoms, all the same cause, because tmux draws for the size
+it believes it has and rows outside the Surface's real grid are never shown:
+
+- keyboard opens: the remote still thinks it is tall, so the prompt is drawn
+  below the visible rows and **the path line disappears**
+- keyboard closes: the remote still thinks it is short, so the **status line is
+  stranded mid-screen** with dead space beneath
+- a command appears to **produce no output** — it ran, and the output was drawn
+  where the Surface could not show it
+
+That last one is worth dwelling on. It presented as "Enter is broken", and a
+lot of time went into the input path before the evidence pointed at output. The
+keystrokes were fine the whole time.
+
+**Fix:** stop relying on the channel and drive the size through tmux itself —
+`set-option window-size manual` once, then `resize-window -x W -y H` on every
+grid change, over the exec channel that is already reliable. Verified: the tmux
+*window* size now tracks the Surface exactly in both directions, 38x30 to 38x14
+and back. The *client* size still lags, which no longer matters.
+
+The Rust core ships prebuilt in an xcframework, so unlike expo-libghostty this
+one cannot be patched locally. Worth an upstream report.
+
+## Hiding tmux's status line, and why remux never had to
+
+Asked for the status line to be hidden, and remux is the reference. remux does
+nothing at all: it drives tmux in **control mode**, where the client renders
+nothing itself and tmux streams pane content, so no status line ever exists.
+
+Muxify attaches a real client (ADR 0001), so tmux draws its full chrome. Hiding
+it therefore needs an explicit `set-option status off`. Because `status` is a
+session option, that is visible to every other client of the Session and would
+outlive the Connection — so the original value is read on attach and restored on
+teardown, leaving the Host as it was found.
+
+This is a small, concrete cost of the ADR 0001 decision: every piece of tmux
+chrome that control mode would simply never render has to be turned off by hand,
+and each one mutates a Session that may be shared.

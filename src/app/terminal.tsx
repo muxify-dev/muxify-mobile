@@ -28,6 +28,10 @@ export default function TerminalScreen() {
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
+  const tmux = useRef<TmuxClient | null>(null);
+  const sessionName = useRef<string>('');
+  /** The Session's own status setting, restored when we detach. */
+  const originalStatusLine = useRef<string | undefined>(undefined);
   const grid = useRef<Grid | null>(null);
   const hasStarted = useRef(false);
   const disposed = useRef(false);
@@ -72,9 +76,11 @@ export default function TerminalScreen() {
 
       // Everything tmux-shaped goes through the client, which owns command
       // construction and output parsing behind the transport seam.
-      const tmux = new TmuxClient(sshTmuxTransport(conn));
+      const client = new TmuxClient(sshTmuxTransport(conn));
+      tmux.current = client;
+      sessionName.current = config.host.sessionName;
 
-      const opened = await tmux.attach(config.host.sessionName, current, {
+      const opened = await client.attach(config.host.sessionName, current, {
         onData: (data) => {
           surface.current?.write(bytesToBase64(new Uint8Array(data)));
         },
@@ -92,6 +98,15 @@ export default function TerminalScreen() {
 
       shell.current = opened;
       setStatus({ phase: 'connected', fingerprint: conn.hostKey.fingerprint });
+
+      // Bring the remote to the Surface's real size immediately on attach, and
+      // hide tmux's status line — the Dock already shows Session, Window and
+      // Pane, and a phone has no rows to spare.
+      void (async () => {
+        await client.setWindowSize(config.host.sessionName, grid.current ?? current);
+        originalStatusLine.current = await client.readStatusLine(config.host.sessionName);
+        await client.setStatusLine(config.host.sessionName, 'off');
+      })();
 
       // A resize may have landed while connecting.
       const latest = grid.current;
@@ -112,7 +127,11 @@ export default function TerminalScreen() {
       setVisibleGrid(next);
 
       if (shell.current) {
+        // Ask the channel too — correct in principle, and it costs nothing if
+        // the library ever starts sending the window-change request.
         shell.current.resize(next.cols, next.rows);
+        // The resize that actually lands. See TmuxClient.setWindowSize.
+        void tmux.current?.setWindowSize(sessionName.current, next);
         return;
       }
 
@@ -186,10 +205,19 @@ export default function TerminalScreen() {
       disposed.current = true;
       const openShellHandle = shell.current;
       const openConnection = connection.current;
+      const client = tmux.current;
+      const session = sessionName.current;
+      const restoreTo = originalStatusLine.current;
       shell.current = null;
       connection.current = null;
+      tmux.current = null;
       void (async () => {
         try {
+          // Put the Session's status line back before dropping the Connection,
+          // so Muxify does not leave the Host changed behind it.
+          if (client && session && restoreTo !== undefined) {
+            await client.setStatusLine(session, restoreTo);
+          }
           await openShellHandle?.close();
         } finally {
           await openConnection?.disconnect();

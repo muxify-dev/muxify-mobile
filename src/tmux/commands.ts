@@ -105,3 +105,56 @@ export function selectPaneCommand(
 export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return `${tmux(tmuxExecutablePath)} switch-client -t ${shellQuote(sessionName)}`;
 }
+
+/**
+ * Control Commands that force a Session's Window to an explicit size.
+ *
+ * Needed because `@osuki-dev/react-native-ssh`'s `resize()` does not reliably
+ * send the SSH window-change request, leaving the remote terminal at a stale
+ * size. tmux then draws for the size it believes it has, so rows outside the
+ * Surface's real grid are never shown. Driving the size through tmux instead
+ * uses the exec channel, which is reliable.
+ *
+ * `window-size manual` is required: without it tmux sizes the Window from its
+ * attached clients and ignores `resize-window`. It is a session option and it
+ * persists on the Host after Muxify disconnects.
+ */
+export function manualWindowSizeCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} window-size manual`;
+}
+
+export function resizeWindowCommand(
+  sessionName: string,
+  cols: number,
+  rows: number,
+  tmuxExecutablePath?: string,
+): string {
+  return (
+    `${tmux(tmuxExecutablePath)} resize-window -t ${shellQuote(sessionName)} ` +
+    `-x ${Math.max(1, Math.floor(cols))} -y ${Math.max(1, Math.floor(rows))}`
+  );
+}
+
+/**
+ * Control Commands for the Session's status line.
+ *
+ * remux never needs these: it drives tmux in control mode, where the client
+ * renders nothing itself and tmux streams pane content instead, so no status
+ * line exists. Muxify attaches a real client (ADR 0001), so tmux draws its full
+ * chrome — including a status line that duplicates what the Dock already shows.
+ *
+ * `status` is a session option, so turning it off is visible to every other
+ * client of that Session and outlives the Connection. Read the original value
+ * first and put it back on teardown.
+ */
+export function readStatusLineCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v status`;
+}
+
+export function setStatusLineCommand(
+  sessionName: string,
+  value: string,
+  tmuxExecutablePath?: string,
+): string {
+  return `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} status ${shellQuote(value)}`;
+}
