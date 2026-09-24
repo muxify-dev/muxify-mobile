@@ -1,5 +1,6 @@
 import {
   attachSessionCommand,
+  resizeClientCommand,
   capturePanesCommand,
   newWindowCommand,
   splitWindowCommand,
@@ -250,5 +251,29 @@ describe('splitWindowCommand', () => {
 describe('newWindowCommand', () => {
   it('adds a Window after the current one', () => {
     expect(newWindowCommand('main')).toBe("tmux new-window -a -t 'main:'");
+  });
+});
+
+describe('resizeClientCommand', () => {
+  it('sets the size of the tty tmux is attached to', () => {
+    expect(resizeClientCommand('/dev/pts/3', 38, 19)).toBe(
+      "stty -F '/dev/pts/3' rows 19 cols 38 2>/dev/null || stty -f '/dev/pts/3' rows 19 cols 38",
+    );
+  });
+
+  it('falls back to the BSD spelling, since the Host may be either', () => {
+    expect(resizeClientCommand('/dev/ttys001', 80, 24)).toContain('stty -f');
+  });
+
+  it('never asks for a zero or negative size', () => {
+    expect(resizeClientCommand('/dev/pts/3', 0, -4)).toContain('rows 1 cols 1');
+  });
+
+  it('floors fractional sizes', () => {
+    expect(resizeClientCommand('/dev/pts/3', 38.9, 19.2)).toContain('rows 19 cols 38');
+  });
+
+  it('quotes a tty that tries to break out of the command', () => {
+    expect(resizeClientCommand("'; id; '", 38, 19)).toContain("''\\''; id; '\\'''");
   });
 });

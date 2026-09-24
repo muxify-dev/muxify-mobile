@@ -9,6 +9,7 @@ import {
   manualWindowSizeCommand,
   readStatusLineCommand,
   redrawClientCommand,
+  resizeClientCommand,
   resizeWindowCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -287,6 +288,22 @@ export class TmuxClient {
   async redrawClient(clientTty?: string): Promise<void> {
     try {
       await this.transport.exec(redrawClientCommand(clientTty, this.tmuxExecutablePath));
+    } catch {
+      // Best effort.
+    }
+  }
+
+  /**
+   * Sets the size of the Client's pty, from the Host side.
+   *
+   * The SSH library will not send a window-change, so this does the same job
+   * from the other end — see resizeClientCommand. Best effort: a Client whose
+   * size is briefly wrong is a cosmetic problem, and throwing here would take
+   * down a Session that is otherwise working.
+   */
+  async setClientSize(clientTty: string, grid: Grid): Promise<void> {
+    try {
+      await this.transport.exec(resizeClientCommand(clientTty, grid.cols, grid.rows));
     } catch {
       // Best effort.
     }

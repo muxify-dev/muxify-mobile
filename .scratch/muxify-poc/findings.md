@@ -722,3 +722,36 @@ looking at.
 Accepting any key silently was rejected outright. It is a habit that survives
 into production, and the library hands the key to a callback precisely so it
 does not have to be.
+
+## The Client's size was controllable all along, from the other end
+
+Three findings above build on the premise that the Client's size cannot be
+changed, because `@osuki-dev/react-native-ssh` does not send a window-change
+request. That premise was never questioned, and it was half wrong: the library
+cannot change it, and the **Host** can.
+
+The Client's size lives in a pty on the Host. `stty -F /dev/pts/3 rows 19 cols
+38`, run over the exec channel that has been reliable since day one, sends
+SIGWINCH to the tmux client — which is precisely what a terminal emulator's own
+resize does. Measured against a live attached Client, it moved from 38x32 to
+38x19 immediately.
+
+So the Window and the Client are now both set over the exec channel, in the
+order `applyGrid` decides, and in the gap between them the Client is the
+smaller of the two in either direction — the one state tmux does not pad. The
+padding is not cleaned up faster; it never happens.
+
+`shell-resize.ts` is gone with this. Its whole reason for existing was to coax
+a call that does not work.
+
+What is worth taking from this beyond the fix: the question "can the Client be
+resized?" was answered three times by testing the SSH library harder, and the
+answer was in a different place entirely. A remote pty has two ends, and only
+one of them was ever tried.
+
+**Caveat on verification.** This change is covered by unit tests and the
+mechanism is proven over SSH against a live Client, but it has not been run on
+the device: Xcode began demanding a license agreement partway through the
+session (`sudo xcodebuild -license`, which needs a human), and the simulator
+cannot start until that is accepted. The device suites should be re-run before
+this is trusted.

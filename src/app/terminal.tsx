@@ -16,7 +16,6 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { toShellInput } from '@/lib/terminal-input';
 import { applyGrid } from '@/tmux/apply-grid';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
-import { resizeShellChannel } from '@/tmux/shell-resize';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import {
   paneFrames,
@@ -83,8 +82,14 @@ export default function TerminalScreen() {
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
-  /** Last known Topology, for whether a picker has anything to offer. */
-  const [topology, setTopology] = useState<Topology>(EMPTY_TOPOLOGY);
+  /**
+   * Last known Topology, for whether a picker has anything to offer. Null until
+   * the first read: not knowing is not the same as knowing there is nothing,
+   * and a button disabled on a guess is worse than one that opens a short list.
+   */
+  const [topology, setTopology] = useState<Topology | null>(null);
+  /** When the Topology was last read, to keep output-driven refreshes rare. */
+  const topologyReadAt = useRef(0);
   /**
    * Whether the attached Pane fills the Window on its own.
    *
@@ -109,14 +114,16 @@ export default function TerminalScreen() {
       createResizeScheduler(async (next, previous) => {
         const client = tmux.current;
         if (!client) return;
-        const channel = shell.current;
         await applyGrid(
           {
             setWindowSize: (grid) => client.setWindowSize(sessionName.current, grid),
-            // The Client's own size, which the SSH library needs coaxing to
-            // send at all; see resizeShellChannel.
-            setClientSize: (grid) => {
-              if (channel) resizeShellChannel(channel, grid);
+            // The Client's own pty, resized from the Host side because the
+            // SSH library will not send a window-change; see
+            // resizeClientCommand. Without a tty there is nothing to aim at,
+            // which only happens before the first Topology read.
+            setClientSize: async (grid) => {
+              const tty = clientTty.current;
+              if (tty) await client.setClientSize(tty, grid);
             },
             redraw: () => client.redrawClient(clientTty.current),
           },
@@ -131,10 +138,25 @@ export default function TerminalScreen() {
   const refreshTopology = useCallback(async (): Promise<Topology> => {
     const client = tmux.current;
     if (!client) return EMPTY_TOPOLOGY;
+    topologyReadAt.current = Date.now();
     const next = await readTopology(client, sessionName.current);
     setTopology(next);
     return next;
   }, []);
+
+  /**
+   * Re-reads the Topology when the Host has been busy.
+   *
+   * Windows and Panes are not only created through the Dock — the usual way is
+   * a tmux keybinding typed into the terminal, which Muxify sees only as bytes.
+   * Output is the signal that something happened, so it is worth a look, but a
+   * Session running something chatty produces a lot of it: hence the interval,
+   * which keeps this to an occasional read rather than a poll.
+   */
+  const noteOutput = useCallback(() => {
+    if (Date.now() - topologyReadAt.current < TOPOLOGY_REFRESH_MS) return;
+    void refreshTopology();
+  }, [refreshTopology]);
 
   const start = useCallback(
     async (initial: Grid) => {
@@ -188,6 +210,7 @@ export default function TerminalScreen() {
         const opened = await client.attach(sessionParam, current, {
           onData: (data) => {
             surface.current?.write(bytesToBase64(new Uint8Array(data)));
+            noteOutput();
           },
           onClosed: (exitCode) => {
             shell.current = null;
@@ -223,18 +246,15 @@ export default function TerminalScreen() {
           await refreshTopology();
         })();
 
-        // A resize may have landed while connecting.
-        const latest = grid.current;
-        if (latest && (latest.cols !== current.cols || latest.rows !== current.rows)) {
-          resizeShellChannel(opened, latest);
-        }
+        // A resize may have landed while connecting; the scheduler picks it up
+        // once the Client's tty is known.
       } catch (error) {
         if (!disposed.current) {
           setStatus({ phase: 'failed', message: describeConnectionFailure(error) });
         }
       }
     },
-    [hostId, sessionParam, remoteSize, refreshTopology],
+    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput],
   );
 
   const handleResize = useCallback(
@@ -423,7 +443,7 @@ export default function TerminalScreen() {
             await client.selectWindow(sessionName.current, Number(id));
             setPicker({ open: false });
           } else {
-            const windowIndex = topology.activeWindow?.index;
+            const windowIndex = topology?.activeWindow?.index;
             if (windowIndex === undefined) return;
             await client.selectPane(sessionName.current, windowIndex, Number(id));
             setPicker({ open: false });
@@ -441,7 +461,7 @@ export default function TerminalScreen() {
         }
       })();
     },
-    [refreshTopology, topology.activeWindow, zoomed, remoteSize],
+    [refreshTopology, topology?.activeWindow, zoomed, remoteSize],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */
@@ -523,15 +543,16 @@ export default function TerminalScreen() {
           systemImage: 'macwindow',
           onPress: () => openPicker('windows'),
           // Nothing to pick from one Window, and an empty sheet is worse than
-          // a button that plainly cannot be used.
-          disabled: !connected || topology.windows.length < 2,
+          // a button that plainly cannot be used. Unknown counts as something
+          // to pick: the sheet re-reads on open and can say otherwise.
+          disabled: !connected || (topology !== null && topology.windows.length < 2),
         },
         {
           id: 'panes',
           label: 'Panes',
           systemImage: 'rectangle.split.2x1',
           onPress: () => openPicker('panes'),
-          disabled: !connected || topology.panes.length < 2,
+          disabled: !connected || (topology !== null && topology.panes.length < 2),
         },
         {
           id: 'home',
@@ -555,8 +576,7 @@ export default function TerminalScreen() {
     keyboardVisible,
     openPicker,
     status.phase,
-    topology.windows.length,
-    topology.panes.length,
+    topology,
   ]);
 
   useEffect(() => {
@@ -715,6 +735,9 @@ function StatusBanner({ status }: { status: Status }) {
 }
 
 const EMPTY_TOPOLOGY: Topology = { windows: [], panes: [] };
+
+/** How often terminal output may trigger a Topology re-read. */
+const TOPOLOGY_REFRESH_MS = 2500;
 
 const PICKER_TITLES: Record<PickerKind, string> = {
   sessions: 'Sessions',

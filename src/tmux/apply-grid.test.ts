@@ -7,7 +7,7 @@ function recorder() {
     async setWindowSize(grid: Grid) {
       calls.push(`window ${grid.rows}`);
     },
-    setClientSize(grid: Grid) {
+    async setClientSize(grid: Grid) {
       calls.push(`client ${grid.rows}`);
     },
     async redraw() {
@@ -23,9 +23,7 @@ describe('applyGrid', () => {
 
     await applyGrid(targets, { cols: 38, rows: 19 }, { cols: 38, rows: 32 });
 
-    // Set again after the Window, because the library only flushes a pending
-    // window-change when the channel sees other traffic.
-    expect(calls).toEqual(['client 19', 'window 19', 'client 19', 'redraw']);
+    expect(calls).toEqual(['client 19', 'window 19', 'redraw']);
   });
 
   it('grows the Window before the Client, for the same reason', async () => {

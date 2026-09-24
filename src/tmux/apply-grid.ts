@@ -4,8 +4,8 @@ import type { Grid } from './tmux-client';
 export interface GridTargets {
   /** The tmux Window: what tmux draws for. A round trip. */
   setWindowSize(grid: Grid): Promise<void>;
-  /** The Client's PTY: what tmux believes it is drawing onto. Fire and forget. */
-  setClientSize(grid: Grid): void;
+  /** The Client's pty: what tmux believes it is drawing onto. A round trip. */
+  setClientSize(grid: Grid): Promise<void>;
   redraw(): Promise<void>;
 }
 
@@ -22,13 +22,10 @@ export interface GridTargets {
  *   tmux draws less than it has; the other order pads.
  * - Growing: the Window first, then the Client.
  *
- * The Client half is best effort and nothing here depends on it. The SSH
- * library's `resize` does not reliably deliver a window-change at all —
- * measured with a scripted sequence, six calls over eighteen seconds moved the
- * remote not at all, while the same call inside this sequence sometimes does.
- * It is sent because it is free and correct when it lands. What actually keeps
- * the Surface clean is the Window size, which goes over the exec channel, and
- * the redraw that follows it.
+ * Both halves go over the exec channel — the Window through tmux, the Client
+ * through `stty` on the Host — so both land, and the order above is the whole
+ * of the guarantee. In the gap between them the Client is the smaller of the
+ * two in either direction, which is the state tmux does not pad.
  */
 export async function applyGrid(
   targets: GridTargets,
@@ -41,9 +38,13 @@ export async function applyGrid(
   // two. It is then set again afterwards: the SSH library only seems to flush
   // a pending window-change once the channel sees other traffic, and the
   // Window resize is what provides it. Repeating the same size costs nothing.
-  if (shrinking) targets.setClientSize(next);
-  await targets.setWindowSize(next);
-  targets.setClientSize(next);
+  if (shrinking) {
+    await targets.setClientSize(next);
+    await targets.setWindowSize(next);
+  } else {
+    await targets.setWindowSize(next);
+    await targets.setClientSize(next);
+  }
 
   await targets.redraw();
 }

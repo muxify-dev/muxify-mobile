@@ -239,3 +239,26 @@ export function splitWindowCommand(
 export function newWindowCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return `${tmux(tmuxExecutablePath)} new-window -a -t ${shellQuote(`${sessionName}:`)}`;
 }
+
+/**
+ * Resizes the Client's pseudo-terminal from the Host side.
+ *
+ * This is the answer to the SSH library not sending window-change requests: it
+ * never needed to. The Client's size lives in a pty on the Host, and the Host
+ * can set it — `stty` on the tty tmux is attached to sends SIGWINCH to the
+ * tmux client, which is exactly what a real terminal emulator's resize does.
+ * It goes over the exec channel, which has been reliable all along.
+ *
+ * Why this matters: tmux pads every row between the Window and the Client with
+ * dots, and those rows land past the end of the Surface's grid. A Client size
+ * that cannot be changed makes that padding unavoidable; one that can makes it
+ * impossible.
+ *
+ * GNU `stty` takes `-F` and BSD's takes `-f`, and the Host may be either, so
+ * the command tries one and falls back to the other.
+ */
+export function resizeClientCommand(clientTty: string, cols: number, rows: number): string {
+  const tty = shellQuote(clientTty);
+  const size = `rows ${Math.max(1, Math.floor(rows))} cols ${Math.max(1, Math.floor(cols))}`;
+  return `stty -F ${tty} ${size} 2>/dev/null || stty -f ${tty} ${size}`;
+}

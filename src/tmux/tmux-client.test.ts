@@ -410,3 +410,28 @@ describe('setZoom', () => {
     expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(true);
   });
 });
+
+describe('setClientSize', () => {
+  it('resizes the Client’s pty from the Host side', async () => {
+    const transport = new FakeTransport();
+
+    await new TmuxClient(transport).setClientSize('/dev/pts/3', { cols: 38, rows: 19 });
+
+    expect(transport.commands[0]).toContain("stty -F '/dev/pts/3' rows 19 cols 38");
+  });
+
+  it('keeps the Session usable when the Host refuses', async () => {
+    const transport: TmuxTransport = {
+      exec: async () => {
+        throw new Error('channel closed');
+      },
+      openShell: async () => {
+        throw new Error('not used');
+      },
+    };
+
+    await expect(
+      new TmuxClient(transport).setClientSize('/dev/pts/3', { cols: 38, rows: 19 }),
+    ).resolves.toBeUndefined();
+  });
+});
