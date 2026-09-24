@@ -47,6 +47,11 @@ The current tree of Windows and Panes under a Session, read on demand via
 Control Commands rather than tracked continuously.
 _Avoid_: Layout, tree, structure
 
+**Zoom**:
+tmux's term for one Pane filling its Window on its own. Muxify attaches zoomed
+by default, because a phone is too narrow to read two Panes side by side; the
+Panes picker is where it is turned off to see the real split.
+
 **Attach**:
 Binding the Shell Channel to an existing Session. Muxify only ever attaches —
 it does not create, rename, or kill Sessions.

@@ -1,5 +1,7 @@
 import {
   attachSessionCommand,
+  CAPTURE_SEPARATOR,
+  capturePanesCommand,
   listClientsCommand,
   listPanesCommand,
   listSessionsCommand,
@@ -10,16 +12,32 @@ import {
   resizeWindowCommand,
   selectPaneCommand,
   selectWindowCommand,
+  newWindowCommand,
   setStatusLineCommand,
+  splitWindowCommand,
   switchSessionCommand,
+  zoomPaneCommand,
 } from './commands';
 import type { TmuxExecResult, TmuxShell, TmuxShellEvents, TmuxTransport } from './transport';
+
+/** A tmux Session on a Host. */
+export interface Session {
+  name: string;
+  /** How many Windows it holds, which is all a picker needs to describe it. */
+  windowCount: number;
+}
 
 /** A tmux Window inside a Session. */
 export interface Window {
   index: number;
   name: string;
   active: boolean;
+  /** How many Panes it holds, which is what makes a preview worth showing. */
+  paneCount: number;
+  /** Whether its active Pane is zoomed to fill the Window. */
+  zoomed: boolean;
+  /** What the active Pane is running, as tmux reports it. */
+  command: string;
 }
 
 /** A tmux Pane inside a Window. */
@@ -28,6 +46,13 @@ export interface Pane {
   /** The command currently running in the Pane, as tmux reports it. */
   command: string;
   active: boolean;
+  /** The Pane's title, which is usually the Host's name. */
+  title: string;
+  /** Where the Pane sits in the Window's grid, in cells. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 /** The Surface's cell grid, used to size the remote terminal. */
@@ -77,7 +102,7 @@ export class TmuxClient {
    * non-zero for that, and treating it as an error would make every fresh
    * machine look broken.
    */
-  async listSessions(): Promise<string[]> {
+  async listSessions(): Promise<Session[]> {
     const result = await this.transport.exec(listSessionsCommand(this.tmuxExecutablePath));
 
     if (result.exitCode !== 0) {
@@ -85,7 +110,12 @@ export class TmuxClient {
       throw failure('list Sessions', result);
     }
 
-    return nonEmptyLines(result.stdout);
+    return nonEmptyLines(result.stdout).flatMap((line) => {
+      const fields = splitFields(line, 2);
+      if (!fields) return [];
+      const [name, windowCount] = fields;
+      return [{ name, windowCount: countOf(windowCount) }];
+    });
   }
 
   /** The Windows of a Session. A Session that has vanished reads as none. */
@@ -100,12 +130,21 @@ export class TmuxClient {
     }
 
     return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 3);
+      const fields = splitFields(line, 6);
       if (!fields) return [];
-      const [index, name, active] = fields;
+      const [index, name, active, paneCount, zoomed, command] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
-      return [{ index: parsed, name, active: active === '1' }];
+      return [
+        {
+          index: parsed,
+          name,
+          active: active === '1',
+          paneCount: countOf(paneCount),
+          zoomed: zoomed === '1',
+          command,
+        },
+      ];
     });
   }
 
@@ -121,12 +160,23 @@ export class TmuxClient {
     }
 
     return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 3);
+      const fields = splitFields(line, 8);
       if (!fields) return [];
-      const [index, command, active] = fields;
+      const [index, command, active, title, left, top, width, height] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
-      return [{ index: parsed, command, active: active === '1' }];
+      return [
+        {
+          index: parsed,
+          command,
+          active: active === '1',
+          title,
+          left: countOf(left),
+          top: countOf(top),
+          width: countOf(width),
+          height: countOf(height),
+        },
+      ];
     });
   }
 
@@ -276,6 +326,61 @@ export class TmuxClient {
     }
   }
 
+  /**
+   * What each of these Panes is showing right now, keyed by target.
+   *
+   * One round trip for all of them; see capturePanesCommand. A Pane that fails
+   * to capture is simply absent, because a preview is worth exactly nothing
+   * when it costs a working picker.
+   */
+  async capturePanes(targets: string[]): Promise<Map<string, string[]>> {
+    const previews = new Map<string, string[]>();
+    if (targets.length === 0) return previews;
+
+    let result: TmuxExecResult;
+    try {
+      result = await this.transport.exec(capturePanesCommand(targets, this.tmuxExecutablePath));
+    } catch {
+      return previews;
+    }
+    if (result.exitCode !== 0) return previews;
+
+    const captures = result.stdout.split(CAPTURE_SEPARATOR);
+    targets.forEach((target, index) => {
+      const capture = captures[index];
+      if (capture === undefined) return;
+      previews.set(target, capture.split('\n').filter((line, at, all) =>
+        // Keep interior blank lines, drop the ones the separator leaves behind.
+        line.trim() !== '' || (at > 0 && at < all.length - 1),
+      ));
+    });
+    return previews;
+  }
+
+  /** Toggles zoom on the Session's active Pane. */
+  async setZoom(sessionName: string, zoomed: boolean): Promise<void> {
+    const windows = await this.listWindows(sessionName);
+    const active = windows.find((window) => window.active);
+    if (!active || active.zoomed === zoomed) return;
+    // Zooming a Window with one Pane does nothing in tmux, and asking costs a
+    // round trip nobody sees the benefit of.
+    if (active.paneCount < 2) return;
+    await this.run('zoom Pane', zoomPaneCommand(sessionName, this.tmuxExecutablePath));
+  }
+
+  /** Splits the Session's active Pane. */
+  async splitWindow(sessionName: string, direction: 'right' | 'down'): Promise<void> {
+    await this.run(
+      'split Window',
+      splitWindowCommand(sessionName, direction, this.tmuxExecutablePath),
+    );
+  }
+
+  /** Adds a Window to the Session, after the current one. */
+  async newWindow(sessionName: string): Promise<void> {
+    await this.run('add a Window', newWindowCommand(sessionName, this.tmuxExecutablePath));
+  }
+
   /** Opens the Shell Channel and Attaches it to an existing Session. */
   attach(sessionName: string, grid: Grid, events: TmuxShellEvents): Promise<TmuxShell> {
     return this.transport.openShell(
@@ -295,6 +400,12 @@ export class TmuxClient {
       throw failure(what, result);
     }
   }
+}
+
+/** A tmux count or coordinate, or 0 when it is not a number. */
+function countOf(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function nonEmptyLines(stdout: string): string[] {

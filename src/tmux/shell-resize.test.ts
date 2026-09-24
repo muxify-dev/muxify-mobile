@@ -6,12 +6,13 @@ function fakeShell() {
 }
 
 describe('resizeShellChannel', () => {
-  it('asks for the size, then a different one, so the size actually lands', () => {
+  it('asks for the size, then a different one, to give it a chance of landing', () => {
     const shell = fakeShell();
 
     resizeShellChannel(shell, { cols: 38, rows: 32 });
 
-    // The second call is what makes the first take effect; see the module.
+    // The second call is what gives the first a chance of taking effect. The
+    // library delivers neither reliably; see the module.
     expect(shell.sizes).toEqual(['38x32', '38x31']);
   });
 

@@ -1,14 +1,8 @@
 import { createSessionPreparer, type SessionChrome } from './session-preparer';
-import type { Grid } from './tmux-client';
-
-const GRID: Grid = { cols: 38, rows: 32 };
 
 function fakeChrome(statusLines: Record<string, string | undefined> = {}) {
   const calls: string[] = [];
   const chrome: SessionChrome = {
-    async setWindowSize(sessionName, grid) {
-      calls.push(`size ${sessionName} ${grid.cols}x${grid.rows}`);
-    },
     async readStatusLine(sessionName) {
       calls.push(`read ${sessionName}`);
       return statusLines[sessionName];
@@ -25,23 +19,27 @@ function fakeChrome(statusLines: Record<string, string | undefined> = {}) {
 }
 
 describe('prepare', () => {
-  it('sizes the Window, hides the status line and repaints, in that order', async () => {
+  it('hides the status line and repaints, in that order', async () => {
     const { chrome, calls } = fakeChrome({ main: 'on' });
 
-    await createSessionPreparer(chrome).prepare('main', GRID, '/dev/pts/3');
+    await createSessionPreparer(chrome).prepare('main', '/dev/pts/3');
 
-    expect(calls).toEqual([
-      'size main 38x32',
-      'read main',
-      'status main off',
-      'redraw /dev/pts/3',
-    ]);
+    expect(calls).toEqual(['read main', 'status main off', 'redraw /dev/pts/3']);
+  });
+
+  it('leaves the Window size alone, which the resize scheduler owns', async () => {
+    // Two things setting the remote size race, and the Window loses.
+    const { chrome, calls } = fakeChrome({ main: 'on' });
+
+    await createSessionPreparer(chrome).prepare('main');
+
+    expect(calls.some((call) => call.startsWith('size'))).toBe(false);
   });
 
   it('reads the original status line before hiding it, so it can be put back', async () => {
     const { chrome, calls } = fakeChrome({ main: 'on' });
 
-    await createSessionPreparer(chrome).prepare('main', GRID);
+    await createSessionPreparer(chrome).prepare('main');
 
     expect(calls.indexOf('read main')).toBeLessThan(calls.indexOf('status main off'));
   });
@@ -52,8 +50,8 @@ describe('prepare', () => {
     const { chrome, calls, statusLines } = fakeChrome({ main: 'on' });
     const preparer = createSessionPreparer(chrome);
 
-    await preparer.prepare('main', GRID);
-    await preparer.prepare('main', GRID);
+    await preparer.prepare('main');
+    await preparer.prepare('main');
     await preparer.restoreAll();
 
     expect(calls.filter((call) => call === 'read main')).toHaveLength(1);
@@ -64,8 +62,8 @@ describe('prepare', () => {
     const { chrome, calls } = fakeChrome({ main: 'on', work: 'on' });
     const preparer = createSessionPreparer(chrome);
 
-    await preparer.prepare('main', GRID);
-    await preparer.prepare('work', GRID);
+    await preparer.prepare('main');
+    await preparer.prepare('work');
 
     expect(calls).toContain('status main off');
     expect(calls).toContain('status work off');
@@ -77,8 +75,8 @@ describe('restoreAll', () => {
     const { chrome, statusLines } = fakeChrome({ main: 'on', work: '2' });
     const preparer = createSessionPreparer(chrome);
 
-    await preparer.prepare('main', GRID);
-    await preparer.prepare('work', GRID);
+    await preparer.prepare('main');
+    await preparer.prepare('work');
     await preparer.restoreAll();
 
     expect(statusLines).toEqual({ main: 'on', work: '2' });
@@ -88,7 +86,7 @@ describe('restoreAll', () => {
     const { chrome, calls } = fakeChrome({ main: undefined });
     const preparer = createSessionPreparer(chrome);
 
-    await preparer.prepare('main', GRID);
+    await preparer.prepare('main');
     await preparer.restoreAll();
 
     expect(calls.filter((call) => call.startsWith('status main'))).toEqual(['status main off']);
@@ -98,7 +96,7 @@ describe('restoreAll', () => {
     const { chrome, calls } = fakeChrome({ main: 'on' });
     const preparer = createSessionPreparer(chrome);
 
-    await preparer.prepare('main', GRID);
+    await preparer.prepare('main');
     await preparer.restoreAll();
     await preparer.restoreAll();
 

@@ -9,8 +9,8 @@
 # cannot be dismissed from automation (see e2e/session-picker.ad).
 #
 # Selecting a row is still out of reach here and is verified by hand; what this
-# proves is that the Host's real Topology reaches the sheet, that the current
-# Window and Pane are marked, and that a button with nothing to offer says so.
+# proves is that the Host's real Topology reaches both sheets, that each sheet
+# carries its own actions, and that a button with nothing to offer says so.
 #
 # Drives the Host's Topology itself, so it does not depend on how the VM was
 # left. Requires a configured .env.local and a booted simulator.
@@ -39,8 +39,18 @@ attach() {
   done
   agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
     || fail "never reached Connected"
-  # The Topology read that decides the Dock's buttons happens just after.
-  sleep 3
+}
+
+# The Topology read that decides the Dock's buttons lands a few round trips
+# after Connected, so this waits for the answer rather than guessing how long
+# those take on the day.
+expect_enabled() {
+  local label=$1 want=$2
+  for _ in $(seq 1 15); do
+    [ "$(enabled "$label")" = "$want" ] && return 0
+    sleep 1
+  done
+  fail "$label button should be ${want/yes/enabled}${want/no/disabled}, it is $(enabled "$label")"
 }
 
 # Whether the Dock button with this label is pressable.
@@ -55,35 +65,41 @@ else: print('missing')
 " "$1"
 }
 
-rows() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
-marked() { agent-device snapshot -i 2>/dev/null | grep -cE '^@e[0-9]+ \[image\] "Selected"'; }
+# Each card is a Button carrying its Window name or Pane title.
+named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
 echo "1/4  one Window, one Pane: neither picker has anything to offer"
 vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true" || fail "could not reach the VM"
 attach
-[ "$(enabled Windows)" = no ] || fail "Windows button should be disabled for a single Window"
-[ "$(enabled Panes)" = no ] || fail "Panes button should be disabled for a single Pane"
+expect_enabled Windows no
+expect_enabled Panes no
 
 echo "2/4  three Windows: the Windows picker opens and lists them"
 vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
     tmux new-window -t '$SESSION:' -n notes 'exec bash'; \
     tmux select-window -t '$SESSION:0'"
 attach
-[ "$(enabled Windows)" = yes ] || fail "Windows button should be enabled for three Windows"
+expect_enabled Windows yes
 agent-device press 'label="Windows"' >/dev/null 2>&1
 agent-device wait text "Windows" 8000 >/dev/null 2>&1
-[ "$(rows '[0-9]+: .*')" -eq 3 ] || fail "expected three Windows in the sheet"
-[ "$(marked)" -eq 1 ] || fail "the active Window should be the only one marked"
+[ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the sheet"
+[ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the sheet"
+# `exists` rather than `visible`: SwiftUI content inside the sheet reports
+# itself unhittable to agent-device even when a finger can press it.
+agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
+  || fail "the Windows sheet has no New Window action"
 
 echo "3/4  two Panes: the Panes picker opens and lists them"
 vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'"
 attach
-[ "$(enabled Panes)" = yes ] || fail "Panes button should be enabled for two Panes"
+expect_enabled Panes yes
 agent-device press 'label="Panes"' >/dev/null 2>&1
 agent-device wait text "Panes" 8000 >/dev/null 2>&1
-[ "$(rows '[0-9]+: .*')" -eq 2 ] || fail "expected two Panes in the sheet"
-[ "$(marked)" -eq 1 ] || fail "the active Pane should be the only one marked"
+[ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"
+[ "$(named 'Split ↓')" -eq 1 ] || fail "the Panes sheet has no Split ↓ action"
+agent-device snapshot -i 2>/dev/null | grep -q 'Zoom' \
+  || fail "the Panes sheet has no Zoom toggle"
 
 echo "4/4  putting the Host back the way it was found"
 agent-device close >/dev/null 2>&1
@@ -91,5 +107,5 @@ vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo
-echo "PASS: Topology reaches both sheets, the current row is marked, and a"
+echo "PASS: Topology reaches both sheets, each carries its own actions, and a"
 echo "      picker with nothing to offer is disabled."

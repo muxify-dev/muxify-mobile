@@ -19,14 +19,28 @@ function reader(
   };
 }
 
-const WINDOWS: Window[] = [
-  { index: 0, name: 'editor', active: false },
-  { index: 1, name: 'server', active: true },
-];
+function window(index: number, name: string, active: boolean): Window {
+  return { index, name, active, paneCount: 1, zoomed: false, command: 'bash' };
+}
+
+function pane(index: number, active: boolean): Pane {
+  return {
+    index,
+    command: 'bash',
+    active,
+    title: 'host',
+    left: 0,
+    top: 0,
+    width: 80,
+    height: 24,
+  };
+}
+
+const WINDOWS: Window[] = [window(0, 'editor', false), window(1, 'server', true)];
 
 describe('readTopology', () => {
   it('reads the Panes of the Window tmux marks active', async () => {
-    const source = reader(WINDOWS, { 1: [{ index: 0, command: 'bash', active: true }] });
+    const source = reader(WINDOWS, { 1: [pane(0, true)] });
 
     const topology = await readTopology(source, 'main');
 
@@ -36,10 +50,7 @@ describe('readTopology', () => {
   });
 
   it('falls back to the first Window when tmux marks none active', async () => {
-    const source = reader([
-      { index: 3, name: 'only', active: false },
-      { index: 4, name: 'other', active: false },
-    ]);
+    const source = reader([window(3, 'only', false), window(4, 'other', false)]);
 
     const topology = await readTopology(source, 'main');
 

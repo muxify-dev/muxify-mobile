@@ -1,12 +1,9 @@
-import type { Grid } from './tmux-client';
-
 /**
  * The slice of TmuxClient needed to make a Session presentable. Narrow on
  * purpose: this is the whole of what taking over a Session involves, and
  * keeping it small keeps that visible.
  */
 export interface SessionChrome {
-  setWindowSize(sessionName: string, grid: Grid): Promise<void>;
   readStatusLine(sessionName: string): Promise<string | undefined>;
   setStatusLine(sessionName: string, value: string): Promise<void>;
   redrawClient(clientTty?: string): Promise<void>;
@@ -14,7 +11,7 @@ export interface SessionChrome {
 
 export interface SessionPreparer {
   /** Makes a Session fit to show on the Surface. */
-  prepare(sessionName: string, grid: Grid, clientTty?: string): Promise<void>;
+  prepare(sessionName: string, clientTty?: string): Promise<void>;
   /** Puts every Session this has changed back the way it was found. */
   restoreAll(): Promise<void>;
 }
@@ -22,12 +19,15 @@ export interface SessionPreparer {
 /**
  * Takes a Session over for the Surface, and gives it back afterwards.
  *
- * A Session is not ready to be shown on a phone as found: tmux sizes its
- * Window from its Clients (whose size the SSH library reports one resize late)
- * and draws a status line that duplicates the Dock. Both are session options,
- * so both are visible to every other Client and outlive the Connection — which
- * is the price of attaching a real client rather than using control mode, see
+ * A Session is not ready to be shown on a phone as found: tmux draws a status
+ * line that duplicates what the Dock already shows. It is a session option, so
+ * it is visible to every other Client and outlives the Connection — which is
+ * the price of attaching a real client rather than using control mode, see
  * ADR 0001.
+ *
+ * Sizing is deliberately not here. It has one owner, the resize scheduler,
+ * because two things setting the remote size race each other — which is
+ * exactly what left the Window at the size it had before layout settled.
  *
  * This exists because Attaching is not the only time it has to happen.
  * Switching Session lands on a Session nobody has prepared, so the same work
@@ -39,9 +39,7 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
   const borrowed = new Map<string, string | undefined>();
 
   return {
-    async prepare(sessionName: string, grid: Grid, clientTty?: string): Promise<void> {
-      await chrome.setWindowSize(sessionName, grid);
-
+    async prepare(sessionName: string, clientTty?: string): Promise<void> {
       // Read before hiding, and only once: coming back to a Session already
       // prepared would otherwise record 'off' as its original and lose the
       // user's setting for good.

@@ -36,14 +36,23 @@ class FakeTransport implements TmuxTransport {
 }
 
 describe('listSessions', () => {
-  it('returns one Session per line', async () => {
-    const transport = new FakeTransport({ 'list-sessions': { stdout: 'main\nwork\n0\n' } });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual(['main', 'work', '0']);
+  it('returns each Session with how many Windows it holds', async () => {
+    const transport = new FakeTransport({ 'list-sessions': { stdout: 'main\t3\nwork\t1\n0\t2\n' } });
+    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
+      { name: 'main', windowCount: 3 },
+      { name: 'work', windowCount: 1 },
+      { name: '0', windowCount: 2 },
+    ]);
   });
 
   it('ignores blank lines and trailing whitespace', async () => {
-    const transport = new FakeTransport({ 'list-sessions': { stdout: '  main  \n\n\nwork\n\n' } });
-    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual(['main', 'work']);
+    const transport = new FakeTransport({
+      'list-sessions': { stdout: '  main\t1  \n\n\nwork\t2\n\n' },
+    });
+    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
+      { name: 'main', windowCount: 1 },
+      { name: 'work', windowCount: 2 },
+    ]);
   });
 
   it('returns an empty list when no tmux server is running', async () => {
@@ -87,18 +96,20 @@ describe('listSessions', () => {
 });
 
 describe('listWindows', () => {
-  it('parses index, name and active flag', async () => {
+  it('parses everything a Window preview needs', async () => {
     const transport = new FakeTransport({
-      'list-windows': { stdout: '0\tbash\t1\n1\teditor\t0\n' },
+      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n1\teditor\t0\t1\t0\tfish\n' },
     });
     await expect(new TmuxClient(transport).listWindows('main')).resolves.toEqual([
-      { index: 0, name: 'bash', active: true },
-      { index: 1, name: 'editor', active: false },
+      { index: 0, name: 'bash', active: true, paneCount: 3, zoomed: true, command: 'vim' },
+      { index: 1, name: 'editor', active: false, paneCount: 1, zoomed: false, command: 'fish' },
     ]);
   });
 
   it('keeps a Window name containing spaces and colons intact', async () => {
-    const transport = new FakeTransport({ 'list-windows': { stdout: '2\tvim: src/app.ts\t0\n' } });
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '2\tvim: src/app.ts\t0\t1\t0\tvim\n' },
+    });
     const [window] = await new TmuxClient(transport).listWindows('main');
     expect(window.name).toBe('vim: src/app.ts');
   });
@@ -109,7 +120,9 @@ describe('listWindows', () => {
   });
 
   it('skips a malformed line rather than failing the whole read', async () => {
-    const transport = new FakeTransport({ 'list-windows': { stdout: '0\tbash\t1\ngarbage\n' } });
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '0\tbash\t1\t1\t0\tbash\ngarbage\n' },
+    });
     await expect(new TmuxClient(transport).listWindows('main')).resolves.toHaveLength(1);
   });
 
@@ -122,11 +135,13 @@ describe('listWindows', () => {
 });
 
 describe('listPanes', () => {
-  it('parses index, running command and active flag', async () => {
-    const transport = new FakeTransport({ 'list-panes': { stdout: '0\tbash\t0\n1\tvim\t1\n' } });
+  it('parses everything a Pane preview needs, geometry included', async () => {
+    const transport = new FakeTransport({
+      'list-panes': { stdout: '0\tbash\t0\thost\t0\t0\t40\t24\n1\tvim\t1\thost\t41\t0\t39\t24\n' },
+    });
     await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, command: 'bash', active: false },
-      { index: 1, command: 'vim', active: true },
+      { index: 0, command: 'bash', active: false, title: 'host', left: 0, top: 0, width: 40, height: 24 },
+      { index: 1, command: 'vim', active: true, title: 'host', left: 41, top: 0, width: 39, height: 24 },
     ]);
   });
 
@@ -323,5 +338,75 @@ describe('redrawClient', () => {
     };
 
     await expect(new TmuxClient(transport).redrawClient('/dev/pts/3')).resolves.toBeUndefined();
+  });
+});
+
+describe('capturePanes', () => {
+  it('reads several Panes in one round trip', async () => {
+    const transport = new FakeTransport({
+      'capture-pane': { stdout: 'one\ntwo\n@@muxify@@\nthree\n' },
+    });
+
+    const previews = await new TmuxClient(transport).capturePanes(['a:0', 'a:1']);
+
+    expect(transport.commands).toHaveLength(1);
+    expect(previews.get('a:0')).toEqual(['one', 'two']);
+    expect(previews.get('a:1')).toEqual(['three']);
+  });
+
+  it('sends nothing at all for no targets', async () => {
+    const transport = new FakeTransport();
+
+    await expect(new TmuxClient(transport).capturePanes([])).resolves.toEqual(new Map());
+    expect(transport.commands).toEqual([]);
+  });
+
+  it('is empty rather than broken when the capture fails', async () => {
+    // A preview is worth nothing when it costs a working picker.
+    const transport = new FakeTransport({ 'capture-pane': { exitCode: 1 } });
+
+    await expect(new TmuxClient(transport).capturePanes(['a:0'])).resolves.toEqual(new Map());
+  });
+});
+
+describe('setZoom', () => {
+  it('zooms the active Window when it is not zoomed', async () => {
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '0\tbash\t1\t3\t0\tvim\n' },
+    });
+
+    await new TmuxClient(transport).setZoom('main', true);
+
+    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(true);
+  });
+
+  it('leaves a Window that is already zoomed alone, since -Z only toggles', async () => {
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n' },
+    });
+
+    await new TmuxClient(transport).setZoom('main', true);
+
+    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(false);
+  });
+
+  it('does not bother zooming a Window with a single Pane', async () => {
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '0\tbash\t1\t1\t0\tvim\n' },
+    });
+
+    await new TmuxClient(transport).setZoom('main', true);
+
+    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(false);
+  });
+
+  it('unzooms when asked for no zoom', async () => {
+    const transport = new FakeTransport({
+      'list-windows': { stdout: '0\tbash\t1\t3\t1\tvim\n' },
+    });
+
+    await new TmuxClient(transport).setZoom('main', false);
+
+    expect(transport.commands.some((c) => c.includes('resize-pane -Z'))).toBe(true);
   });
 });

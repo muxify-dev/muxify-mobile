@@ -589,3 +589,80 @@ right thing for round trips, wrong for the redraw that rides along with it. So
 the redraw is now also fired from `keyboardDidShow` / `keyboardDidHide`: the
 keyboard settling is the last word on the Surface's size, and by then any
 padding painted during the animation is there to be cleaned up.
+
+## Pickers show what a Pane looks like, not what it is called
+
+Asked for the pickers to preview their content, like the reference design.
+
+A Window called "bash" among three others called "bash" is not a choice. What
+distinguishes them is what they are showing, so each row is a live capture of
+the Pane behind it: `capture-pane -p` per target, chained into one exec with a
+separator, because a round trip per row makes a picker nobody opens.
+
+The Panes picker goes further and lays the Panes out the way the Window is
+really split, from tmux's own `pane_left/top/width/height`. Picking a Pane is
+then pointing at where it is rather than reading an index. The frames are
+computed as fractions of the Window, worked out from the Panes themselves —
+the furthest right and lowest edges — which stays consistent mid-resize in a
+way a separately-read Window size would not.
+
+tmux's coordinates exclude the one-cell divider between Panes, so adjacent
+tiles come out with a small gap. That reads as the divider it is, which is a
+nice accident.
+
+## Zoom by default, because a phone is not a desk
+
+A split Session is unreadable on a phone: two Panes side by side is about
+nineteen columns each. So Muxify attaches zoomed — tmux's own `resize-pane -Z`,
+so the Host stays the arbiter of what is showing — and the Panes picker carries
+the switch to turn it off and see the real layout.
+
+`-Z` toggles rather than sets, so zoom has to be read before it is written;
+`window_zoomed_flag` in the Window listing is that read. And tmux drops zoom
+whenever another Pane is selected, so the preference is re-applied after every
+selection rather than assumed to have survived.
+
+## The SSH library's resize does not work at all, and this time it was measured
+
+Three separate findings above describe this library's `resize` as broken, then
+as one-behind-but-workaroundable. The second was wrong, and the way it was
+wrong is worth recording.
+
+A scripted sequence settles it. With the app attached and idle, `shell.resize`
+was called: once alone, twice in a tick, four times in a tick, with an outbound
+write after it, and with inbound output arriving from the Host. Eighteen
+seconds, six calls, and the remote Client did not move once.
+
+The same call, made in the middle of a real resize — alongside the exec channel
+traffic of `resize-window` — sometimes lands and sometimes does not, which is
+what produced the earlier "one behind" reading. It is a race, not a rule, and
+no amount of call-pattern cleverness fixes it.
+
+So the Client size is now **reported and not asserted**. What Muxify controls
+is the Window size, over the exec channel, and the redraw after it. The thing
+that actually matters — whether the user sees tmux's padding — is checked by
+looking at the screen instead, which is the only instrument that has ever
+caught this bug honestly.
+
+## A test whose instrument is checked first
+
+`e2e/regressions.sh` now reads the screen for tmux's padding, by counting bright
+pixels in the band above the Dock. A detector like that is worth nothing unless
+it can fail, so the check first forces a known-bad state — a Window deliberately
+smaller than its Client — and refuses to continue unless the detector sees it.
+Then it restores, cycles the keyboard, and asserts zero.
+
+Two earlier "fixed" claims in this document were made with instruments that
+could not see the bug. This one says so out loud.
+
+## The remote size needs exactly one owner
+
+Attach used to set the Window size twice over: once through the Session
+preparer and once through the resize scheduler, racing each other. The Window
+ended up at whatever the pre-layout grid was, which is how a freshly attached
+Session came up the wrong size.
+
+Sizing now lives only in the scheduler, and the preparer does nothing but the
+status line. Switching Session resets the scheduler rather than re-requesting,
+because the same grid on a different Session is a different Window to size and
+the scheduler is right to drop a repeat otherwise.

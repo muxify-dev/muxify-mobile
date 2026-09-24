@@ -34,7 +34,7 @@ function tmux(executablePath?: string): string {
  * Session list, not a failure, and the caller must treat it as such.
  */
 export function listSessionsCommand(tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} list-sessions -F '#{session_name}'`;
+  return `${tmux(tmuxExecutablePath)} list-sessions -F '#{session_name}\t#{session_windows}'`;
 }
 
 /**
@@ -60,7 +60,8 @@ function windowTarget(sessionName: string, windowIndex: number): string {
 export function listWindowsCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return (
     `${tmux(tmuxExecutablePath)} list-windows -t ${shellQuote(sessionName)} ` +
-    "-F '#{window_index}\t#{window_name}\t#{window_active}'"
+    "-F '#{window_index}\t#{window_name}\t#{window_active}\t#{window_panes}" +
+    "\t#{window_zoomed_flag}\t#{pane_current_command}'"
   );
 }
 
@@ -72,7 +73,8 @@ export function listPanesCommand(
 ): string {
   return (
     `${tmux(tmuxExecutablePath)} list-panes -t ${windowTarget(sessionName, windowIndex)} ` +
-    "-F '#{pane_index}\t#{pane_current_command}\t#{pane_active}'"
+    "-F '#{pane_index}\t#{pane_current_command}\t#{pane_active}\t#{pane_title}" +
+    "\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}'"
   );
 }
 
@@ -190,4 +192,50 @@ export function listClientsCommand(sessionName: string, tmuxExecutablePath?: str
 export function redrawClientCommand(clientTty?: string, tmuxExecutablePath?: string): string {
   const command = `${tmux(tmuxExecutablePath)} refresh-client`;
   return clientTty === undefined ? command : `${command} -t ${shellQuote(clientTty)}`;
+}
+
+/** Separates one Pane's captured content from the next in a batched capture. */
+export const CAPTURE_SEPARATOR = '@@muxify@@';
+
+/**
+ * Control Command capturing what several Panes are showing, in one round trip.
+ *
+ * One exec per Pane would be a round trip each, and a picker that takes a
+ * second to fill is a picker nobody opens. tmux has no batch form, so the
+ * commands are chained with `;` — which every POSIX shell and fish agree on,
+ * unlike a pipeline or a loop.
+ *
+ * `capture-pane -p` gives the visible region, which is exactly what a preview
+ * wants: what that Pane looks like right now.
+ */
+export function capturePanesCommand(targets: string[], tmuxExecutablePath?: string): string {
+  const tmuxPath = tmux(tmuxExecutablePath);
+  return targets
+    .map((target) => `${tmuxPath} capture-pane -t ${shellQuote(target)} -p`)
+    .join(` ; echo ${shellQuote(CAPTURE_SEPARATOR)} ; `);
+}
+
+/**
+ * Control Command toggling zoom on a Window's active Pane.
+ *
+ * tmux has no "zoom on" — `-Z` toggles — so the caller has to know the current
+ * state, which `listWindowsCommand` reports as the zoomed flag.
+ */
+export function zoomPaneCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} resize-pane -Z -t ${shellQuote(sessionName)}`;
+}
+
+/** Control Command splitting the current Pane, beside it or below it. */
+export function splitWindowCommand(
+  sessionName: string,
+  direction: 'right' | 'down',
+  tmuxExecutablePath?: string,
+): string {
+  const flag = direction === 'right' ? '-h' : '-v';
+  return `${tmux(tmuxExecutablePath)} split-window ${flag} -t ${shellQuote(sessionName)}`;
+}
+
+/** Control Command adding a Window to a Session, after the current one. */
+export function newWindowCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} new-window -a -t ${shellQuote(`${sessionName}:`)}`;
 }

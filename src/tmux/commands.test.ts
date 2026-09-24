@@ -1,5 +1,9 @@
 import {
   attachSessionCommand,
+  capturePanesCommand,
+  newWindowCommand,
+  splitWindowCommand,
+  zoomPaneCommand,
   listClientsCommand,
   redrawClientCommand,
   listPanesCommand,
@@ -41,12 +45,14 @@ describe('shellQuote', () => {
 
 describe('listSessionsCommand', () => {
   it('asks tmux for one Session name per line', () => {
-    expect(listSessionsCommand()).toBe("tmux list-sessions -F '#{session_name}'");
+    expect(listSessionsCommand()).toBe(
+      "tmux list-sessions -F '#{session_name}\t#{session_windows}'",
+    );
   });
 
   it('uses an explicit tmux path when the Host provides one', () => {
     expect(listSessionsCommand('/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' list-sessions -F '#{session_name}'",
+      "'/usr/bin/tmux' list-sessions -F '#{session_name}\t#{session_windows}'",
     );
   });
 });
@@ -83,9 +89,10 @@ describe('attachSessionCommand', () => {
 });
 
 describe('listWindowsCommand', () => {
-  it('asks for index, name and active flag per Window, tab separated', () => {
+  it('asks for what a Window preview needs, tab separated', () => {
     expect(listWindowsCommand('main')).toBe(
-      "tmux list-windows -t 'main' -F '#{window_index}\t#{window_name}\t#{window_active}'",
+      "tmux list-windows -t 'main' -F '#{window_index}\t#{window_name}\t#{window_active}" +
+        "\t#{window_panes}\t#{window_zoomed_flag}\t#{pane_current_command}'",
     );
   });
 
@@ -103,7 +110,8 @@ describe('listWindowsCommand', () => {
 describe('listPanesCommand', () => {
   it('targets a specific Window inside a Session', () => {
     expect(listPanesCommand('main', 2)).toBe(
-      "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_current_command}\t#{pane_active}'",
+      "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_current_command}\t#{pane_active}" +
+        "\t#{pane_title}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}'",
     );
   });
 
@@ -199,5 +207,48 @@ describe('redrawClientCommand', () => {
     expect(redrawClientCommand('/dev/pts/3', '/usr/bin/tmux')).toBe(
       "'/usr/bin/tmux' refresh-client -t '/dev/pts/3'",
     );
+  });
+});
+
+describe('capturePanesCommand', () => {
+  it('captures what one Pane is showing', () => {
+    expect(capturePanesCommand(['main:1.0'])).toBe("tmux capture-pane -t 'main:1.0' -p");
+  });
+
+  it('chains several captures into one round trip, separated by a marker', () => {
+    // A picker that takes a round trip per Pane is a picker nobody opens.
+    expect(capturePanesCommand(['a:0', 'a:1'])).toBe(
+      "tmux capture-pane -t 'a:0' -p ; echo '@@muxify@@' ; tmux capture-pane -t 'a:1' -p",
+    );
+  });
+
+  it('is empty for no targets, so nothing is sent', () => {
+    expect(capturePanesCommand([])).toBe('');
+  });
+
+  it('quotes a target that tries to break out', () => {
+    expect(capturePanesCommand(["'; id; '"])).toContain("-t ''\\''; id; '\\'''");
+  });
+});
+
+describe('zoomPaneCommand', () => {
+  it('toggles zoom on the Session\'s active Pane', () => {
+    expect(zoomPaneCommand('main')).toBe("tmux resize-pane -Z -t 'main'");
+  });
+});
+
+describe('splitWindowCommand', () => {
+  it('splits beside the current Pane', () => {
+    expect(splitWindowCommand('main', 'right')).toBe("tmux split-window -h -t 'main'");
+  });
+
+  it('splits below the current Pane', () => {
+    expect(splitWindowCommand('main', 'down')).toBe("tmux split-window -v -t 'main'");
+  });
+});
+
+describe('newWindowCommand', () => {
+  it('adds a Window after the current one', () => {
+    expect(newWindowCommand('main')).toBe("tmux new-window -a -t 'main:'");
   });
 });

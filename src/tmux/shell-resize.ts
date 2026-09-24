@@ -6,27 +6,21 @@ interface Resizable {
 }
 
 /**
- * Tells the Shell Channel how big the Surface is, twice.
+ * Tells the Shell Channel how big the Surface is, and tries to make it stick.
  *
- * `@osuki-dev/react-native-ssh` does not send the size it is given. It sends
- * the one it was given *before*, and ignores a call that repeats the size it
- * already holds. Measured across a keyboard cycle, the remote is always
- * exactly one resize behind:
+ * `@osuki-dev/react-native-ssh` does not reliably deliver a window-change.
+ * Measured with a scripted sequence — a resize every three seconds, alone,
+ * with an outbound write, with inbound output, twice in a tick, four times in
+ * a tick — the remote did not move once in eighteen seconds. The same call
+ * made alongside the exec channel traffic of a tmux resize sometimes lands and
+ * sometimes does not, which makes it a race rather than a rule.
  *
- *     surface=38x32  client=38x34      (the size at attach)
- *     surface=38x16  client=38x32
- *     surface=38x32  client=38x16
- *
- * So a second call with a deliberately different size flushes the first, and
- * the remote ends up correct. One row shorter is the right dummy: a Client
- * smaller than the Window makes tmux draw less for an instant, where a Client
- * larger than the Window makes it pad the difference with dots — which is the
- * whole problem this exists to solve.
- *
- * Why it matters at all, given the Window is sized through tmux anyway: tmux
- * pads every row between the Window and the Client, and those rows are beyond
- * the Surface's grid, so the Surface scrolls to fit them and the terminal
- * fills with dots. A correct Client size is the only thing that stops it.
+ * So this is best effort and nothing depends on it. A second call one row
+ * shorter is what has the best chance of flushing the first, and one row
+ * *shorter* specifically: a Client smaller than the Window makes tmux draw
+ * less for an instant, where a Client larger makes it pad the difference with
+ * dots. If the size lands, that is a bonus; the Window size, which goes over
+ * the exec channel, is what the Surface actually depends on.
  *
  * The Rust core ships prebuilt in an xcframework, so this cannot be fixed at
  * source the way `expo-libghostty` was. It needs an upstream report.

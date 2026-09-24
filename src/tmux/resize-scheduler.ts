@@ -1,11 +1,21 @@
 import type { Grid } from './tmux-client';
 
-/** Pushes one size to the remote Session. Resolves when the Host has it. */
-export type ApplyGrid = (grid: Grid) => Promise<void>;
+/**
+ * Pushes one size to the remote Session, told what the previous one was so it
+ * can decide which half of the resize to do first. Resolves when the Host has
+ * it.
+ */
+export type ApplyGrid = (grid: Grid, previous: Grid | null) => Promise<void>;
 
 export interface ResizeScheduler {
   /** Asks for the remote Session to be this size, eventually. */
   request(grid: Grid): void;
+  /**
+   * Forgets what has been applied, so the next request is sent even if the
+   * size has not changed. For when the target has: a Session switched to has
+   * its own Window, sized for whoever attached to it last.
+   */
+  reset(): void;
 }
 
 /**
@@ -30,6 +40,7 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
   let pending: Grid | null = null;
 
   function run(grid: Grid): void {
+    const previous = applied;
     inFlight = true;
     applied = grid;
 
@@ -43,7 +54,7 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
 
     // A failed resize must not wedge the scheduler: the Session is still
     // usable, and the next size should still get its chance.
-    apply(grid).then(settle, settle);
+    apply(grid, previous).then(settle, settle);
   }
 
   return {
@@ -54,6 +65,11 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
       }
       if (sameGrid(grid, applied)) return;
       run(grid);
+    },
+
+    reset(): void {
+      applied = null;
+      pending = null;
     },
   };
 }

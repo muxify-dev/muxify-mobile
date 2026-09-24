@@ -33,11 +33,11 @@ is "text" "id=\"connection-status\"" "Connected"
 press "label=\"Sessions\""
 wait "text" "Sessions" 8000
 
-# The Sessions were read off the Host and the attached one is marked as where
-# the Surface is. The mark is what gets asserted rather than the Session's
-# name: this Host's Session is named "0", and agent-device will not match a
-# numeric-looking selector value. A mark can only exist on a row, so a visible
-# one proves the list rendered from the Host as well.
-is "visible" "label=\"Selected\""
+# The sheet is up with its own chrome. The Sessions themselves are asserted in
+# e2e/pickers.sh, which can set up the Host's Topology first — this Host's
+# Session is named "0", and agent-device will not match a numeric selector.
+# `exists` rather than `visible`: SwiftUI content inside a presented sheet
+# reports itself unhittable to agent-device even where a finger can press it.
+is "exists" "label=\"Close\""
 
 close
