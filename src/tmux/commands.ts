@@ -305,6 +305,56 @@ export function splitWindowCommand(
   return `${tmux(tmuxExecutablePath)} split-window ${flag} -t ${currentPaneTarget(sessionName)}`;
 }
 
+/**
+ * Control Command scrolling the active Pane back through its history, and
+ * reporting where that landed.
+ *
+ * Three things in one round trip, because a finger moving on the glass cannot
+ * wait for three. `copy-mode -e` is idempotent — entering when already in it
+ * keeps the position — so every scroll back can carry it and there is no
+ * separate "start scrolling" state to get wrong. `-e` is what makes the mode
+ * leave by itself once the Pane is scrolled to the bottom again.
+ *
+ * `-N` takes the whole distance as a count, so a violent flick is one short
+ * command rather than one per line. That is the difference between a gesture
+ * that costs a command and one that costs a hundred.
+ *
+ * The trailing `display-message` is why the indicator never drifts: tmux
+ * clamps the scroll at the top of the history, so the only honest source for
+ * how far back the Pane is, is tmux after the fact — not a number JavaScript
+ * kept while it was guessing.
+ */
+export function scrollCommand(
+  sessionName: string,
+  lines: number,
+  tmuxExecutablePath?: string,
+): string {
+  const exe = tmux(tmuxExecutablePath);
+  const target = currentPaneTarget(sessionName);
+  const count = Math.abs(Math.trunc(lines));
+  const report = `${exe} display-message -p -t ${target} '#{scroll_position}\t#{history_size}'`;
+  if (lines > 0) {
+    return (
+      `${exe} copy-mode -e -t ${target} ; ` +
+      `${exe} send-keys -X -N ${count} -t ${target} scroll-up ; ${report}`
+    );
+  }
+  // Never enters the mode: scrolling forward when already at the bottom is a
+  // gesture that should do nothing, not one that puts the Pane into a mode.
+  return `${exe} send-keys -X -N ${count} -t ${target} scroll-down ; ${report}`;
+}
+
+/**
+ * Control Command putting the Pane back at the live bottom.
+ *
+ * For the two moments that mean "I am done looking at the past": the jump-back
+ * button, and the first key typed while scrolled away — nobody types into
+ * history on purpose.
+ */
+export function stopScrollingCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} send-keys -X -t ${currentPaneTarget(sessionName)} cancel`;
+}
+
 /** Control Command adding a Window to a Session, after the current one. */
 export function newWindowCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return `${tmux(tmuxExecutablePath)} new-window -a -t ${shellQuote(`${sessionName}:`)}`;

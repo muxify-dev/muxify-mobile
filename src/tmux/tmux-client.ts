@@ -11,12 +11,14 @@ import {
   readWindowSizingCommand,
   redrawClientCommand,
   resizeClientCommand,
+  scrollCommand,
   selectPaneCommand,
   selectWindowCommand,
   newWindowCommand,
   setStatusLineCommand,
   setWindowSizingCommand,
   splitWindowCommand,
+  stopScrollingCommand,
   switchSessionCommand,
   zoomPaneCommand,
 } from './commands';
@@ -34,6 +36,18 @@ export interface Session {
    * Window follows the smallest Client.
    */
   attached: boolean;
+}
+
+/**
+ * How far back through its history a Pane is being viewed.
+ *
+ * `back` is zero at the live bottom. `history` is how many lines tmux is
+ * holding, which is what `history-limit` allows and not what has been written
+ * — scrolling cannot reach further than this.
+ */
+export interface ScrollPosition {
+  back: number;
+  history: number;
 }
 
 /** A tmux Window inside a Session. */
@@ -225,6 +239,44 @@ export class TmuxClient {
       'select Window',
       selectWindowCommand(sessionName, windowIndex, this.tmuxExecutablePath),
     );
+  }
+
+  /**
+   * Scrolls the active Pane through its history and says where that landed.
+   *
+   * Positive lines go back into the past. Returns undefined when tmux will not
+   * say — a Pane that has left, or a Session that has gone — which the caller
+   * should read as "stop showing a position", never as zero.
+   */
+  async scroll(sessionName: string, lines: number): Promise<ScrollPosition | undefined> {
+    if (lines === 0) return undefined;
+    let result: TmuxExecResult;
+    try {
+      result = await this.transport.exec(
+        scrollCommand(sessionName, lines, this.tmuxExecutablePath),
+      );
+    } catch {
+      return undefined;
+    }
+    if (result.exitCode !== 0) return undefined;
+
+    const [line] = nonEmptyLines(result.stdout);
+    if (line === undefined) return undefined;
+    const fields = splitFields(line, 2);
+    if (!fields) return undefined;
+    const [back, history] = fields;
+    // An empty position is tmux saying the Pane is not in the mode at all,
+    // which is the live bottom.
+    return { back: back === '' ? 0 : countOf(back), history: countOf(history) };
+  }
+
+  /** Puts the active Pane back at the live bottom. Best effort. */
+  async stopScrolling(sessionName: string): Promise<void> {
+    try {
+      await this.transport.exec(stopScrollingCommand(sessionName, this.tmuxExecutablePath));
+    } catch {
+      // Nothing to do: the Pane is either already at the bottom or gone.
+    }
   }
 
   /** Moves the attached client to another Pane. */

@@ -17,12 +17,13 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
+import { createScrollScheduler } from '@/tmux/scroll-scheduler';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
 import { readTopology, type Topology } from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
-import { TmuxClient } from '@/tmux/tmux-client';
+import { TmuxClient, type ScrollPosition } from '@/tmux/tmux-client';
 import type { TmuxShell } from '@/tmux/transport';
 
 /** What the Surface uses when the user has not picked a size. */
@@ -81,6 +82,12 @@ export default function TerminalScreen() {
 
   const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
+  /** How far back the Pane is being viewed, or null at the live bottom. */
+  const [scrolled, setScrolled] = useState<ScrollPosition | null>(null);
+  /** The same fact where a callback can read it without being rebuilt. */
+  const scrolledBack = useRef(false);
+  /** Sub-line scroll distance not yet worth a command. */
+  const carriedLines = useRef(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   /**
@@ -138,6 +145,67 @@ export default function TerminalScreen() {
       }),
     [],
   );
+
+  /**
+   * Owns every remote scroll, so a flick cannot flood the Host.
+   *
+   * The same bargain as the resize scheduler, for the same reason — one
+   * command in flight, the round trip as the debounce window — but the backlog
+   * *adds* rather than replaces: a dropped resize is merely stale, while a
+   * dropped scroll is distance the user asked for and did not travel.
+   */
+  const scroller = useMemo(
+    () =>
+      createScrollScheduler(async (lines) => {
+        const client = tmux.current;
+        if (!client) return;
+        const position = await client.scroll(sessionName.current, lines);
+        if (disposed.current) return;
+        // Where tmux says it landed, not where the finger asked: the two part
+        // company the moment the history runs out, and believing the finger is
+        // exactly how an indicator starts lying.
+        const back = position?.back ?? 0;
+        scrolledBack.current = back > 0;
+        setScrolled(back > 0 ? position ?? null : null);
+      }),
+    [],
+  );
+
+  /**
+   * One finger on the Surface, moving the Pane through its history.
+   *
+   * The gesture is the library's own — the same pan and the same momentum it
+   * would otherwise spend on ghostty's scrollback, which a Surface painted by
+   * tmux does not have. Points become lines here because only this side knows
+   * both the grid and the height it was laid out at.
+   *
+   * The fraction of a line left over is carried between frames rather than
+   * dropped, so a slow drag moves at the speed of the finger instead of
+   * stalling until a whole line has accumulated.
+   */
+  const handleScroll = useCallback(
+    ({ nativeEvent }: { nativeEvent: { points: number } }) => {
+      const rows = grid.current?.rows ?? 0;
+      const height = surfaceHeight.current;
+      if (rows <= 0 || height <= 0) return;
+      // A finger moving down pulls older output into view.
+      carriedLines.current += nativeEvent.points * (rows / height);
+      const whole = Math.trunc(carriedLines.current);
+      if (whole === 0) return;
+      carriedLines.current -= whole;
+      scroller.request(whole);
+    },
+    [scroller],
+  );
+
+  /** Puts the Pane back at the live bottom, and the indicator away with it. */
+  const stopScrolling = useCallback(() => {
+    scroller.reset();
+    carriedLines.current = 0;
+    scrolledBack.current = false;
+    setScrolled(null);
+    void tmux.current?.stopScrolling(sessionName.current);
+  }, [scroller]);
 
   /** Re-reads the Session's Windows and Panes, for the Dock and the sheet. */
   const refreshTopology = useCallback(async (): Promise<Topology> => {
@@ -288,14 +356,26 @@ export default function TerminalScreen() {
     [start, remoteSize],
   );
 
-  const handleInput = useCallback(({ nativeEvent }: { nativeEvent: { data: string } }) => {
-    // `data` is base64. The sibling `text` field must not be used: a multi-byte
-    // character split across reads is corrupted by text decoding.
-    //
-    // What comes out of the Surface is not quite what a shell expects — every
-    // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-    shell.current?.write(toShellInput(base64ToBytes(nativeEvent.data)));
-  }, []);
+  const handleInput = useCallback(
+    ({ nativeEvent }: { nativeEvent: { data: string } }) => {
+      // Nobody types into the past on purpose. A key pressed while the Pane is
+      // scrolled back spends itself returning to the bottom and is not
+      // forwarded: copy-mode would otherwise read it as a movement command, and
+      // sending it as well would race the cancel down a different channel with
+      // no ordering between the two.
+      if (scrolledBack.current) {
+        stopScrolling();
+        return;
+      }
+      // `data` is base64. The sibling `text` field must not be used: a
+      // multi-byte character split across reads is corrupted by text decoding.
+      //
+      // What comes out of the Surface is not quite what a shell expects — every
+      // keystroke arrives wrapped as a bracketed paste. See toShellInput.
+      shell.current?.write(toShellInput(base64ToBytes(nativeEvent.data)));
+    },
+    [stopScrolling],
+  );
 
   /**
    * Shows or hides the system keyboard.
@@ -444,6 +524,10 @@ export default function TerminalScreen() {
             // the same on the Host Screen. Without this the order would only
             // remember how a visit started, not where it went.
             if (hostId) void deviceHostStore().rememberSession(hostId, id);
+            // The new Session has its own history and its own position in it.
+            scroller.reset();
+            scrolledBack.current = false;
+            setScrolled(null);
             // The Session switched to has never been prepared: its Window is
             // sized for whatever last attached, and its status line is on.
             await sessions.current?.prepare(id, clientTty.current);
@@ -472,7 +556,7 @@ export default function TerminalScreen() {
         }
       })();
     },
-    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId],
+    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId, scroller],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */
@@ -646,7 +730,20 @@ export default function TerminalScreen() {
           }}
           onResize={handleResize}
           onInput={handleInput}
+          // The history is tmux's, so the gesture has to be Muxify's: ghostty
+          // would otherwise spend it on a local scrollback that does not exist
+          // on the alternate screen. Needs the local patch.
+          ownsScrollGesture
+          onScroll={handleScroll}
         />
+
+        {scrolled ? (
+          <ScrollBackIndicator
+            position={scrolled}
+            palette={opened.terminal}
+            onPress={stopScrolling}
+          />
+        ) : null}
       </View>
 
       <PickerSheet
@@ -714,6 +811,47 @@ export default function TerminalScreen() {
  * The loud banner, shown only while something needs the user's attention. The
  * quiet always-present indicator above carries the same state for assertions.
  */
+/**
+ * Says how far back the Pane is being viewed, and takes you back.
+ *
+ * Shown only while it is true, and it is tmux's own count rather than one this
+ * app kept — the two part company as soon as the history runs out under a
+ * flick, and a number that is quietly wrong is worse than no number.
+ *
+ * It doubles as the way out, because the two things a finger wants here are
+ * "how far am I" and "take me back", and remux offers neither: its scrolled
+ * pane has no indicator and no jump, so the only way down is to drag all the
+ * way back by hand.
+ */
+function ScrollBackIndicator({
+  position,
+  palette,
+  onPress,
+}: {
+  position: ScrollPosition;
+  palette: { foreground: string; background: string };
+  onPress: () => void;
+}) {
+  const atOldest = position.back >= position.history;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Jump to latest"
+      testID="scroll-position"
+      style={styles.scrollPill}>
+      <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>
+        {atOldest
+          ? `oldest of ${position.history} lines`
+          : `${position.back} lines back`}
+      </ThemedText>
+      <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.background }]}>
+        Jump to latest
+      </ThemedText>
+    </Pressable>
+  );
+}
+
 function StatusBanner({ status }: { status: Status }) {
   if (status.phase === 'connected') {
     return null;
@@ -854,6 +992,28 @@ function describe(error: unknown): string {
 }
 
 const styles = StyleSheet.create({
+  scrollPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    // Deliberately the terminal's own foreground, inverted: the pill has to
+    // read over whatever the Session happens to be painting behind it.
+    backgroundColor: 'rgba(235, 235, 245, 0.92)',
+  },
+  scrollPillText: {
+    fontSize: 13,
+  },
+  scrollPillAction: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.7,
+  },
   container: {
     flex: 1,
     backgroundColor: SurfacePalette.background,

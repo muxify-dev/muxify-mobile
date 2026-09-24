@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9ca5df64131937bf8b1c5154854307eea07dc0b8 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9faae53f1b5f052f6a65e001046c261dfdecc396 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -18,6 +18,12 @@ export type TerminalViewRef = {
@@ -15,7 +15,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9ca5df64131937bf8b1c5154854307ee
  };
  export type TerminalTheme = {
      /**
-@@ -52,6 +58,11 @@ export type TerminalViewProps = {
+@@ -52,10 +58,30 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -27,6 +27,25 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9ca5df64131937bf8b1c5154854307ee
      /** User keyboard/IME input to forward to the PTY. */
      onInput?: (event: {
          nativeEvent: TerminalInputEvent;
+     }) => void;
++    /**
++     * Vertical scroll from the touch gesture, in points, including its
++     * momentum frames. Only sent when `ownsScrollGesture` is set; positive
++     * means the finger moved down, pulling older output into view.
++     */
++    onScroll?: (event: {
++        nativeEvent: { points: number };
++    }) => void;
++    /**
++     * Take the touch scroll gesture for the app instead of letting ghostty
++     * scroll its own buffer. Set this when the history belongs to something
++     * else — a terminal painted by a remote multiplexer has no local
++     * scrollback to move.
++     */
++    ownsScrollGesture?: boolean;
+     /** Grid resized (layout, rotation, font change); forward to the PTY. */
+     onResize?: (event: {
+         nativeEvent: TerminalResizeEvent;
 diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
 index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..9200e3be3bd92af2e11ba06af52bc356a3376e1a 100644
 --- a/build/ExpoLibghosttyView.js
@@ -42,10 +61,19 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..9200e3be3bd92af2e11ba06af52bc356
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..18761ac4c676d43bfd74dc45571a7fe84310ef3c 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..e67b1cb7d748d9d6a015e5995d4501a9f750f217 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -36,6 +36,27 @@ public class ExpoLibghosttyModule: Module {
+@@ -5,7 +5,7 @@ public class ExpoLibghosttyModule: Module {
+     Name("ExpoLibghostty")
+ 
+     View(ExpoLibghosttyView.self) {
+-      Events("onInput", "onResize")
++      Events("onInput", "onResize", "onScroll")
+ 
+       // Base font size in points (default 14). Changing it after mount
+       // rebuilds the surface and resets the grid.
+@@ -36,6 +36,33 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -70,14 +98,58 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..18761ac4c676d43bfd74dc45571a7fe8
 +      Prop("accessoryBar") { (view: ExpoLibghosttyView, visible: Bool?) in
 +        view.setAccessoryBar(visible: visible ?? true)
 +      }
++
++      // Whether the touch scroll gesture belongs to JavaScript rather than to
++      // ghostty. For terminals whose history lives at the far end.
++      Prop("ownsScrollGesture") { (view: ExpoLibghosttyView, owned: Bool?) in
++        view.scrollGestureOwnedByJS = owned ?? false
++      }
      }
    }
  }
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..f4d5507702af8e9cf494302d4b5ba95d38710ba3 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fe7214941b4355948953f0cff3b0829840d749c6 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
-@@ -83,4 +83,33 @@ class ExpoLibghosttyView: ExpoView {
+@@ -44,6 +44,29 @@ class ExpoLibghosttyView: ExpoView {
+ 
+   let onInput = EventDispatcher()
+   let onResize = EventDispatcher()
++  let onScroll = EventDispatcher()
++
++  /// Take the touch scroll gesture for this view, in vertical points.
++  ///
++  /// Off by default, so a view that says nothing keeps ghostty's own
++  /// behaviour. A terminal showing a remote multiplexer wants it on: the
++  /// history belongs to the far end, so the gesture has to reach JavaScript
++  /// rather than become a wheel event with nothing to scroll.
++  var scrollGestureOwnedByJS: Bool = false {
++    didSet {
++      guard scrollGestureOwnedByJS != oldValue else { return }
++      applyScrollOwnership()
++    }
++  }
++
++  private func applyScrollOwnership() {
++    #if !targetEnvironment(macCatalyst)
++      terminalView.onScrollDelta =
++        scrollGestureOwnedByJS
++        ? { [weak self] points in self?.onScroll(["points": Double(points)]) }
++        : nil
++    #endif
++  }
+ 
+   required init(appContext: AppContext? = nil) {
+     super.init(appContext: appContext)
+@@ -67,6 +90,7 @@ class ExpoLibghosttyView: ExpoView {
+     terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+     terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+     addSubview(terminalView)
++    applyScrollOwnership()
+   }
+ 
+   /// Feed PTY output (terminal.output on the wire) into the grid.
+@@ -83,4 +107,33 @@ class ExpoLibghosttyView: ExpoView {
    func finish(exitCode: UInt32) {
      session?.finish(exitCode: exitCode, runtimeMilliseconds: 0)
    }
@@ -111,8 +183,94 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..f4d5507702af8e9cf494302d4b5ba95d
 +    #endif
 +  }
  }
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
+index 3f3eeb202351f474526690dc27937df833bdd7e3..6981772b2f9f255ee0111e13aaf257e94a7b280a 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
+@@ -532,12 +532,16 @@
+                     "touch scroll changed translation=\(String(format: "%.2f", translation.x))x\(String(format: "%.2f", translation.y))"
+                 )
+ 
+-                let scrollMods = TerminalScrollModifiers(precision: true)
+-                surface?.sendMouseScroll(
+-                    x: Double(translation.x * touchScrollMultiplier),
+-                    y: Double(translation.y * touchScrollMultiplier),
+-                    mods: scrollMods.rawValue
+-                )
++                if let onScrollDelta {
++                    onScrollDelta(translation.y)
++                } else {
++                    let scrollMods = TerminalScrollModifiers(precision: true)
++                    surface?.sendMouseScroll(
++                        x: Double(translation.x * touchScrollMultiplier),
++                        y: Double(translation.y * touchScrollMultiplier),
++                        mods: scrollMods.rawValue
++                    )
++                }
+ 
+             case .ended:
+                 guard activePointerButton == nil else { return }
+@@ -566,8 +570,10 @@
+                 "momentum start velocity=\(String(format: "%.2f", velocity.x))x\(String(format: "%.2f", velocity.y))"
+             )
+ 
+-            let mods = TerminalScrollModifiers(precision: true, momentum: .began)
+-            surface?.sendMouseScroll(x: 0, y: 0, mods: mods.rawValue)
++            if onScrollDelta == nil {
++                let mods = TerminalScrollModifiers(precision: true, momentum: .began)
++                surface?.sendMouseScroll(x: 0, y: 0, mods: mods.rawValue)
++            }
+ 
+             let link = CADisplayLink(
+                 target: self,
+@@ -597,12 +603,16 @@
+                 "momentum frame velocity=\(String(format: "%.2f", momentumVelocity.x))x\(String(format: "%.2f", momentumVelocity.y)) delta=\(String(format: "%.2f", deltaX))x\(String(format: "%.2f", deltaY))"
+             )
+ 
+-            let mods = TerminalScrollModifiers(precision: true, momentum: .changed)
+-            surface?.sendMouseScroll(
+-                x: Double(deltaX),
+-                y: Double(deltaY),
+-                mods: mods.rawValue
+-            )
++            if let onScrollDelta {
++                onScrollDelta(momentumVelocity.y * dt)
++            } else {
++                let mods = TerminalScrollModifiers(precision: true, momentum: .changed)
++                surface?.sendMouseScroll(
++                    x: Double(deltaX),
++                    y: Double(deltaY),
++                    mods: mods.rawValue
++                )
++            }
+         }
+ 
+         func stopMomentumScrolling(sendTerminalEndEvent: Bool = true) {
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..14235dea9ea70fe97f765f14f77600346c6f61c7 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
+@@ -29,6 +29,18 @@
+         lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
+         var hardwareKeyHandled = false
+         let touchScrollMultiplier: CGFloat = 3.0
++
++        /// Installed by the host app to take the touch scroll gesture for
++        /// itself, in vertical points, including the momentum frames.
++        ///
++        /// Ghostty's own handling is right for a local shell — it scrolls the
++        /// surface's scrollback, or reports a wheel when the app asked for
++        /// mouse events. It does nothing at all for a terminal whose contents
++        /// are painted by a remote multiplexer: there is no local scrollback
++        /// on the alternate screen, and no mouse reporting unless the remote
++        /// side turned it on. Such an app owns the history and needs the
++        /// gesture, not the wheel event it would become.
++        open var onScrollDelta: ((CGFloat) -> Void)?
+         #if !targetEnvironment(macCatalyst)
+             var currentFontSize: Float = 14
+             var lastPinchScale: CGFloat = 1.0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..9d373c62403218f83574d43e7890a804b13a11e7 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..512af2697ed7e8401652191c9cc204defaad17b9 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -21,6 +21,12 @@ export type TerminalViewRef = {
@@ -128,6 +286,28 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..9d373c62403218f83574d43e7890a804
  };
  
  export type TerminalTheme = {
+@@ -59,6 +65,21 @@ export type TerminalViewProps = {
+   theme?: TerminalTheme;
+   /** User keyboard/IME input to forward to the PTY. */
+   onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;
++  /**
++   * Vertical scroll from the touch gesture, in points, including its
++   * momentum frames. Only sent when `ownsScrollGesture` is set; positive
++   * means the finger moved down, pulling older output into view.
++   */
++  onScroll?: (event: {
++      nativeEvent: { points: number };
++  }) => void;
++  /**
++   * Take the touch scroll gesture for the app instead of letting ghostty
++   * scroll its own buffer. Set this when the history belongs to something
++   * else — a terminal painted by a remote multiplexer has no local
++   * scrollback to move.
++   */
++  ownsScrollGesture?: boolean;
+   /** Grid resized (layout, rotation, font change); forward to the PTY. */
+   onResize?: (event: { nativeEvent: TerminalResizeEvent }) => void;
+   ref?: Ref<TerminalViewRef>;
 diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
 index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..73c24409794fa61216b8580b42ea2ae01c68c0ad 100644
 --- a/src/ExpoLibghosttyView.tsx

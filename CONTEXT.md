@@ -70,6 +70,14 @@ a Session already on screen; the chrome follows immediately.
 _Avoid_: colour scheme (which is the phone's setting, and Muxify ignores it),
 skin
 
+**Scrollback**:
+The lines a Pane has scrolled off the top, kept by tmux and bounded by its
+`history-limit`. It belongs to the Host, not to the Surface: tmux paints only
+the visible Window, so there is nothing behind what is on screen for the
+Surface to scroll. Reached by dragging, which puts the Pane into tmux's
+copy-mode and takes it out again at the bottom.
+_Avoid_: history (which is the shell's), buffer
+
 **Attach**:
 Binding the Shell Channel to a Session. Attach itself only ever attaches, never
 creates — but Muxify can make a Session first, from the Host Screen's **+**.

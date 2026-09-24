@@ -10,6 +10,8 @@ import {
   listPanesCommand,
   createSessionCommand,
   listSessionsCommand,
+  scrollCommand,
+  stopScrollingCommand,
   listWindowsCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -313,5 +315,48 @@ describe('resizeClientCommand', () => {
 
   it('quotes a tty that tries to break out of the command', () => {
     expect(resizeClientCommand("'; id; '", 38, 19)).toContain("''\\''; id; '\\'''");
+  });
+});
+
+describe('scrollCommand', () => {
+  it('enters the mode, scrolls back, and reports where it landed, in one command', () => {
+    expect(scrollCommand('work', 25)).toBe(
+      "tmux copy-mode -e -t 'work:' ; " +
+        "tmux send-keys -X -N 25 -t 'work:' scroll-up ; " +
+        "tmux display-message -p -t 'work:' '#{scroll_position}\t#{history_size}'",
+    );
+  });
+
+  it('carries the whole distance as one count, however far the flick went', () => {
+    // The reason a violent flick costs the same as a small one.
+    expect(scrollCommand('work', 4000)).toContain('-N 4000');
+  });
+
+  it('does not enter the mode to scroll forwards', () => {
+    // Scrolling forward at the live bottom should do nothing, not put the
+    // Pane into a mode it then has to be taken out of.
+    const command = scrollCommand('work', -12);
+    expect(command).not.toContain('copy-mode');
+    expect(command).toContain("send-keys -X -N 12 -t 'work:' scroll-down");
+  });
+
+  it('aims at the Session, so a bare name cannot be read as a Pane', () => {
+    expect(scrollCommand('0', 5)).toContain("-t '0:'");
+  });
+
+  it('uses an explicit tmux path when the Host provides one', () => {
+    expect(scrollCommand('work', 5, '/usr/bin/tmux')).toContain("'/usr/bin/tmux' copy-mode");
+  });
+});
+
+describe('stopScrollingCommand', () => {
+  it('cancels the mode, which is what puts the Pane back at the bottom', () => {
+    expect(stopScrollingCommand('work')).toBe("tmux send-keys -X -t 'work:' cancel");
+  });
+
+  it('uses an explicit tmux path when the Host provides one', () => {
+    expect(stopScrollingCommand('work', '/usr/bin/tmux')).toBe(
+      "'/usr/bin/tmux' send-keys -X -t 'work:' cancel",
+    );
   });
 });
