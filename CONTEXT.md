@@ -51,7 +51,8 @@ _Avoid_: tree, structure
 **Layout**:
 Where the Panes of one Window sit, as tmux's `#{window_layout}` string gives
 it. The only honest source: tmux reports a zoomed Pane's own coordinates as the
-whole Window, so a Layout is what the Panes picker draws.
+whole Window. The Panes picker draws the Layout's *arrangement* but not its
+proportions — see ADR 0004.
 _Avoid_: Topology (which is what exists, not where it is), geometry
 
 **Zoom**:

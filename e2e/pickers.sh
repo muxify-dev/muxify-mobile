@@ -68,7 +68,7 @@ else: print('missing')
 " "$1"
 }
 
-# Each card is a Button carrying its Window name or Pane title.
+# Each card is a Button carrying its Window name or its Pane's directory.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
 echo "1/4  one Window, one Pane: both pickers still open, to make more"
@@ -84,6 +84,15 @@ agent-device press 'label="Windows"' >/dev/null 2>&1
 agent-device wait text "Windows" 8000 >/dev/null 2>&1
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "a Session with one Window must still offer New Window"
+agent-device press 'label="Close Windows"' >/dev/null 2>&1
+sleep 1
+agent-device press 'label="Panes"' >/dev/null 2>&1
+agent-device wait text "Panes" 8000 >/dev/null 2>&1
+[ "$(named 'Split →')" -eq 1 ] || fail "a Window with one Pane must still offer Split →"
+# Nothing to zoom out of with one Pane, unlike Split, which is how the second
+# one gets made.
+agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
+  && fail "the Zoom switch should not be offered for a single Pane"
 
 echo "2/4  three Windows: the Windows picker opens and lists them"
 vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \

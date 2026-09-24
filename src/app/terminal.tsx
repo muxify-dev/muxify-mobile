@@ -13,15 +13,12 @@ import { SurfacePalette } from '@/constants/theme';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
+import { directoryName } from '@/lib/paths';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
-import {
-  paneFrames,
-  panePreviewTarget,
-  trimPreview,
-  windowPreviewTarget,
-} from '@/tmux/preview';
+import { paneTopologyFrames } from '@/tmux/pane-topology';
+import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
 import { readTopology, type Topology } from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
@@ -377,23 +374,20 @@ export default function TerminalScreen() {
             return;
           }
 
-          const windowIndex = next.activeWindow?.index ?? 0;
-          const previews = await client.capturePanes(
-            next.panes.map((pane) => panePreviewTarget(session, windowIndex, pane.index)),
-          );
-          const frames = paneFrames(next.panes);
+          // No capture here: the Panes are all on screen behind this sheet
+          // already, so the question is which one you mean, not what is in it.
+          // Where it sits, what directory it is in and what it is running are
+          // what tell two Panes apart; a tile of six-point terminal text does
+          // not, and costs a round trip to draw.
+          const frames = paneTopologyFrames(next.panes);
           show(
             next.panes.map((pane) => ({
               id: String(pane.index),
-              title: pane.title || `Pane ${pane.index}`,
+              title: directoryName(pane.path) || `Pane ${pane.index}`,
               detail: pane.command,
               current: pane.active,
               frame: frames.get(pane.index),
-              preview: previewOf(
-                previews,
-                panePreviewTarget(session, windowIndex, pane.index),
-                PANE_PREVIEW_LINES,
-              ),
+              preview: [],
             })),
             `${next.panes.length} ${plural(next.panes.length, 'pane')}`,
           );
@@ -659,7 +653,9 @@ export default function TerminalScreen() {
         actions={picker.open ? PICKER_ACTIONS[picker.kind] : undefined}
         onAction={runSheetAction}
         zoom={
-          picker.open && picker.kind === 'panes'
+          // Nothing to zoom out of with one Pane, so the switch is not offered
+          // — unlike Split, which is how the second one gets made.
+          picker.open && picker.kind === 'panes' && picker.cards.length > 1
             ? { on: zoomed, onChange: changeZoom }
             : undefined
         }
@@ -763,7 +759,6 @@ const PICKER_ACTIONS: Record<PickerKind, SheetAction[]> = {
 
 /** How many captured lines a preview box can show before it is just noise. */
 const PREVIEW_LINES = 14;
-const PANE_PREVIEW_LINES = 8;
 const PREVIEW_COLUMNS = 46;
 
 function previewOf(

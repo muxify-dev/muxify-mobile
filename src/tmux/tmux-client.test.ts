@@ -139,13 +139,14 @@ describe('listPanes', () => {
   // writes it. Every line carries the same layout.
   const SPLIT = '5b1f,80x24,0,0{40x24,0,0,6,39x24,41,0,7}';
   const TWO_PANES =
-    `0\t%6\tbash\t0\thost\t${SPLIT}\n` + `1\t%7\tvim\t1\thost\t${SPLIT}\n`;
+    `0\t%6\tbash\t0\t/home/ubuntu\t${SPLIT}\n` +
+    `1\t%7\tvim\t1\t/home/ubuntu/muxify\t${SPLIT}\n`;
 
   it('parses everything a Pane preview needs, geometry included', async () => {
     const transport = new FakeTransport({ 'list-panes': { stdout: TWO_PANES } });
     await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, id: 6, command: 'bash', active: false, title: 'host', left: 0, top: 0, width: 40, height: 24 },
-      { index: 1, id: 7, command: 'vim', active: true, title: 'host', left: 41, top: 0, width: 39, height: 24 },
+      { index: 0, id: 6, command: 'bash', active: false, path: '/home/ubuntu', left: 0, top: 0, width: 40, height: 24 },
+      { index: 1, id: 7, command: 'vim', active: true, path: '/home/ubuntu/muxify', left: 41, top: 0, width: 39, height: 24 },
     ]);
   });
 
@@ -163,10 +164,10 @@ describe('listPanes', () => {
 
   it('leaves a Pane the layout does not mention with no size, rather than a wrong one', async () => {
     const transport = new FakeTransport({
-      'list-panes': { stdout: `0\t%6\tbash\t1\thost\tnot-a-layout\n` },
+      'list-panes': { stdout: `0\t%6\tbash\t1\t/home/ubuntu\tnot-a-layout\n` },
     });
     await expect(new TmuxClient(transport).listPanes('main', 1)).resolves.toEqual([
-      { index: 0, id: 6, command: 'bash', active: true, title: 'host', left: 0, top: 0, width: 0, height: 0 },
+      { index: 0, id: 6, command: 'bash', active: true, path: '/home/ubuntu', left: 0, top: 0, width: 0, height: 0 },
     ]);
   });
 

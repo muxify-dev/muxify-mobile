@@ -870,3 +870,34 @@ and pile the rest on top of each other, which is the bug it exists to prevent.
 The general form: a variable that answers "where is this thing?" may really be
 answering "where is it being drawn?", and those differ exactly when something
 interesting is going on.
+
+## The Panes diagram was honest and unreadable
+
+With the zoom lie fixed, the Panes sheet drew tmux's real proportions — and it
+still looked wrong. Two reasons, both of which `remux` had already answered.
+
+**Real proportions make a picker unusable.** A Pane holding four rows of a
+forty-row Window is a sliver: too short for a label, too small for a thumb. The
+sheet's job is to answer "which one?", and a faithful map answers a question
+nobody asked. remux divides each split by how many Panes are on each side
+instead, which keeps every tile worth pointing at while the arrangement still
+reads as itself. The real coordinates are still needed — they are what the split
+tree is recovered from, by finding a guillotine cut and recursing — they are
+just not drawn to scale.
+
+**Pane previews are a picture of a wall.** Window tiles earn their preview: a
+Window called "bash" among three others called "bash" is not a choice without
+one. Pane tiles do not — the Panes are on screen behind the sheet already. Four
+tiles of six-point terminal text distinguished nothing, and the labels under
+them said `ubuntu / bash` three times, because `#{pane_title}` is the Host's
+name on every Pane of a Session. `#{pane_current_path}`'s last segment and the
+running command tell them apart, fit at a readable size, and cost no round trip
+at all.
+
+That last part is worth separating from the aesthetics: dropping the preview
+removed a `capture-pane` from opening the sheet. The nicer-looking version is
+also the faster one, which is not the usual direction.
+
+The general form: "show the truth" and "show what distinguishes" are different
+briefs, and a picker wants the second. It took drawing the first one correctly
+to see that correctly was not the problem.

@@ -83,7 +83,7 @@ export function listPanesCommand(
   return (
     `${tmux(tmuxExecutablePath)} list-panes -t ${windowTarget(sessionName, windowIndex)} ` +
     "-F '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}" +
-    "\t#{pane_title}\t#{window_layout}'"
+    "\t#{pane_current_path}\t#{window_layout}'"
   );
 }
 

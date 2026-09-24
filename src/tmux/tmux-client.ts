@@ -50,8 +50,12 @@ export interface Pane {
   /** The command currently running in the Pane, as tmux reports it. */
   command: string;
   active: boolean;
-  /** The Pane's title, which is usually the Host's name. */
-  title: string;
+  /**
+   * The Pane's working directory. What a Pane is doing is mostly where it is,
+   * and it is the only field that differs between Panes of the same Session —
+   * `#{pane_title}` is the Host's name on every one of them.
+   */
+  path: string;
   /**
    * Where the Pane sits in the Window's grid, in cells, as the Window's layout
    * has it — which is where it will be once zoom is turned off, not where a
@@ -174,7 +178,7 @@ export class TmuxClient {
     return nonEmptyLines(result.stdout).flatMap((line) => {
       const fields = splitFields(line, 6);
       if (!fields) return [];
-      const [index, id, command, active, title, windowLayout] = fields;
+      const [index, id, command, active, path, windowLayout] = fields;
       const parsed = Number(index);
       if (!Number.isInteger(parsed)) return [];
       if (layout.size === 0) layout = parseWindowLayout(windowLayout);
@@ -185,7 +189,7 @@ export class TmuxClient {
           id: paneId,
           command,
           active: active === '1',
-          title,
+          path,
           ...(layout.get(paneId) ?? nowhere),
         },
       ];

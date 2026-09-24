@@ -29,7 +29,7 @@ function pane(index: number, active: boolean): Pane {
     id: index,
     command: 'bash',
     active,
-    title: 'host',
+    path: '/home/ubuntu',
     left: 0,
     top: 0,
     width: 80,

@@ -112,7 +112,7 @@ describe('listPanesCommand', () => {
   it('targets a specific Window inside a Session', () => {
     expect(listPanesCommand('main', 2)).toBe(
       "tmux list-panes -t 'main:2' -F '#{pane_index}\t#{pane_id}\t#{pane_current_command}" +
-        "\t#{pane_active}\t#{pane_title}\t#{window_layout}'",
+        "\t#{pane_active}\t#{pane_current_path}\t#{window_layout}'",
     );
   });
 
