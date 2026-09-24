@@ -204,13 +204,30 @@ export function selectWindowCommand(sessionName: string, windowIndex: number): T
   return ['select-window', '-t', windowTarget(sessionName, windowIndex)];
 }
 
-/** Moves the Client to another Pane. */
+/**
+ * Moves the Client to another Pane, carrying the Zoom across.
+ *
+ * `-Z` is the whole of how Zoom survives picking a Pane, and it has to be tmux
+ * that does it. A plain `select-pane` on a zoomed Window unzooms it, and a
+ * control client is told so: measured on tmux 3.6, it publishes one
+ * `%layout-change` whose flags are `*` — no `Z` — and the Panes appear as a
+ * split. Putting the zoom back afterwards is two more round trips, and for
+ * both of them the phone is drawing the split it is about to throw away, which
+ * reads as a flick from one layout to the other on every tap.
+ *
+ * With `-Z` there is nothing to put back. tmux keeps the Window zoomed across
+ * the selection and never publishes the unzoomed layout at all: the same
+ * measurement shows `%layout-change … *Z`, `%window-pane-changed`,
+ * `%layout-change … *Z`, and the newly picked Pane is the one filling the
+ * Window. An unzoomed Window is left alone, so this is only ever "keep what is
+ * there".
+ */
 export function selectPaneCommand(
   sessionName: string,
   windowIndex: number,
   paneIndex: number,
 ): TmuxArgv {
-  return ['select-pane', '-t', `${sessionName}:${windowIndex}.${paneIndex}`];
+  return ['select-pane', '-Z', '-t', `${sessionName}:${windowIndex}.${paneIndex}`];
 }
 
 /**

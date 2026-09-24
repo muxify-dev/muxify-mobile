@@ -125,7 +125,10 @@ describe('reading what is there', () => {
 describe('moving around', () => {
   it('selects a Window and a Pane by target', () => {
     expect(selectWindowCommand('work', 2)).toEqual(['select-window', '-t', 'work:2']);
-    expect(selectPaneCommand('work', 2, 1)).toEqual(['select-pane', '-t', 'work:2.1']);
+    // `-Z` and not by accident: a plain select-pane unzooms a zoomed Window,
+    // and the phone then draws the split for the two round trips it takes to
+    // put the zoom back. See selectPaneCommand.
+    expect(selectPaneCommand('work', 2, 1)).toEqual(['select-pane', '-Z', '-t', 'work:2.1']);
   });
 
   it('switches the Client rather than reconnecting', () => {

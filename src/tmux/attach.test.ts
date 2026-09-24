@@ -385,7 +385,7 @@ describe('the verbs', () => {
     expect(kit.attach.state().phase.kind).toBe('connected');
   });
 
-  it('re-applies Zoom after a Pane is picked, which tmux unzooms for', async () => {
+  it('picks a Pane in one command, and asks tmux to carry the Zoom across', async () => {
     const split = fakeHost();
     const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
     split.answering('list-panes', [
@@ -394,44 +394,21 @@ describe('the verbs', () => {
     ]);
     const kit = attachOn({ hosts: [split] });
     await connected(kit);
-    expect(kit.attach.state().zoomed).toBe(true);
     split.commands.length = 0;
 
     kit.attach.selectPane('%2');
     await settle();
 
-    // Selecting a Pane is a verb like any other, and tmux drops the Window out
-    // of zoom the moment it lands — so the preference goes back on rather than
-    // leaving the switch reading on over a Session drawn as a split.
-    expect(split.verbs()).toEqual([
-      'select-pane',
-      'list-windows',
-      'resize-pane',
-      'list-windows',
-      'list-panes',
-    ]);
+    // One command, and nothing after it. A plain `select-pane` unzooms a
+    // zoomed Window, and putting the zoom back is a `list-windows`, a
+    // `resize-pane` and a re-read — three round trips through which the phone
+    // draws the split it is about to throw away, which reads as a flick from
+    // one layout to the other on every tap. `-Z` has tmux keep the zoom
+    // instead, and the Topology arrives in the notifications tmux sends of its
+    // own accord.
+    expect(split.verbs()).toEqual(['select-pane']);
+    expect(split.commands[0]).toContain("'-Z'");
     expect(kit.attach.state().zoomed).toBe(true);
-  });
-
-  it('leaves Zoom alone after a Pane is picked with the preference off', async () => {
-    const split = fakeHost();
-    const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
-    split.answering('list-panes', [
-      `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
-      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
-    ]);
-    const kit = attachOn({ hosts: [split], zoomed: false });
-    await connected(kit);
-    split.commands.length = 0;
-
-    kit.attach.selectPane('%2');
-    await settle();
-
-    // Read, and found to be what it should be: the fake Window is unzoomed and
-    // the preference asks for nothing, so the Topology is re-read and no
-    // `resize-pane` goes out.
-    expect(split.verbs()).toEqual(['select-pane', 'list-windows', 'list-windows', 'list-panes']);
-    expect(kit.attach.state().zoomed).toBe(false);
   });
 
   it('turns a command nobody waited on into a quiet line, not a dead screen', async () => {

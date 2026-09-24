@@ -121,14 +121,21 @@ print(' '.join(across))
 
 # The ref of the nth Pane card in an open Panes sheet, in tmux's Pane order.
 # Everything else in the sheet is an action with a name of its own.
+#
+# Empty unless the sheet is actually up. Without that guard the buttons it
+# finds are the Dock's own, still there behind a sheet that never opened, and
+# pressing one of those is a check that quietly tests nothing.
 pane_card() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 want = int(sys.argv[1])
-cards = [n for n in json.load(sys.stdin)['data']['nodes']
-         if n['type'] == 'Button'
-         and not (n.get('label') or '').startswith(('Close', 'Split', 'Zoom'))]
-print('@' + cards[want - 1]['ref'] if len(cards) >= want else '')
+buttons = [n for n in json.load(sys.stdin)['data']['nodes'] if n['type'] == 'Button']
+if not any((n.get('label') or '') == 'Close Panes' for n in buttons):
+    print('')
+else:
+    cards = [n for n in buttons
+             if not (n.get('label') or '').startswith(('Close', 'Split', 'Zoom'))]
+    print('@' + cards[want - 1]['ref'] if len(cards) >= want else '')
 " "$1"
 }
 
@@ -139,6 +146,20 @@ print('@' + cards[want - 1]['ref'] if len(cards) >= want else '')
 # raced the sheet's first frame. The close button belongs to the sheet alone.
 sheet() { agent-device wait "label=\"Close $1\"" 15000 >/dev/null 2>&1; }
 
+# Presses a Dock button until its sheet is actually up.
+#
+# One press is not enough: a press landing while the screen is still settling
+# after an attach does nothing at all, measured, and what follows then reads
+# the Dock through where the sheet should have been — so the failure names
+# whatever was asserted next rather than the sheet that never opened.
+open_sheet() {
+  for _ in 1 2 3; do
+    agent-device press "label=\"$1\"" >/dev/null 2>&1
+    sheet "$1" && return 0
+  done
+  fail "the $1 sheet never opened"
+}
+
 echo "1/5  one Window, one Pane: both pickers still open, to make more"
 # Deliberately not disabled. The sheet is the only way to add a Window or a
 # split, and one of something is exactly when that is wanted — an earlier
@@ -148,14 +169,12 @@ vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
 attach
 expect_enabled Windows yes
 expect_enabled Panes yes
-agent-device press 'label="Windows"' >/dev/null 2>&1
-sheet Windows
+open_sheet Windows
 agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
   || fail "a Session with one Window must still offer New Window"
 agent-device press 'label="Close Windows"' >/dev/null 2>&1
 sleep 1
-agent-device press 'label="Panes"' >/dev/null 2>&1
-sheet Panes
+open_sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "a Window with one Pane must still offer Split →"
 # Offered with one Pane as well. There is nothing to zoom out of yet, but the
 # switch is the setting rather than the act — it says what the next split
@@ -185,8 +204,7 @@ vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
     tmux select-window -t '$SESSION:0'"
 attach
 expect_enabled Windows yes
-agent-device press 'label="Windows"' >/dev/null 2>&1
-sheet Windows
+open_sheet Windows
 [ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the sheet"
 [ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the sheet"
 # `exists` rather than `visible`: SwiftUI content inside the sheet reports
@@ -213,8 +231,7 @@ echo "     arrived zoomed"
 # action that is "missing" from it. Checks 1 and 2 wait; this one did not, and
 # failed exactly once that way.
 expect_enabled Panes yes
-agent-device press 'label="Panes"' >/dev/null 2>&1
-sheet Panes
+open_sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"
 [ "$(named 'Split ↓')" -eq 1 ] || fail "the Panes sheet has no Split ↓ action"
 agent-device snapshot -i 2>/dev/null | grep -q 'Zoom' \
@@ -247,8 +264,7 @@ echo "4/5  picking a Pane keeps the Zoom the switch is still asking for"
 attach
 expect_badge Panes 2
 expect_enabled Panes yes
-agent-device press 'label="Panes"' >/dev/null 2>&1
-sheet Panes
+open_sheet Panes
 CARD=$(pane_card 2)
 [ -n "$CARD" ] || fail "the Panes sheet lists no second Pane to pick"
 agent-device press "$CARD" >/dev/null 2>&1

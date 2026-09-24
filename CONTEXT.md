@@ -64,12 +64,13 @@ by default, because a phone is too narrow to read two Panes side by side; the
 Panes picker is where it is turned off, and turning it off shows the real
 split — a Surface per Pane, each laid out where the Layout puts it.
 
-Muxify's is a *preference*, not tmux's flag, and every verb re-applies it —
-picking a Pane included. tmux drops a Window out of zoom the moment another of
-its Panes is selected, so without that the Session comes back drawn as a split
-while the switch is still reading on. What is on screen follows tmux's flag
-rather than the preference, so the two disagreeing is something the user can
-see.
+Muxify's is a *preference*, not tmux's flag: it says what a Session should
+arrive as and what the switch asks for, while what is on screen follows tmux.
+The two disagreeing is something the user can see, so every verb re-applies the
+preference afterwards — except picking a Pane, which carries it in the command
+instead. `select-pane -Z` has tmux keep the Window zoomed across the selection;
+putting the zoom back afterwards would work too, and costs two round trips of
+drawing the split it is about to throw away.
 
 **Theme**:
 The colours the Surface paints with, chosen in Settings: Default (Ghostty's

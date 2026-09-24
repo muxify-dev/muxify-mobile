@@ -625,6 +625,13 @@ export function openAttach(options: AttachOptions): Attach {
       // Panes sheet all follow the Topology, so doing it in this order is the
       // difference between a tap that lands and one that lands a round trip
       // later. tmux's own `%window-pane-changed` arrives after and agrees.
+      //
+      // The one verb that settles nothing afterwards, and that is the point.
+      // Zoom rides along in the command — `select-pane -Z`, so tmux carries it
+      // across rather than dropping it for Muxify to put back — and the
+      // Topology arrives in the notifications tmux sends of its own accord. A
+      // read here would be a round trip the tap is waiting on for no answer it
+      // does not already have.
       model.activate(paneId);
       void (async () => {
         try {
@@ -635,15 +642,7 @@ export function openAttach(options: AttachOptions): Attach {
           // The move was made on a guess the Host has just refused, so the
           // guess is thrown away rather than left showing.
           await model.refresh();
-          return;
         }
-        // Like every other verb, and for the reason settleAfterVerb gives:
-        // tmux unzooms a Window the moment another of its Panes is selected.
-        // Without this the Session came back as a split while the switch that
-        // asked for zoom still read on — the preference saying one thing and
-        // the screen showing another, which is the one thing the preference
-        // being separate from tmux's flag must not cost.
-        await settleAfterVerb(mine);
       })();
     },
 
