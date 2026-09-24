@@ -154,3 +154,43 @@ describe('createResizeScheduler', () => {
 function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+describe('a resize that does not land', () => {
+  it('is not remembered as applied, so the same size can be asked for again', async () => {
+    // The bug this guards: a resize sent before the Client's tty was known was
+    // dropped, recorded as applied, and then skipped forever after — the
+    // Surface and the Window stayed different shapes until something else moved.
+    const sent: Grid[] = [];
+    let failing = true;
+    const scheduler = createResizeScheduler(async (grid) => {
+      sent.push(grid);
+      if (failing) throw new Error('no tty yet');
+    });
+
+    scheduler.request({ cols: 27, rows: 13 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    failing = false;
+    scheduler.request({ cols: 27, rows: 13 });
+    await Promise.resolve();
+
+    expect(sent).toEqual([
+      { cols: 27, rows: 13 },
+      { cols: 27, rows: 13 },
+    ]);
+  });
+
+  it('still skips a repeat of a size that did land', async () => {
+    const sent: Grid[] = [];
+    const scheduler = createResizeScheduler(async (grid) => {
+      sent.push(grid);
+    });
+
+    scheduler.request({ cols: 27, rows: 13 });
+    await Promise.resolve();
+    scheduler.request({ cols: 27, rows: 13 });
+
+    expect(sent).toEqual([{ cols: 27, rows: 13 }]);
+  });
+});

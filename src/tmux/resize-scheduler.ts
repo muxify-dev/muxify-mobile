@@ -36,10 +36,15 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
 
   function run(grid: Grid): void {
     inFlight = true;
-    applied = grid;
 
-    const settle = () => {
+    const settle = (landed: boolean) => {
       inFlight = false;
+      // Only a resize that actually happened counts as applied. Recording it
+      // up front was a quiet way to lose one: a size that failed to send was
+      // remembered as if it had, so the next request for the same size was
+      // skipped as redundant and the Surface stayed a different shape from the
+      // Window until something else moved.
+      if (landed) applied = grid;
       const next = pending;
       pending = null;
       // A burst that ends where it started needs no second round trip.
@@ -47,8 +52,12 @@ export function createResizeScheduler(apply: ApplyGrid): ResizeScheduler {
     };
 
     // A failed resize must not wedge the scheduler: the Session is still
-    // usable, and the next size should still get its chance.
-    apply(grid).then(settle, settle);
+    // usable, and the next size should still get its chance. It is not retried
+    // here either — a Host that is refusing will refuse in a loop.
+    apply(grid).then(
+      () => settle(true),
+      () => settle(false),
+    );
   }
 
   return {

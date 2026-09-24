@@ -38,6 +38,10 @@ const DEFAULT_FONT_SIZE = 13;
 const GRID_SETTLE_MS = 80;
 const GRID_SETTLE_TRIES = 12;
 
+/** How long a resize will wait for the Client's tty to be read. */
+const TTY_WAIT_MS = 100;
+const TTY_WAIT_TRIES = 30;
+
 /** The Surface's cell grid. Travels as a unit everywhere it is used. */
 type Grid = { cols: number; rows: number };
 
@@ -141,15 +145,20 @@ export default function TerminalScreen() {
    * to be caught halfway through. That is what stops the dots: tmux only pads
    * when the Client is bigger than the Window, and now it never is.
    *
-   * Without a tty there is nothing to aim at, which only happens before the
-   * first Topology read; the scheduler is reset once it is known.
+   * Waits for the Client's tty rather than giving up without one. The tty is
+   * read from `list-clients` just after Attach, and the keyboard can easily
+   * rise before that answer arrives; a resize dropped in that window used to be
+   * lost for good, leaving tmux drawing a taller Window than the Surface had
+   * until something else happened to move it.
    */
   const remoteSize = useMemo(
     () =>
       createResizeScheduler(async (next) => {
         const client = tmux.current;
-        const tty = clientTty.current;
-        if (!client || !tty) return;
+        const tty = await knownClientTty();
+        // Thrown, not shrugged off: the scheduler must not record a size it
+        // never sent, or it will skip the next request for the same one.
+        if (!client || !tty) throw new Error('no Client to resize');
         await client.setClientSize(tty, next);
       }),
     [],
@@ -215,6 +224,33 @@ export default function TerminalScreen() {
     setScrolled(null);
     void tmux.current?.stopScrolling(sessionName.current);
   }, [scroller]);
+
+  /**
+   * The Client's tty, asking again until tmux will say.
+   *
+   * `list-clients` is run the instant after Attach and tmux has often not
+   * registered the Client yet, so the first answer is an empty list. Reading
+   * it once and keeping the blank was enough to disable every later resize:
+   * the Surface would report a new size, the scheduler would hand it to an
+   * apply with nothing to aim at, and the Window would stay whatever shape it
+   * was made — which is why the keyboard never moved it.
+   *
+   * Bounded, because a Session whose Client never appears must not leave a
+   * resize pending forever.
+   */
+  const knownClientTty = useCallback(async (): Promise<string | undefined> => {
+    for (let attempt = 0; attempt < TTY_WAIT_TRIES; attempt += 1) {
+      if (clientTty.current !== undefined) return clientTty.current;
+      if (disposed.current) return undefined;
+      const found = await tmux.current?.newestClient(sessionName.current);
+      if (found !== undefined) {
+        clientTty.current = found;
+        return found;
+      }
+      await new Promise((resolve) => setTimeout(resolve, TTY_WAIT_MS));
+    }
+    return clientTty.current;
+  }, []);
 
   /** Re-reads the Session's Windows and Panes, for the Dock and the sheet. */
   const refreshTopology = useCallback(async (): Promise<Topology> => {
@@ -329,7 +365,7 @@ export default function TerminalScreen() {
         void (async () => {
           // Ours is the Client that just attached; a redraw aimed anywhere else
           // would leave this Surface dirty.
-          clientTty.current = await client.newestClient(sessionParam);
+          clientTty.current = await knownClientTty();
           // Everything a Session needs before it can be shown on a phone.
           // Switching Session runs the same thing again.
           await sessions.current?.prepare(sessionParam, clientTty.current);
@@ -353,7 +389,7 @@ export default function TerminalScreen() {
         }
       }
     },
-    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput],
+    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput, knownClientTty],
   );
 
   const handleResize = useCallback(
