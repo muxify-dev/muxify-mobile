@@ -57,6 +57,21 @@ describe('typing while a modifier is armed', () => {
     expect(applyModifiers(bytes(' '), { ctrl: true, alt: false }).key).toBe('C-Space');
   });
 
+  it('names Return, so alt-Return is a newline and not a run', () => {
+    // Measured on tmux 3.6: `send-keys M-Enter` comes out as ESC CR, which is
+    // what Claude Code and readline read as a newline inside the line. Return
+    // reaches this as CR because toShellInput has already made it one.
+    const out = applyModifiers(bytes('\r'), { ctrl: false, alt: true });
+    expect(out.key).toBe('M-Enter');
+    expect(out.rest).toHaveLength(0);
+  });
+
+  it('names the other keys the system keyboard has but cannot spell', () => {
+    expect(applyModifiers(bytes('\t'), { ctrl: false, alt: true }).key).toBe('M-Tab');
+    expect(applyModifiers(new Uint8Array([0x7f]), { ctrl: false, alt: true }).key).toBe('M-BSpace');
+    expect(applyModifiers(new Uint8Array([0x08]), { ctrl: true, alt: false }).key).toBe('C-BSpace');
+  });
+
   it('sends a key it cannot name as ordinary typing', () => {
     // An emoji, a pasted accent, an arrow the Surface sent as bytes. There is
     // no honest `C-` name for any of them, and inventing one would send

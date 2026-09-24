@@ -60,10 +60,30 @@ export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): Modifie
   return { key: `${modifierPrefix(modifiers)}${name}`, rest: bytes.subarray(1) };
 }
 
+/**
+ * The keys the system keyboard has that are not characters, by the byte the
+ * Surface sends for each and the name tmux knows it by.
+ *
+ * Return is the one that was missed first: alt-Return is how Claude Code, and
+ * most line editors, take a newline without running the line, and a Return
+ * with alt armed used to go out as a plain Return with alt still lit. Return
+ * arrives as CR because toShellInput has already turned the Surface's LF into
+ * one; delete arrives as DEL from ghostty, with BS kept for a keyboard that
+ * sends that instead.
+ */
+const NAMED_KEYS: Record<number, string> = {
+  0x0d: 'Enter',
+  0x09: 'Tab',
+  0x7f: 'BSpace',
+  0x08: 'BSpace',
+};
+
 /** tmux's name for one typed byte, for the keys a modifier makes sense of. */
 function keyNameOf(byte: number, modifiers: Modifiers): string | undefined {
   // Space has no printable form, and `C-Space` is a key people genuinely press.
   if (byte === 0x20) return 'Space';
+  const named = NAMED_KEYS[byte];
+  if (named !== undefined) return named;
 
   const character = String.fromCharCode(byte);
   if (/^[0-9]$/.test(character)) return character;
