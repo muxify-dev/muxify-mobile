@@ -181,6 +181,61 @@ export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: s
  * of `smallest` is real — a desktop Client on the same Session is squeezed down
  * to the phone — which is exactly why it is borrowed rather than kept.
  */
+/** Escapes a value for a tmux double-quoted string inside a hook body. */
+function tmuxQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Control Command asking tmux to put the borrowed options back itself, the
+ * moment Muxify's Client goes away.
+ *
+ * Restoring on teardown is not enough, because teardown does not always run. A
+ * force-quit, a crash, a dropped Connection — the app gets no chance, and the
+ * Session is left with its status line off and its Windows pinned to the size
+ * of a phone. Somebody working on the same Session from a laptop then finds
+ * their status bar missing, with nothing to tell them why or how to get it
+ * back. That is the worst thing this app has done to a Host.
+ *
+ * A `client-detached` hook survives all of it, because tmux runs it rather than
+ * Muxify. It removes itself as its last act, so there is no litter either.
+ *
+ * The one cost: the hook fires when *any* Client leaves the Session, so a
+ * laptop detaching gives the options back while the phone is still attached.
+ * The phone gets its status line and its padding back until something prepares
+ * the Session again — untidy, where the alternative is permanent.
+ */
+export function restoreOnDetachCommand(
+  sessionName: string,
+  original: { status?: string; windowSize?: string; mouse?: string },
+  tmuxExecutablePath?: string,
+): string {
+  const target = tmuxQuote(sessionName);
+  const puts = [
+    original.status === undefined
+      ? null
+      : `set-option -t ${target} status ${tmuxQuote(original.status)}`,
+    original.windowSize === undefined
+      ? null
+      : `set-option -t ${target} window-size ${tmuxQuote(original.windowSize)}`,
+    original.mouse === undefined
+      ? null
+      : `set-option -t ${target} mouse ${tmuxQuote(original.mouse)}`,
+    // Its last act, so a Session is never left carrying Muxify's hook.
+    `set-hook -u -t ${target} client-detached`,
+  ].filter((part): part is string => part !== null);
+
+  return (
+    `${tmux(tmuxExecutablePath)} set-hook -t ${shellQuote(sessionName)} ` +
+    `client-detached ${shellQuote(puts.join(' ; '))}`
+  );
+}
+
+/** Control Command taking Muxify's restore hook off a Session. */
+export function clearRestoreHookCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} set-hook -u -t ${shellQuote(sessionName)} client-detached`;
+}
+
 /**
  * Whether tmux reads mouse events from its Client.
  *

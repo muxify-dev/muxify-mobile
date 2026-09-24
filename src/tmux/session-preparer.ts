@@ -10,6 +10,11 @@ export interface SessionChrome {
   setWindowSizing(sessionName: string, value: string): Promise<void>;
   readMouse(sessionName: string): Promise<string | undefined>;
   setMouse(sessionName: string, value: string): Promise<void>;
+  restoreOnDetach(
+    sessionName: string,
+    original: { status?: string; windowSize?: string; mouse?: string },
+  ): Promise<void>;
+  clearRestoreHook(sessionName: string): Promise<void>;
   redrawClient(clientTty?: string): Promise<void>;
 }
 
@@ -46,9 +51,15 @@ interface Borrowed {
  *   screen. See readMouseCommand.
  *
  * All three are session options, so all three are visible to every other
- * Client and outlive the Connection — the price of attaching a real client rather than
- * using control mode, see ADR 0001. Hence the borrowing: read first, put back
- * on teardown.
+ * Client and outlive the Connection — the price of attaching a real client
+ * rather than using control mode, see ADR 0001. Hence the borrowing: read
+ * first, put back on teardown.
+ *
+ * Teardown is not the only way out, though, and the others run no code of
+ * ours: a force-quit, a crash, a Connection that drops. So tmux is asked to do
+ * the restoring itself, through a `client-detached` hook installed before
+ * anything is changed. Without it a killed app leaves a Session with no status
+ * line on every other Client, permanently, and nothing to say why.
  *
  * Sizing the Window itself is deliberately not here, and is now nobody's job:
  * with `window-size smallest` the Window follows the Client, and the Client's
@@ -75,6 +86,15 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
           mouse: await chrome.readMouse(sessionName),
         });
       }
+      // Installed before anything is changed, so a Connection that dies in the
+      // next instant still leaves tmux holding the instructions to undo it.
+      const original = borrowed.get(sessionName);
+      await chrome.restoreOnDetach(sessionName, {
+        status: original?.statusLine,
+        windowSize: original?.windowSizing,
+        mouse: original?.mouse,
+      });
+
       await chrome.setStatusLine(sessionName, 'off');
       await chrome.setWindowSizing(sessionName, 'smallest');
       await chrome.setMouse(sessionName, 'on');
@@ -96,6 +116,8 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
         if (original.mouse !== undefined) {
           await chrome.setMouse(sessionName, original.mouse);
         }
+        // Put back by hand, so the hook has nothing left to do.
+        await chrome.clearRestoreHook(sessionName);
       }
     },
   };

@@ -184,10 +184,51 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fe7214941b4355948953f0cff3b08298
 +  }
  }
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
-index 3f3eeb202351f474526690dc27937df833bdd7e3..6981772b2f9f255ee0111e13aaf257e94a7b280a 100644
+index 3f3eeb202351f474526690dc27937df833bdd7e3..9266a2d660c344cdeab5419ae9d4403751cf4861 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
-@@ -532,12 +532,16 @@
+@@ -22,11 +22,19 @@
+                 becomeFirstResponder()
+             #else
+                 pendingKeyboardDismissOnTouchEnd = false
++                pendingKeyboardRaiseOnTouchEnd = false
+                 touchDidScrollDuringCurrentTouch = false
+                 if softwareKeyboardVisible {
+                     pendingKeyboardDismissOnTouchEnd = true
+-                } else {
++                } else if onScrollDelta == nil {
+                     becomeFirstResponder()
++                } else {
++                    // A host that owns the scroll gesture cannot know at touch
++                    // down whether this is a tap or a drag, and raising the
++                    // keyboard the moment a finger lands means every scroll
++                    // starts by covering half the screen. Wait for the touch to
++                    // end and raise it only if nothing scrolled.
++                    pendingKeyboardRaiseOnTouchEnd = true
+                 }
+             #endif
+         }
+@@ -52,7 +60,11 @@
+                 if pendingKeyboardDismissOnTouchEnd, !touchDidScrollDuringCurrentTouch {
+                     resignFirstResponder()
+                 }
++                if pendingKeyboardRaiseOnTouchEnd, !touchDidScrollDuringCurrentTouch {
++                    becomeFirstResponder()
++                }
+                 pendingKeyboardDismissOnTouchEnd = false
++                pendingKeyboardRaiseOnTouchEnd = false
+                 touchDidScrollDuringCurrentTouch = false
+             #endif
+             super.touchesEnded(touches, with: event)
+@@ -67,6 +79,7 @@
+             }
+             #if !targetEnvironment(macCatalyst)
+                 pendingKeyboardDismissOnTouchEnd = false
++                pendingKeyboardRaiseOnTouchEnd = false
+                 touchDidScrollDuringCurrentTouch = false
+             #endif
+             super.touchesCancelled(touches, with: event)
+@@ -532,12 +545,16 @@
                      "touch scroll changed translation=\(String(format: "%.2f", translation.x))x\(String(format: "%.2f", translation.y))"
                  )
  
@@ -210,7 +251,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..6981772b2f9f255ee0111e13aaf257e9
  
              case .ended:
                  guard activePointerButton == nil else { return }
-@@ -566,8 +570,10 @@
+@@ -566,8 +583,10 @@
                  "momentum start velocity=\(String(format: "%.2f", velocity.x))x\(String(format: "%.2f", velocity.y))"
              )
  
@@ -223,7 +264,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..6981772b2f9f255ee0111e13aaf257e9
  
              let link = CADisplayLink(
                  target: self,
-@@ -597,12 +603,16 @@
+@@ -597,12 +616,16 @@
                  "momentum frame velocity=\(String(format: "%.2f", momentumVelocity.x))x\(String(format: "%.2f", momentumVelocity.y)) delta=\(String(format: "%.2f", deltaX))x\(String(format: "%.2f", deltaY))"
              )
  
@@ -247,10 +288,10 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..6981772b2f9f255ee0111e13aaf257e9
  
          func stopMomentumScrolling(sendTerminalEndEvent: Bool = true) {
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..14235dea9ea70fe97f765f14f77600346c6f61c7 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..1ae13e701215172331b156c50f2d6c2a2ba235d1 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-@@ -29,6 +29,18 @@
+@@ -29,6 +29,22 @@
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
          var hardwareKeyHandled = false
          let touchScrollMultiplier: CGFloat = 3.0
@@ -266,6 +307,10 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..14235dea9ea70fe97f765f14f7760034
 +        /// side turned it on. Such an app owns the history and needs the
 +        /// gesture, not the wheel event it would become.
 +        open var onScrollDelta: ((CGFloat) -> Void)?
++
++        /// Set while a touch is down that should raise the keyboard when it
++        /// ends, if it turns out to have been a tap rather than a drag.
++        var pendingKeyboardRaiseOnTouchEnd = false
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0

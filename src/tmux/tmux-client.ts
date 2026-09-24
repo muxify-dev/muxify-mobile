@@ -2,6 +2,7 @@ import {
   attachSessionCommand,
   CAPTURE_SEPARATOR,
   capturePanesCommand,
+  clearRestoreHookCommand,
   createSessionCommand,
   listClientsCommand,
   listPanesCommand,
@@ -10,6 +11,7 @@ import {
   readStatusLineCommand,
   readWindowSizingCommand,
   redrawClientCommand,
+  restoreOnDetachCommand,
   resizeClientCommand,
   readMouseCommand,
   readScrollStateCommand,
@@ -394,6 +396,34 @@ export class TmuxClient {
       resizeClientCommand(clientTty, grid.cols, grid.rows, this.tmuxExecutablePath),
     );
     if (result.exitCode !== 0) throw failure('resize the Client', result);
+  }
+
+  /**
+   * Asks tmux to put the borrowed options back when Muxify's Client leaves.
+   *
+   * Best effort: a Host whose tmux will not take a hook is still perfectly
+   * usable, and the ordinary teardown still runs.
+   */
+  async restoreOnDetach(
+    sessionName: string,
+    original: { status?: string; windowSize?: string; mouse?: string },
+  ): Promise<void> {
+    try {
+      await this.transport.exec(
+        restoreOnDetachCommand(sessionName, original, this.tmuxExecutablePath),
+      );
+    } catch {
+      // Nothing to do: teardown is still the first line of defence.
+    }
+  }
+
+  /** Takes Muxify's restore hook off a Session. */
+  async clearRestoreHook(sessionName: string): Promise<void> {
+    try {
+      await this.transport.exec(clearRestoreHookCommand(sessionName, this.tmuxExecutablePath));
+    } catch {
+      // Nothing to do.
+    }
   }
 
   /** Reads whether tmux is reading mouse events, so it can be restored. */

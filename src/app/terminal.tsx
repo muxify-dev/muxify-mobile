@@ -61,6 +61,9 @@ type Grid = { cols: number; rows: number };
 /** What a picker is picking. One sheet serves all three. */
 type PickerKind = 'sessions' | 'windows' | 'panes';
 
+/** All of them, for reading ahead. */
+const PICKER_KINDS: PickerKind[] = ['sessions', 'windows', 'panes'];
+
 /** The sheet: closed, or open and showing whatever it has so far. */
 type PickerState =
   | { open: false }
@@ -342,6 +345,98 @@ export default function TerminalScreen() {
   }, []);
 
   /**
+   * Reads what a picker would show, without a sheet being open.
+   *
+   * Lifted out of opening one so the same work can be done ahead of time. What
+   * it returns is a snapshot, not a subscription: Muxify holds no live model of
+   * the Host — see ADR 0001 — so this is only ever what was true when asked.
+   */
+  const readCards = useCallback(
+    async (kind: PickerKind): Promise<{ cards: PreviewCard[]; subtitle: string }> => {
+      const client = tmux.current;
+      if (!client) throw new Error('Not connected');
+
+      if (kind === 'sessions') {
+        const sessions = await client.listSessions();
+        const previews = await client.capturePanes(sessions.map((session) => `${session.name}:`));
+        return {
+          cards: sessions.map((session) => ({
+            id: session.name,
+            title: session.name,
+            // The name leads here, unlike a Window's chip: a Session has no
+            // badge to identify it by, so the preview alone would leave the
+            // user guessing which is which.
+            detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
+            current: session.name === sessionName.current,
+            preview: previewOf(previews, `${session.name}:`, PREVIEW_LINES),
+          })),
+          subtitle: `${sessions.length} ${plural(sessions.length, 'session')}`,
+        };
+      }
+
+      const next = await refreshTopology();
+      const session = sessionName.current;
+
+      if (kind === 'windows') {
+        const previews = await client.capturePanes(
+          next.windows.map((window) => windowPreviewTarget(session, window.index)),
+        );
+        return {
+          cards: next.windows.map((window) => ({
+            id: String(window.index),
+            title: window.name,
+            detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
+            current: window.active,
+            badge: String(window.index),
+            preview: previewOf(previews, windowPreviewTarget(session, window.index), PREVIEW_LINES),
+          })),
+          subtitle: `${session} · ${next.windows.length} ${plural(next.windows.length, 'window')}`,
+        };
+      }
+
+      // No capture here: the Panes are all on screen behind this sheet already,
+      // so the question is which one you mean, not what is in it. Where it
+      // sits, what directory it is in and what it is running are what tell two
+      // Panes apart; a tile of six-point terminal text does not, and costs a
+      // round trip to draw.
+      const frames = paneTopologyFrames(next.panes);
+      return {
+        cards: next.panes.map((pane) => ({
+          id: String(pane.index),
+          title: directoryName(pane.path) || `Pane ${pane.index}`,
+          detail: pane.command,
+          current: pane.active,
+          frame: frames.get(pane.index),
+          preview: [],
+        })),
+        subtitle: `${next.panes.length} ${plural(next.panes.length, 'pane')}`,
+      };
+    },
+    [refreshTopology],
+  );
+
+  /**
+   * Reads all three pickers once, so the first one opened has something to draw.
+   *
+   * Without it the first open of every Session waits for a round trip and a
+   * `capture-pane`, which is the one that matters — by the second the user has
+   * already formed a view of how fast the app is.
+   */
+  const warmPickers = useCallback(() => {
+    void (async () => {
+      for (const kind of PICKER_KINDS) {
+        try {
+          pickerCache.current[kind] = await readCards(kind);
+        } catch {
+          // A picker nobody has opened yet is not worth reporting a failure
+          // for; opening it will ask again and say so properly.
+          return;
+        }
+      }
+    })();
+  }, [readCards]);
+
+  /**
    * Re-reads the Topology when the Host has been busy.
    *
    * Windows and Panes are not only created through the Dock — the usual way is
@@ -456,8 +551,12 @@ export default function TerminalScreen() {
           // arrives with its active Pane filling the Window.
           await client.setZoom(sessionParam, true);
           // Read once now so the Dock knows whether there is anything to pick
-          // before the user reaches for a picker.
+          // before the user reaches for a picker, and read the pickers
+          // themselves straight after, so the first one opened is already
+          // filled. Both happen while the user is still looking at the Surface
+          // appearing.
           await refreshTopology();
+          warmPickers();
         })();
 
         // A resize may have landed while connecting; the scheduler picks it up
@@ -468,7 +567,7 @@ export default function TerminalScreen() {
         }
       }
     },
-    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput, knownClientTty],
+    [hostId, sessionParam, remoteSize, refreshTopology, noteOutput, knownClientTty, warmPickers],
   );
 
   const handleResize = useCallback(
@@ -531,19 +630,14 @@ export default function TerminalScreen() {
   }, [keyboardVisible]);
 
   /**
-   * Opens a picker, reading what it shows from the Host right then.
+   * Opens a picker on what was last seen, and corrects it behind.
    *
-   * Opens on what was last seen, then corrects itself.
-   *
-   * Muxify holds no live model of the Host — see ADR 0001 — so what is shown
-   * first is a memory, and a Session killed since will be in it. The answer is
-   * not to make the user wait for a round trip and a `capture-pane` before the
-   * sheet will appear: it is to show the memory immediately and replace it the
-   * moment the Host answers, which is what makes opening a picker feel like
-   * opening a drawer rather than asking a question.
-   *
-   * The first open of a Session has nothing remembered and still waits. Every
-   * one after that does not.
+   * Muxify holds no live model of the Host, so what is shown first is a memory,
+   * and a Session killed since will be in it. The answer is not to make the
+   * user wait for a round trip and a `capture-pane` before the sheet will
+   * appear: it is to show the memory immediately and replace it the moment the
+   * Host answers, which is what makes opening a picker feel like opening a
+   * drawer rather than asking a question.
    */
   const openPicker = useCallback(
     (kind: PickerKind) => {
@@ -551,102 +645,30 @@ export default function TerminalScreen() {
       setPicker({
         open: true,
         kind,
-        // Only the first open of a kind has nothing to show while it asks.
+        // Only a picker nothing has ever read has to show a spinner.
         loading: remembered === undefined,
         cards: remembered?.cards ?? [],
         subtitle: remembered?.subtitle ?? '',
       });
       void (async () => {
-        const client = tmux.current;
-        const show = (cards: PreviewCard[], subtitle: string) => {
-          pickerCache.current[kind] = { cards, subtitle };
-          setPicker((previous) =>
-            previous.open && previous.kind === kind
-              ? { open: true, kind, loading: false, cards, subtitle }
-              : previous,
-          );
-        };
-        const fail = (message: string) =>
-          setPicker((previous) =>
-            previous.open && previous.kind === kind
-              ? { ...previous, loading: false, error: message }
-              : previous,
-          );
-        if (!client) {
-          fail('Not connected');
-          return;
-        }
-
         try {
-          if (kind === 'sessions') {
-            const sessions = await client.listSessions();
-            const previews = await client.capturePanes(
-              sessions.map((session) => `${session.name}:`),
-            );
-            show(
-              sessions.map((session) => ({
-                id: session.name,
-                title: session.name,
-                // The name leads here, unlike a Window's chip: a Session has
-                // no badge to identify it by, so the preview alone would leave
-                // the user guessing which is which.
-                detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
-                current: session.name === sessionName.current,
-                preview: previewOf(previews, `${session.name}:`, PREVIEW_LINES),
-              })),
-              `${sessions.length} ${plural(sessions.length, 'session')}`,
-            );
-            return;
-          }
-
-          const next = await refreshTopology();
-          const session = sessionName.current;
-
-          if (kind === 'windows') {
-            const previews = await client.capturePanes(
-              next.windows.map((window) => windowPreviewTarget(session, window.index)),
-            );
-            show(
-              next.windows.map((window) => ({
-                id: String(window.index),
-                title: window.name,
-                detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
-                current: window.active,
-                badge: String(window.index),
-                preview: previewOf(
-                  previews,
-                  windowPreviewTarget(session, window.index),
-                  PREVIEW_LINES,
-                ),
-              })),
-              `${session} · ${next.windows.length} ${plural(next.windows.length, 'window')}`,
-            );
-            return;
-          }
-
-          // No capture here: the Panes are all on screen behind this sheet
-          // already, so the question is which one you mean, not what is in it.
-          // Where it sits, what directory it is in and what it is running are
-          // what tell two Panes apart; a tile of six-point terminal text does
-          // not, and costs a round trip to draw.
-          const frames = paneTopologyFrames(next.panes);
-          show(
-            next.panes.map((pane) => ({
-              id: String(pane.index),
-              title: directoryName(pane.path) || `Pane ${pane.index}`,
-              detail: pane.command,
-              current: pane.active,
-              frame: frames.get(pane.index),
-              preview: [],
-            })),
-            `${next.panes.length} ${plural(next.panes.length, 'pane')}`,
+          const fresh = await readCards(kind);
+          pickerCache.current[kind] = fresh;
+          setPicker((previous) =>
+            previous.open && previous.kind === kind
+              ? { open: true, kind, loading: false, ...fresh }
+              : previous,
           );
         } catch (error) {
-          fail(describe(error));
+          setPicker((previous) =>
+            previous.open && previous.kind === kind
+              ? { ...previous, loading: false, error: describe(error) }
+              : previous,
+          );
         }
       })();
     },
-    [refreshTopology],
+    [readCards],
   );
 
   /**

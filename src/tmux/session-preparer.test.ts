@@ -30,6 +30,14 @@ function fakeChrome(sessions: Record<string, Options> = {}) {
       calls.push(`mouse ${sessionName} ${value}`);
       sessions[sessionName] = { ...sessions[sessionName], mouse: value };
     },
+    async restoreOnDetach(sessionName, original) {
+      calls.push(
+        `hook ${sessionName} ${original.status ?? '-'} ${original.windowSize ?? '-'} ${original.mouse ?? '-'}`,
+      );
+    },
+    async clearRestoreHook(sessionName) {
+      calls.push(`unhook ${sessionName}`);
+    },
     async redrawClient(clientTty) {
       calls.push(`redraw ${clientTty ?? 'best'}`);
     },
@@ -49,6 +57,7 @@ describe('prepare', () => {
       'read status main',
       'read size main',
       'read mouse main',
+      'hook main on latest off',
       'status main off',
       'size main smallest',
       'mouse main on',
@@ -150,5 +159,31 @@ describe('restoreAll', () => {
     await createSessionPreparer(chrome).restoreAll();
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe('surviving a kill', () => {
+  it('asks tmux to undo the borrowing before it borrows anything', async () => {
+    // The order is the point: a Connection that dies an instant later must
+    // already have left tmux holding the instructions, or a force-quit leaves
+    // somebody else's laptop with no status line and nothing to say why.
+    const { chrome, calls } = fakeChrome({ main: { ...MAIN } });
+
+    await createSessionPreparer(chrome).prepare('main');
+
+    expect(calls.indexOf('hook main on latest off')).toBeLessThan(
+      calls.indexOf('status main off'),
+    );
+  });
+
+  it('takes the hook off again once it has put things back by hand', async () => {
+    const { chrome, calls } = fakeChrome({ main: { ...MAIN } });
+    const preparer = createSessionPreparer(chrome);
+
+    await preparer.prepare('main');
+    await preparer.restoreAll();
+
+    expect(calls).toContain('unhook main');
+    expect(calls.indexOf('unhook main')).toBeGreaterThan(calls.indexOf('status main on'));
   });
 });

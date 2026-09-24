@@ -10,8 +10,10 @@ import {
   listPanesCommand,
   createSessionCommand,
   listSessionsCommand,
+  clearRestoreHookCommand,
   readMouseCommand,
   readScrollStateCommand,
+  restoreOnDetachCommand,
   setMouseCommand,
   stopScrollingCommand,
   listWindowsCommand,
@@ -359,5 +361,41 @@ describe('stopScrollingCommand', () => {
     expect(stopScrollingCommand('work', '/usr/bin/tmux')).toBe(
       "'/usr/bin/tmux' send-keys -X -t 'work:' cancel",
     );
+  });
+});
+
+describe('restoreOnDetachCommand', () => {
+  it('puts every borrowed option back and then removes itself', () => {
+    expect(
+      restoreOnDetachCommand('work', { status: 'on', windowSize: 'latest', mouse: 'off' }),
+    ).toBe(
+      "tmux set-hook -t 'work' client-detached " +
+        '\'set-option -t "work" status "on" ; ' +
+        'set-option -t "work" window-size "latest" ; ' +
+        'set-option -t "work" mouse "off" ; ' +
+        'set-hook -u -t "work" client-detached\'',
+    );
+  });
+
+  it('leaves out an option tmux would not say the value of', () => {
+    const command = restoreOnDetachCommand('work', { status: 'on' });
+    expect(command).toContain('status "on"');
+    expect(command).not.toContain('window-size');
+    expect(command).toContain('set-hook -u');
+  });
+
+  it('still removes itself when there was nothing to put back', () => {
+    expect(restoreOnDetachCommand('work', {})).toContain('set-hook -u -t "work" client-detached');
+  });
+
+  it('escapes a Session name that would otherwise end the hook early', () => {
+    const command = restoreOnDetachCommand('we"ird', { status: 'on' });
+    expect(command).toContain('we\\"ird');
+  });
+});
+
+describe('clearRestoreHookCommand', () => {
+  it('takes the hook off the Session', () => {
+    expect(clearRestoreHookCommand('work')).toBe("tmux set-hook -u -t 'work' client-detached");
   });
 });
