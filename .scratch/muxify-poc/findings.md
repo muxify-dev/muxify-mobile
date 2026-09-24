@@ -211,3 +211,24 @@ project has had no functional commit since 2026-07-17.
 
 **Cost of carrying a patch:** any version bump has to reapply it, and a native
 change means a full prebuild and rebuild, not a Metro reload.
+
+## Simulator gotcha: "Connect Hardware Keyboard" hides the on-screen keys
+
+Cost real time, so worth recording. With **I/O > Keyboard > Connect Hardware
+Keyboard** checked (Shift-Cmd-K, and it is on by default), iOS routes input from
+the Mac keyboard and suppresses the on-screen keyboard — but still shows the
+Surface's Accessory Bar. The symptom is a terminal that gains first responder,
+shows ctrl/esc/tab, and never shows letters, which looks exactly like a broken
+focus implementation.
+
+It is not: `becomeFirstResponder()` was working the whole time. Turning the
+setting off produced 26 letter keys immediately.
+
+Set it per-device rather than globally, with the device shut down so the
+Simulator cannot overwrite the preference on quit:
+
+    DevicePreferences:<UDID>:ConnectHardwareKeyboard = false
+
+Diagnostic that separates the two cases: count nodes matching `[key] "<letter>"`
+in the accessibility tree. Accessory-bar buttons present with zero letter keys
+means the hardware keyboard is connected, not that focus failed.
