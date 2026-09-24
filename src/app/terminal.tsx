@@ -7,17 +7,24 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Dock, type DockAction } from '@/components/dock';
+import { PickerSheet, type PickerItem } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 import { readDevHost } from '@/dev/dev-host';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
+import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { TmuxShell } from '@/tmux/transport';
 
 /** The Surface's cell grid. Travels as a unit everywhere it is used. */
 type Grid = { cols: number; rows: number };
+
+/** The Sessions sheet: closed, or open and showing whatever it has so far. */
+type PickerState =
+  | { open: false }
+  | { open: true; loading: boolean; names: string[]; error?: string };
 
 type Status =
   | { phase: 'waiting-for-layout' }
@@ -39,8 +46,8 @@ export default function TerminalScreen() {
   const sessionName = useRef<string>('');
   /** The tty of our own tmux Client, used to aim a redraw at it. */
   const clientTty = useRef<string | undefined>(undefined);
-  /** The Session's own status setting, restored when we detach. */
-  const originalStatusLine = useRef<string | undefined>(undefined);
+  /** Owns every Session Muxify has taken over, and hands them all back. */
+  const sessions = useRef<SessionPreparer | null>(null);
   const grid = useRef<Grid | null>(null);
   const hasStarted = useRef(false);
   const disposed = useRef(false);
@@ -48,6 +55,9 @@ export default function TerminalScreen() {
   const [status, setStatus] = useState<Status>({ phase: 'waiting-for-layout' });
   const [visibleGrid, setVisibleGrid] = useState<Grid | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [sessionPicker, setSessionPicker] = useState<PickerState>({ open: false });
+  /** Rendered in the Dock, so the attached Session survives a switch. */
+  const [attachedSession, setAttachedSession] = useState('');
 
   /**
    * Owns every remote resize, so a keyboard animation cannot flood the Host
@@ -105,7 +115,9 @@ export default function TerminalScreen() {
       // construction and output parsing behind the transport seam.
       const client = new TmuxClient(sshTmuxTransport(conn));
       tmux.current = client;
+      sessions.current = createSessionPreparer(client);
       sessionName.current = config.host.sessionName;
+      setAttachedSession(config.host.sessionName);
 
       const opened = await client.attach(config.host.sessionName, current, {
         onData: (data) => {
@@ -126,16 +138,18 @@ export default function TerminalScreen() {
       shell.current = opened;
       setStatus({ phase: 'connected', fingerprint: conn.hostKey.fingerprint });
 
-      // Bring the remote to the Surface's real size immediately on attach, and
-      // hide tmux's status line — the Dock already shows Session, Window and
-      // Pane, and a phone has no rows to spare.
-      remoteSize.request(grid.current ?? current);
       void (async () => {
         // Ours is the Client that just attached; a redraw aimed anywhere else
         // would leave this Surface dirty.
         clientTty.current = await client.newestClient(config.host.sessionName);
-        originalStatusLine.current = await client.readStatusLine(config.host.sessionName);
-        await client.setStatusLine(config.host.sessionName, 'off');
+        // Everything a Session needs before it can be shown on a phone: the
+        // right Window size, and no status line. Switching Session runs the
+        // same thing again. See createSessionPreparer.
+        await sessions.current?.prepare(
+          config.host.sessionName,
+          grid.current ?? current,
+          clientTty.current,
+        );
       })();
 
       // A resize may have landed while connecting.
@@ -196,8 +210,85 @@ export default function TerminalScreen() {
     }
   }, [keyboardVisible]);
 
+  /**
+   * Re-reads the Host's Sessions every time the sheet opens.
+   *
+   * Muxify holds no live model of the Host — see ADR 0001 — so the list is
+   * only ever as fresh as the moment it was asked for, and a sheet that opens
+   * on a cached list would show Sessions that have since been killed.
+   */
+  const openSessionPicker = useCallback(() => {
+    setSessionPicker({ open: true, loading: true, names: [] });
+    void (async () => {
+      const client = tmux.current;
+      if (!client) {
+        setSessionPicker({ open: true, loading: false, names: [], error: 'Not connected' });
+        return;
+      }
+      try {
+        const names = await client.listSessions();
+        setSessionPicker((previous) =>
+          previous.open ? { open: true, loading: false, names } : previous,
+        );
+      } catch (error) {
+        setSessionPicker((previous) =>
+          previous.open
+            ? { open: true, loading: false, names: [], error: describe(error) }
+            : previous,
+        );
+      }
+    })();
+  }, []);
+
+  /**
+   * Points the attached Client at another Session.
+   *
+   * The Shell Channel stays open throughout, so this costs no reconnect. The
+   * sheet stays up if the switch fails, because closing it would leave the
+   * user looking at the old Session with no idea why.
+   */
+  const selectSession = useCallback(
+    (name: string) => {
+      if (name === sessionName.current) {
+        setSessionPicker({ open: false });
+        return;
+      }
+      void (async () => {
+        const client = tmux.current;
+        if (!client) return;
+        try {
+          await client.switchSession(name);
+          sessionName.current = name;
+          setAttachedSession(name);
+          setSessionPicker({ open: false });
+          // The new Session has never been prepared: its Window is sized for
+          // whatever last attached to it, and its status line is still on.
+          await sessions.current?.prepare(
+            name,
+            grid.current ?? { cols: 80, rows: 24 },
+            clientTty.current,
+          );
+        } catch (error) {
+          setSessionPicker((previous) =>
+            previous.open ? { ...previous, error: describe(error) } : previous,
+          );
+        }
+      })();
+    },
+    [],
+  );
+
   const dockGroups: DockAction[][] = useMemo(
     () => [
+      [
+        {
+          id: 'sessions',
+          label: 'Sessions',
+          systemImage: 'square.on.square',
+          onPress: openSessionPicker,
+          disabled: status.phase !== 'connected',
+        },
+      ],
       [
         {
           id: 'home',
@@ -215,7 +306,7 @@ export default function TerminalScreen() {
         },
       ],
     ],
-    [router, toggleKeyboard, keyboardVisible],
+    [router, toggleKeyboard, keyboardVisible, openSessionPicker, status.phase],
   );
 
   useEffect(() => {
@@ -235,19 +326,17 @@ export default function TerminalScreen() {
       disposed.current = true;
       const openShellHandle = shell.current;
       const openConnection = connection.current;
-      const client = tmux.current;
-      const session = sessionName.current;
-      const restoreTo = originalStatusLine.current;
+      const preparer = sessions.current;
       shell.current = null;
       connection.current = null;
       tmux.current = null;
+      sessions.current = null;
       void (async () => {
         try {
-          // Put the Session's status line back before dropping the Connection,
-          // so Muxify does not leave the Host changed behind it.
-          if (client && session && restoreTo !== undefined) {
-            await client.setStatusLine(session, restoreTo);
-          }
+          // Hand back every Session touched this visit — switching means there
+          // may be more than one — before dropping the Connection, so Muxify
+          // does not leave the Host changed behind it.
+          await preparer?.restoreAll();
           await openShellHandle?.close();
         } finally {
           await openConnection?.disconnect();
@@ -274,6 +363,17 @@ export default function TerminalScreen() {
           onInput={handleInput}
         />
       </View>
+
+      <PickerSheet
+        title="Sessions"
+        isPresented={sessionPicker.open}
+        onDismiss={() => setSessionPicker({ open: false })}
+        loading={sessionPicker.open && sessionPicker.loading}
+        error={sessionPicker.open ? sessionPicker.error : undefined}
+        emptyMessage="No Sessions on this Host"
+        items={sessionPicker.open ? toPickerItems(sessionPicker.names, attachedSession) : []}
+        onSelect={selectSession}
+      />
 
       <Dock groups={dockGroups} />
 
@@ -316,6 +416,11 @@ function StatusBanner({ status }: { status: Status }) {
       </ThemedText>
     </View>
   );
+}
+
+/** Session names as sheet rows, with the attached one marked. */
+function toPickerItems(names: string[], attachedSession: string): PickerItem[] {
+  return names.map((name) => ({ id: name, label: name, current: name === attachedSession }));
 }
 
 function label(status: Status): string {

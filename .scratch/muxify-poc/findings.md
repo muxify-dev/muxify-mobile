@@ -394,3 +394,59 @@ One e2e consequence: both `.ad` suites waited on the header title "Terminal" to
 know the screen was up. That signal is gone, so they now wait on the
 `connection-status` indicator instead — which is a better signal anyway, since
 it belongs to the screen rather than to the navigator.
+
+## Nothing inside a presented sheet responds to agent-device (ticket 08)
+
+The Session picker is an `@expo/ui` `BottomSheet`. It renders correctly and
+re-renders from React state, so the JS to native direction is fine. Native back
+to JS is where it stops: no `onPress` inside the sheet ever fired.
+
+Ruled out, in this order, each with a relaunch and a probe rendered into the
+sheet's own title so the result was readable while the sheet was up:
+
+- a Button nested in `List` / `Section` — no
+- a plain Button directly in the sheet, outside any list — no
+- the host being zero-sized, 1x1, or full-screen — no difference
+- the documented `anchor` pattern — the anchor Button, which sits outside the
+  sheet, fired immediately; the same Button inside the sheet did not
+- pressing by ref versus by measured screen coordinates — no difference
+
+The telling detail: iOS's own drag indicator does not respond either, and
+swipe-to-dismiss does nothing. A system gesture failing is not an app bug.
+
+`hittable: false` on every node in the sheet looked like the answer, but it is a
+red herring — the Dock's Buttons report `hittable: false` too and press fine.
+
+**Resolution: the sheet works.** Confirmed by hand on the simulator, where rows
+select and the sheet dismisses normally. This is agent-device unable to reach a
+presented sheet, the same class of limitation as the on-screen return key
+(above), and the second time this project has had to check a harness failure
+against a real finger before believing it.
+
+Worth stating plainly, because it nearly cost the design: the automation said
+the component was broken, and the component was fine. An e2e harness that
+cannot reach a UI is evidence about the harness.
+
+What this costs: `e2e/session-picker.ad` can assert the Dock button, the sheet
+opening, and the attached Session being marked, but not selection. Selection is
+covered below the UI instead, which is where the interesting logic is anyway —
+see the next finding.
+
+## Switching Session means preparing it all over again (ticket 08)
+
+A Session that has just been switched to has never been touched by Muxify: its
+Window is sized for whatever last attached to it, and its status line is on. So
+everything done on Attach has to run again on every switch — which makes it a
+thing worth naming, `createSessionPreparer`, rather than code sitting inline in
+the screen.
+
+Two traps, both now covered by tests:
+
+- **Reading the original status line every time destroys it.** Switch away and
+  back, and the value read the second time is `off`, which Muxify itself set. It
+  is the first reading that has to be kept.
+- **Restoring only the last Session leaves the others changed.** A visit that
+  touches three Sessions owes three Sessions their status line back.
+
+Both are consequences of ADR 0001 rather than accidents: a real client sees real
+session options, where control mode would have rendered no chrome to hide.

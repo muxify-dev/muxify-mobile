@@ -1,0 +1,43 @@
+context platform=ios kind=simulator
+
+# Session picker (ticket 08).
+#
+# Covers everything automation can reach: the Dock button, the sheet, and the
+# Sessions read live off the Host appearing as rows.
+#
+# What this deliberately stops short of: selecting a row. Nothing inside a
+# presented sheet responds to agent-device — not a row at its own measured
+# coordinates, not iOS's own drag indicator, not swipe-to-dismiss — while the
+# same Buttons in the Dock press fine. Verified by hand on the simulator: the
+# sheet works perfectly for a finger, so this is the harness not reaching a
+# presented sheet, the same class of limitation as the on-screen return key.
+#
+# Switching is therefore verified below the UI instead: `TmuxClient` has unit
+# coverage, and `session-preparer.test.ts` covers what has to happen to a
+# Session on arrival and on the way out.
+#
+# It ends by closing rather than dismissing, because the sheet it opens cannot
+# be dismissed from here. Other suites are unaffected: each one relaunches.
+#
+# Run with:  agent-device test ./e2e/session-picker.ad
+
+open "dev.muxify.app" --relaunch
+wait "text" "No Hosts yet" 15000
+
+press "label=\"Open Surface smoke test\""
+wait "id=\"connection-status\"" 8000
+wait 8000
+is "text" "id=\"connection-status\"" "Connected"
+
+# The Dock's Sessions button opens the sheet.
+press "label=\"Sessions\""
+wait "text" "Sessions" 8000
+
+# The Sessions were read off the Host and the attached one is marked as where
+# the Surface is. The mark is what gets asserted rather than the Session's
+# name: this Host's Session is named "0", and agent-device will not match a
+# numeric-looking selector value. A mark can only exist on a row, so a visible
+# one proves the list rendered from the Host as well.
+is "visible" "label=\"Selected\""
+
+close
