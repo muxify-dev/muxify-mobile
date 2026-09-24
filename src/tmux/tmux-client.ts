@@ -11,11 +11,13 @@ import {
   readWindowSizingCommand,
   redrawClientCommand,
   resizeClientCommand,
-  scrollCommand,
+  readMouseCommand,
+  readScrollStateCommand,
   selectPaneCommand,
   selectWindowCommand,
   newWindowCommand,
   setStatusLineCommand,
+  setMouseCommand,
   setWindowSizingCommand,
   splitWindowCommand,
   stopScrollingCommand,
@@ -48,6 +50,25 @@ export interface Session {
 export interface ScrollPosition {
   back: number;
   history: number;
+}
+
+/**
+ * What a scroll gesture should be turned into for the Pane as it stands.
+ *
+ * - `history`: a shell at a prompt. A wheel event puts tmux into copy-mode and
+ *   moves through the scrollback.
+ * - `application`: a full-screen application that asked for the mouse — Claude
+ *   Code, htop, vim with `mouse=a`. The wheel is handed to it and it scrolls
+ *   itself.
+ * - `keys`: a full-screen application that did not ask for the mouse — `less`,
+ *   `man`. A wheel event reaches it and means nothing, so it gets cursor keys
+ *   instead. tmux used to do this itself until `alternate-scroll` was dropped.
+ */
+export type ScrollRoute = 'history' | 'application' | 'keys';
+
+export interface ScrollState {
+  position: ScrollPosition | undefined;
+  route: ScrollRoute;
 }
 
 /** A tmux Window inside a Session. */
@@ -242,32 +263,35 @@ export class TmuxClient {
   }
 
   /**
-   * Scrolls the active Pane through its history and says where that landed.
+   * Where the active Pane is in its history, for the label.
    *
-   * Positive lines go back into the past. Returns undefined when tmux will not
-   * say — a Pane that has left, or a Session that has gone — which the caller
-   * should read as "stop showing a position", never as zero.
+   * Undefined whenever there is nothing to say: a Pane that is not in
+   * copy-mode, a Session that has gone, or a full-screen application doing its
+   * own scrolling — none of which has a position tmux can report.
    */
-  async scroll(sessionName: string, lines: number): Promise<ScrollPosition | undefined> {
-    if (lines === 0) return undefined;
+  async readScrollState(sessionName: string): Promise<ScrollState> {
+    const unknown: ScrollState = { position: undefined, route: 'history' };
     let result: TmuxExecResult;
     try {
       result = await this.transport.exec(
-        scrollCommand(sessionName, lines, this.tmuxExecutablePath),
+        readScrollStateCommand(sessionName, this.tmuxExecutablePath),
       );
     } catch {
-      return undefined;
+      return unknown;
     }
-    if (result.exitCode !== 0) return undefined;
+    if (result.exitCode !== 0) return unknown;
 
     const [line] = nonEmptyLines(result.stdout);
-    if (line === undefined) return undefined;
-    const fields = splitFields(line, 2);
-    if (!fields) return undefined;
-    const [back, history] = fields;
-    // An empty position is tmux saying the Pane is not in the mode at all,
-    // which is the live bottom.
-    return { back: back === '' ? 0 : countOf(back), history: countOf(history) };
+    if (line === undefined) return unknown;
+    const fields = splitFields(line, 5);
+    if (!fields) return unknown;
+    const [inMode, back, history, alternate, wantsMouse] = fields;
+
+    const route: ScrollRoute =
+      alternate !== '1' ? 'history' : wantsMouse === '1' ? 'application' : 'keys';
+    const position =
+      inMode === '1' && back !== '' ? { back: countOf(back), history: countOf(history) } : undefined;
+    return { position, route };
   }
 
   /** Puts the active Pane back at the live bottom. Best effort. */
@@ -357,6 +381,25 @@ export class TmuxClient {
     } catch {
       // Best effort.
     }
+  }
+
+  /** Reads whether tmux is reading mouse events, so it can be restored. */
+  async readMouse(sessionName: string): Promise<string | undefined> {
+    try {
+      const result = await this.transport.exec(
+        readMouseCommand(sessionName, this.tmuxExecutablePath),
+      );
+      if (result.exitCode !== 0) return undefined;
+      const [line] = nonEmptyLines(result.stdout);
+      return line;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Turns tmux's mouse reading on or off for a Session. */
+  async setMouse(sessionName: string, value: string): Promise<void> {
+    await this.run('set mouse', setMouseCommand(sessionName, value, this.tmuxExecutablePath));
   }
 
   /**

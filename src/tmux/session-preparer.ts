@@ -8,6 +8,8 @@ export interface SessionChrome {
   setStatusLine(sessionName: string, value: string): Promise<void>;
   readWindowSizing(sessionName: string): Promise<string | undefined>;
   setWindowSizing(sessionName: string, value: string): Promise<void>;
+  readMouse(sessionName: string): Promise<string | undefined>;
+  setMouse(sessionName: string, value: string): Promise<void>;
   redrawClient(clientTty?: string): Promise<void>;
 }
 
@@ -23,13 +25,14 @@ interface Borrowed {
   /** Undefined means tmux would not say, so there is nothing to put back. */
   statusLine: string | undefined;
   windowSizing: string | undefined;
+  mouse: string | undefined;
 }
 
 /**
  * Takes a Session over for the Surface, and gives it back afterwards.
  *
- * A Session is not ready to be shown on a phone as found. Two session options
- * are in the way:
+ * A Session is not ready to be shown on a phone as found. Three session
+ * options are in the way:
  *
  * - `status`, a status line duplicating what the Dock already shows, on a
  *   screen with no rows to spare.
@@ -37,9 +40,13 @@ interface Borrowed {
  *   and tmux pads every row of the difference with dots. `smallest` keeps the
  *   Window no bigger than the smallest attached Client, so the padding has
  *   nothing to fill. See readWindowSizingCommand.
+ * - `mouse`, without which a wheel event never reaches tmux at all. With it,
+ *   tmux's own wheel binding does the routing scrolling needs — history for a
+ *   shell, the event handed to the application for anything on the alternate
+ *   screen. See readMouseCommand.
  *
- * Both are session options, so both are visible to every other Client and
- * outlive the Connection — the price of attaching a real client rather than
+ * All three are session options, so all three are visible to every other
+ * Client and outlive the Connection — the price of attaching a real client rather than
  * using control mode, see ADR 0001. Hence the borrowing: read first, put back
  * on teardown.
  *
@@ -65,10 +72,12 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
         borrowed.set(sessionName, {
           statusLine: await chrome.readStatusLine(sessionName),
           windowSizing: await chrome.readWindowSizing(sessionName),
+          mouse: await chrome.readMouse(sessionName),
         });
       }
       await chrome.setStatusLine(sessionName, 'off');
       await chrome.setWindowSizing(sessionName, 'smallest');
+      await chrome.setMouse(sessionName, 'on');
 
       await chrome.redrawClient(clientTty);
     },
@@ -83,6 +92,9 @@ export function createSessionPreparer(chrome: SessionChrome): SessionPreparer {
         }
         if (original.windowSizing !== undefined) {
           await chrome.setWindowSizing(sessionName, original.windowSizing);
+        }
+        if (original.mouse !== undefined) {
+          await chrome.setMouse(sessionName, original.mouse);
         }
       }
     },

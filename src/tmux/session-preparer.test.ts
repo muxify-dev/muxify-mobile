@@ -1,7 +1,7 @@
 import { createSessionPreparer, type SessionChrome } from './session-preparer';
 
 /** A Session's borrowed options, as the Host holds them. */
-type Options = { status?: string; windowSize?: string };
+type Options = { status?: string; windowSize?: string; mouse?: string };
 
 function fakeChrome(sessions: Record<string, Options> = {}) {
   const calls: string[] = [];
@@ -22,6 +22,14 @@ function fakeChrome(sessions: Record<string, Options> = {}) {
       calls.push(`size ${sessionName} ${value}`);
       sessions[sessionName] = { ...sessions[sessionName], windowSize: value };
     },
+    async readMouse(sessionName) {
+      calls.push(`read mouse ${sessionName}`);
+      return sessions[sessionName]?.mouse;
+    },
+    async setMouse(sessionName, value) {
+      calls.push(`mouse ${sessionName} ${value}`);
+      sessions[sessionName] = { ...sessions[sessionName], mouse: value };
+    },
     async redrawClient(clientTty) {
       calls.push(`redraw ${clientTty ?? 'best'}`);
     },
@@ -29,7 +37,7 @@ function fakeChrome(sessions: Record<string, Options> = {}) {
   return { chrome, calls, sessions };
 }
 
-const MAIN: Options = { status: 'on', windowSize: 'latest' };
+const MAIN: Options = { status: 'on', windowSize: 'latest', mouse: 'off' };
 
 describe('prepare', () => {
   it('hides the status line, pins the Window to the Surface, and repaints', async () => {
@@ -40,8 +48,10 @@ describe('prepare', () => {
     expect(calls).toEqual([
       'read status main',
       'read size main',
+      'read mouse main',
       'status main off',
       'size main smallest',
+      'mouse main on',
       'redraw /dev/pts/3',
     ]);
   });
@@ -96,8 +106,8 @@ describe('prepare', () => {
 describe('restoreAll', () => {
   it('puts back every Session it changed, not just the last one', async () => {
     const { chrome, sessions } = fakeChrome({
-      main: { status: 'on', windowSize: 'latest' },
-      work: { status: '2', windowSize: 'manual' },
+      main: { status: 'on', windowSize: 'latest', mouse: 'off' },
+      work: { status: '2', windowSize: 'manual', mouse: 'on' },
     });
     const preparer = createSessionPreparer(chrome);
 
@@ -106,8 +116,8 @@ describe('restoreAll', () => {
     await preparer.restoreAll();
 
     expect(sessions).toEqual({
-      main: { status: 'on', windowSize: 'latest' },
-      work: { status: '2', windowSize: 'manual' },
+      main: { status: 'on', windowSize: 'latest', mouse: 'off' },
+      work: { status: '2', windowSize: 'manual', mouse: 'on' },
     });
   });
 

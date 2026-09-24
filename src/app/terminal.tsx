@@ -22,16 +22,16 @@ import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
+import { cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
 import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
-import { createScrollScheduler } from '@/tmux/scroll-scheduler';
 import { createSessionPreparer, type SessionPreparer } from '@/tmux/session-preparer';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
 import { readTopology, type Topology } from '@/tmux/topology';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
-import { TmuxClient, type ScrollPosition } from '@/tmux/tmux-client';
+import { TmuxClient, type ScrollPosition, type ScrollRoute } from '@/tmux/tmux-client';
 import type { TmuxShell } from '@/tmux/transport';
 
 /** What the Surface uses when the user has not picked a size. */
@@ -44,6 +44,12 @@ const DEFAULT_FONT_SIZE = 13;
  */
 const GRID_SETTLE_MS = 80;
 const GRID_SETTLE_TRIES = 12;
+
+/** How long after the finger stops before asking tmux where it landed. */
+const LABEL_SETTLE_MS = 220;
+
+/** After this long without scrolling, what a scroll should become is re-asked. */
+const ROUTE_STALE_MS = 1500;
 
 /** How long a resize will wait for the Client's tty to be read. */
 const TTY_WAIT_MS = 100;
@@ -106,8 +112,12 @@ export default function TerminalScreen() {
   const [scrolled, setScrolled] = useState<ScrollPosition | null>(null);
   /** The same fact where a callback can read it without being rebuilt. */
   const scrolledBack = useRef(false);
-  /** Sub-line scroll distance not yet worth a command. */
+  /** Scroll distance not yet worth a notch of the wheel. */
   const carriedLines = useRef(0);
+  const labelRead = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollAt = useRef(0);
+  /** What a scroll gesture should become for the Pane as it stands. */
+  const route = useRef<ScrollRoute>('history');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   /**
@@ -172,29 +182,26 @@ export default function TerminalScreen() {
   );
 
   /**
-   * Owns every remote scroll, so a flick cannot flood the Host.
+   * Asks tmux where the Pane is in its history, once the finger has stopped.
    *
-   * The same bargain as the resize scheduler, for the same reason — one
-   * command in flight, the round trip as the debounce window — but the backlog
-   * *adds* rather than replaces: a dropped resize is merely stale, while a
-   * dropped scroll is distance the user asked for and did not travel.
+   * Only the label needs this. The scrolling itself is bytes on a channel that
+   * is already open, so it costs nothing and needs no coalescing — a Control
+   * Command per frame is exactly what made dragging feel like it was catching
+   * on something.
    */
-  const scroller = useMemo(
-    () =>
-      createScrollScheduler(async (lines) => {
-        const client = tmux.current;
-        if (!client) return;
-        const position = await client.scroll(sessionName.current, lines);
-        if (disposed.current) return;
-        // Where tmux says it landed, not where the finger asked: the two part
-        // company the moment the history runs out, and believing the finger is
-        // exactly how an indicator starts lying.
-        const back = position?.back ?? 0;
-        scrolledBack.current = back > 0;
-        setScrolled(back > 0 ? position ?? null : null);
-      }),
-    [],
-  );
+  const readScrollState = useCallback((delayMs: number = LABEL_SETTLE_MS) => {
+    if (labelRead.current !== null) clearTimeout(labelRead.current);
+    labelRead.current = setTimeout(() => {
+      labelRead.current = null;
+      void (async () => {
+        const state = await tmux.current?.readScrollState(sessionName.current);
+        if (disposed.current || !state) return;
+        route.current = state.route;
+        scrolledBack.current = state.position !== undefined;
+        setScrolled(state.position ?? null);
+      })();
+    }, delayMs);
+  }, []);
 
   /**
    * One finger on the Surface, moving the Pane through its history.
@@ -210,27 +217,57 @@ export default function TerminalScreen() {
    */
   const handleScroll = useCallback(
     ({ nativeEvent }: { nativeEvent: { points: number } }) => {
-      const rows = grid.current?.rows ?? 0;
+      const active = shell.current;
+      const size = grid.current;
       const height = surfaceHeight.current;
-      if (rows <= 0 || height <= 0) return;
+      if (!active || !size || size.rows <= 0 || height <= 0) return;
+
+      // A gesture starting after a pause may be the first since the Pane began
+      // running something else entirely, and what a scroll should become
+      // depends on that. Asked for here as well as after the gesture, so a
+      // drag that follows `less` starting is routed by the second notch rather
+      // than the second drag.
+      const now = Date.now();
+      if (now - lastScrollAt.current > ROUTE_STALE_MS) readScrollState(0);
+      lastScrollAt.current = now;
+
       // A finger moving down pulls older output into view.
-      carriedLines.current += nativeEvent.points * (rows / height);
-      const whole = Math.trunc(carriedLines.current);
-      if (whole === 0) return;
-      carriedLines.current -= whole;
-      scroller.request(whole);
+      carriedLines.current += nativeEvent.points * (size.rows / height);
+      const notches = Math.trunc(carriedLines.current / LINES_PER_NOTCH);
+      if (notches === 0) return;
+      carriedLines.current -= notches * LINES_PER_NOTCH;
+
+      const direction = notches > 0 ? 'up' : 'down';
+      const bytes =
+        route.current === 'keys'
+          ? // A full-screen application that never asked for the mouse would
+            // ignore a wheel event entirely, so it gets the keys it does read.
+            cursorKeys(direction, Math.abs(notches) * LINES_PER_NOTCH)
+          : // Aimed at the middle of the Surface: tmux discards a mouse event
+            // whose coordinates fall outside the Pane, and the middle is inside
+            // whichever Pane is filling the Window.
+            wheelSequence(
+              direction,
+              Math.abs(notches),
+              Math.max(1, Math.round(size.cols / 2)),
+              Math.max(1, Math.round(size.rows / 2)),
+            );
+      if (bytes === '') return;
+      active.write(new TextEncoder().encode(bytes));
+      readScrollState();
     },
-    [scroller],
+    [readScrollState],
   );
 
   /** Puts the Pane back at the live bottom, and the indicator away with it. */
   const stopScrolling = useCallback(() => {
-    scroller.reset();
+    if (labelRead.current !== null) clearTimeout(labelRead.current);
+    labelRead.current = null;
     carriedLines.current = 0;
     scrolledBack.current = false;
     setScrolled(null);
     void tmux.current?.stopScrolling(sessionName.current);
-  }, [scroller]);
+  }, []);
 
   /**
    * The Client's tty, asking again until tmux will say.
@@ -615,7 +652,7 @@ export default function TerminalScreen() {
             // remember how a visit started, not where it went.
             if (hostId) void deviceHostStore().rememberSession(hostId, id);
             // The new Session has its own history and its own position in it.
-            scroller.reset();
+            carriedLines.current = 0;
             scrolledBack.current = false;
             setScrolled(null);
             // The Session switched to has never been prepared: its Window is
@@ -646,7 +683,7 @@ export default function TerminalScreen() {
         }
       })();
     },
-    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId, scroller],
+    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */

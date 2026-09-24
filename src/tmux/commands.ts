@@ -181,6 +181,33 @@ export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: s
  * of `smallest` is real — a desktop Client on the same Session is squeezed down
  * to the phone — which is exactly why it is borrowed rather than kept.
  */
+/**
+ * Whether tmux reads mouse events from its Client.
+ *
+ * Muxify needs it on, because that is what makes a wheel event reach tmux at
+ * all — and tmux's own wheel binding is the routing this app would otherwise
+ * have to write: history for a shell, the event handed straight to the
+ * application for anything on the alternate screen or asking for the mouse.
+ *
+ * It is a session option like the other two, so it is borrowed the same way:
+ * read first, put back on teardown. Muxify never sends a button press, only a
+ * wheel, so turning it on does not make taps into clicks.
+ */
+export function readMouseCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v mouse`;
+}
+
+export function setMouseCommand(
+  sessionName: string,
+  value: string,
+  tmuxExecutablePath?: string,
+): string {
+  return (
+    `${tmux(tmuxExecutablePath)} set-option -t ${shellQuote(sessionName)} ` +
+    `mouse ${shellQuote(value)}`
+  );
+}
+
 export function readWindowSizingCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return `${tmux(tmuxExecutablePath)} show-options -t ${shellQuote(sessionName)} -v window-size`;
 }
@@ -306,42 +333,30 @@ export function splitWindowCommand(
 }
 
 /**
- * Control Command scrolling the active Pane back through its history, and
- * reporting where that landed.
+ * Control Command asking where the active Pane is in its history.
  *
- * Three things in one round trip, because a finger moving on the glass cannot
- * wait for three. `copy-mode -e` is idempotent — entering when already in it
- * keeps the position — so every scroll back can carry it and there is no
- * separate "start scrolling" state to get wrong. `-e` is what makes the mode
- * leave by itself once the Pane is scrolled to the bottom again.
+ * Only for the label. The scrolling itself is wheel bytes on the Shell Channel
+ * and costs no round trip; this is asked once after a drag settles, because a
+ * count that is quietly wrong is worse than no count and only tmux knows where
+ * the history ran out.
  *
- * `-N` takes the whole distance as a count, so a violent flick is one short
- * command rather than one per line. That is the difference between a gesture
- * that costs a command and one that costs a hundred.
+ * A Pane that is not in copy-mode — a shell at the bottom, or any full-screen
+ * application scrolling itself — reports no position, which is the signal that
+ * there is nothing to say.
  *
- * The trailing `display-message` is why the indicator never drifts: tmux
- * clamps the scroll at the top of the history, so the only honest source for
- * how far back the Pane is, is tmux after the fact — not a number JavaScript
- * kept while it was guessing.
+ * The last two fields say what a scroll gesture should turn into. tmux's wheel
+ * binding hands the event to the application whenever the Pane is on the
+ * alternate screen or asking for the mouse; an application that asked for the
+ * mouse will act on it, and one that did not will ignore it entirely — tmux 3.6
+ * dropped `alternate-scroll`, which used to translate it to cursor keys. So
+ * that translation has to happen here, or `less` and `man` do not scroll at all.
  */
-export function scrollCommand(
-  sessionName: string,
-  lines: number,
-  tmuxExecutablePath?: string,
-): string {
-  const exe = tmux(tmuxExecutablePath);
-  const target = currentPaneTarget(sessionName);
-  const count = Math.abs(Math.trunc(lines));
-  const report = `${exe} display-message -p -t ${target} '#{scroll_position}\t#{history_size}'`;
-  if (lines > 0) {
-    return (
-      `${exe} copy-mode -e -t ${target} ; ` +
-      `${exe} send-keys -X -N ${count} -t ${target} scroll-up ; ${report}`
-    );
-  }
-  // Never enters the mode: scrolling forward when already at the bottom is a
-  // gesture that should do nothing, not one that puts the Pane into a mode.
-  return `${exe} send-keys -X -N ${count} -t ${target} scroll-down ; ${report}`;
+export function readScrollStateCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return (
+    `${tmux(tmuxExecutablePath)} display-message -p -t ${currentPaneTarget(sessionName)} ` +
+    "'#{pane_in_mode}\t#{scroll_position}\t#{history_size}" +
+    "\t#{alternate_on}\t#{mouse_any_flag}'"
+  );
 }
 
 /**

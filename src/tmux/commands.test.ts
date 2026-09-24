@@ -10,7 +10,9 @@ import {
   listPanesCommand,
   createSessionCommand,
   listSessionsCommand,
-  scrollCommand,
+  readMouseCommand,
+  readScrollStateCommand,
+  setMouseCommand,
   stopScrollingCommand,
   listWindowsCommand,
   selectPaneCommand,
@@ -318,34 +320,33 @@ describe('resizeClientCommand', () => {
   });
 });
 
-describe('scrollCommand', () => {
-  it('enters the mode, scrolls back, and reports where it landed, in one command', () => {
-    expect(scrollCommand('work', 25)).toBe(
-      "tmux copy-mode -e -t 'work:' ; " +
-        "tmux send-keys -X -N 25 -t 'work:' scroll-up ; " +
-        "tmux display-message -p -t 'work:' '#{scroll_position}\t#{history_size}'",
+describe('readScrollStateCommand', () => {
+  it('asks where in the history the Pane is, and what a scroll should become', () => {
+    expect(readScrollStateCommand('work')).toBe(
+      "tmux display-message -p -t 'work:' " +
+        "'#{pane_in_mode}\t#{scroll_position}\t#{history_size}\t#{alternate_on}\t#{mouse_any_flag}'",
     );
   });
 
-  it('carries the whole distance as one count, however far the flick went', () => {
-    // The reason a violent flick costs the same as a small one.
-    expect(scrollCommand('work', 4000)).toContain('-N 4000');
-  });
-
-  it('does not enter the mode to scroll forwards', () => {
-    // Scrolling forward at the live bottom should do nothing, not put the
-    // Pane into a mode it then has to be taken out of.
-    const command = scrollCommand('work', -12);
-    expect(command).not.toContain('copy-mode');
-    expect(command).toContain("send-keys -X -N 12 -t 'work:' scroll-down");
-  });
-
   it('aims at the Session, so a bare name cannot be read as a Pane', () => {
-    expect(scrollCommand('0', 5)).toContain("-t '0:'");
+    expect(readScrollStateCommand('0')).toContain("-t '0:'");
+  });
+});
+
+describe('mouse borrowing', () => {
+  it('reads the option so it can be put back', () => {
+    expect(readMouseCommand('work')).toBe("tmux show-options -t 'work' -v mouse");
+  });
+
+  it('sets it on the Session, not the server', () => {
+    // Global would reach every Session on the Host, including ones Muxify has
+    // never attached to.
+    expect(setMouseCommand('work', 'on')).toBe("tmux set-option -t 'work' mouse 'on'");
+    expect(setMouseCommand('work', 'on')).not.toContain('-g');
   });
 
   it('uses an explicit tmux path when the Host provides one', () => {
-    expect(scrollCommand('work', 5, '/usr/bin/tmux')).toContain("'/usr/bin/tmux' copy-mode");
+    expect(setMouseCommand('work', 'off', '/usr/bin/tmux')).toContain("'/usr/bin/tmux' set-option");
   });
 });
 
