@@ -14,6 +14,7 @@ export interface PaneReader {
   capturePane(paneId: string): Promise<Uint8Array[]>;
   captureScrollback(paneId: string, startLine: number, endLine: number): Promise<Uint8Array[]>;
   sendKeys(paneId: string, bytes: Uint8Array): Promise<void>;
+  sendKey(paneId: string, key: string): Promise<void>;
 }
 
 /** How far back through its Scrollback a Pane is being viewed. */
@@ -53,10 +54,24 @@ export interface PaneView {
   /** Bytes the user typed. */
   type(bytes: Uint8Array): void;
   /**
-   * A scroll gesture, in wheel notches. Positive is back into the past. The
-   * grid is only for the coordinates a wheel event has to carry.
+   * One key by tmux's name for it: `Up`, `Escape`, `Tab`, `C-c`, `M-b`.
+   *
+   * The Meta menu's path. A name rather than the bytes for it, because which
+   * bytes are right depends on what the Pane is running — see sendKeyCommand.
    */
-  scroll(notches: number, grid: Grid): void;
+  press(key: string): void;
+  /**
+   * A scroll gesture, in whole lines. Positive is back into the past. The grid
+   * is only for the coordinates a wheel event has to carry.
+   *
+   * Lines rather than wheel notches, because a finger is not a wheel. A notch
+   * is five lines, so a drag measured in notches moved the Scrollback in
+   * five-line jumps however smoothly the finger travelled — and a flick
+   * coasting to a stop stepped rather than slowed. What a line becomes for the
+   * Pane being looked at is this view's business: a position in the
+   * Scrollback, a cursor key, or a fraction of a notch of the wheel.
+   */
+  scroll(lines: number, grid: Grid): void;
   /**
    * A tap at one cell, 1-based as SGR counts them.
    *
@@ -136,11 +151,30 @@ export function createPaneView(
   /** How far above the live bottom the Surface is showing. */
   let back = 0;
 
+  /**
+   * Lines scrolled on the alternate screen that have not yet made a notch.
+   *
+   * A wheel has notches and a finger does not. Dropping the remainder would
+   * mean a slow drag over `less` moving nothing at all, and a flick's last
+   * frames — which are the small ones — counting for nothing.
+   */
+  let wheelCarry = 0;
+
   /** Output arriving mid-repaint, to be written once the repaint lands. */
   let held: Uint8Array[] | null = null;
 
-  /** Bytes typed but not yet sent, and whether a send is in flight. */
-  let typed: number[] = [];
+  /**
+   * What is on its way into the Pane, and whether a send is in flight.
+   *
+   * Two kinds, because there are two ways in. Typed input is bytes, and a
+   * burst of them coalesces into one `send-keys -H`. A Meta key is a *name*,
+   * which tmux turns into the right bytes for whatever the Pane is running —
+   * and which therefore cannot be merged with the bytes either side of it. One
+   * queue rather than two, so a key pressed mid-burst still arrives where it
+   * was pressed.
+   */
+  type Outgoing = { bytes: number[] } | { key: string };
+  let outgoing: Outgoing[] = [];
   let sending = false;
 
   /** A repaint in flight, and the position asked for behind it. */
@@ -280,22 +314,20 @@ export function createPaneView(
       });
   }
 
-  /** Sends everything typed since the last send, as one command. */
+  /** Sends the next thing on its way in, as one command. */
   function flushTyped(): void {
-    if (sending || typed.length === 0 || pane === '') return;
-    const bytes = Uint8Array.from(typed);
-    typed = [];
+    if (sending || outgoing.length === 0 || pane === '') return;
+    const next = outgoing.shift() as Outgoing;
     sending = true;
-    void reader
-      .sendKeys(pane, bytes)
-      .catch(report)
-      .finally(() => {
-        sending = false;
-        // Whatever was typed during the round trip goes in the next one, which
-        // is what turns a burst of keystrokes into one command rather than
-        // thirty.
-        if (!disposed) flushTyped();
-      });
+    const sent =
+      'key' in next ? reader.sendKey(pane, next.key) : reader.sendKeys(pane, Uint8Array.from(next.bytes));
+    void sent.catch(report).finally(() => {
+      sending = false;
+      // Whatever was typed during the round trip goes in the next one, which
+      // is what turns a burst of keystrokes into one command rather than
+      // thirty.
+      if (!disposed) flushTyped();
+    });
   }
 
   function jumpToLatest(): void {
@@ -313,7 +345,30 @@ export function createPaneView(
       jumpToLatest();
       return;
     }
-    for (const byte of bytes) typed.push(byte);
+    const last = outgoing[outgoing.length - 1];
+    if (last && 'bytes' in last) {
+      for (const byte of bytes) last.bytes.push(byte);
+    } else {
+      outgoing.push({ bytes: Array.from(bytes) });
+    }
+    flushTyped();
+  }
+
+  /**
+   * One named key, from the Meta menu.
+   *
+   * Queued behind anything already typed rather than sent past it, so an
+   * arrow pressed in the middle of a burst of keystrokes arrives where it was
+   * pressed. Same rule as typing about the Scrollback: a key pressed while
+   * looking at the past spends itself getting back to the present.
+   */
+  function press(key: string): void {
+    if (disposed || pane === '') return;
+    if (back > 0) {
+      jumpToLatest();
+      return;
+    }
+    outgoing.push({ key });
     flushTyped();
   }
 
@@ -326,7 +381,8 @@ export function createPaneView(
       back = 0;
       state = undefined;
       stateReadAt = 0;
-      typed = [];
+      wheelCarry = 0;
+      outgoing = [];
       await repaint();
     },
 
@@ -369,6 +425,7 @@ export function createPaneView(
     },
 
     type,
+    press,
     jumpToLatest,
 
     setCursorVisible(visible: boolean): void {
@@ -384,8 +441,8 @@ export function createPaneView(
       if (back > 0) schedule();
     },
 
-    scroll(notches: number, grid: Grid): void {
-      if (disposed || pane === '' || notches === 0) return;
+    scroll(lines: number, grid: Grid): void {
+      if (disposed || pane === '' || lines === 0) return;
 
       // A gesture starting after a pause may be the first since the Pane began
       // running something else entirely, and what a scroll should become
@@ -393,26 +450,32 @@ export function createPaneView(
       refreshState();
 
       if (state?.alternate) {
-        const direction = notches > 0 ? 'up' : 'down';
-        const count = Math.abs(notches);
-        const text = state.wantsMouse
-          ? // Aimed at the middle of the Surface: a mouse event whose
-            // coordinates fall outside the Pane is discarded, and the middle
-            // is inside whichever Pane is filling the Window.
-            wheelSequence(
-              direction,
-              count,
-              Math.max(1, Math.round(grid.cols / 2)),
-              Math.max(1, Math.round(grid.rows / 2)),
-            )
-          : // An application that never asked for the mouse would ignore a
-            // wheel event entirely, so it gets the keys it does read.
-            cursorKeys(direction, count * LINES_PER_NOTCH);
+        if (state.wantsMouse) {
+          // Back into notches, with the remainder carried rather than lost.
+          wheelCarry += lines;
+          const notches = Math.trunc(wheelCarry / LINES_PER_NOTCH);
+          if (notches === 0) return;
+          wheelCarry -= notches * LINES_PER_NOTCH;
+          // Aimed at the middle of the Surface: a mouse event whose
+          // coordinates fall outside the Pane is discarded, and the middle is
+          // inside whichever Pane is filling the Window.
+          const text = wheelSequence(
+            notches > 0 ? 'up' : 'down',
+            Math.abs(notches),
+            Math.max(1, Math.round(grid.cols / 2)),
+            Math.max(1, Math.round(grid.rows / 2)),
+          );
+          if (text !== '') type(asciiBytes(text));
+          return;
+        }
+        // An application that never asked for the mouse would ignore a wheel
+        // event entirely, so it gets the keys it does read — one per line.
+        const text = cursorKeys(lines > 0 ? 'up' : 'down', Math.abs(lines));
         if (text !== '') type(asciiBytes(text));
         return;
       }
 
-      const next = clampBack(back + notches * LINES_PER_NOTCH, state?.scrollbackLines ?? 0);
+      const next = clampBack(back + lines, state?.scrollbackLines ?? 0);
       if (next === back) return;
       back = next;
       schedule();
@@ -420,7 +483,7 @@ export function createPaneView(
 
     dispose(): void {
       disposed = true;
-      typed = [];
+      outgoing = [];
       held = null;
     },
   };

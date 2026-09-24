@@ -48,3 +48,32 @@ The decision to revisit is therefore whether to build that group, not whether
 the bar can be hidden. Left open deliberately: the brief asked for ctrl/esc/tab,
 the user has asked for the bar to go "for now", and how much its absence grates
 is worth finding out before building a replacement.
+
+## Resolved: the group is built, as a menu, and tmux does the encoding
+
+The absence grated, and the answer came back as "three groups, the first one
+Meta". So the group exists: one Dock capsule holding a single button that opens
+a SwiftUI `Menu` — esc, tab and enter, the four arrows, and submenus for
+Control, Option and Move.
+
+The encoding worry above turned out to be the wrong worry, and the fix is the
+reason this is worth recording. The ADR assumed a custom group would have to
+**compute bytes itself** — `ctrl+A` → `0x01` — because it could no longer
+borrow ghostty's `ghostty_key_encoder`. That would have been a real second
+input path, and a wrong one: the bytes for a key are not a property of the key.
+Measured on tmux 3.6, Up into a shell is `ESC [ A` and Up into anything that
+has turned DECCKM on is `ESC O A`. Computing them here would mean tracking each
+Pane's cursor-key mode — a second model of tmux's state, which ADR 0006
+declined to keep.
+
+So nothing is computed. The menu sends tmux the *name* of the key, and
+`send-keys -t %3 Up` lets tmux pick the bytes for whatever that Pane is
+currently running. It is the same path typing already takes, the same command
+with a different argument, and the Pane's mode is tmux's business rather than
+this app's. There is no second input path.
+
+What is genuinely new is the cost of the menu shape: a menu closes when you
+pick something, so a key that wants repeating — an arrow, mostly — costs a
+reopen each time. That is the trade for having the keys at all without a
+permanent second row eating the Surface. If repeating turns out to grate the
+way the absence did, the answer is a row that stays up, not a different menu.

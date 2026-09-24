@@ -131,7 +131,10 @@ snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
 echo "     no header, no back button"
 
 echo "2/6  the library's Accessory Bar stays hidden"
-snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
+# `Escape` and `Command` only. The Dock's own Meta menu offers Control, Option
+# and Tab, so those three no longer tell the two apart — the bar's full-word
+# `Escape` and its `Command`, which Muxify has no use for, still do.
+snap | grep -qE '\[button\] "(Escape|Command)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 

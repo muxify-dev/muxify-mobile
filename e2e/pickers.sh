@@ -76,7 +76,7 @@ named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] 
 # Not `wait text "Panes"`: the Dock has a button of that name too and it is on
 # screen the whole time, so the wait returned at once and everything after it
 # raced the sheet's first frame. The close button belongs to the sheet alone.
-sheet() { agent-device wait "label=\"Close $1\"" 8000 >/dev/null 2>&1; }
+sheet() { agent-device wait "label=\"Close $1\"" 15000 >/dev/null 2>&1; }
 
 echo "1/4  one Window, one Pane: both pickers still open, to make more"
 # Deliberately not disabled. The sheet is the only way to add a Window or a
@@ -127,6 +127,12 @@ attach
 [ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
   || fail "a split Session should arrive with its active Pane zoomed"
 echo "     arrived zoomed"
+# Waited for, not assumed. The Dock's buttons are disabled until the Topology
+# read that follows Connected lands, and a press that arrives before that does
+# nothing at all — which shows up here as a sheet that never opened and an
+# action that is "missing" from it. Checks 1 and 2 wait; this one did not, and
+# failed exactly once that way.
+expect_enabled Panes yes
 agent-device press 'label="Panes"' >/dev/null 2>&1
 sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"

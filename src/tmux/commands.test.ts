@@ -14,6 +14,7 @@ import {
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
+  sendKeyCommand,
   sendKeysCommand,
   shellQuote,
   splitWindowCommand,
@@ -153,6 +154,21 @@ describe('sizing the Client', () => {
   it('never asks for a size tmux would refuse', () => {
     expect(resizeClientCommand(0, -3)).toEqual(['refresh-client', '-C', '1x1']);
     expect(resizeClientCommand(40.7, 20.2)).toEqual(['refresh-client', '-C', '40x20']);
+  });
+});
+
+describe('sending one named key into a Pane', () => {
+  it('sends the name, so tmux picks the bytes for what the Pane is running', () => {
+    // Measured on tmux 3.6: Up into a shell is `ESC [ A`, and Up into anything
+    // that has turned DECCKM on is `ESC O A`. Only tmux knows which.
+    expect(sendKeyCommand('%3', 'Up')).toEqual(['send-keys', '-t', '%3', 'Up']);
+    expect(sendKeyCommand('%0', 'C-c')).toEqual(['send-keys', '-t', '%0', 'C-c']);
+  });
+
+  it('quotes the key like everything else, and tmux still reads it as one', () => {
+    expect(renderControlCommand(sendKeyCommand('%3', 'M-.'))).toBe(
+      "'send-keys' '-t' '%3' 'M-.'",
+    );
   });
 });
 

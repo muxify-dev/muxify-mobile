@@ -7,16 +7,17 @@ import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Dock, type DockAction } from '@/components/dock';
+import { Dock, type DockAction, type DockMenuSection } from '@/components/dock';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
 import type { TerminalPalette } from '@/constants/app-theme';
+import { META_SECTIONS } from '@/constants/meta-keys';
 import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { directoryName } from '@/lib/paths';
-import { LINES_PER_NOTCH } from '@/lib/mouse-wheel';
+import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
 import { settle } from '@/lib/settle';
 import { toShellInput } from '@/lib/terminal-input';
 import { createResizeScheduler } from '@/tmux/resize-scheduler';
@@ -267,11 +268,11 @@ export default function TerminalScreen() {
 
       // A finger moving down pulls older output into view.
       carriedLines.current += points * (grid.rows / height) * SCROLL_SPEED;
-      const notches = Math.trunc(carriedLines.current / LINES_PER_NOTCH);
-      if (notches === 0) return;
-      carriedLines.current -= notches * LINES_PER_NOTCH;
+      const lines = Math.trunc(carriedLines.current);
+      if (lines === 0) return;
+      carriedLines.current -= lines;
 
-      view.scroll(notches, grid);
+      view.scroll(lines, grid);
     },
     [],
   );
@@ -288,10 +289,10 @@ export default function TerminalScreen() {
     [activeView],
   );
 
-  /** A drag, already counted in wheel notches by whoever owned the finger. */
-  const handleNotches = useCallback(
-    (notches: number, size: Grid) => {
-      activeView()?.scroll(notches, size);
+  /** A drag, already counted in whole lines by whoever owned the finger. */
+  const handleScrollLines = useCallback(
+    (lines: number, size: Grid) => {
+      activeView()?.scroll(lines, size);
     },
     [activeView],
   );
@@ -1007,11 +1008,55 @@ export default function TerminalScreen() {
    */
   const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
 
+  /** A key from the Meta menu, into the Pane that has the keyboard. */
+  const pressMetaKey = useCallback(
+    (key: string) => {
+      activeView()?.press(key);
+    },
+    [activeView],
+  );
+
+  /**
+   * What the Meta button offers, as the Dock wants it.
+   *
+   * The keys themselves are in META_SECTIONS, which knows nothing about the
+   * Dock or about this screen — it is a list of tmux key names and what to
+   * call them.
+   */
+  const metaMenu: DockMenuSection[] = useMemo(
+    () =>
+      META_SECTIONS.map((section) => ({
+        id: section.id,
+        title: section.title,
+        kind: section.kind,
+        items: section.keys.map((each) => ({
+          id: each.key,
+          label: each.label,
+          systemImage: each.systemImage,
+          onPress: () => pressMetaKey(each.key),
+        })),
+      })),
+    [pressMetaKey],
+  );
+
   const dockGroups: DockAction[][] = useMemo(() => {
     const connected = status.phase === 'connected';
-    // One group, so the Dock reads as a single control rather than a row of
-    // unrelated islands.
+    // Three capsules, because there are three kinds of button here: the keys
+    // the phone's keyboard does not have, the things the Session is made of,
+    // and the way out. One long row said none of that.
     return [
+      [
+        {
+          id: 'meta',
+          label: 'Meta',
+          // No glyph: this one says what it is. Every other Dock button is a
+          // familiar shape — a house, a keyboard — and there is no familiar
+          // shape for "the keys your keyboard is missing".
+          onPress: () => {},
+          menu: metaMenu,
+          disabled: !connected,
+        },
+      ],
       [
         {
           id: 'sessions',
@@ -1038,6 +1083,8 @@ export default function TerminalScreen() {
           disabled: !connected,
           onPress: () => openPicker('panes'),
         },
+      ],
+      [
         {
           id: 'home',
           label: 'Home',
@@ -1054,7 +1101,7 @@ export default function TerminalScreen() {
         },
       ],
     ];
-  }, [router, toggleKeyboard, keyboardVisible, openPicker, status.phase]);
+  }, [router, toggleKeyboard, keyboardVisible, openPicker, status.phase, metaMenu]);
 
   useEffect(() => {
     // Only so the Dock can show which way its keyboard button points.
@@ -1175,7 +1222,7 @@ export default function TerminalScreen() {
             box={activeSlot.box}
             grid={mouseGrid}
             onTap={handleTapCell}
-            onScroll={(notches) => handleNotches(notches, mouseGrid)}
+            onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
           />
         ) : null}
       </View>
@@ -1414,7 +1461,7 @@ function MouseLayer({
   box: PaneBox;
   grid: Grid;
   onTap: (column: number, row: number) => void;
-  onScroll: (notches: number) => void;
+  onScroll: (lines: number) => void;
 }) {
   const size = useRef({ width: 0, height: 0 });
   const origin = useRef(0);
@@ -1422,6 +1469,70 @@ function MouseLayer({
   const dragged = useRef(false);
   /** Fractions of a line a slow drag has not yet spent. */
   const carried = useRef(0);
+  /** Where the finger has been lately, which is what a flick is worth. */
+  const track = useRef(createVelocityTracker());
+  /** When it last moved, so a finger that stopped before lifting throws nothing. */
+  const movedAt = useRef(0);
+  /** The frame loop a flick is coasting on, so a new touch can stop it. */
+  const coasting = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+
+  /** Points of travel, banked until they make whole lines. */
+  const spend = useCallback(
+    (points: number) => {
+      const { height } = size.current;
+      if (height <= 0 || grid.rows <= 0) return;
+      // A finger moving down pulls older output into view, which is the same
+      // sign the Surface's own scroll reports.
+      carried.current += points * (grid.rows / height) * SCROLL_SPEED;
+      const lines = Math.trunc(carried.current);
+      if (lines === 0) return;
+      carried.current -= lines;
+      onScroll(lines);
+    },
+    [grid.rows, onScroll],
+  );
+
+  const stopCoasting = useCallback(() => {
+    if (coasting.current === null) return;
+    cancelAnimationFrame(coasting.current);
+    coasting.current = null;
+  }, []);
+
+  /**
+   * Keeps a flick going after the finger has gone.
+   *
+   * The Surface's own gesture gets this from the terminal library, which ends
+   * a pan by decaying the velocity on a display link. This layer takes the
+   * finger instead whenever something is listening for the mouse — which on a
+   * phone is most of the time, because that is what Claude Code and vim do —
+   * and without this a flick there stopped dead on release. Same constants, so
+   * both feel the same. See coast.
+   */
+  const fling = useCallback(
+    (velocity: number) => {
+      stopCoasting();
+      if (!isFlick(velocity)) return;
+      let speedNow = velocity;
+      let lastFrame = Date.now();
+      const frame = () => {
+        const now = Date.now();
+        const seconds = Math.min(0.05, (now - lastFrame) / 1000);
+        lastFrame = now;
+        const step = coast(speedNow, seconds);
+        if (!step.moving) {
+          coasting.current = null;
+          return;
+        }
+        speedNow = step.velocity;
+        spend(step.points);
+        coasting.current = requestAnimationFrame(frame);
+      };
+      coasting.current = requestAnimationFrame(frame);
+    },
+    [spend, stopCoasting],
+  );
+
+  useEffect(() => stopCoasting, [stopCoasting]);
 
   return (
     <View
@@ -1433,34 +1544,46 @@ function MouseLayer({
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={({ nativeEvent }: GestureResponderEvent) => {
+        // A finger landing stops whatever the last one threw, exactly as
+        // catching a scroll view does.
+        stopCoasting();
         origin.current = nativeEvent.locationY;
         previous.current = nativeEvent.locationY;
         dragged.current = false;
         carried.current = 0;
+        track.current.clear();
+        movedAt.current = Date.now();
+        track.current.add(nativeEvent.locationY, movedAt.current);
       }}
       onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
-        const { height } = size.current;
         const travelled = nativeEvent.locationY - previous.current;
         previous.current = nativeEvent.locationY;
         if (Math.abs(nativeEvent.locationY - origin.current) > TAP_SLOP) dragged.current = true;
-        if (height <= 0 || grid.rows <= 0) return;
 
-        // A finger moving down pulls older output into view, which is the same
-        // sign the Surface's own scroll reports.
-        carried.current += travelled * (grid.rows / height) * SCROLL_SPEED;
-        const notches = Math.trunc(carried.current / LINES_PER_NOTCH);
-        if (notches === 0) return;
-        carried.current -= notches * LINES_PER_NOTCH;
-        onScroll(notches);
+        // The last moment of the drag rather than the whole of it: what a
+        // flick is worth is how fast the finger was going when it left, not
+        // how fast it went on the way there.
+        movedAt.current = Date.now();
+        track.current.add(nativeEvent.locationY, movedAt.current);
+
+        spend(travelled);
       }}
       onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
         const { width, height } = size.current;
-        if (dragged.current || width <= 0 || height <= 0) return;
+        if (dragged.current) {
+          // Stale by more than a frame or two means the finger had already
+          // stopped before it lifted, which is a placement rather than a throw.
+          const now = Date.now();
+          if (now - movedAt.current < 80) fling(track.current.velocity(now));
+          return;
+        }
+        if (width <= 0 || height <= 0) return;
         onTap(
           cellOf(nativeEvent.locationX, width, grid.cols),
           cellOf(nativeEvent.locationY, height, grid.rows),
         );
       }}
+      onResponderTerminate={() => stopCoasting()}
     />
   );
 }

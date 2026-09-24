@@ -261,6 +261,23 @@ export function sendKeysCommand(paneId: string, bytes: Uint8Array): TmuxArgv {
 }
 
 /**
+ * Sends one named key into a Pane.
+ *
+ * The name rather than the bytes, because which bytes are right depends on
+ * what the Pane is running and only tmux knows. Measured on tmux 3.6: Up into
+ * a shell is `ESC [ A`, and Up into anything that has turned DECCKM on — vim,
+ * less, a full-screen TUI — is `ESC O A`. Sending the bytes from here would
+ * mean tracking that mode per Pane, which is a second model of tmux's state of
+ * exactly the kind ADR 0006 declined to keep.
+ *
+ * Not through tmux's key table either: `send-keys` puts the key into the Pane,
+ * so a Meta key that happens to be the prefix is still just a key.
+ */
+export function sendKeyCommand(paneId: string, key: string): TmuxArgv {
+  return ['send-keys', '-t', paneId, key];
+}
+
+/**
  * Reads back what is already on a Pane's screen.
  *
  * `%output` only carries what happens *next*, so a Surface that has just

@@ -11,6 +11,7 @@ import {
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
+  sendKeyCommand,
   sendKeysCommand,
   splitWindowCommand,
   switchSessionCommand,
@@ -262,6 +263,17 @@ export class TmuxClient {
   async sendKeys(paneId: string, bytes: Uint8Array): Promise<void> {
     if (bytes.length === 0) return;
     await this.mustRun('send input', sendKeysCommand(paneId, bytes));
+  }
+
+  /**
+   * Sends one named key into a Pane: `Up`, `Escape`, `C-c`, `M-b`.
+   *
+   * The Meta menu's path. Named rather than the bytes for it, because which
+   * bytes are right depends on what the Pane is running and tmux is the only
+   * one here that knows — see sendKeyCommand.
+   */
+  async sendKey(paneId: string, key: string): Promise<void> {
+    await this.mustRun('send key', sendKeyCommand(paneId, key));
   }
 
   /**

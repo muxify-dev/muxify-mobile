@@ -133,6 +133,30 @@ describe('the control-mode path, against a real tmux', () => {
     await wait(900);
     expect(text(await client.capturePane(paneId))).toContain('LIVE_CHECK_OK');
 
+    // Every Meta key, by tmux's name for it, into a `cat -v` that prints back
+    // exactly what arrived. This is the half that cannot be driven from the
+    // device: a SwiftUI menu's cells report no usable frame, so automation
+    // taps the panel rather than the row it asked for.
+    view.type(new TextEncoder().encode('cat -v\r'));
+    await wait(700);
+    for (const key of ['Escape', 'Tab', 'Up', 'Down', 'Left', 'Right', 'Home', 'M-b']) {
+      view.press(key);
+      await wait(120);
+    }
+    await wait(600);
+    const arrived = text(await client.capturePane(paneId));
+    // What a terminal sends for each, with the Pane in its ordinary cursor
+    // mode: an application that turns DECCKM on gets `ESC O A` for Up instead,
+    // which is the whole reason the name is sent rather than the bytes.
+    // Tab arrives as a real tab: `cat -v` escapes the non-printing characters
+    // but leaves that one alone.
+    expect(arrived).toContain('^[\t^[[A^[[B^[[D^[[C^[[1~^[b');
+    view.press('C-c');
+    await wait(500);
+    expect(tmux(['display-message', '-p', '-t', paneId, '#{pane_current_command}']).trim()).not.toBe(
+      'cat',
+    );
+
     // A batch: one write, one reply each, and one of them failing takes
     // nothing with it.
     const previews = await client.capturePanes([`${SESSION}:${windowIndex}`, `${SESSION}:9999`]);

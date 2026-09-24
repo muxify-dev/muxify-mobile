@@ -1,5 +1,5 @@
 import { isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { Button, HStack, Host } from '@expo/ui/swift-ui';
+import { Button, ControlGroup, HStack, Host, Menu, Section } from '@expo/ui/swift-ui';
 import {
   buttonStyle,
   disabled,
@@ -15,13 +15,43 @@ import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 
+/** One row of a Dock button's menu. */
+export interface DockMenuItem {
+  id: string;
+  label: string;
+  systemImage?: SFSymbol;
+  onPress: () => void;
+}
+
+/**
+ * A run of menu rows, drawn either as a row of icons or as a submenu.
+ *
+ * `row` is SwiftUI's ControlGroup, which inside a menu lays its children out
+ * side by side instead of stacked — four arrows on one line rather than four.
+ */
+export interface DockMenuSection {
+  id: string;
+  title?: string;
+  kind: 'row' | 'nested';
+  items: DockMenuItem[];
+}
+
 export interface DockAction {
   /** Stable id, also used as the glass effect identity within the namespace. */
   id: string;
   label: string;
-  systemImage: SFSymbol;
+  /** Omitted for a button that shows its name instead of a glyph. */
+  systemImage?: SFSymbol;
   onPress: () => void;
   disabled?: boolean;
+  /**
+   * When present the button opens this instead of acting.
+   *
+   * A SwiftUI Menu, so the panel that opens is the system's own — glass,
+   * placed by iOS, dismissed the way every other menu on the phone is. Nothing
+   * here draws it.
+   */
+  menu?: DockMenuSection[];
 }
 
 export interface DockProps {
@@ -36,10 +66,16 @@ export interface DockProps {
  * applied once around the whole row: giving each button its own capsule makes
  * the Dock read as a chain of separate blobs, and it is one control.
  *
- * Note this bar carries no modifier keys. The terminal library ships its own
- * Accessory Bar with ctrl, esc and tab above the keyboard and exposes no way to
- * hide it, so duplicating them here would stack two rows of the same keys —
- * see ADR 0003.
+ * Several capsules rather than one, because the buttons are not all the same
+ * kind of thing: the keys a phone keyboard lacks, the things the Session is
+ * made of, and the way out. Grouping is what says so without a word of
+ * labelling.
+ *
+ * It does carry modifier keys now, which ADR 0003 ruled out. That decision
+ * rested on the terminal library's own Accessory Bar above the keyboard
+ * carrying ctrl, esc and tab already; the bar is turned off by a local patch
+ * because it covered the Dock, and with it gone the app had no escape, no tab
+ * and no arrows at all. See META_SECTIONS.
  */
 /**
  * Height the Dock must clear to stay tappable.
@@ -102,27 +138,69 @@ function GlassGroup({ actions }: { actions: DockAction[] }) {
           padding({ horizontal: 6, vertical: 4 }),
           glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),
         ]}>
-        {actions.map((action) => (
-          <Button
-            key={action.id}
-            label={action.label}
-            systemImage={action.systemImage}
-            onPress={action.onPress}
-            modifiers={[
-              // 44pt is the smallest reliably tappable target on iOS.
-              frame({ width: 52, height: 44 }),
-              buttonStyle('plain'),
-              // Icon only, but the label stays: it is what the accessibility
-              // tree exposes, and what every e2e suite presses by.
-              labelStyle('iconOnly'),
-              // Actually disabled, not merely inert: a button that looks
-              // pressable and does nothing is worse than one that says so.
-              disabled(action.disabled ?? false),
-            ]}
-          />
-        ))}
+        {actions.map((action) =>
+          action.menu ? (
+            <Menu
+              key={action.id}
+              label={action.label}
+              modifiers={[
+                frame({ height: 44 }),
+                padding({ horizontal: 10 }),
+                buttonStyle('plain'),
+                disabled(action.disabled ?? false),
+              ]}>
+              {action.menu.map((section) => (
+                <MenuSection key={section.id} section={section} />
+              ))}
+            </Menu>
+          ) : (
+            <Button
+              key={action.id}
+              label={action.label}
+              systemImage={action.systemImage}
+              onPress={action.onPress}
+              modifiers={[
+                // 44pt is the smallest reliably tappable target on iOS, and
+                // also as tight as the buttons can sit without the row reading
+                // as one smudge.
+                frame({ width: 44, height: 44 }),
+                buttonStyle('plain'),
+                // Icon only, but the label stays: it is what the accessibility
+                // tree exposes, and what every e2e suite presses by.
+                labelStyle('iconOnly'),
+                // Actually disabled, not merely inert: a button that looks
+                // pressable and does nothing is worse than one that says so.
+                disabled(action.disabled ?? false),
+              ]}
+            />
+          ),
+        )}
       </HStack>
     </Host>
+  );
+}
+
+/** One section of a Dock menu: a row of icons, or a submenu of rows. */
+function MenuSection({ section }: { section: DockMenuSection }) {
+  const items = section.items.map((item) => (
+    <Button
+      key={item.id}
+      label={item.label}
+      systemImage={item.systemImage}
+      onPress={item.onPress}
+    />
+  ));
+
+  if (section.kind === 'nested') {
+    return <Menu label={section.title ?? ''}>{items}</Menu>;
+  }
+  // Labelless, so the row is the keys and nothing else. iOS lays a
+  // ControlGroup inside a menu out horizontally, which is the whole reason the
+  // arrows are one line rather than four.
+  return (
+    <Section>
+      <ControlGroup>{items}</ControlGroup>
+    </Section>
   );
 }
 

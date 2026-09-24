@@ -47,6 +47,9 @@ function fakePane(state: PaneState = paneState()) {
       asked.push(`keys ${paneId}`);
       sent.push(data);
     },
+    async sendKey(paneId, key) {
+      asked.push(`key ${paneId} ${key}`);
+    },
   };
 
   return {
@@ -258,6 +261,57 @@ describe('typing', () => {
   });
 });
 
+describe('a key from the Meta menu', () => {
+  it('sends tmux the name, not the bytes', async () => {
+    const host = fakePane();
+    const { view } = viewOn(host);
+    await view.show('%4', 24);
+
+    view.press('Up');
+    await settle();
+
+    expect(host.asked).toContain('key %4 Up');
+  });
+
+  it('arrives where it was pressed, not past what was typed before it', async () => {
+    // A named key cannot be merged into a `send-keys -H` of typed bytes, so
+    // the two share one queue. Sending it straight out would put an arrow
+    // pressed mid-burst *before* the letters typed ahead of it.
+    const host = fakePane();
+    const { view } = viewOn(host);
+    await view.show('%0', 24);
+
+    view.type(bytes('a'));
+    view.type(bytes('b'));
+    view.press('C-c');
+    view.type(bytes('c'));
+    await settle();
+
+    expect(host.asked.filter((each) => each.startsWith('key') || each === 'keys %0')).toEqual([
+      'keys %0',
+      'keys %0',
+      'key %0 C-c',
+      'keys %0',
+    ]);
+    expect(host.sent.map((data) => shown([data]))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('spends itself getting back to the bottom, like a keystroke', async () => {
+    const host = fakePane();
+    const { view, positions } = viewOn(host);
+    await view.show('%0', 24);
+    view.scroll(2, { cols: 80, rows: 24 });
+    await settle();
+    host.asked.length = 0;
+
+    view.press('Up');
+    await settle();
+
+    expect(host.asked.some((each) => each.startsWith('key '))).toBe(false);
+    expect(positions[positions.length - 1]).toBeNull();
+  });
+});
+
 describe('scrolling a shell’s Scrollback', () => {
   it('paints the Scrollback tmux is holding, without entering copy-mode', async () => {
     const host = fakePane();
@@ -266,10 +320,10 @@ describe('scrolling a shell’s Scrollback', () => {
     await view.show('%0', 24);
     written.length = 0;
 
-    view.scroll(2, { cols: 80, rows: 24 });
+    view.scroll(10, { cols: 80, rows: 24 });
     await settle();
 
-    // Two notches of five lines each, a screen's worth from there.
+    // Ten lines back, a screen's worth from there.
     expect(host.asked).toContain('scrollback %0 -10..13');
     expect(shown(written)).toContain('older output');
     expect(host.sent).toHaveLength(0);
@@ -279,7 +333,7 @@ describe('scrolling a shell’s Scrollback', () => {
     const host = fakePane(paneState({ scrollbackLines: 240 }));
     const { view, positions } = viewOn(host);
     await view.show('%0', 24);
-    view.scroll(3, { cols: 80, rows: 24 });
+    view.scroll(15, { cols: 80, rows: 24 });
     await settle();
 
     expect(positions[positions.length - 1]).toEqual({ back: 15, scrollbackLines: 240 });
@@ -289,7 +343,7 @@ describe('scrolling a shell’s Scrollback', () => {
     const host = fakePane(paneState({ scrollbackLines: 7 }));
     const { view, positions } = viewOn(host);
     await view.show('%0', 24);
-    view.scroll(50, { cols: 80, rows: 24 });
+    view.scroll(250, { cols: 80, rows: 24 });
     await settle();
 
     expect(positions[positions.length - 1]).toEqual({ back: 7, scrollbackLines: 7 });
@@ -299,11 +353,11 @@ describe('scrolling a shell’s Scrollback', () => {
     const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
     const { view, written, positions } = viewOn(host);
     await view.show('%0', 24);
-    view.scroll(2, { cols: 80, rows: 24 });
+    view.scroll(10, { cols: 80, rows: 24 });
     await settle();
     written.length = 0;
 
-    view.scroll(-10, { cols: 80, rows: 24 });
+    view.scroll(-50, { cols: 80, rows: 24 });
     await settle();
 
     expect(positions[positions.length - 1]).toBeNull();
@@ -314,7 +368,7 @@ describe('scrolling a shell’s Scrollback', () => {
     const host = fakePane();
     const { view, positions } = viewOn(host);
     await view.show('%0', 24);
-    view.scroll(4, { cols: 80, rows: 24 });
+    view.scroll(20, { cols: 80, rows: 24 });
     await settle();
 
     view.jumpToLatest();
@@ -327,7 +381,7 @@ describe('scrolling a shell’s Scrollback', () => {
     const host = fakePane();
     const { view, written } = viewOn(host);
     await view.show('%0', 24);
-    view.scroll(2, { cols: 80, rows: 24 });
+    view.scroll(10, { cols: 80, rows: 24 });
     await settle();
     written.length = 0;
 
@@ -341,9 +395,9 @@ describe('scrolling a shell’s Scrollback', () => {
     await view.show('%0', 24);
     host.asked.length = 0;
 
-    view.scroll(1, { cols: 80, rows: 24 });
-    view.scroll(1, { cols: 80, rows: 24 });
-    view.scroll(1, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
     await settle();
 
     const captures = host.asked.filter((each) => each.startsWith('scrollback'));
@@ -357,7 +411,7 @@ describe('scrolling a shell’s Scrollback', () => {
     await view.show('%0', 24);
     positions.length = 0;
 
-    view.scroll(3, { cols: 80, rows: 24 });
+    view.scroll(15, { cols: 80, rows: 24 });
     await settle();
 
     expect(host.asked.filter((each) => each.startsWith('scrollback'))).toHaveLength(0);
@@ -371,10 +425,11 @@ describe('scrolling a full-screen application', () => {
     const { view } = viewOn(host);
     await view.show('%0', 24);
 
-    view.scroll(2, { cols: 80, rows: 24 });
+    view.scroll(10, { cols: 80, rows: 24 });
     await settle();
 
-    // SGR wheel-up, twice, aimed at the middle of the Surface.
+    // Ten lines is two notches of the wheel, aimed at the middle of the
+    // Surface.
     expect(shown(host.sent)).toBe('<ESC>[<64;40;12M<ESC>[<64;40;12M');
     expect(host.asked.filter((each) => each.startsWith('scrollback'))).toHaveLength(0);
   });
@@ -386,10 +441,27 @@ describe('scrolling a full-screen application', () => {
     const { view } = viewOn(host);
     await view.show('%0', 24);
 
-    view.scroll(1, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[A'.repeat(5));
+  });
+
+  it('carries a part-notch rather than dropping it', async () => {
+    // A finger is not a wheel. Four lines is less than a notch, and throwing
+    // the remainder away is a slow drag over `less` that moves nothing at all
+    // — and a flick whose last, smallest frames count for nothing.
+    const host = fakePane(paneState({ alternate: true, wantsMouse: true }));
+    const { view } = viewOn(host);
+    await view.show('%0', 24);
+
+    view.scroll(4, { cols: 80, rows: 24 });
+    await settle();
+    expect(host.sent).toHaveLength(0);
+
+    view.scroll(2, { cols: 80, rows: 24 });
+    await settle();
+    expect(shown(host.sent)).toBe('<ESC>[<64;40;12M');
   });
 
   it('scrolls down as readily as up', async () => {
@@ -397,7 +469,7 @@ describe('scrolling a full-screen application', () => {
     const { view } = viewOn(host);
     await view.show('%0', 24);
 
-    view.scroll(-1, { cols: 80, rows: 24 });
+    view.scroll(-5, { cols: 80, rows: 24 });
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[<65;40;12M');
@@ -413,16 +485,16 @@ describe('scrolling a full-screen application', () => {
 
     // A gesture while the reading is still fresh is routed by what was true
     // when it was taken.
-    view.scroll(1, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
     await settle();
     expect(host.sent).toHaveLength(0);
 
     // Once it has gone stale, the gesture that finds it so asks again — so the
-    // drag is routed by its second notch rather than by the next drag.
+    // drag is routed by its second frame rather than by the next drag.
     tick(2000);
-    view.scroll(1, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
     await settle();
-    view.scroll(1, { cols: 80, rows: 24 });
+    view.scroll(5, { cols: 80, rows: 24 });
     await settle();
 
     expect(shown(host.sent)).toBe('<ESC>[A'.repeat(5));
