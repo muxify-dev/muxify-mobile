@@ -26,6 +26,12 @@ function ids() {
   return () => `id${++next}`;
 }
 
+/** A clock that ticks a second per read, so an order is an order. */
+function clock() {
+  let seconds = 0;
+  return () => new Date(Date.UTC(2026, 0, 1, 0, 0, ++seconds));
+}
+
 const HOST = {
   displayName: 'Build box',
   address: '10.0.0.4',
@@ -201,6 +207,7 @@ describe('load', () => {
       hosts: [],
       identities: [],
       fingerprints: [],
+      recentSessions: [],
     });
   });
 
@@ -211,6 +218,7 @@ describe('load', () => {
       hosts: [],
       identities: [],
       fingerprints: [],
+      recentSessions: [],
     });
   });
 
@@ -221,6 +229,79 @@ describe('load', () => {
       hosts: [],
       identities: [],
       fingerprints: [],
+      recentSessions: [],
     });
+  });
+});
+
+describe('recent Sessions', () => {
+  it('remembers a Session against its Host, most recently opened first', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids(), clock());
+
+    await store.rememberSession('host1', 'dotfiles');
+    await store.rememberSession('host1', 'muxify');
+
+    expect((await store.recentSessionsFor('host1')).map((s) => s.name)).toEqual([
+      'muxify',
+      'dotfiles',
+    ]);
+  });
+
+  it('moves a Session back to the top when it is opened again', async () => {
+    // The order is the point of the record: the list should answer "where was
+    // I", and a Session opened twice is not older than one opened once.
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids(), clock());
+
+    await store.rememberSession('host1', 'dotfiles');
+    await store.rememberSession('host1', 'muxify');
+    await store.rememberSession('host1', 'dotfiles');
+
+    const recent = await store.recentSessionsFor('host1');
+    expect(recent.map((s) => s.name)).toEqual(['dotfiles', 'muxify']);
+    expect(recent).toHaveLength(2);
+  });
+
+  it('keeps each Host to its own Sessions', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids(), clock());
+
+    await store.rememberSession('host1', 'shared-name');
+    await store.rememberSession('host2', 'shared-name');
+
+    expect(await store.recentSessionsFor('host1')).toHaveLength(1);
+    expect(await store.recentSessionsFor('host2')).toHaveLength(1);
+  });
+
+  it('forgets one Session without touching the others', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids(), clock());
+
+    await store.rememberSession('host1', 'dotfiles');
+    await store.rememberSession('host1', 'muxify');
+    await store.forgetSession('host1', 'dotfiles');
+
+    expect((await store.recentSessionsFor('host1')).map((s) => s.name)).toEqual(['muxify']);
+  });
+
+  it('forgets a Host’s Sessions along with the Host', async () => {
+    // Otherwise a Host deleted and re-added comes back haunted by the Sessions
+    // of the one before it.
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const host = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+    await store.rememberSession(host.id, 'muxify');
+
+    await store.removeHost(host.id);
+
+    expect(await store.recentSessionsFor(host.id)).toEqual([]);
+  });
+
+  it('reads records written before recent Sessions existed', async () => {
+    const { file, secrets } = fakeStorage('{"hosts":[],"identities":[],"fingerprints":[]}');
+    const store = createHostStore(file, secrets, ids());
+
+    expect((await store.load()).recentSessions).toEqual([]);
   });
 });

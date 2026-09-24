@@ -232,6 +232,11 @@ export default function TerminalScreen() {
         shell.current = opened;
         setStatus({ phase: 'connected', fingerprint });
 
+        // Stamped on a Session that actually opened, not on one that was only
+        // tapped: the Host Screen's order is a record of where you have been,
+        // and a Session that refused to attach is not somewhere you have been.
+        void store.rememberSession(host.id, sessionParam);
+
         void (async () => {
           // Ours is the Client that just attached; a redraw aimed anywhere else
           // would leave this Surface dirty.
@@ -435,6 +440,10 @@ export default function TerminalScreen() {
             sessionName.current = id;
             setAttachedSession(id);
             setPicker({ open: false });
+            // Switching lands in a Session just as arriving does, so it counts
+            // the same on the Host Screen. Without this the order would only
+            // remember how a visit started, not where it went.
+            if (hostId) void deviceHostStore().rememberSession(hostId, id);
             // The Session switched to has never been prepared: its Window is
             // sized for whatever last attached, and its status line is on.
             await sessions.current?.prepare(id, clientTty.current);
@@ -463,7 +472,7 @@ export default function TerminalScreen() {
         }
       })();
     },
-    [refreshTopology, topology?.activeWindow, zoomed, remoteSize],
+    [refreshTopology, topology?.activeWindow, zoomed, remoteSize, hostId],
   );
 
   /** Zoom, split and new-Window: the sheet's bottom bar. */

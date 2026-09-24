@@ -1,43 +1,93 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
 
-import { GlassRow } from '@/components/glass-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import {
+  Button,
+  Form,
+  Host,
+  HStack,
+  Image,
+  ProgressView,
+  Section,
+  Spacer,
+  SwipeActions,
+  Text,
+  VStack,
+} from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  background,
+  buttonStyle,
+  environment,
+  font,
+  foregroundColor,
+  frame,
+  listRowBackground,
+  scrollContentBackground,
+  tint,
+} from '@expo/ui/swift-ui/modifiers';
+
+import type { Appearance } from '@/constants/app-theme';
+import { hostSessions, type RecentRow } from '@/domain/host-sessions';
+import { timeAgoFrom } from '@/lib/relative-time';
+import { useSettings } from '@/settings/settings-context';
 import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host as HostRecord } from '@/storage/records';
+import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient, type Session } from '@/tmux/tmux-client';
 
-type State =
-  | { phase: 'loading' }
-  | { phase: 'ready'; sessions: Session[] }
+/** How many rows a section shows before it offers to show the rest. */
+const COLLAPSED = 3;
+
+/** What the Host has to say for itself, once asked. */
+type Listing =
+  | { phase: 'reading' }
+  | { phase: 'read'; sessions: Session[] }
   | { phase: 'failed'; message: string };
 
 /**
- * A Host's Sessions.
+ * A Host and its Sessions.
  *
- * Reading them costs a whole Connection, which is dropped again once the list
- * is in hand: Connections are cheap to make and expensive to hold, and the
- * Terminal Screen opens its own anyway.
+ * Two lists, because there are two different things here: the Sessions this
+ * phone has opened before — which Muxify remembers, in the order you last
+ * wanted them — and everything else the Host happens to be running. See
+ * hostSessions for the rule that decides which is which.
+ *
+ * What is remembered is on screen before the Host is even dialled, and the
+ * Host's own answer arrives underneath a moment later. A Host you cannot reach
+ * is exactly when you most want to see what you had open on it.
  */
-export default function HostDetailScreen() {
+export default function HostScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [host, setHost] = useState<HostRecord | undefined>();
-  const [state, setState] = useState<State>({ phase: 'loading' });
+  const { appearance, palette } = useSettings();
 
-  const read = useCallback(async () => {
-    setState({ phase: 'loading' });
+  const [host, setHost] = useState<HostRecord | undefined>();
+  const [recent, setRecent] = useState<RecentSession[]>([]);
+  const [listing, setListing] = useState<Listing>({ phase: 'reading' });
+  const [showEveryRecent, setShowEveryRecent] = useState(false);
+  const [showEveryAvailable, setShowEveryAvailable] = useState(false);
+  // Frozen per visit: "2 hr ago" must not renumber itself under the user's
+  // thumb, and the screen is short-lived enough that it will not go stale.
+  const [openedAt] = useState(() => new Date());
+
+  const readRecords = useCallback(async () => {
+    const store = deviceHostStore();
+    const records = await store.load();
+    setHost(records.hosts.find((candidate) => candidate.id === id));
+    setRecent(await store.recentSessionsFor(id));
+  }, [id]);
+
+  const readHost = useCallback(async () => {
+    setListing({ phase: 'reading' });
     const store = deviceHostStore();
     const records = await store.load();
     const found = records.hosts.find((candidate) => candidate.id === id);
-    setHost(found);
     if (!found) {
-      setState({ phase: 'failed', message: 'This Host is no longer saved.' });
+      setListing({ phase: 'failed', message: 'This Host is no longer saved.' });
       return;
     }
 
@@ -54,105 +104,358 @@ export default function HostDetailScreen() {
         });
         // A Host with no tmux server is a Host with no Sessions, which the
         // client already forgives — it must not read as a failure here.
-        setState({ phase: 'ready', sessions: await client.listSessions() });
+        setListing({ phase: 'read', sessions: await client.listSessions() });
       } finally {
         await connection.disconnect();
       }
     } catch (error) {
-      setState({ phase: 'failed', message: describeConnectionFailure(error) });
+      setListing({ phase: 'failed', message: describeConnectionFailure(error) });
     }
   }, [id]);
 
-  useEffect(() => {
-    void read();
-  }, [read]);
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        await readRecords();
+        await readHost();
+      })();
+    }, [readRecords, readHost]),
+  );
+
+  const open = useCallback(
+    (name: string) => {
+      router.push({ pathname: '/terminal', params: { hostId: id, session: name } });
+    },
+    [router, id],
+  );
+
+  const forget = useCallback(
+    (name: string) => {
+      void (async () => {
+        await deviceHostStore().forgetSession(id, name);
+        await readRecords();
+      })();
+    },
+    [id, readRecords],
+  );
+
+  const { recent: rows, available } = hostSessions(
+    recent,
+    listing.phase === 'read' ? listing.sessions : undefined,
+  );
+  // Counted from what the Host said, not from the rows above it: a Session
+  // someone is on counts whether or not this phone has ever opened it.
+  const attachedCount =
+    listing.phase === 'read' ? listing.sessions.filter((session) => session.attached).length : 0;
 
   return (
-    <ThemedView style={styles.fill}>
-      <ScrollView contentContainerStyle={styles.list}>
-        <ThemedText type="small" themeColor="textSecondary">
-          {host ? `${host.address}:${host.port}` : ''}
-        </ThemedText>
+    <View style={styles.fill}>
+      <Stack.Screen
+        options={{
+          title: host?.displayName ?? 'Host',
+          headerRight: () => (
+            <ToolbarActions
+              palette={palette}
+              onEdit={() => router.push({ pathname: '/host-form', params: { id } })}
+              onNew={() => router.push({ pathname: '/session-form', params: { hostId: id } })}
+            />
+          ),
+        }}
+      />
 
-        {state.phase === 'loading' ? (
-          <View style={styles.centred} accessibilityLabel="Reading Sessions">
-            <ActivityIndicator />
-            <ThemedText type="small" themeColor="textSecondary">
-              Reading Sessions…
-            </ThemedText>
-          </View>
-        ) : null}
+      <Host style={styles.fill} matchContents={false}>
+        <Form
+          modifiers={[
+            // See settings.tsx: SwiftUI follows the phone, not the app.
+            environment('colorScheme', appearance),
+            scrollContentBackground('hidden'),
+            background(palette.background),
+            tint(palette.controlAccent),
+          ]}>
+          <Section
+            header={<SectionHeader palette={palette}>Connection</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <VStack
+              spacing={4}
+              alignment="leading"
+              modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+              <Text modifiers={[font({ size: 17 })]}>Address</Text>
+              <Text
+                modifiers={[
+                  font({ size: 13, design: 'monospaced' }),
+                  foregroundColor(palette.secondaryLabel),
+                ]}>
+                {host ? `${host.address}:${host.port}` : ''}
+              </Text>
+            </VStack>
 
-        {state.phase === 'failed' ? (
-          <ThemedText type="small" style={styles.error} testID="host-error">
-            {state.message}
-          </ThemedText>
-        ) : null}
+            <HStack modifiers={[frame({ maxWidth: 3000 })]}>
+              <Text modifiers={[font({ size: 17 })]}>Sessions</Text>
+              <Spacer />
+              <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
+                {sessionSummary(rows.length + available.length, attachedCount, listing)}
+              </Text>
+            </HStack>
+          </Section>
 
-        {state.phase === 'ready' && state.sessions.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary" testID="no-sessions">
-            No tmux Sessions are running on this Host.
-          </ThemedText>
-        ) : null}
+          <Section
+            header={<SectionHeader palette={palette}>Sessions</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            {rows.length === 0 ? (
+              <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+                {listing.phase === 'reading'
+                  ? 'Nothing opened on this Host yet.'
+                  : 'Nothing opened on this Host yet. Pick one below to start.'}
+              </Text>
+            ) : (
+              collapse(rows, showEveryRecent).map((row) => (
+                <SwipeActions key={row.name}>
+                  <RecentSessionRow
+                    row={row}
+                    palette={palette}
+                    openedAt={openedAt}
+                    onPress={() => open(row.name)}
+                  />
+                  <SwipeActions.Actions>
+                    {/* Not destructive, and deliberately not red: this drops
+                        Muxify's memory of the Session and leaves it running. */}
+                    <Button
+                      label="Forget"
+                      systemImage="minus.circle"
+                      onPress={() => forget(row.name)}
+                      modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
+                    />
+                  </SwipeActions.Actions>
+                </SwipeActions>
+              ))
+            )}
 
-        {state.phase === 'ready'
-          ? state.sessions.map((session) => (
-              <GlassRow
+            {rows.length > COLLAPSED ? (
+              <DisclosureRow
+                palette={palette}
+                expanded={showEveryRecent}
+                onPress={() => setShowEveryRecent((shown) => !shown)}
+              />
+            ) : null}
+          </Section>
+
+          <Section
+            header={<SectionHeader palette={palette}>Available on Host</SectionHeader>}
+            footer={
+              available.length > 0 ? (
+                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                  Opening one adds it to Sessions above.
+                </Text>
+              ) : undefined
+            }
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            {listing.phase === 'reading' ? (
+              <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
+                <ProgressView />
+                <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+                  Checking Sessions…
+                </Text>
+                <Spacer />
+              </HStack>
+            ) : null}
+
+            {listing.phase === 'failed' ? (
+              <VStack
+                spacing={8}
+                alignment="leading"
+                modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+                <HStack spacing={8}>
+                  <Image systemName="exclamationmark.triangle" size={15} color={palette.destructive} />
+                  <Text modifiers={[font({ size: 15 }), foregroundColor(palette.destructive)]}>
+                    {listing.message}
+                  </Text>
+                  <Spacer />
+                </HStack>
+                <Button
+                  label="Retry"
+                  onPress={() => void readHost()}
+                  modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel('Retry')]}
+                />
+              </VStack>
+            ) : null}
+
+            {listing.phase === 'read' && available.length === 0 ? (
+              <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+                No other Sessions on this Host.
+              </Text>
+            ) : null}
+
+            {collapse(available, showEveryAvailable).map((session) => (
+              <Button
                 key={session.name}
-                accessibilityLabel={`Session ${session.name}`}
-                onPress={() =>
-                  router.push({
-                    pathname: '/terminal',
-                    params: { hostId: id, session: session.name },
-                  })
-                }>
-                <ThemedText type="smallBold">{session.name}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {`${session.windowCount} ${session.windowCount === 1 ? 'window' : 'windows'}`}
-                </ThemedText>
-              </GlassRow>
-            ))
-          : null}
+                onPress={() => open(session.name)}
+                modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${session.name}`)]}>
+                <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+                  <Image systemName="terminal" size={20} color={palette.rowIcon} />
+                  <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
+                  <Spacer />
+                  {session.attached ? <AttachedBadge palette={palette} /> : null}
+                  <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+                </HStack>
+              </Button>
+            ))}
 
-        <View style={styles.actions}>
-          <GlassRow accessibilityLabel="Retry" onPress={() => void read()} style={styles.action}>
-            <ThemedText type="small">Retry</ThemedText>
-          </GlassRow>
-          <GlassRow
-            accessibilityLabel="Edit Host"
-            onPress={() => router.push({ pathname: '/host-form', params: { id } })}
-            style={styles.action}>
-            <ThemedText type="small">Edit Host</ThemedText>
-          </GlassRow>
-        </View>
-      </ScrollView>
-    </ThemedView>
+            {available.length > COLLAPSED ? (
+              <DisclosureRow
+                palette={palette}
+                expanded={showEveryAvailable}
+                onPress={() => setShowEveryAvailable((shown) => !shown)}
+              />
+            ) : null}
+          </Section>
+        </Form>
+      </Host>
+    </View>
   );
+}
+
+/** A remembered Session: what it is called, when you last opened it, who is on it. */
+function RecentSessionRow({
+  row,
+  palette,
+  openedAt,
+  onPress,
+}: {
+  row: RecentRow;
+  palette: Appearance;
+  openedAt: Date;
+  onPress: () => void;
+}) {
+  const opened = timeAgoFrom(row.lastOpenedAt, openedAt);
+  return (
+    <Button
+      onPress={onPress}
+      modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+        <Image systemName="terminal" size={20} color={palette.rowIcon} />
+        <VStack spacing={2} alignment="leading">
+          <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
+          {opened === undefined ? null : (
+            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+              {`Opened ${opened}`}
+            </Text>
+          )}
+        </VStack>
+        <Spacer />
+        {row.attached ? <AttachedBadge palette={palette} /> : null}
+        <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+      </HStack>
+    </Button>
+  );
+}
+
+/**
+ * Says that someone is on this Session — anyone, not necessarily Muxify.
+ *
+ * A warning rather than a status: Muxify borrows `window-size smallest` while
+ * attached, so joining a Session someone is watching shrinks their Window to
+ * the size of this phone.
+ */
+function AttachedBadge({ palette }: { palette: Appearance }) {
+  return (
+    <HStack spacing={5}>
+      <Image systemName="circle.fill" size={8} color={palette.controlAccent} />
+      <Text modifiers={[font({ size: 15 }), foregroundColor(palette.controlAccent)]}>Attached</Text>
+    </HStack>
+  );
+}
+
+/** The row at the foot of a section that has more to show. */
+function DisclosureRow({
+  palette,
+  expanded,
+  onPress,
+}: {
+  palette: Appearance;
+  expanded: boolean;
+  onPress: () => void;
+}) {
+  const label = expanded ? 'Show fewer' : 'Show more';
+  return (
+    <Button
+      onPress={onPress}
+      modifiers={[buttonStyle('plain'), accessibilityLabel(label)]}>
+      <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 })]}>
+        <Image
+          systemName={expanded ? 'chevron.up' : 'chevron.down'}
+          size={15}
+          color={palette.controlAccent}
+        />
+        <Text modifiers={[font({ size: 17 }), foregroundColor(palette.controlAccent)]}>{label}</Text>
+        <Spacer />
+      </HStack>
+    </Button>
+  );
+}
+
+/**
+ * Edit and New, as one glass group — the shape iOS gives a toolbar item group.
+ *
+ * Plain React Native rather than a SwiftUI island, including the Symbol: a bar
+ * button's glass is drawn around the width the custom view reports, and an
+ * island reports its width too late, so the capsule came out clamped with the
+ * plus cut off. Yoga measures these immediately.
+ */
+function ToolbarActions({
+  palette,
+  onEdit,
+  onNew,
+}: {
+  palette: Appearance;
+  onEdit: () => void;
+  onNew: () => void;
+}) {
+  return (
+    <View style={styles.toolbarGroup}>
+      <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit Host">
+        <RNText style={[styles.toolbarWord, { color: palette.toolbarTint }]}>Edit</RNText>
+      </Pressable>
+      <Pressable onPress={onNew} accessibilityRole="button" accessibilityLabel="New Session">
+        <SymbolView name="plus" size={22} tintColor={palette.toolbarTint} />
+      </Pressable>
+    </View>
+  );
+}
+
+function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
+  return (
+    <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.sectionHeader)]}>
+      {children}
+    </Text>
+  );
+}
+
+/**
+ * How the Connection section describes the Host in one line.
+ *
+ * Silent until the Host has actually answered: a count assembled from memory
+ * alone would say "2 sessions" about a machine that has nine.
+ */
+function sessionSummary(total: number, attached: number, listing: Listing): string {
+  if (listing.phase !== 'read') return '—';
+  const sessions = `${total} ${total === 1 ? 'session' : 'sessions'}`;
+  return attached > 0 ? `${sessions} · ${attached} attached` : sessions;
+}
+
+function collapse<T>(items: T[], expanded: boolean): T[] {
+  return expanded ? items : items.slice(0, COLLAPSED);
 }
 
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
   },
-  list: {
-    padding: Spacing.three,
-    gap: Spacing.two,
-  },
-  centred: {
-    alignItems: 'center',
-    gap: Spacing.one,
-    paddingVertical: Spacing.four,
-  },
-  error: {
-    color: '#ff6b6b',
-  },
-  actions: {
+  toolbarGroup: {
     flexDirection: 'row',
-    gap: Spacing.two,
-    paddingTop: Spacing.two,
-  },
-  action: {
-    flex: 1,
     alignItems: 'center',
+    gap: 16,
+  },
+  toolbarWord: {
+    fontSize: 17,
   },
 });

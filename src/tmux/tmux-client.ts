@@ -2,6 +2,7 @@ import {
   attachSessionCommand,
   CAPTURE_SEPARATOR,
   capturePanesCommand,
+  createSessionCommand,
   listClientsCommand,
   listPanesCommand,
   listSessionsCommand,
@@ -27,6 +28,12 @@ export interface Session {
   name: string;
   /** How many Windows it holds, which is all a picker needs to describe it. */
   windowCount: number;
+  /**
+   * Whether any Client is on it — anyone's, not just Muxify's. A Session
+   * someone else is watching is one that Attaching will shrink, because the
+   * Window follows the smallest Client.
+   */
+  attached: boolean;
 }
 
 /** A tmux Window inside a Session. */
@@ -122,11 +129,22 @@ export class TmuxClient {
     }
 
     return nonEmptyLines(result.stdout).flatMap((line) => {
-      const fields = splitFields(line, 2);
+      const fields = splitFields(line, 3);
       if (!fields) return [];
-      const [name, windowCount] = fields;
-      return [{ name, windowCount: countOf(windowCount) }];
+      const [windowCount, name, attached] = fields;
+      return [{ name, windowCount: countOf(windowCount), attached: attached !== '0' }];
     });
+  }
+
+  /**
+   * Creates a Session on the Host and leaves it running.
+   *
+   * Unlike a listing, a failure is reported: the name may already be taken,
+   * and silently handing back the Session that owns it would be worse than an
+   * error. See ADR 0005.
+   */
+  async createSession(name: string): Promise<void> {
+    await this.run('create Session', createSessionCommand(name, this.tmuxExecutablePath));
   }
 
   /** The Windows of a Session. A Session that has vanished reads as none. */

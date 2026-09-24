@@ -8,6 +8,7 @@ import {
   listClientsCommand,
   redrawClientCommand,
   listPanesCommand,
+  createSessionCommand,
   listSessionsCommand,
   listWindowsCommand,
   selectPaneCommand,
@@ -45,15 +46,35 @@ describe('shellQuote', () => {
 });
 
 describe('listSessionsCommand', () => {
-  it('asks tmux for one Session name per line', () => {
+  it('asks tmux for the Window count, the name and whether anything is attached', () => {
     expect(listSessionsCommand()).toBe(
-      "tmux list-sessions -F '#{session_name}\t#{session_windows}'",
+      "tmux list-sessions -F '#{session_windows}\t#{session_name}\t#{session_attached}'",
     );
   });
 
   it('uses an explicit tmux path when the Host provides one', () => {
     expect(listSessionsCommand('/usr/bin/tmux')).toBe(
-      "'/usr/bin/tmux' list-sessions -F '#{session_name}\t#{session_windows}'",
+      "'/usr/bin/tmux' list-sessions -F '#{session_windows}\t#{session_name}\t#{session_attached}'",
+    );
+  });
+});
+
+describe('createSessionCommand', () => {
+  it('creates the Session detached, so the exec channel is not left holding it', () => {
+    expect(createSessionCommand('notes')).toBe("tmux new-session -d -s 'notes'");
+  });
+
+  it('quotes a name that would otherwise reach the shell', () => {
+    expect(createSessionCommand("; rm -rf /")).toBe("tmux new-session -d -s '; rm -rf /'");
+  });
+
+  it('never uses -A, which would hand back an existing Session instead of failing', () => {
+    expect(createSessionCommand('taken')).not.toContain('-A');
+  });
+
+  it('uses an explicit tmux path when the Host provides one', () => {
+    expect(createSessionCommand('notes', '/usr/bin/tmux')).toBe(
+      "'/usr/bin/tmux' new-session -d -s 'notes'",
     );
   });
 });

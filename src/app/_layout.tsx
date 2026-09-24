@@ -65,7 +65,18 @@ function AppStack() {
             title: 'New Host',
           }}
         />
-        <Stack.Screen name="hosts/[id]" options={{ title: 'Sessions' }} />
+        <Stack.Screen name="hosts/[id]" options={{ title: 'Host' }} />
+        <Stack.Screen
+          name="session-form"
+          options={{
+            // A short sheet: one field, and the Host Screen stays visible
+            // behind it because that is where the new Session will appear.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.4],
+            sheetGrabberVisible: true,
+            title: 'New Session',
+          }}
+        />
         {/* No header: the Surface fills the screen to the top, and the Dock's
             Home button already goes back. */}
         <Stack.Screen name="terminal" options={{ headerShown: false }} />

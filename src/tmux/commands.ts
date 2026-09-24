@@ -28,13 +28,43 @@ function tmux(executablePath?: string): string {
 }
 
 /**
- * Control Command listing Session names, one per line.
+ * Control Command listing the Host's Sessions: Window count, name, and whether
+ * anything is attached, tab separated.
+ *
+ * The name sits second to last because a Session name may contain a tab and
+ * the fields around it may not — see splitFields, which rejoins the overflow
+ * into that position.
+ *
+ * `session_attached` is how many Clients a Session has, and it is read for the
+ * Host Screen's badge. It says nothing about Muxify: a Session is attached
+ * when *anyone* is on it, which is the useful warning, because Muxify borrows
+ * `window-size smallest` and taking over a Session someone is watching shrinks
+ * their Window to phone size.
  *
  * A Host with no tmux server running exits non-zero here; that is an empty
  * Session list, not a failure, and the caller must treat it as such.
  */
 export function listSessionsCommand(tmuxExecutablePath?: string): string {
-  return `${tmux(tmuxExecutablePath)} list-sessions -F '#{session_name}\t#{session_windows}'`;
+  return (
+    `${tmux(tmuxExecutablePath)} list-sessions ` +
+    "-F '#{session_windows}\t#{session_name}\t#{session_attached}'"
+  );
+}
+
+/**
+ * Control Command creating a Session and leaving it running, detached.
+ *
+ * Detached (`-d`) because the Shell Channel attaches separately a moment later:
+ * a Control Command runs on its own exec channel and has no terminal to hand a
+ * foreground Session, so creating one attached would hang the channel.
+ *
+ * `new-session` rather than `new-session -A`, and never as part of Attach: if
+ * the name is already taken this must fail loudly rather than silently hand
+ * back someone else's Session. See ADR 0005 for why Muxify creates Sessions at
+ * all, having spent its first year refusing to.
+ */
+export function createSessionCommand(name: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} new-session -d -s ${shellQuote(name)}`;
 }
 
 /**

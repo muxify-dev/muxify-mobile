@@ -37,21 +37,35 @@ class FakeTransport implements TmuxTransport {
 
 describe('listSessions', () => {
   it('returns each Session with how many Windows it holds', async () => {
-    const transport = new FakeTransport({ 'list-sessions': { stdout: 'main\t3\nwork\t1\n0\t2\n' } });
+    const transport = new FakeTransport({
+      'list-sessions': { stdout: '3\tmain\t1\n1\twork\t0\n2\t0\t0\n' },
+    });
     await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
-      { name: 'main', windowCount: 3 },
-      { name: 'work', windowCount: 1 },
-      { name: '0', windowCount: 2 },
+      { name: 'main', windowCount: 3, attached: true },
+      { name: 'work', windowCount: 1, attached: false },
+      { name: '0', windowCount: 2, attached: false },
+    ]);
+  });
+
+  it('reads a Session whose name contains a tab', async () => {
+    // Why the name sits between the two numeric fields in the format: the
+    // parser rejoins overflow into that position, so a tab inside a name
+    // cannot shift the attached flag out from under it.
+    const transport = new FakeTransport({
+      'list-sessions': { stdout: '1\tbuild\tstep\t1\n' },
+    });
+    await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
+      { name: 'build\tstep', windowCount: 1, attached: true },
     ]);
   });
 
   it('ignores blank lines and trailing whitespace', async () => {
     const transport = new FakeTransport({
-      'list-sessions': { stdout: '  main\t1  \n\n\nwork\t2\n\n' },
+      'list-sessions': { stdout: '  1\tmain\t0  \n\n\n2\twork\t0\n\n' },
     });
     await expect(new TmuxClient(transport).listSessions()).resolves.toEqual([
-      { name: 'main', windowCount: 1 },
-      { name: 'work', windowCount: 2 },
+      { name: 'main', windowCount: 1, attached: false },
+      { name: 'work', windowCount: 2, attached: false },
     ]);
   });
 

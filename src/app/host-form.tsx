@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import {
   Form,
@@ -32,6 +32,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
+import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import {
@@ -362,41 +363,8 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
   );
 }
 
-/**
- * The sheet's confirming word: Add for a new Host, Save for an edit.
- *
- * Plain React Native, and padded: iOS 26 draws its glass capsule around the
- * view's own frame, so a bare word ends up in a disc it spills out of.
- */
-function ToolbarWord({
-  label,
-  color,
-  onPress,
-}: {
-  label: string;
-  color: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={styles.toolbarWord}>
-      <RNText style={[styles.toolbarWordText, { color }]}>{label}</RNText>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
-  },
-  toolbarWord: {
-    paddingHorizontal: 8,
-  },
-  toolbarWordText: {
-    fontSize: 17,
-    fontWeight: '600',
   },
 });

@@ -1,4 +1,11 @@
-import { emptyRecords, type Fingerprint, type Host, type Identity, type Records } from './records';
+import {
+  emptyRecords,
+  type Fingerprint,
+  type Host,
+  type Identity,
+  type RecentSession,
+  type Records,
+} from './records';
 
 /** Where the JSON lives. The one seam between the store and the filesystem. */
 export interface JsonFile {
@@ -34,6 +41,12 @@ export interface HostStore {
   credentialFor(hostId: string): Promise<string | null>;
   rememberFingerprint(hostId: string, value: string): Promise<void>;
   fingerprintFor(hostId: string): Promise<Fingerprint | undefined>;
+  /** Records that this phone has just opened a Session, stamped now. */
+  rememberSession(hostId: string, name: string): Promise<void>;
+  /** Drops the memory of a Session. The Session itself is left running. */
+  forgetSession(hostId: string, name: string): Promise<void>;
+  /** A Host's remembered Sessions, most recently opened first. */
+  recentSessionsFor(hostId: string): Promise<RecentSession[]>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -56,6 +69,7 @@ export function createHostStore(
   file: JsonFile,
   secrets: Secrets,
   newId: () => string = randomId,
+  now: () => Date = () => new Date(),
 ): HostStore {
   async function load(): Promise<Records> {
     const contents = await file.read();
@@ -66,6 +80,7 @@ export function createHostStore(
         hosts: parsed.hosts ?? [],
         identities: parsed.identities ?? [],
         fingerprints: parsed.fingerprints ?? [],
+        recentSessions: parsed.recentSessions ?? [],
       };
     } catch {
       // Unreadable records are treated as none rather than as a crash on
@@ -96,6 +111,7 @@ export function createHostStore(
         hosts: replaceById(records.hosts, savedHost),
         identities: replaceById(records.identities, savedIdentity),
         fingerprints: records.fingerprints,
+        recentSessions: records.recentSessions,
       });
       // Written after the records, so a failed keychain write cannot leave a
       // credential belonging to a Host that was never saved.
@@ -122,6 +138,9 @@ export function createHostStore(
           ? records.identities
           : records.identities.filter((candidate) => candidate.id !== host.identityId),
         fingerprints: records.fingerprints.filter((candidate) => candidate.hostId !== hostId),
+        recentSessions: records.recentSessions.filter(
+          (candidate) => candidate.hostId !== hostId,
+        ),
       });
       if (!stillUsed) {
         await secrets.remove(credentialKey(host.identityId));
@@ -143,7 +162,7 @@ export function createHostStore(
         value,
         // Kept from the original sighting: when a key was first trusted is the
         // interesting fact, not when it was last confirmed.
-        firstSeenAt: existing?.firstSeenAt ?? new Date().toISOString(),
+        firstSeenAt: existing?.firstSeenAt ?? now().toISOString(),
       };
       await save({
         ...records,
@@ -158,7 +177,51 @@ export function createHostStore(
       const records = await load();
       return records.fingerprints.find((candidate) => candidate.hostId === hostId);
     },
+
+    async rememberSession(hostId: string, name: string): Promise<void> {
+      const records = await load();
+      await save({
+        ...records,
+        recentSessions: [
+          ...records.recentSessions.filter((candidate) => !sameSession(candidate, hostId, name)),
+          { hostId, name, lastOpenedAt: now().toISOString() },
+        ],
+      });
+    },
+
+    async forgetSession(hostId: string, name: string): Promise<void> {
+      const records = await load();
+      await save({
+        ...records,
+        recentSessions: records.recentSessions.filter(
+          (candidate) => !sameSession(candidate, hostId, name),
+        ),
+      });
+    },
+
+    async recentSessionsFor(hostId: string): Promise<RecentSession[]> {
+      const records = await load();
+      return records.recentSessions
+        .filter((candidate) => candidate.hostId === hostId)
+        .sort(byMostRecentlyOpened);
+    },
   };
+}
+
+function sameSession(candidate: RecentSession, hostId: string, name: string): boolean {
+  return candidate.hostId === hostId && candidate.name === name;
+}
+
+/**
+ * Most recently opened first, and by name when two were opened in the same
+ * millisecond — which is not a real case, but an order that depends on how the
+ * file happened to be written is a list that reshuffles itself for no reason.
+ */
+function byMostRecentlyOpened(left: RecentSession, right: RecentSession): number {
+  if (left.lastOpenedAt !== right.lastOpenedAt) {
+    return left.lastOpenedAt < right.lastOpenedAt ? 1 : -1;
+  }
+  return left.name.localeCompare(right.name);
 }
 
 function replaceById<T extends { id: string }>(items: T[], item: T): T[] {

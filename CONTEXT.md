@@ -71,8 +71,23 @@ _Avoid_: colour scheme (which is the phone's setting, and Muxify ignores it),
 skin
 
 **Attach**:
-Binding the Shell Channel to an existing Session. Muxify only ever attaches —
-it does not create, rename, or kill Sessions.
+Binding the Shell Channel to a Session. Attach itself only ever attaches, never
+creates — but Muxify can make a Session first, from the Host Screen's **+**.
+Rename and kill are still refused. See ADR 0005.
+
+**Recent Session**:
+Muxify's memory of a Session this phone has opened, and when it last did. Not
+the Session, which lives on the Host and outlives every Connection — the
+memory. The distinction matters on the Host Screen, where a Session that exists
+but has never been opened here is a different row in a different section.
+_Avoid_: workspace, saved session, history
+
+**Attached**:
+Whether a Session has any Client on it — anyone's, not just Muxify's. Shown on
+the Host Screen as a warning rather than a status: Muxify borrows `window-size
+smallest`, so joining a Session somebody is watching shrinks their Window to the
+size of this phone.
+_Avoid_: Connected (which is about the SSH link, and is Muxify's own)
 
 **Client**:
 tmux's own term for what an Attach creates: the thing tmux draws a Session for,
