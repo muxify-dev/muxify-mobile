@@ -40,3 +40,35 @@ describe('Themes', () => {
     }
   });
 });
+
+describe('ANSI palettes', () => {
+  it('gives every Theme but Default a full sixteen colours', () => {
+    // Anything short of sixteen leaves some of the Host's output painted in
+    // ghostty's colours and some in the Theme's, which reads as a bug.
+    for (const id of THEME_IDS) {
+      const { ansi } = Themes[id];
+      if (id === 'default') {
+        expect(ansi).toBeUndefined();
+        continue;
+      }
+      expect(ansi).toHaveLength(16);
+      for (const colour of ansi ?? []) {
+        expect(colour).toMatch(/^#[0-9a-f]{6}$/);
+      }
+    }
+  });
+
+  it('keeps the preview and the terminal telling the same story', () => {
+    // The preview names a few colours by hand; if they drifted from the real
+    // palette the Settings screen would advertise a Theme nobody gets.
+    for (const id of THEME_IDS) {
+      const theme = Themes[id];
+      if (!theme.ansi) continue;
+      expect(theme.ansi[2]).toBe(theme.palette.green);
+      expect(theme.ansi[3]).toBe(theme.palette.yellow);
+      expect(theme.ansi[4]).toBe(theme.palette.blue);
+      expect(theme.ansi[0]).toBe(theme.palette.black);
+      expect(theme.ansi[8]).toBe(theme.palette.grey);
+    }
+  });
+});

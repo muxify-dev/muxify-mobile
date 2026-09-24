@@ -77,6 +77,21 @@ export interface TerminalPalette {
 export type ThemeId = 'default' | 'mocha' | 'latte';
 
 /**
+ * The sixteen colours a terminal application actually paints with.
+ *
+ * Without these a Theme only reaches the background, the foreground and the
+ * cursor — every prompt, every `ls`, every diff keeps ghostty's own colours,
+ * and picking Mocha changes almost nothing. Ordered as ANSI has them: the
+ * eight normal colours, then the eight bright ones.
+ *
+ * Omitted for the Default Theme, whose whole point is ghostty's own palette.
+ */
+export type AnsiPalette = readonly [
+  string, string, string, string, string, string, string, string,
+  string, string, string, string, string, string, string, string,
+];
+
+/**
  * The Themes, in the order the picker shows them.
  *
  * `name` is what the picker segment says; `displayName` is the full name shown
@@ -86,6 +101,7 @@ export const Themes: Record<ThemeId, {
   name: string;
   displayName: string;
   palette: TerminalPalette;
+  ansi?: AnsiPalette;
 }> = {
   default: {
     name: 'Default',
@@ -118,6 +134,12 @@ export const Themes: Record<ThemeId, {
       black: '#45475a',
       white: '#a6adc8',
     },
+    ansi: [
+      '#45475a', '#f38ba8', '#a6e3a1', '#f9e2af',
+      '#89b4fa', '#f5c2e7', '#94e2d5', '#bac2de',
+      '#585b70', '#f38ba8', '#a6e3a1', '#f9e2af',
+      '#89b4fa', '#f5c2e7', '#94e2d5', '#a6adc8',
+    ],
   },
   latte: {
     name: 'Latte',
@@ -134,6 +156,12 @@ export const Themes: Record<ThemeId, {
       black: '#5c5f77',
       white: '#acb0be',
     },
+    ansi: [
+      '#5c5f77', '#d20f39', '#40a02b', '#df8e1d',
+      '#1e66f5', '#ea76cb', '#179299', '#acb0be',
+      '#6c6f85', '#d20f39', '#40a02b', '#df8e1d',
+      '#1e66f5', '#ea76cb', '#179299', '#bcc0cc',
+    ],
   },
 };
 

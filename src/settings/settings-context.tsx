@@ -4,6 +4,7 @@ import {
   appearanceFor,
   paletteFor,
   Themes,
+  type AnsiPalette,
   type Appearance,
   type TerminalPalette,
 } from '@/constants/app-theme';
@@ -20,6 +21,8 @@ interface SettingsContextValue {
   palette: Appearance;
   /** What the Surface is painted with. */
   terminal: TerminalPalette;
+  /** The sixteen colours the Host's own output is painted with. */
+  ansi: AnsiPalette | undefined;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -54,6 +57,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       appearance: appearanceFor(settings.theme),
       palette: paletteFor(settings.theme),
       terminal: Themes[settings.theme].palette,
+      ansi: Themes[settings.theme].ansi,
     }),
     [settings, update],
   );

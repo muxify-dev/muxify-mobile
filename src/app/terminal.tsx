@@ -84,7 +84,7 @@ export default function TerminalScreen() {
   // background runs to the top of the display and only the inset keeps text
   // clear of the status bar. Going Home is the Dock's job, not a back button's.
   const insets = useSafeAreaInsets();
-  const { settings, terminal } = useSettings();
+  const { settings, terminal, ansi } = useSettings();
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
   const shell = useRef<TmuxShell | null>(null);
@@ -132,7 +132,7 @@ export default function TerminalScreen() {
    * Surface would reflow the grid, which means a resize, which means tmux
    * redrawing mid-session. Settings apply from the next Attach, a step away.
    */
-  const [opened] = useState(() => ({ font: settings.fontSize, terminal }));
+  const [opened] = useState(() => ({ font: settings.fontSize, terminal, ansi }));
   const [zoomed, setZoomed] = useState(settings.zoomMultipaneWindows);
   /** Rendered in the Dock, so the attached Session survives a switch. */
   const [attachedSession, setAttachedSession] = useState('');
@@ -817,6 +817,9 @@ export default function TerminalScreen() {
             background: opened.terminal.background,
             foreground: opened.terminal.foreground,
             cursorColor: opened.terminal.cursor,
+            // The sixteen colours everything on the Host actually paints with.
+            // Undefined for the Default Theme, which is ghostty's own palette.
+            palette: opened.ansi ? [...opened.ansi] : undefined,
           }}
           onResize={handleResize}
           onInput={handleInput}
