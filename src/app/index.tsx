@@ -154,7 +154,9 @@ export default function HostsScreen() {
                         color={attachedHere ? palette.controlAccent : palette.rowIcon}
                       />
                       <VStack spacing={2} alignment="leading">
-                        <Text modifiers={[font({ size: 17 })]}>{host.displayName}</Text>
+                        <Text modifiers={[font({ size: 17, weight: 'bold' })]}>
+                          {host.displayName}
+                        </Text>
                         <Text
                           modifiers={[
                             font({ size: 13, design: 'monospaced' }),
