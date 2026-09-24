@@ -17,11 +17,14 @@ modifier-key group dropped in ADR 0003 turned out to matter in daily use.
 
 **Blocked by:** 09, 12, 13
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] States plainly whether the stack holds together, with evidence
-- [ ] Records which libraries proved reliable and which did not
-- [ ] Lists workarounds that were needed and what they cost
-- [ ] Assesses whether losing ctrl, esc and tab when the keyboard is hidden grates in practice
-- [ ] Notes any ADR that the build contradicted, and why
-- [ ] Gives a recommendation on whether to continue on this stack
+- [x] States plainly whether the stack holds together, with evidence
+- [x] Records which libraries proved reliable and which did not
+- [x] Lists workarounds that were needed and what they cost
+- [x] Assesses whether losing ctrl, esc and tab when the keyboard is hidden grates in practice
+- [x] Notes any ADR that the build contradicted, and why
+- [x] Gives a recommendation on whether to continue on this stack
+
+**Notes:** Written to `.scratch/muxify-poc/verdict.md`. `findings.md` stays as
+the running record it was; the verdict is the thing to read first.

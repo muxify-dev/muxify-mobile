@@ -26,3 +26,11 @@ Files are all out of scope.
 - [x] A tmux path that is not absolute is rejected
 - [x] Validation runs before any Connection is attempted
 - [x] The entered credential is written to the keychain, not to the Host record
+
+**Notes:** Validation firing before any Connection is verified on the device —
+saving an empty form shows "Give this Host a name.", "Enter an address or
+hostname." and "Enter a password." with no network attempt. Text entry itself
+is not automatable: agent-device's `delete` key press types a `v`, the same
+class of on-screen-keyboard limitation as the `return` key (see findings). Two
+fields were driven successfully by coordinate, which is enough to show the
+wiring; the rest is covered by the validation and store unit tests.
