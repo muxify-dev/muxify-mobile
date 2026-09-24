@@ -47,7 +47,8 @@
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "e2e": "agent-device test ./e2e/*.ad"
+    "e2e": "agent-device test ./e2e/*.ad",
+    "e2e:roundtrip": "bash e2e/ls-round-trip.sh"
   },
   "private": true,
   "jest": {

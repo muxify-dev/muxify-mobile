@@ -232,3 +232,34 @@ Simulator cannot overwrite the preference on quit:
 Diagnostic that separates the two cases: count nodes matching `[key] "<letter>"`
 in the accessibility tree. Accessory-bar buttons present with zero letter keys
 means the hardware keyboard is connected, not that focus failed.
+
+## agent-device cannot press the on-screen return key (tickets 04-07)
+
+Letter keys type fine through `agent-device type`. Return never reaches the app,
+by any route tried:
+
+- `press @ref` on the `return` button lands on a neighbouring key — every
+  keyboard ref resolved to the same wrong coordinate, and pressing `return`
+  and `delete` both produced `g`.
+- `press <x> <y>` at the centre of return's own reported rect (350, 779)
+  reports a successful tap and does nothing.
+- A newline or a carriage return passed to `type` is counted as a typed
+  character and inserts a line break in the display, but never submits.
+
+Keyboard keys live in a separate iOS window, which is the likely cause; the
+agent-device workflow guide documents a related class of accessibility gap.
+The app itself is fine — confirmed by hand with a real keyboard.
+
+**Workaround, in `e2e/ls-round-trip.sh` (`pnpm e2e:roundtrip`):** type the
+command on the device, then submit it out of band with `tmux send-keys Enter`
+and read the pane over SSH. This is not a weaker test than pressing return
+would be — the characters must genuinely have reached the remote shell's input
+buffer for an out-of-band Enter to run the right command, and the rendered
+output is then read from the Session rather than from the app's chrome.
+
+Verified round trip: `ls` typed on the device, `PROOF_ls_WORKS.txt` rendered
+back in the Surface, shell returned to a prompt.
+
+**Consequence for ticket 08 onward:** any e2e that needs to submit a command has
+to use this split. Pickers driven by Dock buttons are unaffected — those press
+fine.
