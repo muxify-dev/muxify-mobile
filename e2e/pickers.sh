@@ -31,8 +31,11 @@ fail() { echo "FAIL: $1"; exit 1; }
 attach() {
   agent-device close >/dev/null 2>&1
   agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
-  agent-device wait text "No Hosts yet" 25000 >/dev/null 2>&1
-  agent-device press 'label="Open Surface smoke test"' >/dev/null 2>&1
+  agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+  # The real flow: a saved Host, its Sessions, then one of them.
+  agent-device press 'label="Dev Host"' >/dev/null 2>&1
+  agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
+  agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
   for _ in $(seq 1 20); do
     agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
     sleep 1

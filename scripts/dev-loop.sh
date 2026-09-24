@@ -47,8 +47,10 @@ report() { printf '%-18s surface=%-8s window=%-8s client=%-8s dots=%s\n' \
 attach() {
   agent-device close >/dev/null 2>&1
   agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
-  agent-device wait text "No Hosts yet" 25000 >/dev/null 2>&1
-  agent-device press 'label="Open Surface smoke test"' >/dev/null 2>&1
+  agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+  agent-device press 'label="Dev Host"' >/dev/null 2>&1
+  agent-device wait 'label="Session 0"' 15000 >/dev/null 2>&1
+  agent-device press 'label="Session 0"' >/dev/null 2>&1
   # Wait for the Connection rather than sleeping a fixed guess.
   for _ in $(seq 1 20); do
     agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && return 0

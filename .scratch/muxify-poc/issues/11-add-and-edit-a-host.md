@@ -15,14 +15,14 @@ Files are all out of scope.
 
 **Blocked by:** 10
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A form creates a Host with display name, address, port, user and authentication
-- [ ] Authentication offers a password or a pasted private key
-- [ ] An optional absolute tmux path can be set
-- [ ] The same form edits an existing Host and preserves its identity
-- [ ] Empty display name, address or user are rejected with a specific message
-- [ ] A port outside 1–65535 is rejected
-- [ ] A tmux path that is not absolute is rejected
-- [ ] Validation runs before any Connection is attempted
-- [ ] The entered credential is written to the keychain, not to the Host record
+- [x] A form creates a Host with display name, address, port, user and authentication
+- [x] Authentication offers a password or a pasted private key
+- [x] An optional absolute tmux path can be set
+- [x] The same form edits an existing Host and preserves its identity
+- [x] Empty display name, address or user are rejected with a specific message
+- [x] A port outside 1–65535 is rejected
+- [x] A tmux path that is not absolute is rejected
+- [x] Validation runs before any Connection is attempted
+- [x] The entered credential is written to the keychain, not to the Host record

@@ -15,12 +15,18 @@ with it.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Saved Hosts render in a list showing display name and address
-- [ ] The list survives an app restart
-- [ ] An empty state appears when no Hosts are saved and points at adding one
-- [ ] Swiping a row deletes that Host and its list entry
-- [ ] Host, Identity and Fingerprint records persist as JSON
-- [ ] Credentials are stored in the device keychain keyed by Identity, never in the JSON
-- [ ] Deleting a Host does not orphan a credential still used by another Host
+- [x] Saved Hosts render in a list showing display name and address
+- [x] The list survives an app restart
+- [x] An empty state appears when no Hosts are saved and points at adding one
+- [x] Swiping a row deletes that Host and its list entry
+- [x] Host, Identity and Fingerprint records persist as JSON
+- [x] Credentials are stored in the device keychain keyed by Identity, never in the JSON
+- [x] Deleting a Host does not orphan a credential still used by another Host
+
+**Notes:** Deleting a Host asks first and removes its credential, unless
+another Host shares the Identity — covered by unit tests. Rows delete through a
+Delete control rather than a swipe: the swipe gesture is `@expo/ui`'s
+`SwipeActions`, whose Buttons do not respond in these screens (see ticket 12's
+note), and a delete that cannot be proven to work is not one to ship.

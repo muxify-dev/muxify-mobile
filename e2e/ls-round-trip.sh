@@ -39,8 +39,10 @@ sleep 2
 echo "2/5  opening the app and attaching"
 agent-device close >/dev/null 2>&1
 agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1 || fail "could not open the app"
-agent-device wait text "No Hosts yet" 25000 >/dev/null 2>&1
-agent-device press 'label="Open Surface smoke test"' >/dev/null 2>&1
+agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+agent-device press 'label="Dev Host"' >/dev/null 2>&1
+agent-device wait 'label="Session 0"' 15000 >/dev/null 2>&1
+agent-device press 'label="Session 0"' >/dev/null 2>&1
 agent-device wait 10000 >/dev/null 2>&1
 agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
   || fail "never reached Connected"

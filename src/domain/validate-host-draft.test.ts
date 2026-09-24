@@ -186,3 +186,43 @@ describe('validateHostDraft', () => {
     expect(validateHostDraft(draft({ displayName: '  Mac mini  ' })).ok).toBe(true);
   });
 });
+
+describe('editing an existing Host', () => {
+  it('accepts a draft with no credential, because the keychain already has one', () => {
+    // Making someone retype a private key to fix a typo in an address is how
+    // the typo stays unfixed.
+    const draft = {
+      ...emptyHostDraft(),
+      displayName: 'Build box',
+      address: '10.0.0.4',
+      username: 'evgeny',
+      password: '',
+    };
+
+    expect(validateHostDraft(draft, { requireCredential: false }).ok).toBe(true);
+  });
+
+  it('still rejects a private key that was typed but is not a key', () => {
+    const draft = {
+      ...emptyHostDraft(),
+      displayName: 'Build box',
+      address: '10.0.0.4',
+      username: 'evgeny',
+      identityKind: 'privateKey' as const,
+      privateKeyPem: 'not a key',
+    };
+
+    expect(validateHostDraft(draft, { requireCredential: false }).ok).toBe(false);
+  });
+
+  it('demands a credential when adding, which is the default', () => {
+    const draft = {
+      ...emptyHostDraft(),
+      displayName: 'Build box',
+      address: '10.0.0.4',
+      username: 'evgeny',
+    };
+
+    expect(validateHostDraft(draft).errors.password).toBeDefined();
+  });
+});

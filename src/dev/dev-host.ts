@@ -1,13 +1,18 @@
 /**
- * The single hardcoded Host used by the transport spike (tickets 04 and 05).
+ * A development Host, offered on the empty Hosts list as a way to save one
+ * without typing a private key into a phone.
  *
- * Read from `EXPO_PUBLIC_*` env vars supplied by a gitignored `.env.local`, so
- * no address or key material is ever committed. Ticket 12 removes this module
- * entirely and connects to real saved Hosts instead.
+ * It is not a connection path: nothing here reaches a Host. Pressing the button
+ * writes an ordinary Host record through the ordinary store, and everything
+ * after that is the same code any Host uses. The button only appears when these
+ * env vars are set, which they are not in a real build.
+ *
+ * Read from `EXPO_PUBLIC_*` supplied by a gitignored `.env.local`, so no address
+ * or key material is ever committed.
  *
  * Caveat worth knowing: `EXPO_PUBLIC_` values are inlined into the JS bundle at
- * build time. That is acceptable here because the target is a local VM with a
- * disposable key, but it is not a pattern to carry into anything real.
+ * build time. That is acceptable for a local VM with a disposable key, and is
+ * not a pattern to carry into anything real.
  */
 
 export interface DevHost {

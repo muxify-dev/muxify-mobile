@@ -58,7 +58,19 @@ export function emptyHostDraft(): HostDraft {
   };
 }
 
-export function validateHostDraft(draft: HostDraft): HostDraftValidation {
+export interface ValidateOptions {
+  /**
+   * Whether a credential must be present. False when editing: the keychain
+   * already holds one, and making the user retype a private key to fix a typo
+   * in an address is how people end up not fixing the typo.
+   */
+  requireCredential?: boolean;
+}
+
+export function validateHostDraft(
+  draft: HostDraft,
+  { requireCredential = true }: ValidateOptions = {},
+): HostDraftValidation {
   const errors: Partial<Record<HostDraftField, string>> = {};
 
   if (draft.displayName.trim() === '') {
@@ -97,7 +109,12 @@ export function validateHostDraft(draft: HostDraft): HostDraftValidation {
     }
   }
 
-  if (draft.identityKind === 'password') {
+  const credentialGiven =
+    draft.identityKind === 'password' ? draft.password !== '' : draft.privateKeyPem !== '';
+
+  if (!requireCredential && !credentialGiven) {
+    // Nothing typed on an edit means "keep what is stored".
+  } else if (draft.identityKind === 'password') {
     if (draft.password === '') {
       errors.password = 'Enter a password.';
     }

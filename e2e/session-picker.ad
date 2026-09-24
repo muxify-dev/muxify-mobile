@@ -22,9 +22,12 @@ context platform=ios kind=simulator
 # Run with:  agent-device test ./e2e/session-picker.ad
 
 open "dev.muxify.app" --relaunch
-wait "text" "No Hosts yet" 15000
+wait "text" "Dev Host" 15000
 
-press "label=\"Open Surface smoke test\""
+# Through the real flow now: a saved Host, its Sessions, then one of them.
+press "label=\"Dev Host\""
+wait "label=\"Session 0\"" 15000
+press "label=\"Session 0\""
 wait "id=\"connection-status\"" 8000
 wait 8000
 is "text" "id=\"connection-status\"" "Connected"

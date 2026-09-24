@@ -1,8 +1,8 @@
-import { connect, type SshConnection } from '@osuki-dev/react-native-ssh';
+import type { SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,7 +10,8 @@ import { Dock, type DockAction } from '@/components/dock';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
-import { readDevHost } from '@/dev/dev-host';
+import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
+import { deviceHostStore } from '@/storage/device-store';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { toShellInput } from '@/lib/terminal-input';
 import { applyGrid } from '@/tmux/apply-grid';
@@ -55,6 +56,10 @@ type Status =
 
 export default function TerminalScreen() {
   const router = useRouter();
+  const { hostId, session: sessionParam } = useLocalSearchParams<{
+    hostId?: string;
+    session?: string;
+  }>();
   // The screen draws its own chrome: no navigation header, so the Surface
   // background runs to the top of the display and only the inset keeps text
   // clear of the status bar. Going Home is the Dock's job, not a back button's.
@@ -90,6 +95,10 @@ export default function TerminalScreen() {
   const [zoomed, setZoomed] = useState(true);
   /** Rendered in the Dock, so the attached Session survives a switch. */
   const [attachedSession, setAttachedSession] = useState('');
+  /** Set when the Host's key is not the one last seen. Never blocks. */
+  const [keyWarning, setKeyWarning] = useState<{ hostName: string; fingerprint: string } | null>(
+    null,
+  );
 
   /**
    * Owns every remote resize, so a keyboard animation cannot flood the Host
@@ -127,102 +136,106 @@ export default function TerminalScreen() {
     return next;
   }, []);
 
-  const start = useCallback(async (initial: Grid) => {
-    const config = readDevHost();
-    if (!config.ok) {
-      setStatus({ phase: 'failed', message: config.reason });
-      return;
-    }
-
-    const { address, port, username, privateKeyPem } = config.host;
-    setStatus({ phase: 'connecting' });
-
-    try {
-      const conn = await connect({
-        host: address,
-        port,
-        username,
-        auth: { type: 'privateKey', privateKey: privateKeyPem },
-        // Ticket 13 replaces this with trust-on-first-use against a stored
-        // Fingerprint. Accepting unconditionally is a spike-only shortcut.
-        verifyHostKey: () => true,
-        onDisconnected: (reason) => {
-          if (!disposed.current) setStatus({ phase: 'failed', message: reason });
-        },
-      });
-
-      if (disposed.current) {
-        await conn.disconnect();
-        return;
-      }
-      connection.current = conn;
-
-      // Size from the latest grid, not the one captured when this started —
-      // `onResize` fires more than once and the first is a pre-layout value.
-      const current = grid.current ?? initial;
-
-      // Everything tmux-shaped goes through the client, which owns command
-      // construction and output parsing behind the transport seam.
-      const client = new TmuxClient(sshTmuxTransport(conn));
-      tmux.current = client;
-      sessions.current = createSessionPreparer(client);
-      sessionName.current = config.host.sessionName;
-      setAttachedSession(config.host.sessionName);
-
-      const opened = await client.attach(config.host.sessionName, current, {
-        onData: (data) => {
-          surface.current?.write(bytesToBase64(new Uint8Array(data)));
-        },
-        onClosed: (exitCode) => {
-          shell.current = null;
-          if (!disposed.current) setStatus({ phase: 'closed', exitCode });
-        },
-      });
-
-      if (disposed.current) {
-        await opened.close();
-        await conn.disconnect();
+  const start = useCallback(
+    async (initial: Grid) => {
+      if (!hostId || !sessionParam) {
+        setStatus({ phase: 'failed', message: 'No Host was chosen.' });
         return;
       }
 
-      shell.current = opened;
-      setStatus({ phase: 'connected', fingerprint: conn.hostKey.fingerprint });
-
-      void (async () => {
-        // Ours is the Client that just attached; a redraw aimed anywhere else
-        // would leave this Surface dirty.
-        clientTty.current = await client.newestClient(config.host.sessionName);
-        // Everything a Session needs before it can be shown on a phone: the
-        // right Window size, and no status line. Switching Session runs the
-        // same thing again. See createSessionPreparer.
-        await sessions.current?.prepare(config.host.sessionName, clientTty.current);
-        // The Window's size has one owner. Reset first: this Session's Window
-        // is whatever size its last Client left it, not what the Surface has.
-        remoteSize.reset();
-        remoteSize.request(grid.current ?? current);
-        // A phone is too narrow for side-by-side Panes, so a split Session
-        // arrives with its active Pane filling the Window. The Panes picker is
-        // where you turn that off.
-        await client.setZoom(config.host.sessionName, true);
-        // Read once now so the Dock knows whether there is anything to pick
-        // before the user reaches for a picker.
-        await refreshTopology();
-
-        // EXPERIMENT: a scripted resize sequence, timed so an outside observer
-        // can see exactly when each value lands.
-      })();
-
-      // A resize may have landed while connecting.
-      const latest = grid.current;
-      if (latest && (latest.cols !== current.cols || latest.rows !== current.rows)) {
-        resizeShellChannel(opened, latest);
+      const store = deviceHostStore();
+      const records = await store.load();
+      const host = records.hosts.find((candidate) => candidate.id === hostId);
+      if (!host) {
+        setStatus({ phase: 'failed', message: 'This Host is no longer saved.' });
+        return;
       }
-    } catch (error) {
-      if (!disposed.current) {
-        setStatus({ phase: 'failed', message: describe(error) });
+
+      setStatus({ phase: 'connecting' });
+
+      try {
+        const { connection: conn, fingerprint, verdict } = await connectToHost(host, store);
+
+        if (disposed.current) {
+          await conn.disconnect();
+          return;
+        }
+        connection.current = conn;
+
+        // Trust on first use: remember the key the first time, and say so
+        // loudly when it changes. The Connection is not blocked either way —
+        // someone who has just rebuilt a machine still has to reach it.
+        if (verdict.kind === 'first-sight') {
+          await store.rememberFingerprint(host.id, fingerprint);
+        } else if (verdict.kind === 'changed') {
+          setKeyWarning({ hostName: host.displayName, fingerprint });
+        }
+
+        // Size from the latest grid, not the one captured when this started —
+        // `onResize` fires more than once and the first is a pre-layout value.
+        const current = grid.current ?? initial;
+
+        // Everything tmux-shaped goes through the client, which owns command
+        // construction and output parsing behind the transport seam.
+        const client = new TmuxClient(sshTmuxTransport(conn), {
+          tmuxExecutablePath: host.tmuxExecutablePath,
+        });
+        tmux.current = client;
+        sessions.current = createSessionPreparer(client);
+        sessionName.current = sessionParam;
+        setAttachedSession(sessionParam);
+
+        const opened = await client.attach(sessionParam, current, {
+          onData: (data) => {
+            surface.current?.write(bytesToBase64(new Uint8Array(data)));
+          },
+          onClosed: (exitCode) => {
+            shell.current = null;
+            if (!disposed.current) setStatus({ phase: 'closed', exitCode });
+          },
+        });
+
+        if (disposed.current) {
+          await opened.close();
+          await conn.disconnect();
+          return;
+        }
+
+        shell.current = opened;
+        setStatus({ phase: 'connected', fingerprint });
+
+        void (async () => {
+          // Ours is the Client that just attached; a redraw aimed anywhere else
+          // would leave this Surface dirty.
+          clientTty.current = await client.newestClient(sessionParam);
+          // Everything a Session needs before it can be shown on a phone.
+          // Switching Session runs the same thing again.
+          await sessions.current?.prepare(sessionParam, clientTty.current);
+          // The Window's size has one owner. Reset first: this Session's Window
+          // is whatever size its last Client left it, not what the Surface has.
+          remoteSize.reset();
+          remoteSize.request(grid.current ?? current);
+          // A phone is too narrow for side-by-side Panes, so a split Session
+          // arrives with its active Pane filling the Window.
+          await client.setZoom(sessionParam, true);
+          // Read once now so the Dock knows whether there is anything to pick
+          // before the user reaches for a picker.
+          await refreshTopology();
+        })();
+
+        // A resize may have landed while connecting.
+        const latest = grid.current;
+        if (latest && (latest.cols !== current.cols || latest.rows !== current.rows)) {
+          resizeShellChannel(opened, latest);
+        }
+      } catch (error) {
+        if (!disposed.current) {
+          setStatus({ phase: 'failed', message: describeConnectionFailure(error) });
+        }
       }
-    }
-  }, [remoteSize, refreshTopology]);
+    },
+    [hostId, sessionParam, remoteSize, refreshTopology],
+  );
 
   const handleResize = useCallback(
     ({ nativeEvent }: { nativeEvent: Grid }) => {
@@ -524,7 +537,9 @@ export default function TerminalScreen() {
           id: 'home',
           label: 'Home',
           systemImage: 'house',
-          onPress: () => router.back(),
+          // All the way to the Hosts list, not back a step: Home means home,
+          // and a step back is the Session list of the Host just left.
+          onPress: () => router.dismissTo('/'),
         },
         {
           id: 'keyboard',
@@ -642,6 +657,20 @@ export default function TerminalScreen() {
         }
       />
 
+      {keyWarning ? (
+        <HostKeyWarning
+          hostName={keyWarning.hostName}
+          onAccept={() => {
+            const accepted = keyWarning;
+            setKeyWarning(null);
+            void (async () => {
+              if (hostId) await deviceHostStore().rememberFingerprint(hostId, accepted.fingerprint);
+            })();
+          }}
+          onDismiss={() => setKeyWarning(null)}
+        />
+      ) : null}
+
       <Dock groups={dockGroups} />
 
       <View style={styles.overlay} pointerEvents="none">
@@ -731,6 +760,47 @@ function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
+/**
+ * Shown when a Host presents a different key from the one last seen.
+ *
+ * Loud, and over the terminal, because the two explanations — a rebuilt machine
+ * or something sitting in the middle — look identical from here and only the
+ * user knows which. It does not block: someone who has just rebuilt a machine
+ * still has to be able to reach it.
+ */
+function HostKeyWarning({
+  hostName,
+  onAccept,
+  onDismiss,
+}: {
+  hostName: string;
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <View style={styles.keyWarning} accessibilityLabel={`Host key changed for ${hostName}`}>
+      <ThemedText type="smallBold" style={styles.keyWarningTitle}>
+        {`${hostName} presented a different host key`}
+      </ThemedText>
+      <ThemedText type="small" style={styles.keyWarningBody}>
+        It may have been rebuilt, or something may be intercepting the connection.
+      </ThemedText>
+      <View style={styles.keyWarningActions}>
+        <Pressable onPress={onAccept} accessibilityRole="button" accessibilityLabel="Accept new key">
+          <ThemedText type="smallBold" style={styles.keyWarningAccept}>
+            Accept new key
+          </ThemedText>
+        </Pressable>
+        <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="Keep warning">
+          <ThemedText type="small" style={styles.keyWarningBody}>
+            Not now
+          </ThemedText>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function label(status: Status): string {
   switch (status.phase) {
     case 'waiting-for-layout':
@@ -777,6 +847,31 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: SurfacePalette.dim,
+  },
+  keyWarning: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    top: 12,
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#5b1d1d',
+  },
+  keyWarningTitle: {
+    color: '#ffd9d9',
+  },
+  keyWarningBody: {
+    color: '#f3c7c7',
+  },
+  keyWarningActions: {
+    flexDirection: 'row',
+    gap: 18,
+    paddingTop: 6,
+  },
+  keyWarningAccept: {
+    color: '#ffffff',
   },
   banner: {
     position: 'absolute',

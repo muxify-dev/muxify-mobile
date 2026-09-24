@@ -15,12 +15,12 @@ control.
 
 **Blocked by:** 12
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The Fingerprint is recorded on the first successful Connection to a Host
-- [ ] Every later Connection compares the presented key against the stored Fingerprint
-- [ ] A matching Fingerprint connects with no interruption
-- [ ] A mismatch shows a prominent warning naming the Host
-- [ ] The warning does not block the Connection
-- [ ] Accepting the new Fingerprint replaces the stored one for later comparisons
-- [ ] Fingerprint comparison is covered by tests
+- [x] The Fingerprint is recorded on the first successful Connection to a Host
+- [x] Every later Connection compares the presented key against the stored Fingerprint
+- [x] A matching Fingerprint connects with no interruption
+- [x] A mismatch shows a prominent warning naming the Host
+- [x] The warning does not block the Connection
+- [x] Accepting the new Fingerprint replaces the stored one for later comparisons
+- [x] Fingerprint comparison is covered by tests

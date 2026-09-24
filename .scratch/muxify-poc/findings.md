@@ -666,3 +666,59 @@ Sizing now lives only in the scheduler, and the preparer does nothing but the
 status line. Switching Session resets the scheduler rather than re-requesting,
 because the same grid on a different Session is a different Window to size and
 the scheduler is right to drop a repeat otherwise.
+
+## Records on disk, credentials in the keychain (ticket 10)
+
+Hosts, Identities and Fingerprints are JSON in the app's documents directory.
+Passwords and private keys are not: they go to the iOS keychain, keyed by
+Identity, with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` so they neither travel to iCloud
+nor are readable while the phone is locked.
+
+The split is enforced in the store rather than trusted to callers — a Host
+record has nowhere to put a credential — and a test asserts the written JSON
+does not contain the password it was handed.
+
+Identity being its own record earns its keep at deletion time: an Identity may
+serve several Hosts, so removing one Host only removes the credential when the
+last Host using it goes. Getting that wrong silently breaks a Host the user did
+not touch, which is the kind of bug nobody reports because it looks like the
+network.
+
+Unreadable records read as none rather than throwing. The alternative is an app
+that will not start until someone clears its storage by hand.
+
+## `@expo/ui` buttons work in the Dock and nowhere else
+
+The Hosts list was built first with `@expo/ui` — `List`, `Section`, `Button`,
+`SwipeActions`. It rendered correctly and nothing was pressable: not a row, not
+the Add Host button, pressed by selector or at its own measured coordinates. An
+RN `Pressable` added to the same screen fired immediately.
+
+This is the third variation of the same problem: SwiftUI content hosted by this
+library responds to a real finger more often than it responds to automation, and
+the boundary is not predictable. The Dock's buttons work. The picker sheet's did
+not, and turned out to work by hand. These did not, and there was no one awake to
+ask.
+
+So the Hosts list, the form and the Host detail are React Native views, with
+`GlassView` — the real Liquid Glass API — for the glass itself. The Dock and the
+picker sheets stay `@expo/ui`, where they are proven.
+
+What decided it: a list whose rows cannot be proven to work is not one to ship,
+and "it probably works for a finger" is not a thing to find out from a user.
+
+## Trust on first use, without a blocking dialog (ticket 13)
+
+The first key a Host presents is recorded once the Connection actually succeeds
+— not in the verification callback, because a key seen during a failed
+authentication has been vouched for by nothing.
+
+Every later Connection compares. A match is silent. A change puts a red banner
+over the terminal naming the Host, with Accept new key and Not now, and does not
+block: someone who has just rebuilt a machine still has to reach it, and the
+banner is there to make sure they know which of the two explanations they are
+looking at.
+
+Accepting any key silently was rejected outright. It is a habit that survives
+into production, and the library hands the key to a callback precisely so it
+does not have to be.

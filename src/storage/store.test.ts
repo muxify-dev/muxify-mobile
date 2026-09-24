@@ -1,0 +1,226 @@
+import { createHostStore, credentialKey, type JsonFile, type Secrets } from './store';
+
+function fakeStorage(initial: string | null = null) {
+  let contents = initial;
+  const vault = new Map<string, string>();
+  const file: JsonFile = {
+    read: async () => contents,
+    write: async (next) => {
+      contents = next;
+    },
+  };
+  const secrets: Secrets = {
+    get: async (key) => vault.get(key) ?? null,
+    set: async (key, value) => {
+      vault.set(key, value);
+    },
+    remove: async (key) => {
+      vault.delete(key);
+    },
+  };
+  return { file, secrets, vault, written: () => contents ?? '' };
+}
+
+function ids() {
+  let next = 0;
+  return () => `id${++next}`;
+}
+
+const HOST = {
+  displayName: 'Build box',
+  address: '10.0.0.4',
+  port: 22,
+};
+const IDENTITY = { username: 'evgeny', kind: 'password' as const };
+
+describe('saveHost', () => {
+  it('stores the Host and its Identity, and hands back what was saved', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+
+    expect(saved).toEqual({ ...HOST, id: 'id2', identityId: 'id1' });
+    const records = await store.load();
+    expect(records.hosts).toHaveLength(1);
+    expect(records.identities).toEqual([{ id: 'id1', username: 'evgeny', kind: 'password' }]);
+  });
+
+  it('never writes the credential into the JSON', async () => {
+    // The whole point of the split: a password in a file is readable by
+    // anything that can read the app's container, including a backup.
+    const { file, secrets, written } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+
+    expect(written()).not.toContain('hunter2');
+  });
+
+  it('puts the credential in the keychain, keyed by Identity', async () => {
+    const { file, secrets, vault } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+
+    expect(vault.get(credentialKey('id1'))).toBe('hunter2');
+  });
+
+  it('edits a Host in place rather than adding a second one', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'x' });
+
+    await store.saveHost({
+      host: { ...HOST, id: saved.id, displayName: 'Renamed' },
+      identity: { ...IDENTITY, id: saved.identityId },
+      credential: 'x',
+    });
+
+    const records = await store.load();
+    expect(records.hosts).toHaveLength(1);
+    expect(records.hosts[0].displayName).toBe('Renamed');
+  });
+
+  it('leaves an existing credential alone when none is given', async () => {
+    // Editing an address should not require retyping a private key.
+    const { file, secrets, vault } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'keep-me' });
+
+    await store.saveHost({
+      host: { ...HOST, id: saved.id, address: '10.0.0.5' },
+      identity: { ...IDENTITY, id: saved.identityId },
+      credential: '',
+    });
+
+    expect(vault.get(credentialKey(saved.identityId))).toBe('keep-me');
+  });
+});
+
+describe('removeHost', () => {
+  it('removes the Host and its credential', async () => {
+    const { file, secrets, vault } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+
+    await store.removeHost(saved.id);
+
+    expect((await store.load()).hosts).toEqual([]);
+    expect(vault.size).toBe(0);
+  });
+
+  it('keeps a credential another Host still uses', async () => {
+    // Identities are shared on purpose, so deletion has to check.
+    const { file, secrets, vault } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const first = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'shared' });
+    await store.saveHost({
+      host: { ...HOST, displayName: 'Second' },
+      identity: { ...IDENTITY, id: first.identityId },
+      credential: '',
+    });
+
+    await store.removeHost(first.id);
+
+    expect(vault.get(credentialKey(first.identityId))).toBe('shared');
+    expect((await store.load()).identities).toHaveLength(1);
+  });
+
+  it('forgets the Host key it had recorded', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'x' });
+    await store.rememberFingerprint(saved.id, 'SHA256:abc');
+
+    await store.removeHost(saved.id);
+
+    expect((await store.load()).fingerprints).toEqual([]);
+  });
+
+  it('does nothing for a Host that is not there', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    await expect(store.removeHost('gone')).resolves.toBeUndefined();
+  });
+});
+
+describe('credentialFor', () => {
+  it('reads the credential of the Host’s Identity', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+
+    await expect(store.credentialFor(saved.id)).resolves.toBe('hunter2');
+  });
+
+  it('is null for a Host that is not there', async () => {
+    const { file, secrets } = fakeStorage();
+
+    await expect(createHostStore(file, secrets).credentialFor('gone')).resolves.toBeNull();
+  });
+});
+
+describe('fingerprints', () => {
+  it('records one on first sight and reads it back', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    await store.rememberFingerprint('h1', 'SHA256:abc');
+
+    expect((await store.fingerprintFor('h1'))?.value).toBe('SHA256:abc');
+  });
+
+  it('keeps the original sighting time when the key is replaced', async () => {
+    // When a key was first trusted is the interesting fact.
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    await store.rememberFingerprint('h1', 'SHA256:abc');
+    const first = await store.fingerprintFor('h1');
+
+    await store.rememberFingerprint('h1', 'SHA256:def');
+    const second = await store.fingerprintFor('h1');
+
+    expect(second?.value).toBe('SHA256:def');
+    expect(second?.firstSeenAt).toBe(first?.firstSeenAt);
+  });
+
+  it('is undefined for a Host never connected to', async () => {
+    const { file, secrets } = fakeStorage();
+
+    await expect(createHostStore(file, secrets).fingerprintFor('h1')).resolves.toBeUndefined();
+  });
+});
+
+describe('load', () => {
+  it('is empty on a fresh install', async () => {
+    const { file, secrets } = fakeStorage(null);
+
+    await expect(createHostStore(file, secrets).load()).resolves.toEqual({
+      hosts: [],
+      identities: [],
+      fingerprints: [],
+    });
+  });
+
+  it('treats unreadable records as none rather than failing to launch', async () => {
+    const { file, secrets } = fakeStorage('{ not json');
+
+    await expect(createHostStore(file, secrets).load()).resolves.toEqual({
+      hosts: [],
+      identities: [],
+      fingerprints: [],
+    });
+  });
+
+  it('fills in a missing section of an older file', async () => {
+    const { file, secrets } = fakeStorage('{"hosts":[]}');
+
+    await expect(createHostStore(file, secrets).load()).resolves.toEqual({
+      hosts: [],
+      identities: [],
+      fingerprints: [],
+    });
+  });
+});
