@@ -59,14 +59,24 @@ Check Simulator I/O > Keyboard > Connect Hardware Keyboard is OFF."
 echo "4/5  typing 'ls' on the device"
 agent-device type "ls" >/dev/null 2>&1
 sleep 2
-vm "tmux capture-pane -t 0 -p" | grep -q '\$ ls$' \
+# Wrap-tolerant on purpose. This used to require `$ ls` at the end of a line,
+# which assumed the prompt and the command shared a rendered row — and they do
+# not: the prompt is `evgeny@ubuntu:~/muxify-e2e$ `, 28 columns, in a Pane 27
+# wide, so it wraps and the `ls` lands at the start of the next row. The check
+# then failed while saying the characters never arrived, which was false and
+# sent more than one reader hunting for an input bug that was not there.
+# (Verified against the pre-control-mode commit: it failed there too.)
+#
+# What is actually being asserted is that the shell has `ls` on its input line,
+# so the rows are joined before looking.
+vm "tmux capture-pane -t 0 -p -J" | tr -d '\n' | grep -q '\$ ls' \
   || fail "characters typed on the device did not reach the remote shell"
 
 echo "5/5  submitting on the device, then checking what the Session rendered"
 agent-device type "
 " >/dev/null 2>&1
 sleep 3
-PANE=$(vm "tmux capture-pane -t 0 -p")
+PANE=$(vm "tmux capture-pane -t 0 -p -J")
 
 echo "$PANE" | grep -q "$MARKER" || fail "command produced no output in the Session"
 echo "$PANE" | grep -qE '\$ *$' || fail "shell did not return to a prompt"

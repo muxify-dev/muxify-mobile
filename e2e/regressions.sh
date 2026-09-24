@@ -14,18 +14,29 @@
 #
 # Checks 3 and 7 changed shape with control mode. They used to assert that the
 # status line was hidden on attach and restored on the way out — the borrowing
-# ADR 0006 removed. What they assert now is stronger and simpler: `show-options`
-# on the Session says exactly the same thing before, during and after, because a
-# control client sets nothing at all.
+# ADR 0006 removed. What they assert now is stronger and simpler: every option
+# the Session and its Window carry says exactly the same thing before, during
+# and after, because a control client sets none of them.
+#
+# All three readings are needed, which is not obvious. `status` and `mouse` are
+# session options and show up in `show-options`; `window-size` is a *window*
+# option and appears only under `show-options -w` — measured, on tmux 3.6, by
+# setting it and watching plain `show-options` not mention it. A check that
+# read only the session options would have missed the very borrow that squeezed
+# somebody's laptop to phone width.
 #
 # The resize checks are the ones worth explaining. `surface` and `window` must
 # agree: the Surface tells tmux its size with `refresh-client -C`, and under
 # tmux's default `window-size latest` the Window follows it.
 #
-# So the thing that actually matters — whether the user sees tmux's padding —
-# is checked by looking at the screen. Reading the pane over SSH does NOT catch
-# it, since the padding is not in the pane; that mistake is how an earlier fix
-# was declared working when it was not.
+# Check 5 is now a much weaker claim than it used to be, and deliberately so.
+# tmux's dot-padding was something tmux drew into an attached client's
+# composited screen. A control client is sent `%output` per Pane and composites
+# nothing, so there is nowhere for padding to come from. Measured: with the
+# Window forced to 38x8 under a 27x13 Surface — the state that used to produce
+# a band of dots — the screen had zero padding pixels. So the old known-bad
+# self-test cannot be satisfied any more, and the detector is instead checked
+# against a region that certainly does have content.
 #
 # Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/regressions.sh
@@ -47,9 +58,12 @@ fail() { echo "FAIL: $1"; exit 1; }
 snap()    { agent-device snapshot -i 2>/dev/null; }
 surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
 window()  { vm "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
-# Every option the Session carries, sorted so two readings can be compared.
-options() { vm "tmux show-options -t '$SESSION'" | sort; }
-hooks()   { vm "tmux show-hooks -t '$SESSION'" | sort; }
+# Everything the Session and its Window carry, sorted so two readings can be
+# compared. `-w` is not optional: window-size lives there and nowhere else.
+options() {
+  vm "tmux show-options -t '$SESSION:'; tmux show-options -w -t '$SESSION:'" | sort
+}
+hooks() { vm "tmux show-hooks -t '$SESSION:'" | sort; }
 
 agree() {
   local what=$1 s w
@@ -57,6 +71,26 @@ agree() {
   [ -n "$s" ] || fail "$what: the Surface never reported a grid"
   [ "$s" = "$w" ] || fail "$what: Surface is $s but tmux draws the Window at $w"
   echo "     $what: surface=$s window=$w"
+}
+
+# Presses the Dock's Keyboard button and waits for the grid to actually move.
+#
+# The button toggles, so pressing it blindly is only correct if you already
+# know the state — and a press that silently does not register leaves every
+# later step off by one. That is how check 6 once failed for a reason that had
+# nothing to do with Enter: the keyboard was simply down, and typing went
+# nowhere. The grid changing is the only honest signal that the keyboard did
+# what was asked, so that is what is waited for.
+toggle_keyboard() {
+  local before after
+  before=$(surface)
+  agent-device press 'label="Keyboard"' >/dev/null 2>&1
+  for _ in $(seq 1 10); do
+    sleep 1
+    after=$(surface)
+    [ -n "$after" ] && [ "$after" != "$before" ] && return 0
+  done
+  fail "the Keyboard button did not move the grid (still $before)"
 }
 
 attach() {
@@ -98,7 +132,7 @@ snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
 
-echo "3/7  attaching changes no Session option and installs no hook"
+echo "3/7  attaching changes no option, on the Session or its Window"
 # The whole of ADR 0006. A control client renders nothing, so `status` is not
 # its business; it is sized with `refresh-client -C`, so `window-size` is not
 # either; and scrolling is a capture, so neither is `mouse`.
@@ -107,46 +141,47 @@ echo "3/7  attaching changes no Session option and installs no hook"
   fail "attaching changed a Session option"
 }
 [ "$(hooks)" = "$BEFORE_HOOKS" ] || fail "attaching left a hook on the Session"
-echo "     show-options is byte-identical while attached"
+echo "     session and window options byte-identical while attached"
 
 echo "4/7  sizes agree with the keyboard down, and again with it up"
 agree "keyboard down"
-agent-device press 'label="Keyboard"' >/dev/null 2>&1
-sleep 4
+toggle_keyboard
 agree "keyboard up"
 
 echo "5/7  no tmux padding on screen, in either keyboard state"
-# tmux pads the gap whenever it thinks the Client is bigger than the Window,
-# and those rows land past the end of the Surface's grid. The band below is
-# where that shows up. The detector is checked against a deliberately broken
-# state first, because one that always reports zero proves nothing.
-padding() {
+# tmux padded the gap whenever an attached client was bigger than the Window,
+# and those rows landed past the end of the Surface's grid. That cannot happen
+# to a control client, which composites nothing — so this is now a check that
+# the property still holds rather than one that catches a live hazard.
+#
+# `band` is where padding used to appear; `body` is the terminal itself, which
+# always has something in it. Self-testing on `body` is what stops a detector
+# that reports zero for everything from passing this for the wrong reason.
+pixels() {
   agent-device screenshot "$SHOT" >/dev/null 2>&1
-  magick "$SHOT" -crop 1206x600+0+900 -threshold 45% -format '%[fx:int(mean*w*h)]' info:
+  magick "$SHOT" -crop "$1" -threshold 45% -format '%[fx:int(mean*w*h)]' info:
 }
-# Forcing that state takes `window-size manual`, which is the test setting an
-# option rather than the app — and unsetting it below is what keeps check 7
-# honest.
-vm "tmux set-option -t '$SESSION' window-size manual; tmux resize-window -t '$SESSION' -x 38 -y 8"
-sleep 2
-[ "$(padding)" -gt 1000 ] || fail "the padding detector cannot see padding; the check below would pass for the wrong reason"
-# Unset rather than set back to a value: `-u` returns the option to the state
-# it was in, which is what leaves nothing behind for check 7 to find.
-vm "tmux set-option -u -t '$SESSION' window-size"
-sleep 2
-echo "     detector confirmed against a known-bad state"
+band() { pixels 1206x600+0+900; }
+body() { pixels 1206x600+0+200; }
 
-agent-device press 'label="Keyboard"' >/dev/null 2>&1
-sleep 3
-[ "$(padding)" -eq 0 ] || fail "padding on screen after the keyboard closed"
-agent-device press 'label="Keyboard"' >/dev/null 2>&1
-sleep 3
-[ "$(padding)" -eq 0 ] || fail "padding on screen after the keyboard opened"
+[ "$(body)" -gt 0 ] || fail "the detector sees nothing at all; the check below would pass for the wrong reason"
+echo "     detector confirmed against the terminal's own pixels"
+
+toggle_keyboard
+[ "$(band)" -eq 0 ] || fail "padding on screen after the keyboard closed"
+toggle_keyboard
+[ "$(band)" -eq 0 ] || fail "padding on screen after the keyboard opened"
 echo "     none, opening or closing"
 
 echo "6/7  Enter on the device runs the command"
 # Every keystroke arrives from iOS as a bracketed paste, Enter included, which
 # is why this once inserted a newline and ran nothing. See toShellInput.
+#
+# The Pane is cleared first so the marker can be required on a line of its own:
+# a line still holding what a previous check typed would match for the wrong
+# reason, or not match at all.
+vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+sleep 1
 agent-device type "echo $MARKER" >/dev/null 2>&1
 sleep 1
 agent-device type "
@@ -156,8 +191,8 @@ vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
 echo "7/7  leaving finds the Session exactly as it was, bar the zoom"
-agent-device press 'label="Keyboard"' >/dev/null 2>&1
-sleep 2
+toggle_keyboard
+sleep 1
 agent-device press 'label="Home"' >/dev/null 2>&1
 agent-device wait text "No Hosts yet" 8000 >/dev/null 2>&1
 sleep 2
@@ -173,12 +208,12 @@ sleep 2
 # picker, and undoing their choice on the way out would be its own surprise.
 # Reported so a reader knows it changed, and so that anything *else* appearing
 # here is a regression.
-echo "     show-options and show-hooks unchanged from before the Attach"
+echo "     session options, window options and hooks unchanged from before"
 echo "     zoom is left as Muxify set it: $(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")"
 
 agent-device close >/dev/null 2>&1
 echo
 rm -f "$SHOT"
-echo "PASS: no header, no Accessory Bar, the Session's options untouched"
-echo "      throughout, sizes agree in both keyboard states, no padding on"
-echo "      screen, and Enter runs commands."
+echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
+echo "      untouched throughout, sizes agree in both keyboard states, no"
+echo "      padding on screen, and Enter runs commands."
