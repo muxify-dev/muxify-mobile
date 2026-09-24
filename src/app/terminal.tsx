@@ -2,7 +2,14 @@ import type { SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  AppState,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -250,6 +257,32 @@ export default function TerminalScreen() {
       await new Promise((resolve) => setTimeout(resolve, TTY_WAIT_MS));
     }
     return clientTty.current;
+  }, []);
+
+  /**
+   * Gives the Session's borrowed options back whenever Muxify stops being the
+   * thing on screen, and takes them again on return.
+   *
+   * The two options Muxify borrows are session options, so every other Client
+   * sees them: a laptop attached to the same Session loses its status line and
+   * gets squeezed to the phone's size. That is the documented price of
+   * attaching a real Client — but only while somebody is actually looking at
+   * the phone. Leaving the app in the background holding a Session hostage is
+   * not a price, it is a bug, and it is what leaves a status line missing on
+   * the machine the user walked back to.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (disposed.current) return;
+      if (next === 'active') {
+        void sessions.current?.prepare(sessionName.current, clientTty.current);
+        return;
+      }
+      if (next === 'background') {
+        void sessions.current?.restoreAll();
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   /** Re-reads the Session's Windows and Panes, for the Dock and the sheet. */
