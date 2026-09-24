@@ -1,4 +1,4 @@
-import { connect, type SshConnection, type SshShell } from '@osuki-dev/react-native-ssh';
+import { connect, type SshConnection } from '@osuki-dev/react-native-ssh';
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -7,7 +7,9 @@ import { ThemedText } from '@/components/themed-text';
 import { SurfacePalette } from '@/constants/theme';
 import { readDevHost } from '@/dev/dev-host';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
-import { attachSessionCommand } from '@/tmux/commands';
+import { sshTmuxTransport } from '@/tmux/ssh-transport';
+import { TmuxClient } from '@/tmux/tmux-client';
+import type { TmuxShell } from '@/tmux/transport';
 
 /** The Surface's cell grid. Travels as a unit everywhere it is used. */
 type Grid = { cols: number; rows: number };
@@ -22,7 +24,7 @@ type Status =
 export default function TerminalScreen() {
   const surface = useRef<TerminalViewRef>(null);
   const connection = useRef<SshConnection | null>(null);
-  const shell = useRef<SshShell | null>(null);
+  const shell = useRef<TmuxShell | null>(null);
   const grid = useRef<Grid | null>(null);
   const hasStarted = useRef(false);
   const disposed = useRef(false);
@@ -64,25 +66,19 @@ export default function TerminalScreen() {
       // `onResize` fires more than once and the first is a pre-layout value.
       const current = grid.current ?? initial;
 
-      const opened = await conn.openShell(
-        {
-          term: 'xterm-256color',
-          cols: current.cols,
-          rows: current.rows,
-          // Attach directly instead of opening a login shell and typing: the
-          // Shell Channel exists to carry one Session. Attach-only by design.
-          command: attachSessionCommand(config.host.sessionName),
+      // Everything tmux-shaped goes through the client, which owns command
+      // construction and output parsing behind the transport seam.
+      const tmux = new TmuxClient(sshTmuxTransport(conn));
+
+      const opened = await tmux.attach(config.host.sessionName, current, {
+        onData: (data) => {
+          surface.current?.write(bytesToBase64(new Uint8Array(data)));
         },
-        {
-          onData: (data) => {
-            surface.current?.write(bytesToBase64(new Uint8Array(data)));
-          },
-          onClosed: (exitCode) => {
-            shell.current = null;
-            if (!disposed.current) setStatus({ phase: 'closed', exitCode });
-          },
+        onClosed: (exitCode) => {
+          shell.current = null;
+          if (!disposed.current) setStatus({ phase: 'closed', exitCode });
         },
-      );
+      });
 
       if (disposed.current) {
         await opened.close();

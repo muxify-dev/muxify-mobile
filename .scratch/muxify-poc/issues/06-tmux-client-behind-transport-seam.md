@@ -21,10 +21,10 @@ mode is deliberately not used; see ADR 0001.
 
 **Status:** ready-for-agent
 
-- [ ] A transport interface exists with execute and open-shell operations
-- [ ] TmuxClient exposes the domain operations and depends only on that interface
-- [ ] The existing Attach path is routed through TmuxClient with no behaviour change
-- [ ] Session names are escaped before being interpolated into any Control Command
-- [ ] A Host running no tmux server reports an empty Session list, not an error
-- [ ] Tests cover command construction, name escaping, listing parsing, active Window and Pane identification, and the no-server case
-- [ ] Tests assert observable results, not internal call sequences
+- [x] A transport interface exists with execute and open-shell operations
+- [x] TmuxClient exposes the domain operations and depends only on that interface
+- [x] The existing Attach path is routed through TmuxClient with no behaviour change
+- [x] Session names are escaped before being interpolated into any Control Command
+- [x] A Host running no tmux server reports an empty Session list, not an error
+- [x] Tests cover command construction, name escaping, listing parsing, active Window and Pane identification, and the no-server case
+- [x] Tests assert observable results, not internal call sequences

@@ -46,3 +46,62 @@ export function listSessionsCommand(tmuxExecutablePath?: string): string {
 export function attachSessionCommand(sessionName: string, tmuxExecutablePath?: string): string {
   return `${tmux(tmuxExecutablePath)} attach-session -t ${shellQuote(sessionName)}`;
 }
+
+/** Addresses a Window as tmux writes it: `session:window`. */
+function windowTarget(sessionName: string, windowIndex: number): string {
+  return shellQuote(`${sessionName}:${windowIndex}`);
+}
+
+/**
+ * Control Command listing the Windows of a Session: index, name and whether it
+ * is the active one, tab separated. Tab is the separator because a Window name
+ * may contain spaces and colons but not a tab.
+ */
+export function listWindowsCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return (
+    `${tmux(tmuxExecutablePath)} list-windows -t ${shellQuote(sessionName)} ` +
+    "-F '#{window_index}\t#{window_name}\t#{window_active}'"
+  );
+}
+
+/** Control Command listing the Panes of one Window, same shape as Windows. */
+export function listPanesCommand(
+  sessionName: string,
+  windowIndex: number,
+  tmuxExecutablePath?: string,
+): string {
+  return (
+    `${tmux(tmuxExecutablePath)} list-panes -t ${windowTarget(sessionName, windowIndex)} ` +
+    "-F '#{pane_index}\t#{pane_current_command}\t#{pane_active}'"
+  );
+}
+
+/** Control Command moving the attached client to another Window. */
+export function selectWindowCommand(
+  sessionName: string,
+  windowIndex: number,
+  tmuxExecutablePath?: string,
+): string {
+  return `${tmux(tmuxExecutablePath)} select-window -t ${windowTarget(sessionName, windowIndex)}`;
+}
+
+/** Control Command moving the attached client to another Pane. */
+export function selectPaneCommand(
+  sessionName: string,
+  windowIndex: number,
+  paneIndex: number,
+  tmuxExecutablePath?: string,
+): string {
+  const target = shellQuote(`${sessionName}:${windowIndex}.${paneIndex}`);
+  return `${tmux(tmuxExecutablePath)} select-pane -t ${target}`;
+}
+
+/**
+ * Control Command pointing the attached client at a different Session.
+ *
+ * This is how Session switching happens without tearing down the Shell
+ * Channel: the client follows, and the Surface simply redraws.
+ */
+export function switchSessionCommand(sessionName: string, tmuxExecutablePath?: string): string {
+  return `${tmux(tmuxExecutablePath)} switch-client -t ${shellQuote(sessionName)}`;
+}
