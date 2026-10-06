@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="960" viewBox="0 0 1200 960" fill="none">
+  <title>Translucent white and gray faceted M</title>
+  <desc>Two mirrored triangular forms, each divided into three precisely joined facets. Transparent background and partially transparent glass faces.</desc>
+  <defs>
+    <linearGradient id="outer" x1="210" y1="140" x2="160" y2="870" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".80"/>
+      <stop offset=".43" stop-color="#DEDEDE" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#B8B8B8" stop-opacity=".58"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="240" y1="220" x2="560" y2="625" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".92"/>
+      <stop offset=".48" stop-color="#ECECEC" stop-opacity=".64"/>
+      <stop offset="1" stop-color="#BBBBBB" stop-opacity=".36"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="355" y1="510" x2="280" y2="865" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#858585" stop-opacity=".52"/>
+      <stop offset=".56" stop-color="#C5C5C5" stop-opacity=".40"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity=".76"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="180" y1="140" x2="410" y2="850" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".94"/>
+      <stop offset=".48" stop-color="#FFFFFF" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity=".75"/>
+    </linearGradient>
+    <path id="outline" d="M 196 159 Q 200 140 210 151.5 L 600 600 L 62.4 888 Q 40 900 44 881 Z"/>
+    <clipPath id="clip"><use xlink:href="#outline"/></clipPath>
+    <g id="half">
+      <g clip-path="url(#clip)">
+        <path d="M 200 140 L 370 485 L 40 900 Z" fill="url(#outer)"/>
+        <path d="M 200 140 L 600 600 L 370 485 Z" fill="url(#inner)"/>
+        <path d="M 40 900 L 370 485 L 600 600 Z" fill="url(#lower)"/>
+        <path d="M 200 140 L 370 485 L 600 600 M 370 485 L 40 900" stroke="#FFFFFF" stroke-opacity=".70" stroke-width="1.6" stroke-linejoin="round"/>
+        <use xlink:href="#outline" stroke="url(#rim)" stroke-width="4"/>
+      </g>
+    </g>
+  </defs>
+  <use xlink:href="#half"/>
+  <use xlink:href="#half" transform="translate(1200 0) scale(-1 1)"/>
+</svg>

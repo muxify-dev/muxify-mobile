@@ -6,7 +6,8 @@
   "dependencies": {
     "@expo/ui": "57.0.18",
     "@osuki-dev/react-native-ssh": "0.3.0",
-    "expo": "57.0.22",
+    "expo": "57.0.23",
+    "expo-build-properties": "~57.0.22",
     "expo-clipboard": "57.0.2",
     "expo-constants": "57.0.18",
     "expo-device": "57.0.2",

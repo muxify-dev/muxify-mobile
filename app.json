@@ -8,7 +8,7 @@
     "scheme": "muxify",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/icon.png",
+      "icon": "./assets/images/AppIcon.icon",
       "bundleIdentifier": "dev.muxify.app",
       "supportsTablet": true,
       "appleTeamId": "BX9D4834DP"
@@ -40,13 +40,30 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0a141e",
+          "backgroundColor": "#443BAD",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 220,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#0a141e",
+            "backgroundColor": "#443BAD",
             "image": "./assets/images/splash-icon.png"
+          },
+          "ios": {
+            "image": "./assets/images/splash.png",
+            "enableFullScreenImage_legacy": true,
+            "resizeMode": "cover",
+            "dark": {
+              "image": "./assets/images/splash.png",
+              "backgroundColor": "#443BAD"
+            }
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
           }
         }
       ]
