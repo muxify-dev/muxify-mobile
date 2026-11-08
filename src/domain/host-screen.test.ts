@@ -15,8 +15,11 @@ import type {
   SessionId,
   TopicId,
   TopicState,
+  Unpinned,
 } from '@/topics/environment';
-import { TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
+import inPlayFixture from '@/topics/__fixtures__/environment-in-play.json';
+import { parseEnvironment } from '@/topics/environment';
+import { listedSessions, TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
 
 const remembered = (name: string, lastOpenedAt = '2026-09-15T10:00:00Z'): RecentSession => ({
   hostId: 'host1',
@@ -257,6 +260,7 @@ describe('hostScreen', () => {
         listing,
         topics: TOPICS_UNASKED,
         opened: new Set(),
+        appearance: 'light',
       }),
     ).toEqual(sections);
   });
@@ -270,6 +274,7 @@ interface TopicsCase {
   listing?: Listing;
   topics: HostTopics;
   opened?: ReadonlySet<OpenableRow>;
+  appearance?: 'light' | 'dark';
   sections: HostScreenSection[];
 }
 
@@ -278,7 +283,7 @@ const tid = (id: string) => id as TopicId;
 
 const topicCard = (
   id: string,
-  over: { state?: TopicState; mark?: Mark | null; note?: string | null } = {},
+  over: { state?: TopicState; mark?: Mark | null; note?: string | null; tags?: string[] } = {},
 ): Card => ({
   kind: 'topic',
   mark: over.mark ?? null,
@@ -287,7 +292,7 @@ const topicCard = (
     id: tid(id),
     label: `Topic ${id}`,
     note: over.note ?? null,
-    tags: [],
+    tags: over.tags ?? [],
     state: over.state ?? 'live',
   },
 });
@@ -300,6 +305,7 @@ const topicRow = (
   id: tid(id),
   label: `Topic ${id}`,
   note: null,
+  tags: [],
   mark: null,
   pinned: false,
   dimmed: false,
@@ -332,6 +338,35 @@ const listed = (over: Partial<EnvironmentSnapshot>): HostTopics => ({
 
 const CLOSED = new Set<OpenableRow>();
 
+const section = (
+  id: HostScreenSection['id'],
+  title: string | null,
+  ...rows: HostScreenRow[]
+): HostScreenSection => ({ id, title, footer: null, rows });
+
+const OPEN_PLACE: Card = { kind: 'open_place', id: 'open1' };
+const OPEN_PLACE_ROW: HostScreenRow = { kind: 'open-place', id: 'open1' };
+
+/** An In Play answer with one Open Place and nothing else, unless told. */
+const inPlay = (over: Partial<Extract<Unpinned, { kind: 'in_play' }>> = {}): Unpinned => ({
+  kind: 'in_play',
+  limit: 3,
+  places: [OPEN_PLACE],
+  guests: [],
+  bench: [],
+  ...over,
+});
+
+// `odd` has a colour the phone cannot read. `gone` is a Tag the Config no
+// longer defines, which a Topic record can still hold.
+const TAGS: EnvironmentSnapshot['tags'] = [
+  { name: 'work', color: { light: { kind: 'system', name: 'orange' }, dark: { kind: 'system', name: 'orange' } } },
+  { name: 'ui', color: { light: { kind: 'rgb', hex: '#112233' }, dark: { kind: 'system', name: 'blue' } } },
+  { name: 'odd', color: { light: null, dark: null } },
+];
+// The Topic's own order, which the Mac does not draw in.
+const TAG_NAMES = ['gone', 'ui', 'odd', 'work'];
+
 describe('hostScreen with Topics', () => {
   it.each<TopicsCase>([
     {
@@ -345,24 +380,102 @@ describe('hostScreen with Topics', () => {
       ],
     },
     {
-      name: 'with In Play, draws the places, the Guests and the Bench as one list in that order',
+      name: 'with In Play, draws Pinned, the places, the Guests, then a closed Bench row',
       topics: listed({
         pinned: [topicCard('p')],
         unpinned: {
           kind: 'in_play',
           limit: 3,
-          places: [topicCard('place'), { kind: 'open_place', id: 'open1' }],
+          places: [topicCard('place'), OPEN_PLACE],
           guests: [topicCard('guest')],
-          bench: [topicCard('bench')],
+          bench: [topicCard('b1'), topicCard('b2')],
         },
       }),
       sections: [
-        topicsSection(
+        section('pinned', 'Pinned', topicRow('p', { pinned: true })),
+        section('in-play', 'In Play', topicRow('place'), { kind: 'open-place', id: 'open1' }),
+        section('guests', 'Guests', topicRow('guest')),
+        section('bench', null, { kind: 'bench', opened: false }),
+      ],
+    },
+    {
+      name: 'opens the Bench row into its cards, in the order they came',
+      topics: listed({ unpinned: inPlay({ bench: [topicCard('b2'), topicCard('b1')] }) }),
+      opened: new Set<OpenableRow>(['bench']),
+      sections: [
+        section('in-play', 'In Play', OPEN_PLACE_ROW),
+        section('bench', null, { kind: 'bench', opened: true }, topicRow('b2'), topicRow('b1')),
+      ],
+    },
+    {
+      name: 'with In Play, leaves out an empty Pinned, Guests and Bench, and keeps the Open Places',
+      topics: listed({ unpinned: inPlay({ places: [OPEN_PLACE, OPEN_PLACE] }) }),
+      sections: [section('in-play', 'In Play', OPEN_PLACE_ROW, OPEN_PLACE_ROW)],
+    },
+    {
+      name: 'with In Play and Topics alone, puts the No Topic row after the Bench row',
+      topics: listed({
+        sessions: [snapshotSession('$1', 'cook', null)],
+        unpinned: inPlay({ bench: [topicCard('b1')] }),
+        no_topic: [sid('$1')],
+      }),
+      sections: [
+        section('in-play', 'In Play', OPEN_PLACE_ROW),
+        section(
+          'bench',
+          null,
+          { kind: 'bench', opened: false },
+          { kind: 'no-topic', count: 1, opened: false },
+        ),
+      ],
+    },
+    {
+      name: 'with In Play, shows the error of a failed read above the first section',
+      topics: {
+        kind: 'failed',
+        error: 'muxify exited with status 1',
+        last: snapshot({ pinned: [topicCard('p')], unpinned: inPlay() }),
+      },
+      sections: [
+        section(
+          'pinned',
+          'Pinned',
+          { kind: 'refused', message: 'muxify exited with status 1' },
           topicRow('p', { pinned: true }),
-          topicRow('place'),
-          { kind: 'open-place', id: 'open1' },
-          topicRow('guest'),
-          topicRow('bench'),
+        ),
+        section('in-play', 'In Play', OPEN_PLACE_ROW),
+      ],
+    },
+    {
+      name: 'draws the Tags in Config order, in their light colours, and an undefined one last',
+      topics: listed({ tags: TAGS, unpinned: { kind: 'list', cards: [topicCard('t1', { tags: TAG_NAMES })] } }),
+      sections: [
+        topicsSection(
+          topicRow('t1', {
+            tags: [
+              { name: 'work', color: '#ff9500' },
+              { name: 'ui', color: '#112233' },
+              { name: 'odd', color: null },
+              { name: 'gone', color: null },
+            ],
+          }),
+        ),
+      ],
+    },
+    {
+      name: 'draws each Tag in the dark colour of its Config entry in dark appearance',
+      appearance: 'dark',
+      topics: listed({ tags: TAGS, unpinned: { kind: 'list', cards: [topicCard('t1', { tags: TAG_NAMES })] } }),
+      sections: [
+        topicsSection(
+          topicRow('t1', {
+            tags: [
+              { name: 'work', color: '#ff9f0a' },
+              { name: 'ui', color: '#0a84ff' },
+              { name: 'odd', color: null },
+              { name: 'gone', color: null },
+            ],
+          }),
         ),
       ],
     },
@@ -559,6 +672,7 @@ describe('hostScreen with Topics', () => {
     listing = UNASKED,
     topics,
     opened = CLOSED,
+    appearance = 'light',
     sections,
   }) => {
     expect(
@@ -568,7 +682,52 @@ describe('hostScreen with Topics', () => {
         listing,
         topics,
         opened,
+        appearance,
       }),
     ).toEqual(sections);
+  });
+});
+
+describe('hostScreen with Topics, against the snapshot `environment show` gave on the Mac', () => {
+  const mac = parseEnvironment(inPlayFixture);
+
+  it('draws the sections and cards in the order the Mac sent them', () => {
+    const sections = hostScreen({
+      settings: { hostScreenLists: ['topics'], recentSessionsFirst: true },
+      recent: [],
+      listing: UNASKED,
+      topics: { kind: 'listed', snapshot: mac },
+      opened: new Set<OpenableRow>(['bench']),
+      appearance: 'dark',
+    });
+    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
+    const ids = (cards: Card[]) => cards.map((card) => (card.kind === 'topic' ? card.topic.id : card.kind));
+    const rowIds = (rows: HostScreenRow[]) =>
+      rows.flatMap((row) => (row.kind === 'topic' ? [row.id] : row.kind === 'open-place' ? ['open_place'] : []));
+
+    expect(sections.map((shown) => shown.title)).toEqual(['Pinned', 'In Play', 'Guests', null]);
+    expect(rowIds(sections[0]?.rows ?? [])).toEqual(ids(mac.pinned));
+    expect(rowIds(sections[1]?.rows ?? [])).toEqual(ids(mac.unpinned.places));
+    expect(rowIds(sections[2]?.rows ?? [])).toEqual(ids(mac.unpinned.guests));
+    expect(rowIds(sections[3]?.rows ?? [])).toEqual(ids(mac.unpinned.bench));
+    expect(sections[1]?.rows[2]).toMatchObject({ tags: [{ name: 'personal', color: '#7fa88a' }] });
+  });
+
+  it('with Recent Sessions first off, lists the Sessions in the order `environment show` gave', () => {
+    const [sessions] = hostScreen({
+      settings: { hostScreenLists: ['sessions', 'topics'], recentSessionsFirst: false },
+      recent: [remembered('chezmoi')],
+      listing: answered(listedSessions(mac)),
+      topics: { kind: 'listed', snapshot: mac },
+      opened: CLOSED,
+      appearance: 'light',
+    });
+    const inNoTopic = mac.sessions.filter((session) => session.topic === null);
+
+    expect(sessions?.id).toBe('sessions');
+    expect(sessions?.rows.map((row) => ('name' in row ? row.name : row.kind))).toEqual(
+      inNoTopic.map((session) => session.name),
+    );
+    expect(sessions?.rows.find((row) => row.kind === 'recent')).toMatchObject({ name: 'chezmoi' });
   });
 });

@@ -7,6 +7,8 @@
  * the Mac does not.
  */
 
+import { parseTagColor, type TagColor } from './tag-color';
+
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type TopicId = string & { readonly __brand: 'TopicId' };
 
@@ -44,7 +46,8 @@ export interface SnapshotSession {
 }
 
 export interface EnvironmentSnapshot {
-  tags: { name: string; color: { light: string; dark: string } }[];
+  /** In Config order. A colour this phone cannot read is null. */
+  tags: { name: string; color: { light: TagColor | null; dark: TagColor | null } }[];
   sessions: SnapshotSession[];
   pinned: Card[];
   unpinned: Unpinned;
@@ -54,12 +57,12 @@ export interface EnvironmentSnapshot {
 /**
  * Parses the answer once, at the boundary, so nothing past it checks a shape.
  *
- * Throws with the path of the first thing that is wrong. Two things never
+ * Throws with the path of the first thing that is wrong. Three things never
  * throw, because a newer desktop Muxify may send them: a card `kind` this
- * phone does not know becomes an `unknown` card, and a `mark` it does not
- * know becomes no mark. A Topic `state` it does not know becomes `live`: that
- * draws the card undimmed and says nothing about Sessions, where `dormant`
- * would claim "No live Sessions" about a Topic the phone cannot describe.
+ * phone does not know becomes an `unknown` card, a `mark` it does not know
+ * becomes no mark, and a Tag colour it cannot read becomes no colour. A Topic
+ * `state` it does not know becomes `live`: that draws the card undimmed and
+ * says nothing about Sessions, where `dormant` would claim "No live Sessions" about a Topic the phone cannot describe.
  */
 export function parseEnvironment(json: unknown): EnvironmentSnapshot {
   const root = object(json, 'environment');
@@ -71,7 +74,10 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
       const color = object(entry.color, `${at}.color`);
       return {
         name: string(entry.name, `${at}.name`),
-        color: { light: string(color.light, `${at}.color.light`), dark: string(color.dark, `${at}.color.dark`) },
+        color: {
+          light: parseTagColor(string(color.light, `${at}.color.light`)),
+          dark: parseTagColor(string(color.dark, `${at}.color.dark`)),
+        },
       };
     }),
     sessions: array(root.sessions, 'sessions').map((session, index) => {
