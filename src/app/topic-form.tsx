@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
-  Button,
   Form,
   Host,
   HStack,
@@ -15,10 +14,7 @@ import {
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
-  accessibilityValue,
   background,
-  buttonStyle,
-  controlSize,
   environment,
   font,
   foregroundColor,
@@ -29,6 +25,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { SectionHeader } from '@/components/section-header';
+import { TagChoice } from '@/components/tag-choice';
 import { ToolbarWord } from '@/components/toolbar-word';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -36,11 +33,9 @@ import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { withHostTransport } from '@/tmux/ssh-connection';
-import type { Tag } from '@/topics/environment';
 import { createMuxifyCli } from '@/topics/muxify-cli';
 import type { NewTopicRead } from '@/topics/new-topic';
-import { tagsFromParam } from '@/topics/new-topic';
-import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
+import { tagsFromParam } from '@/topics/tags-param';
 
 const say = speakingAs(deviceLog(), 'new-topic');
 
@@ -116,7 +111,7 @@ export default function TopicFormScreen() {
       router.back();
       router.push({
         pathname: '/topic',
-        params: { hostId, topicId: made.topic, label: wanted },
+        params: { hostId, topicId: made.topic, label: wanted, tags: tagsJson },
       });
     })();
   }, [creating, title, hostId, tags, chosen, router]);
@@ -183,7 +178,8 @@ export default function TopicFormScreen() {
                       key={tag.name}
                       tag={tag}
                       chosen={chosen.has(tag.name)}
-                      color={tagColor(tag, appearance) ?? palette.secondaryLabel}
+                      appearance={appearance}
+                      fallbackColor={palette.secondaryLabel}
                       onPress={() => toggle(tag.name)}
                     />
                   ))}
@@ -195,38 +191,6 @@ export default function TopicFormScreen() {
       </Host>
     </View>
   );
-}
-
-/** A Tag to give the new Topic: filled in its Tag colour when chosen, outlined when not. */
-function TagChoice({
-  tag,
-  chosen,
-  color,
-  onPress,
-}: {
-  tag: Tag;
-  chosen: boolean;
-  color: string;
-  onPress: () => void;
-}) {
-  return (
-    <Button
-      label={`#${tag.name}`}
-      onPress={onPress}
-      modifiers={[
-        buttonStyle(chosen ? 'borderedProminent' : 'bordered'),
-        controlSize('small'),
-        tint(color),
-        accessibilityLabel(`Tag #${tag.name}`),
-        accessibilityValue(chosen ? 'chosen' : 'not chosen'),
-      ]}
-    />
-  );
-}
-
-function tagColor(tag: Tag, appearance: ColorAppearance): string | null {
-  const color = tag.color[appearance];
-  return color === null ? null : tagColorHex(color, appearance);
 }
 
 const styles = StyleSheet.create({
