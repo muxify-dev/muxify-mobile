@@ -165,6 +165,8 @@ export interface Attach {
 export interface AttachOptions {
   host: Host;
   sessionName: string;
+  /** The Topic the Session was opened from, kept in the Last Place. */
+  topicId: string | null;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
   openConnection: OpenConnection;
@@ -485,6 +487,18 @@ export function openAttach(options: AttachOptions): Attach {
     views.clear();
   }
 
+  /**
+   * Records a Session the user is now in: a Recent Session, and the Last Place
+   * a cold start goes back to. One after the other, because each rewrites the
+   * whole records file and two at once would lose one of them.
+   */
+  function arrived(sessionName: string, topicId: string | null): void {
+    void store
+      .rememberSession(host.id, sessionName)
+      .then(() => store.rememberLastPlace({ hostId: host.id, session: sessionName, topicId }))
+      .catch(() => {});
+  }
+
   // ------------------------------------------------------------------- Attach
 
   async function connect(): Promise<void> {
@@ -587,7 +601,7 @@ export function openAttach(options: AttachOptions): Attach {
       // Stamped on a Session that actually opened, not on one that was only
       // tapped: the Host Screen's order is a record of where you have been,
       // and a Session that refused to attach is not somewhere you have been.
-      void store.rememberSession(host.id, state.sessionName).catch(() => {});
+      arrived(state.sessionName, options.topicId);
 
       // Size first, so the capture that follows is of a Pane the size of the
       // Surface rather than of whatever the last Client left it.
@@ -759,8 +773,9 @@ export function openAttach(options: AttachOptions): Attach {
       change({ sessionName: name });
       // Switching lands in a Session just as arriving does, so it counts the
       // same on the Host Screen. Without this the order would only remember
-      // how a visit started, not where it went.
-      void store.rememberSession(host.id, name).catch(() => {});
+      // how a visit started, not where it went. The Topic it was opened from
+      // need not hold the Session switched to, so the Last Place drops it.
+      arrived(name, null);
       // The Session switched into has its own Window, sized for whoever
       // attached to it last.
       sizing.sessionSwitched();

@@ -32,6 +32,12 @@ export interface Settings {
    * Off, it keeps the Host's own order, the order the Mac shows.
    */
   recentSessionsFirst: boolean;
+  /**
+   * Whether a cold start opens the Last Place again, if there is one. Off by
+   * default: an app that connects to a machine on launch is a surprise
+   * nobody asked for.
+   */
+  reconnectOnStart: boolean;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
@@ -50,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   zoomMultipaneWindows: true,
   hostScreenLists: ['sessions'],
   recentSessionsFirst: true,
+  reconnectOnStart: false,
 };
 
 /** Keeps a font size inside what the Surface will accept. */
@@ -157,6 +164,7 @@ export function parseSettings(raw: unknown): Settings {
   const theme = record.theme;
   const zoom = record.zoomMultipaneWindows;
   const recentFirst = record.recentSessionsFirst;
+  const reconnect = record.reconnectOnStart;
 
   return {
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
@@ -166,5 +174,7 @@ export function parseSettings(raw: unknown): Settings {
     hostScreenLists: parseHostScreenLists(record.hostScreenLists),
     recentSessionsFirst:
       typeof recentFirst === 'boolean' ? recentFirst : DEFAULT_SETTINGS.recentSessionsFirst,
+    reconnectOnStart:
+      typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
   };
 }

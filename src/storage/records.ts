@@ -51,14 +51,41 @@ export interface RecentSession {
   lastOpenedAt: string;
 }
 
+/**
+ * Where the user was when Muxify last closed: the Session of the last Attach
+ * that reached its attached phase, and the Topic it was opened from, if any.
+ * Reconnect on start opens it again. A Disconnect clears it, because a
+ * Disconnect means "do not take me back".
+ */
+export interface LastPlace {
+  hostId: string;
+  session: string;
+  topicId: string | null;
+}
+
 /** Everything the app persists, as it sits on disk. */
 export interface Records {
   hosts: Host[];
   identities: Identity[];
   fingerprints: Fingerprint[];
   recentSessions: RecentSession[];
+  lastPlace: LastPlace | null;
 }
 
 export function emptyRecords(): Records {
-  return { hosts: [], identities: [], fingerprints: [], recentSessions: [] };
+  return { hosts: [], identities: [], fingerprints: [], recentSessions: [], lastPlace: null };
+}
+
+/**
+ * The Last Place a saved value names, or null for a missing or bad one. Only
+ * this field is checked: a bad one sends a cold start to the Hosts list, which
+ * is a safe place to be.
+ */
+export function parseLastPlace(raw: unknown): LastPlace | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { hostId, session, topicId } = raw as Record<string, unknown>;
+  if (typeof hostId !== 'string' || hostId === '') return null;
+  if (typeof session !== 'string' || session === '') return null;
+  if (topicId !== null && typeof topicId !== 'string') return null;
+  return { hostId, session, topicId };
 }

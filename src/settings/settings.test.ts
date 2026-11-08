@@ -38,6 +38,7 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: false,
         hostScreenLists: ['topics', 'sessions'],
         recentSessionsFirst: false,
+        reconnectOnStart: true,
       }),
     ).toEqual({
       fontSize: 14,
@@ -45,6 +46,7 @@ describe('parseSettings', () => {
       zoomMultipaneWindows: false,
       hostScreenLists: ['topics', 'sessions'],
       recentSessionsFirst: false,
+      reconnectOnStart: true,
     });
   });
 
@@ -84,6 +86,7 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: 'yes',
         hostScreenLists: 7,
         recentSessionsFirst: 'no',
+        reconnectOnStart: 'yes',
       }),
     ).toEqual({
       fontSize: 13,
@@ -91,6 +94,7 @@ describe('parseSettings', () => {
       zoomMultipaneWindows: true,
       hostScreenLists: ['sessions'],
       recentSessionsFirst: true,
+      reconnectOnStart: false,
     });
   });
 
@@ -102,6 +106,16 @@ describe('parseSettings', () => {
     ['on', true, true],
   ])('reads Recent Sessions first that is %s', (_, saved, on) => {
     expect(parseSettings({ recentSessionsFirst: saved }).recentSessionsFirst).toBe(on);
+  });
+
+  it.each<[string, unknown, boolean]>([
+    ['missing, as in a file from before the setting', undefined, false],
+    ['not a boolean', 'true', false],
+    ['null', null, false],
+    ['off', false, false],
+    ['on', true, true],
+  ])('reads Reconnect on start that is %s', (_, saved, on) => {
+    expect(parseSettings({ reconnectOnStart: saved }).reconnectOnStart).toBe(on);
   });
 
   it.each<[string, unknown, HostScreenLists]>([

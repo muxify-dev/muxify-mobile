@@ -208,6 +208,7 @@ describe('load', () => {
       identities: [],
       fingerprints: [],
       recentSessions: [],
+      lastPlace: null,
     });
   });
 
@@ -219,6 +220,7 @@ describe('load', () => {
       identities: [],
       fingerprints: [],
       recentSessions: [],
+      lastPlace: null,
     });
   });
 
@@ -230,6 +232,7 @@ describe('load', () => {
       identities: [],
       fingerprints: [],
       recentSessions: [],
+      lastPlace: null,
     });
   });
 });
@@ -303,5 +306,74 @@ describe('recent Sessions', () => {
     const store = createHostStore(file, secrets, ids());
 
     expect((await store.load()).recentSessions).toEqual([]);
+  });
+});
+
+describe('the Last Place', () => {
+  it('is none until a Session has been reached', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    expect((await store.load()).lastPlace).toBeNull();
+  });
+
+  it('keeps the place the Attach wrote, and the next one replaces it', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+
+    await store.rememberLastPlace({ hostId: 'host1', session: 'dotfiles', topicId: 'topic1' });
+    await store.rememberLastPlace({ hostId: 'host1', session: 'muxify', topicId: null });
+
+    expect((await store.load()).lastPlace).toEqual({
+      hostId: 'host1',
+      session: 'muxify',
+      topicId: null,
+    });
+  });
+
+  it('is cleared by a Disconnect, and other records stay', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids(), clock());
+    await store.rememberSession('host1', 'dotfiles');
+    await store.rememberLastPlace({ hostId: 'host1', session: 'dotfiles', topicId: null });
+
+    await store.forgetLastPlace();
+
+    const records = await store.load();
+    expect(records.lastPlace).toBeNull();
+    expect(records.recentSessions.map((s) => s.name)).toEqual(['dotfiles']);
+  });
+
+  it('survives saving a Host, and goes with the Host it names', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'x' });
+    await store.rememberLastPlace({ hostId: saved.id, session: 'work', topicId: null });
+
+    await store.saveHost({
+      host: { ...HOST, id: saved.id, displayName: 'Renamed' },
+      identity: { ...IDENTITY, id: saved.identityId },
+      credential: '',
+    });
+    expect((await store.load()).lastPlace?.session).toBe('work');
+
+    await store.removeHost(saved.id);
+    expect((await store.load()).lastPlace).toBeNull();
+  });
+
+  it.each([
+    ['missing', {}],
+    ['not an object', { lastPlace: 'host1:work' }],
+    ['without a Host', { lastPlace: { session: 'work', topicId: null } }],
+    ['with an empty Session', { lastPlace: { hostId: 'host1', session: '', topicId: null } }],
+    ['with a Topic that is not text', { lastPlace: { hostId: 'host1', session: 'work', topicId: 4 } }],
+    ['from before it had a Topic', { lastPlace: { hostId: 'host1', session: 'work' } }],
+  ])('reads as none when it is %s, and the other records still load', async (_, saved) => {
+    const { file, secrets } = fakeStorage(JSON.stringify({ hosts: [{ id: 'host1' }], ...saved }));
+    const store = createHostStore(file, secrets, ids());
+
+    const records = await store.load();
+    expect(records.lastPlace).toBeNull();
+    expect(records.hosts).toHaveLength(1);
   });
 });

@@ -71,7 +71,13 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
 function holderOn() {
   const log: string[] = [];
   const seen: (string | null)[] = [];
-  const holder = createAttachHolder((options) => fakeAttach(options, log));
+  const lastPlace = {
+    forgetLastPlace: () => {
+      log.push('forget Last Place');
+      return Promise.resolve();
+    },
+  };
+  const holder = createAttachHolder((options) => fakeAttach(options, log), lastPlace);
   holder.subscribe((attach) => seen.push(attach ? attach.state().sessionName : null));
   return { holder, log, seen };
 }
@@ -79,7 +85,7 @@ function holderOn() {
 describe('the one Attach the app holds', () => {
   it('opens a Session when nothing is attached', async () => {
     const { holder, log } = holderOn();
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
 
     expect(log).toEqual(['open a:work']);
     expect(holder.current()?.state().sessionName).toBe('work');
@@ -87,26 +93,28 @@ describe('the one Attach the app holds', () => {
 
   it('closes the attached Session before opening another', async () => {
     const { holder, log } = holderOn();
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
-    await holder.open({ host: host('a'), sessionName: 'play', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'play', topicId: null, zoomed: true });
 
     // The order is the point: two Connections to account for is exactly what
     // holding one at a time is meant to avoid.
+    // Opening another is not a Disconnect: the Last Place is kept until the
+    // new Session arrives and replaces it.
     expect(log).toEqual(['open a:work', 'close a:work', 'open a:play']);
   });
 
   it('does the same for a Session on another Host', async () => {
     const { holder, log } = holderOn();
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
-    await holder.open({ host: host('b'), sessionName: 'work', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
+    await holder.open({ host: host('b'), sessionName: 'work', topicId: null, zoomed: true });
 
     expect(log).toEqual(['open a:work', 'close a:work', 'open b:work']);
   });
 
   it('opens nothing for the Session that is already attached', async () => {
     const { holder, log } = holderOn();
-    const first = await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
-    const again = await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    const first = await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
+    const again = await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
 
     expect(again).toBe(first);
     expect(log).toEqual(['open a:work']);
@@ -114,21 +122,21 @@ describe('the one Attach the app holds', () => {
 
   it('opens again for a Session that was closed under it', async () => {
     const { holder, log } = holderOn();
-    const first = await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    const first = await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
     await first.close();
     log.length = 0;
 
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
 
     expect(log).toEqual(['close a:work', 'open a:work']);
   });
 
   it('ends it on purpose when asked, and holds nothing afterwards', async () => {
     const { holder, log, seen } = holderOn();
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
     await holder.disconnect();
 
-    expect(log).toEqual(['open a:work', 'close a:work']);
+    expect(log).toEqual(['open a:work', 'close a:work', 'forget Last Place']);
     expect(holder.current()).toBeNull();
     expect(seen).toEqual([null, 'work', null]);
   });
@@ -143,7 +151,7 @@ describe('the one Attach the app holds', () => {
 describe('the app’s lifecycle', () => {
   it('forwards it to whatever is attached', async () => {
     const { holder, log } = holderOn();
-    await holder.open({ host: host('a'), sessionName: 'work', zoomed: true });
+    await holder.open({ host: host('a'), sessionName: 'work', topicId: null, zoomed: true });
     log.length = 0;
 
     holder.lifecycleChanged('background');

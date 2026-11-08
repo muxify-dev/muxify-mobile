@@ -110,7 +110,7 @@ export default function TopicScreen() {
   );
 
   const open = (session: string) =>
-    router.push({ pathname: '/terminal', params: { hostId, session } });
+    router.push({ pathname: '/terminal', params: { hostId, session, topicId } });
 
   const topic = lastTopic(view);
 

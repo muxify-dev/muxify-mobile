@@ -64,7 +64,8 @@
     "e2e:topic-screen": "bash e2e/topic-screen.sh",
     "e2e:new-topic": "bash e2e/new-topic.sh",
     "e2e:edit-topic": "bash e2e/edit-topic.sh",
-    "e2e:add-session": "bash e2e/add-session.sh"
+    "e2e:add-session": "bash e2e/add-session.sh",
+    "e2e:reconnect": "bash e2e/reconnect-on-start.sh"
   },
   "private": true,
   "jest": {

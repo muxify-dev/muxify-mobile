@@ -34,6 +34,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
             openConnection: sshConnection(deviceHostStore()),
             log: deviceLog(),
           }),
+        deviceHostStore(),
         deviceLog(),
       ),
     [],

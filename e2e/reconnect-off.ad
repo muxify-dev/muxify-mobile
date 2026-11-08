@@ -1,0 +1,14 @@
+context platform=ios kind=simulator
+
+# With Reconnect on start off, a cold start opens the Hosts list even though a
+# Last Place is saved.
+#
+# Run with:  bash e2e/reconnect-on-start.sh
+
+open "dev.muxify.app" --relaunch
+wait "label=\"Settings\"" 15000
+wait 3000
+is "visible" "label=\"Settings\""
+is "absent" "id=\"reconnect-screen\""
+
+close
