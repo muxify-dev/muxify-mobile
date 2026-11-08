@@ -7,6 +7,7 @@
  * the Mac does not.
  */
 
+import { array, number, object, string } from './json-shape';
 import { parseTagColor, type TagColor } from './tag-color';
 
 export type SessionId = string & { readonly __brand: 'SessionId' };
@@ -171,31 +172,9 @@ function parseMark(value: unknown): Mark | null {
   return typeof value === 'string' && MARKS.includes(value) ? (value as Mark) : null;
 }
 
-function parseTopicState(value: unknown): TopicState {
+export function parseTopicState(value: unknown): TopicState {
   return value === 'dormant' || value === 'empty' ? value : 'live';
 }
 
-function object(value: unknown, at: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${at}: expected an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function array(value: unknown, at: string): unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${at}: expected an array`);
-  return value;
-}
-
-function string(value: unknown, at: string): string {
-  if (typeof value !== 'string') throw new Error(`${at}: expected a string`);
-  return value;
-}
-
-function number(value: unknown, at: string): number {
-  if (typeof value !== 'number') throw new Error(`${at}: expected a number`);
-  return value;
-}
-
-const sessionId = (value: unknown, at: string) => string(value, at) as SessionId;
-const topicId = (value: unknown, at: string) => string(value, at) as TopicId;
+export const sessionId = (value: unknown, at: string) => string(value, at) as SessionId;
+export const topicId = (value: unknown, at: string) => string(value, at) as TopicId;

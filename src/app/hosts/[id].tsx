@@ -3,7 +3,6 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useCallback, useState, type ReactNode } from 'react';
 import { Alert, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
-import type { SFSymbol } from 'sf-symbols-typescript';
 
 import {
   Button,
@@ -34,6 +33,8 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { TAPPABLE_ROW } from '@/components/tappable-row';
+import { SectionHeader } from '@/components/section-header';
+import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
 import { describeApp, describeDevice, deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -52,21 +53,19 @@ import {
   type HostScreenSection,
   type OpenableRow,
   type RecentRow,
-  type TagMark,
 } from '@/domain/host-screen';
 import { describeError } from '@/lib/describe-error';
 import { timeAgoFrom } from '@/lib/relative-time';
 import { useSettings } from '@/settings/settings-context';
-import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
+import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import type { AttachPhase } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { execCommandRunner } from '@/tmux/exec-runner';
-import { sshTmuxTransport } from '@/tmux/ssh-transport';
+import { withHostTransport } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
-import type { Mark } from '@/topics/environment';
 import {
   listedSessions,
   loadingTopics,
@@ -158,14 +157,7 @@ export default function HostScreen() {
     say(`asking ${found.displayName} for its ${topicsOn ? 'Topics' : 'Sessions'}`);
     let topicsRead = false;
     try {
-      const { connection, fingerprint, verdict } = await connectToHost(found, store);
-      try {
-        // Only a Connection that actually succeeded has vouched for the key,
-        // so this is where first sight is recorded rather than in the callback.
-        if (verdict.kind === 'first-sight') {
-          await store.rememberFingerprint(found.id, fingerprint);
-        }
-        const transport = sshTmuxTransport(connection);
+      await withHostTransport(found, store, async (transport) => {
         const read = topicsOn ? await muxify.read((command) => transport.exec(command)) : null;
         if (read) {
           topicsRead = true;
@@ -183,9 +175,7 @@ export default function HostScreen() {
           say(`${found.displayName} listed ${sessions.length} Sessions`);
           setListing(answered(sessions));
         }
-      } finally {
-        await connection.disconnect();
-      }
+      });
     } catch (error) {
       const message = describeConnectionFailure(error);
       say(`${found.displayName} refused the listing: ${message}`);
@@ -381,38 +371,43 @@ export default function HostScreen() {
           </Text>
         );
       case 'topic':
-        // No action yet: the Topic Screen is a later task.
         return (
-          <HStack
+          <Button
             key={row.id}
-            spacing={12}
-            modifiers={[
-              frame({ maxWidth: 3000 }),
-              opacity(row.dimmed ? 0.5 : 1),
-              accessibilityLabel(`Topic ${row.label}`),
-            ]}>
-            <Image
-              systemName={row.pinned ? 'pin.fill' : 'rectangle.stack'}
-              size={20}
-              color={row.pinned ? palette.controlAccent : palette.rowIcon}
-            />
-            <VStack spacing={2} alignment="leading">
-              <Text modifiers={[font({ size: 17 })]}>{row.label}</Text>
-              {row.note === null ? null : (
-                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
-                  {row.note}
-                </Text>
-              )}
-              {row.dimmed ? (
-                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
-                  No live Sessions
-                </Text>
-              ) : null}
-            </VStack>
-            <Spacer />
-            {row.tags.length === 0 ? null : <TagMarks tags={row.tags} palette={palette} />}
-            {row.mark === null ? null : <MarkImage mark={row.mark} palette={palette} />}
-          </HStack>
+            onPress={() =>
+              router.push({
+                pathname: '/topic',
+                params: { hostId: id, topicId: row.id, label: row.label },
+              })
+            }
+            modifiers={[buttonStyle('plain'), accessibilityLabel(`Topic ${row.label}`)]}>
+            <HStack
+              spacing={12}
+              modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW, opacity(row.dimmed ? 0.5 : 1)]}>
+              <Image
+                systemName={row.pinned ? 'pin.fill' : 'rectangle.stack'}
+                size={20}
+                color={row.pinned ? palette.controlAccent : palette.rowIcon}
+              />
+              <VStack spacing={2} alignment="leading">
+                <Text modifiers={[font({ size: 17 })]}>{row.label}</Text>
+                {row.note === null ? null : (
+                  <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+                    {row.note}
+                  </Text>
+                )}
+                {row.dimmed ? (
+                  <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+                    No live Sessions
+                  </Text>
+                ) : null}
+              </VStack>
+              <Spacer />
+              {row.tags.length === 0 ? null : <TagMarks tags={row.tags} palette={palette} />}
+              {row.mark === null ? null : <MarkImage mark={row.mark} palette={palette} />}
+              <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+            </HStack>
+          </Button>
         );
       case 'locked-session':
         return (
@@ -657,36 +652,6 @@ function LogMenu({ onCopyLog, children }: { onCopyLog: () => void; children: Rea
   );
 }
 
-/** One SF Symbol for the one mark a card has, in the colour that says how urgent it is. */
-function MarkImage({ mark, palette }: { mark: Mark; palette: Appearance }) {
-  const { symbol, color } = MARKS[mark](palette);
-  return <Image systemName={symbol} size={17} color={color} />;
-}
-
-/** A Topic's Tags as small squares in the Tag colours, as the Mac's Tag Marks are. */
-function TagMarks({ tags, palette }: { tags: TagMark[]; palette: Appearance }) {
-  return (
-    <HStack spacing={3} modifiers={[accessibilityLabel(tags.map((tag) => `#${tag.name}`).join(' '))]}>
-      {tags.map((tag) => (
-        <Image
-          key={tag.name}
-          systemName={tag.color === null ? 'square.dashed' : 'square.fill'}
-          size={11}
-          color={tag.color ?? palette.secondaryLabel}
-        />
-      ))}
-    </HStack>
-  );
-}
-
-const MARKS: Record<Mark, (palette: Appearance) => { symbol: SFSymbol; color: string }> = {
-  blocked: (palette) => ({ symbol: 'hand.raised.fill', color: palette.destructive }),
-  failed: (palette) => ({ symbol: 'xmark.octagon.fill', color: palette.destructive }),
-  unread: (palette) => ({ symbol: 'circle.fill', color: palette.controlAccent }),
-  done: (palette) => ({ symbol: 'checkmark.circle.fill', color: palette.secondaryLabel }),
-  working: (palette) => ({ symbol: 'arrow.triangle.2.circlepath', color: palette.secondaryLabel }),
-};
-
 /** The row at the foot of a section that has more to show. */
 function DisclosureRow({
   palette,
@@ -741,14 +706,6 @@ function ToolbarActions({
         <SymbolView name="plus" size={23} tintColor={palette.toolbarTint} />
       </Pressable>
     </View>
-  );
-}
-
-function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
-  return (
-    <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.sectionHeader)]}>
-      {children}
-    </Text>
   );
 }
 

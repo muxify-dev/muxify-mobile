@@ -199,6 +199,15 @@ is the Tag's light or dark value for the app's appearance. A Tag the Config no
 longer defines, or a colour the phone cannot read, shows as a dashed square.
 _Avoid_: tag chip, tag dot
 
+**Topic Screen**:
+The phone screen for one Topic, opened by a tap on its card on the Host Screen.
+It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
+order, each with its Windows and their Agent marks. A tap on a Session attaches
+to it, and Home from that Session goes to the Host Screen. A Dormant or Empty
+Topic shows "No live Sessions" and says which of the two it is. The screen
+reads the Topic again each time it comes into view.
+_Avoid_: Topic detail, Topic page, Topic view
+
 ### Terminal
 
 **Control Connection**:

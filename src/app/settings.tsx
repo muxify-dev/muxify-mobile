@@ -36,6 +36,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { SectionHeader } from '@/components/section-header';
 import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import {
@@ -338,19 +339,6 @@ function ThemePreview({
         </HStack>
       </VStack>
     </VStack>
-  );
-}
-
-/** A section's title, in a grey that is actually legible on this background. */
-function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
-  return (
-    <Text
-      modifiers={[
-        font({ size: 13, weight: 'semibold' }),
-        foregroundColor(palette.sectionHeader),
-      ]}>
-      {children}
-    </Text>
   );
 }
 

@@ -20,10 +20,10 @@ import {
 import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
-import { connectToHost, describeConnectionFailure } from '@/ssh/connect-host';
+import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
-import { sshTmuxTransport } from '@/tmux/ssh-transport';
+import { withHostTransport } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 
 /**
@@ -63,17 +63,12 @@ export default function SessionFormScreen() {
       }
 
       try {
-        const { connection } = await connectToHost(host, store);
-        try {
-          const client = new TmuxClient(
-            execCommandRunner(sshTmuxTransport(connection), host.tmuxExecutablePath),
-          );
+        await withHostTransport(host, store, async (transport) => {
+          const client = new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath));
           // Loud when the name is taken, rather than silently handing back
           // someone else's Session — see createSessionCommand.
           await client.createSession(wanted);
-        } finally {
-          await connection.disconnect();
-        }
+        });
       } catch (caught) {
         setError(describeCreateFailure(caught));
         setCreating(false);

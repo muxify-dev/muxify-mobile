@@ -5,6 +5,7 @@ import type { HostStore } from '@/storage/store';
 
 import type { HostConnection, OpenConnection } from './attach';
 import { sshTmuxTransport } from './ssh-transport';
+import type { TmuxTransport } from './transport';
 
 /**
  * Opens a Host link over SSH.
@@ -29,4 +30,24 @@ export function sshConnection(store: HostStore): OpenConnection {
       close: () => connection.disconnect(),
     };
   };
+}
+
+/**
+ * One short visit to a Host for the screens that ask it something and leave:
+ * connect, run `use` over the Connection, and disconnect, also when `use`
+ * throws. A Fingerprint seen for the first time is recorded once the
+ * Connection succeeds, as an Attach records it.
+ */
+export async function withHostTransport<T>(
+  host: Host,
+  store: HostStore,
+  use: (transport: TmuxTransport) => Promise<T>,
+): Promise<T> {
+  const { connection, fingerprint, verdict } = await connectToHost(host, store);
+  try {
+    if (verdict.kind === 'first-sight') await store.rememberFingerprint(host.id, fingerprint);
+    return await use(sshTmuxTransport(connection));
+  } finally {
+    await connection.disconnect();
+  }
 }

@@ -2,6 +2,8 @@ import { createMuxifyCli } from './muxify-cli';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 
 import inPlay from './__fixtures__/environment-in-play.json';
+import liveTopic from './__fixtures__/topic-live.json';
+import type { TopicId } from './environment';
 
 type Answer = Partial<TmuxExecResult>;
 const NOT_FOUND: Answer = { exitCode: 1 };
@@ -174,5 +176,66 @@ describe('reading the Topics', () => {
     const read = await createMuxifyCli().read(host.exec);
 
     expect(read.kind === 'failed' && read.error).toContain('unpinned: expected an object');
+  });
+});
+
+describe('reading one Topic', () => {
+  const found = ['command -v', PATH_FOUND] as [string, Answer];
+  const topicId = 'eb367a1f-687b-43af-9679-e27f28ad7141' as TopicId;
+
+  it('names the Topic by its id, quoted for the shell', async () => {
+    const host = fakeHost([found, ['topic show', { exitCode: 0, stdout: JSON.stringify(liveTopic) }]]);
+
+    const read = await createMuxifyCli().show(host.exec, topicId);
+
+    expect(host.ran[1]).toBe(`'/opt/bin/muxify' topic show --json --topic '${topicId}'`);
+    expect(read.kind === 'shown' && read.topic.label).toBe('GS: Try a verification skill in poteto-mode');
+  });
+
+  it('quotes an id that has shell characters in it', async () => {
+    const host = fakeHost([found]);
+
+    await createMuxifyCli().show(host.exec, "it's; rm -rf ~" as TopicId);
+
+    expect(host.ran[1]).toBe(`'/opt/bin/muxify' topic show --json --topic 'it'\\''s; rm -rf ~'`);
+  });
+
+  it('fails with the message the CLI gave for a Topic it has not got', async () => {
+    const failure = {
+      failed: { kind: 'topic_unavailable', message: 'No open Topic matches nope.', phase: 'nothing_changed' },
+    };
+    const host = fakeHost([found, ['topic show', { exitCode: 1, stdout: JSON.stringify(failure) }]]);
+
+    expect(await createMuxifyCli().show(host.exec, 'nope' as TopicId)).toEqual({
+      kind: 'failed',
+      error: 'No open Topic matches nope.',
+    });
+  });
+
+  it('fails, and says why, on a Host with no muxify', async () => {
+    const host = fakeHost([]);
+
+    expect(await createMuxifyCli().show(host.exec, topicId)).toEqual({
+      kind: 'failed',
+      error: 'Desktop Muxify is not on this Host.',
+    });
+  });
+
+  it('fails, with the path of the problem, on JSON of a shape it cannot use', async () => {
+    const host = fakeHost([found, ['topic show', { exitCode: 0, stdout: '{"topic":{"id":"x"}}' }]]);
+
+    const read = await createMuxifyCli().show(host.exec, topicId);
+
+    expect(read.kind === 'failed' && read.error).toContain('topic.label: expected a string');
+  });
+
+  it('shares one probe with the Topics read', async () => {
+    const host = fakeHost([found, ['environment show', SHOW]]);
+    const cli = createMuxifyCli();
+
+    await cli.read(host.exec);
+    await cli.show(host.exec, topicId);
+
+    expect(host.ran.filter((command) => command.startsWith('command -v'))).toHaveLength(1);
   });
 });

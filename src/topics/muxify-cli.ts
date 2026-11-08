@@ -2,7 +2,9 @@ import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 
 import { parseEnvironment } from './environment';
+import type { TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
+import { parseTopicDetail, type TopicRead } from './topic-detail';
 
 type Exec = TmuxTransport['exec'];
 
@@ -35,6 +37,14 @@ export interface MuxifyCli {
    * the Connection broke, finds nothing out and leaves the next one to probe.
    */
   read(exec: Exec): Promise<TopicsRead>;
+
+  /**
+   * One read of one Topic: `topic show --json`, parsed. It names the Topic by
+   * id, because a rename on the Mac changes its label. It finds `muxify` as
+   * `read` does. With no `muxify`, or a Topic the Mac has closed, the read
+   * fails with the reason.
+   */
+  show(exec: Exec, topic: TopicId): Promise<TopicRead>;
 }
 
 /**
@@ -62,28 +72,47 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     return null;
   }
 
+  async function locate(exec: Exec): Promise<string | null> {
+    probed ??= probe(exec);
+    return probed.catch((error: unknown) => {
+      probed = undefined;
+      throw error;
+    });
+  }
+
   return {
     async read(exec) {
-      probed ??= probe(exec);
-      const path = await probed.catch((error: unknown) => {
-        probed = undefined;
-        throw error;
-      });
+      const path = await locate(exec);
       if (path === null) return { kind: 'absent' };
 
       const result = await exec(`${shellQuote(path)} environment show --json`);
       if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
       if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      try {
-        return { kind: 'listed', snapshot: parseEnvironment(JSON.parse(result.stdout)) };
-      } catch (error) {
-        return {
-          kind: 'failed',
-          error: `Could not read the answer of muxify: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
+      const parsed = parseAnswer(result.stdout, parseEnvironment);
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', snapshot: parsed.value };
+    },
+
+    async show(exec, topic) {
+      const path = await locate(exec);
+      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
+
+      const result = await exec(`${shellQuote(path)} topic show --json --topic ${shellQuote(topic)}`);
+      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+      const parsed = parseAnswer(result.stdout, parseTopicDetail);
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'shown', topic: parsed.value };
     },
   };
+}
+
+/** A successful answer, parsed, or why it could not be. */
+function parseAnswer<T>(stdout: string, parse: (json: unknown) => T): { value: T } | { error: string } {
+  try {
+    return { value: parse(JSON.parse(stdout)) };
+  } catch (error) {
+    return {
+      error: `Could not read the answer of muxify: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /**
