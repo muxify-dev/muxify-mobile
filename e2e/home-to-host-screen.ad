@@ -1,0 +1,45 @@
+context platform=ios kind=simulator
+
+# Home goes to the Host Screen of the attached Host (ADR 0007).
+#
+# From a Session, Home shows that Host's Host Screen, Back from there is the
+# Hosts list, and opening the Session again finds it still attached: a new
+# Attach would read "Connecting" again, so "Connected" straight away is the
+# proof there was none.
+#
+# The New Session sheet path is not driven here: nothing inside a presented
+# sheet responds to agent-device (see session-picker.ad). It leaves the same
+# stack as this path — Hosts list, Host Screen, Terminal Screen.
+#
+# Run with:  agent-device test ./e2e/home-to-host-screen.ad
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+
+press "label=\"Dev Host\""
+wait "label=\"Session 0\"" 15000
+press "label=\"Session 0\""
+wait "id=\"connection-status\"" 8000
+wait 8000
+is "text" "id=\"connection-status\"" "Connected"
+
+# The Host Screen, not the Hosts list: its toolbar has New Session, the list's
+# has Settings.
+press "label=\"Home\""
+wait "label=\"New Session\"" 8000
+is "visible" "label=\"New Session\""
+is "visible" "label=\"Session 0\""
+
+# One Back below it is the Hosts list.
+press "role=button label=\"Muxify\""
+wait "label=\"Settings\"" 8000
+
+# Still attached: the Session opens already Connected.
+press "label=\"Dev Host\""
+wait "label=\"Session 0\"" 8000
+press "label=\"Session 0\""
+wait "id=\"connection-status\"" 8000
+wait 1000
+is "text" "id=\"connection-status\"" "Connected"
+
+close

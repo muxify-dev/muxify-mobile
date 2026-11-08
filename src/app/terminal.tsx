@@ -828,10 +828,13 @@ export default function TerminalScreen() {
             id: 'home',
             label: 'Home',
             systemImage: 'house',
-            // All the way to the Hosts list, not back a step: Home means home,
-            // and a step back is the Session list of the Host just left. The
-            // Session stays attached — this is navigation and nothing else.
-            onPress: () => router.dismissTo('/'),
+            // Home is the Host Screen of the Host this Session is on, where
+            // the next Session is a tap away; Back from there is the Hosts
+            // list. With no Host in the route there is no Host Screen to go
+            // to. The Session stays attached — this is navigation and nothing
+            // else.
+            onPress: () =>
+              hostId ? router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } }) : router.dismissTo('/'),
           },
           {
             id: 'compose',
