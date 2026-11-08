@@ -109,6 +109,16 @@ function AppStack() {
             title: 'Edit Topic',
           }}
         />
+        <Stack.Screen
+          name="topic-add-session"
+          options={{
+            // One field, like New Session; the Topic Screen stays in view, where the new Session will show.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.4],
+            sheetGrabberVisible: true,
+            title: 'Add a Session',
+          }}
+        />
         {/* No header: the Surface fills the screen to the top, and the Dock's
             Home button already goes back. */}
         <Stack.Screen name="terminal" options={{ headerShown: false }} />

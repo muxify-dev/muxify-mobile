@@ -1,0 +1,37 @@
+context platform=ios kind=simulator
+
+# Add a Session on an Empty Topic. Run e2e/add-session.sh, not this file: it
+# makes the Topic, turns the Topics list on, checks the Session on the Mac and
+# cleans up.
+#
+# A folder that is not there shows the Host's error in the sheet, and the sheet
+# stays open. A folder with spaces makes a Session that shows on the Topic
+# Screen, and a tap on it attaches.
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Dev Host\""
+
+wait "label=\"Topic e2e Add Session\"" 15000
+press "label=\"Topic e2e Add Session\""
+wait "text" "No live Sessions" 15000
+# The row's cell and its button share the label; only the button is hittable.
+wait "label=\"Add a Session\"" 8000
+press "label=\"Add a Session\" hittable=true"
+
+wait "role=text-field" 8000
+fill "role=text-field" "/tmp/muxify e2e missing"
+press "label=\"Save\""
+wait "text" "no directory" 15000
+is "visible" "role=text-field"
+
+fill "role=text-field" "/tmp/muxify e2e add"
+press "label=\"Save\""
+
+wait "label=\"Session muxifye2eadd/e2e-add-session\"" 15000
+press "label=\"Session muxifye2eadd/e2e-add-session\""
+wait "id=\"connection-status\"" 8000
+wait 8000
+is "text" "id=\"connection-status\"" "Connected"
+
+close

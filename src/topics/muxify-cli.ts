@@ -1,6 +1,7 @@
 import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 
+import { folderArgument, parseAddedSession, type AddSessionRead } from './add-session';
 import { parseEnvironment } from './environment';
 import type { TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
@@ -73,6 +74,14 @@ export interface MuxifyCli {
    * changes nothing.
    */
   change(exec: Exec, topic: TopicId, change: TopicChange): Promise<TopicWrite>;
+
+  /**
+   * Makes a Session at a folder on the Host in this Topic: `topic add-session`,
+   * with no Worktree. It names the Topic by id and finds `muxify` as `read`
+   * does. A folder that is not there, or any other refusal, fails with the
+   * Host's reason, and the Host makes nothing.
+   */
+  addSession(exec: Exec, topic: TopicId, folder: string): Promise<AddSessionRead>;
 }
 
 /**
@@ -152,6 +161,18 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       return result.exitCode === 0
         ? { kind: 'changed' }
         : { kind: 'failed', error: failureText(result) };
+    },
+
+    async addSession(exec, topic, folder) {
+      const path = await locate(exec);
+      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
+
+      const result = await exec(
+        `${shellQuote(path)} topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
+      );
+      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+      const parsed = parseAnswer(result.stdout, parseAddedSession);
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'added', session: parsed.value };
     },
   };
 }
