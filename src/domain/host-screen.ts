@@ -1,7 +1,13 @@
-import { lastAnswer, waitingOnFirstAnswer, type Listing } from '@/domain/host-listing';
+import {
+  lastAnswer,
+  waitingOnFirstAnswer,
+  type ListedSession,
+  type Listing,
+} from '@/domain/host-listing';
 import type { Settings } from '@/settings/settings';
 import type { RecentSession } from '@/storage/records';
-import type { Session } from '@/tmux/tmux-client';
+import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
+import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
 
 /** A Session Muxify remembers opening, as the Sessions section shows it. */
 export interface RecentRow {
@@ -16,10 +22,30 @@ export type HostScreenRow =
   | RecentRow
   | { kind: 'available'; name: string }
   /** The first question to the Host is still in flight. */
-  | { kind: 'checking' }
+  | { kind: 'checking'; of: 'Sessions' | 'Topics' }
   /** The Host could not be asked. The screen offers Retry. */
   | { kind: 'refused'; message: string }
-  | { kind: 'note'; text: string };
+  | { kind: 'note'; text: string }
+  /** A Topic. Dimmed when it has no live Session, and the screen says so. */
+  | {
+      kind: 'topic';
+      id: TopicId;
+      label: string;
+      note: string | null;
+      mark: Mark | null;
+      pinned: boolean;
+      dimmed: boolean;
+    }
+  /** A Locked Session shown as its own card. */
+  | { kind: 'locked-session'; name: string; mark: Mark | null; pinned: boolean }
+  | { kind: 'open-place'; id: string }
+  /** A card this phone does not know, drawn as one plain line. */
+  | { kind: 'unknown-card'; text: string }
+  /** The Sessions that are in no Topic, as one row that opens to list them. */
+  | { kind: 'no-topic'; count: number; opened: boolean };
+
+/** The rows that the user can open in place, by the id the screen holds them under. */
+export type OpenableRow = 'no-topic';
 
 export interface HostScreenSection {
   id: 'recent' | 'available' | 'sessions' | 'topics';
@@ -33,6 +59,9 @@ export interface HostScreenInput {
   /** This Host's Recent Sessions, newest first. */
   recent: RecentSession[];
   listing: Listing;
+  topics: HostTopics;
+  /** The rows the user has opened. */
+  opened: ReadonlySet<OpenableRow>;
 }
 
 /**
@@ -55,22 +84,141 @@ export interface HostScreenInput {
  * A remembered Session the Host no longer has is dropped from both sections,
  * but never from the records: kill it from a laptop and make it again tomorrow
  * and the row comes back where it was, still knowing when you last opened it.
+ *
+ * With both lists on, a Session that is in a Topic shows under its Topic and
+ * not here, once a snapshot says which they are: one Session, one row. The
+ * Sessions that are in no Topic then show only in the Sessions list, so the
+ * Topics list has no No Topic row. With Topics on its own, that row is the
+ * only way to a Session that is in no Topic.
  */
-export function hostScreen({ settings, recent, listing }: HostScreenInput): HostScreenSection[] {
-  return settings.hostScreenLists.flatMap((list) => {
-    if (list === 'topics') return [TOPICS_PLACEHOLDER];
+export function hostScreen({
+  settings,
+  recent,
+  listing,
+  topics,
+  opened,
+}: HostScreenInput): HostScreenSection[] {
+  const lists = settings.hostScreenLists;
+  const sessionsShown = lists.includes('sessions');
+  const snapshot = lastSnapshot(topics);
+  const inTopics =
+    sessionsShown && lists.includes('topics') && snapshot ? namesInTopics(snapshot) : NONE;
+
+  const sessionsRecent = recent.filter((session) => !inTopics.has(session.name));
+  const sessionsListing = without(listing, inTopics);
+
+  return lists.flatMap((list) => {
+    if (list === 'topics') return [topicsList(topics, opened, sessionsShown)];
     return settings.recentSessionsFirst
-      ? sessionsList(recent, listing)
-      : [hostOrderList(recent, listing)];
+      ? sessionsList(sessionsRecent, sessionsListing)
+      : [hostOrderList(sessionsRecent, sessionsListing)];
   });
 }
 
-const TOPICS_PLACEHOLDER: HostScreenSection = {
-  id: 'topics',
-  title: 'Topics',
-  footer: null,
-  rows: [{ kind: 'note', text: 'Topics come in a later version.' }],
-};
+const NONE: ReadonlySet<string> = new Set();
+
+function namesInTopics(snapshot: EnvironmentSnapshot): ReadonlySet<string> {
+  return new Set(
+    snapshot.sessions.filter((session) => session.topic !== null).map((session) => session.name),
+  );
+}
+
+/** The Listing with some Sessions taken out of what it last answered. */
+function without(listing: Listing, names: ReadonlySet<string>): Listing {
+  if (names.size === 0 || listing.phase === 'failed' || listing.sessions === undefined) {
+    return listing;
+  }
+  return { ...listing, sessions: listing.sessions.filter((session) => !names.has(session.name)) };
+}
+
+function topicsList(
+  topics: HostTopics,
+  opened: ReadonlySet<OpenableRow>,
+  sessionsShown: boolean,
+): HostScreenSection {
+  const cards = (snapshot: EnvironmentSnapshot) => cardRows(snapshot, opened, !sessionsShown);
+  const rows = ((): HostScreenRow[] => {
+    switch (topics.kind) {
+      case 'absent':
+        return [{ kind: 'note', text: 'No Topics on this Host' }];
+      case 'old':
+        return [{ kind: 'note', text: 'Update Muxify on this Host' }];
+      case 'loading':
+        return topics.last ? cards(topics.last) : [{ kind: 'checking', of: 'Topics' }];
+      case 'failed':
+        return [{ kind: 'refused', message: topics.error }, ...(topics.last ? cards(topics.last) : [])];
+      case 'listed':
+        return cards(topics.snapshot);
+    }
+  })();
+  return { id: 'topics', title: 'Topics', footer: null, rows };
+}
+
+/**
+ * The cards in the order the Mac's Topics mode draws them: Pinned first, then
+ * the list in the order it came, or with In Play the places, the Guests and
+ * the Bench. Never sorted: the order is the Mac's, and a card the phone moved
+ * would not be where the user looks for it on the Mac.
+ */
+function cardRows(
+  snapshot: EnvironmentSnapshot,
+  opened: ReadonlySet<OpenableRow>,
+  withNoTopic: boolean,
+): HostScreenRow[] {
+  const names = new Map<SessionId, string>(
+    snapshot.sessions.map((session) => [session.id, session.name]),
+  );
+  const { unpinned } = snapshot;
+  const rest =
+    unpinned.kind === 'list'
+      ? unpinned.cards
+      : [...unpinned.places, ...unpinned.guests, ...unpinned.bench];
+
+  const rows = [
+    ...snapshot.pinned.map((card) => cardRow(card, true, names)),
+    ...rest.map((card) => cardRow(card, false, names)),
+  ];
+
+  if (withNoTopic && snapshot.no_topic.length > 0) {
+    const isOpened = opened.has('no-topic');
+    rows.push({ kind: 'no-topic', count: snapshot.no_topic.length, opened: isOpened });
+    if (isOpened) {
+      for (const id of snapshot.no_topic) {
+        const name = names.get(id);
+        if (name !== undefined) rows.push({ kind: 'available', name });
+      }
+    }
+  }
+
+  return rows.length > 0 ? rows : [{ kind: 'note', text: 'No Topics yet.' }];
+}
+
+function cardRow(card: Card, pinned: boolean, names: ReadonlyMap<SessionId, string>): HostScreenRow {
+  switch (card.kind) {
+    case 'topic':
+      return {
+        kind: 'topic',
+        id: card.topic.id,
+        label: card.topic.label,
+        note: card.topic.note,
+        mark: card.mark,
+        pinned,
+        dimmed: card.topic.state !== 'live',
+      };
+    case 'session': {
+      const name = names.get(card.sessions[0]);
+      return name === undefined
+        ? { kind: 'unknown-card', text: card.sessions[0] }
+        : { kind: 'locked-session', name, mark: card.mark, pinned };
+    }
+    case 'open_place':
+      return { kind: 'open-place', id: card.id };
+    case 'unknown': {
+      const sessions = card.sessions.flatMap((id) => names.get(id) ?? []);
+      return { kind: 'unknown-card', text: sessions.length > 0 ? sessions.join(', ') : card.sourceKind };
+    }
+  }
+}
 
 /**
  * The Sessions list with Recent Sessions first turned off: one section in the
@@ -121,7 +269,7 @@ function sessionsList(recent: RecentSession[], listing: Listing): HostScreenSect
     return [recentRow(session, live?.windowCount)];
   });
 
-  const available: Session[] = (listed ?? [])
+  const available: ListedSession[] = (listed ?? [])
     .filter((session) => !remembered.has(session.name))
     .sort((left, right) => left.name.localeCompare(right.name));
 
@@ -151,7 +299,7 @@ function sessionsList(recent: RecentSession[], listing: Listing): HostScreenSect
   ];
 }
 
-function availableRows(available: Session[], listing: Listing): HostScreenRow[] {
+function availableRows(available: ListedSession[], listing: Listing): HostScreenRow[] {
   if (available.length > 0) {
     return available.map((session) => ({ kind: 'available', name: session.name }));
   }
@@ -167,5 +315,5 @@ function availableRows(available: Session[], listing: Listing): HostScreenRow[] 
  */
 function unansweredRow(listing: Listing): HostScreenRow {
   if (listing.phase === 'failed') return { kind: 'refused', message: listing.message };
-  return { kind: 'checking' };
+  return { kind: 'checking', of: 'Sessions' };
 }

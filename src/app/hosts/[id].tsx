@@ -3,6 +3,7 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useCallback, useState, type ReactNode } from 'react';
 import { Alert, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
+import type { SFSymbol } from 'sf-symbols-typescript';
 
 import {
   Button,
@@ -27,6 +28,7 @@ import {
   foregroundColor,
   frame,
   listRowBackground,
+  opacity,
   scrollContentBackground,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
@@ -48,6 +50,7 @@ import {
   hostScreen,
   type HostScreenRow,
   type HostScreenSection,
+  type OpenableRow,
   type RecentRow,
 } from '@/domain/host-screen';
 import { describeError } from '@/lib/describe-error';
@@ -62,6 +65,9 @@ import { phaseLabel } from '@/tmux/attach-labels';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
+import type { Mark } from '@/topics/environment';
+import { loadingTopics, settled, TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
+import { createMuxifyCli } from '@/topics/muxify-cli';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -87,6 +93,12 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [listing, setListing] = useState<Listing>(UNASKED);
+  const [topics, setTopics] = useState<HostTopics>(TOPICS_UNASKED);
+  const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
+  // One per visit: it keeps where `muxify` was found on this Host, so a
+  // refresh is one exec instead of a probe and an exec.
+  const [muxify] = useState(() => createMuxifyCli(say));
+  const topicsOn = settings.hostScreenLists.includes('topics');
   const [expanded, setExpanded] = useState<ReadonlySet<HostScreenSection['id']>>(new Set());
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
   // thumb, and the screen is short-lived enough that it will not go stale.
@@ -119,9 +131,15 @@ export default function HostScreen() {
    * Every return to this screen asks again — and most of them are returns from
    * a sheet that had nothing to do with the Host's Sessions. See host-listing
    * for why the question is invisible until it has a better answer to give.
+   *
+   * With Topics on, the one exec of each refresh is `environment show`, whose
+   * snapshot has the Sessions too. When it gives no snapshot — no desktop
+   * Muxify, an old one, a failed read — the Sessions list still needs its own
+   * answer, so tmux is asked after all.
    */
   const readHost = useCallback(async () => {
     setListing(asking);
+    if (topicsOn) setTopics(loadingTopics);
     const store = deviceHostStore();
     const records = await store.load();
     const found = records.hosts.find((candidate) => candidate.id === id);
@@ -130,7 +148,8 @@ export default function HostScreen() {
       return;
     }
 
-    say(`asking ${found.displayName} for its Sessions`);
+    say(`asking ${found.displayName} for its ${topicsOn ? 'Topics' : 'Sessions'}`);
+    let topicsRead = false;
     try {
       const { connection, fingerprint, verdict } = await connectToHost(found, store);
       try {
@@ -139,14 +158,27 @@ export default function HostScreen() {
         if (verdict.kind === 'first-sight') {
           await store.rememberFingerprint(found.id, fingerprint);
         }
-        const client = new TmuxClient(
-          execCommandRunner(sshTmuxTransport(connection), found.tmuxExecutablePath),
-        );
-        // A Host with no tmux server is a Host with no Sessions, which the
-        // client already forgives — it must not read as a failure here.
-        const sessions = await client.listSessions();
-        say(`${found.displayName} listed ${sessions.length} Sessions`);
-        setListing(answered(sessions));
+        const transport = sshTmuxTransport(connection);
+        const read = topicsOn ? await muxify.read((command) => transport.exec(command)) : null;
+        if (read) {
+          topicsRead = true;
+          setTopics((previous) => settled(previous, read));
+        }
+        if (read?.kind === 'listed') {
+          const sessions = read.snapshot.sessions.map(({ name }) => ({
+            name,
+            windowCount: undefined,
+          }));
+          say(`${found.displayName} listed ${sessions.length} Sessions with its Topics`);
+          setListing(answered(sessions));
+        } else {
+          const client = new TmuxClient(execCommandRunner(transport, found.tmuxExecutablePath));
+          // A Host with no tmux server is a Host with no Sessions, which the
+          // client already forgives — it must not read as a failure here.
+          const sessions = await client.listSessions();
+          say(`${found.displayName} listed ${sessions.length} Sessions`);
+          setListing(answered(sessions));
+        }
       } finally {
         await connection.disconnect();
       }
@@ -154,8 +186,11 @@ export default function HostScreen() {
       const message = describeConnectionFailure(error);
       say(`${found.displayName} refused the listing: ${message}`);
       setListing(refused(message));
+      if (topicsOn && !topicsRead) {
+        setTopics((previous) => settled(previous, { kind: 'failed', error: message }));
+      }
     }
-  }, [id]);
+  }, [id, topicsOn, muxify]);
 
   /**
    * Puts the Log on the clipboard, for pasting wherever the problem is being
@@ -223,7 +258,7 @@ export default function HostScreen() {
     [id, readRecords],
   );
 
-  const sections = hostScreen({ settings, recent, listing });
+  const sections = hostScreen({ settings, recent, listing, topics, opened });
 
   const toggleExpanded = (section: HostScreenSection['id']) =>
     setExpanded((shown) => {
@@ -232,7 +267,14 @@ export default function HostScreen() {
       return next;
     });
 
-  const renderRow = (row: HostScreenRow) => {
+  const toggleOpened = (row: OpenableRow) =>
+    setOpened((shown) => {
+      const next = new Set(shown);
+      if (!next.delete(row)) next.add(row);
+      return next;
+    });
+
+  const renderRow = (row: HostScreenRow, index: number) => {
     switch (row.kind) {
       case 'recent': {
         const attached = attachedHere?.sessionName === row.name;
@@ -300,7 +342,7 @@ export default function HostScreen() {
           <HStack key="checking" spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
             <ProgressView />
             <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-              Checking Sessions…
+              {`Checking ${row.of}…`}
             </Text>
             <Spacer />
           </HStack>
@@ -333,6 +375,101 @@ export default function HostScreen() {
             modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
             {row.text}
           </Text>
+        );
+      case 'topic':
+        // No action yet: the Topic Screen is a later task.
+        return (
+          <HStack
+            key={row.id}
+            spacing={12}
+            modifiers={[
+              frame({ maxWidth: 3000 }),
+              opacity(row.dimmed ? 0.5 : 1),
+              accessibilityLabel(`Topic ${row.label}`),
+            ]}>
+            <Image
+              systemName={row.pinned ? 'pin.fill' : 'rectangle.stack'}
+              size={20}
+              color={row.pinned ? palette.controlAccent : palette.rowIcon}
+            />
+            <VStack spacing={2} alignment="leading">
+              <Text modifiers={[font({ size: 17 })]}>{row.label}</Text>
+              {row.note === null ? null : (
+                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+                  {row.note}
+                </Text>
+              )}
+              {row.dimmed ? (
+                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
+                  No live Sessions
+                </Text>
+              ) : null}
+            </VStack>
+            <Spacer />
+            {row.mark === null ? null : <MarkImage mark={row.mark} palette={palette} />}
+          </HStack>
+        );
+      case 'locked-session':
+        return (
+          <LogMenu key={`locked:${row.name}`} onCopyLog={copyLog}>
+            <Button
+              onPress={() => open(row.name)}
+              modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+              <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+                <Image
+                  systemName={row.pinned ? 'pin.fill' : 'terminal'}
+                  size={20}
+                  color={row.pinned ? palette.controlAccent : palette.rowIcon}
+                />
+                <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
+                <Spacer />
+                {row.mark === null ? null : <MarkImage mark={row.mark} palette={palette} />}
+                <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+              </HStack>
+            </Button>
+          </LogMenu>
+        );
+      case 'open-place':
+        return (
+          <HStack
+            key={row.id}
+            spacing={12}
+            modifiers={[frame({ maxWidth: 3000 }), accessibilityLabel('Open place')]}>
+            <Image systemName="circle.dashed" size={20} color={palette.secondaryLabel} />
+            <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
+              Open place
+            </Text>
+            <Spacer />
+          </HStack>
+        );
+      case 'unknown-card':
+        return (
+          <Text
+            key={`card:${index}`}
+            modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
+            {row.text}
+          </Text>
+        );
+      case 'no-topic':
+        return (
+          <Button
+            key="no-topic"
+            onPress={() => toggleOpened('no-topic')}
+            modifiers={[buttonStyle('plain'), accessibilityLabel('No Topic')]}>
+            <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+              <Image systemName="tray" size={20} color={palette.rowIcon} />
+              <Text modifiers={[font({ size: 17 })]}>No Topic</Text>
+              <Spacer />
+              <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
+                {String(row.count)}
+              </Text>
+              <Image
+                systemName={row.opened ? 'chevron.up' : 'chevron.down'}
+                size={13}
+                color={palette.secondaryLabel}
+              />
+            </HStack>
+          </Button>
         );
     }
   };
@@ -399,8 +536,11 @@ export default function HostScreen() {
                 )
               }
               modifiers={[listRowBackground(palette.rowSurface)]}>
-              {collapse(section.rows, expanded.has(section.id)).map(renderRow)}
-              {section.rows.length > COLLAPSED ? (
+              {(collapsible(section)
+                ? collapse(section.rows, expanded.has(section.id))
+                : section.rows
+              ).map(renderRow)}
+              {collapsible(section) && section.rows.length > COLLAPSED ? (
                 <DisclosureRow
                   palette={palette}
                   expanded={expanded.has(section.id)}
@@ -490,6 +630,20 @@ function LogMenu({ onCopyLog, children }: { onCopyLog: () => void; children: Rea
   );
 }
 
+/** One SF Symbol for the one mark a card has, in the colour that says how urgent it is. */
+function MarkImage({ mark, palette }: { mark: Mark; palette: Appearance }) {
+  const { symbol, color } = MARKS[mark](palette);
+  return <Image systemName={symbol} size={17} color={color} />;
+}
+
+const MARKS: Record<Mark, (palette: Appearance) => { symbol: SFSymbol; color: string }> = {
+  blocked: (palette) => ({ symbol: 'hand.raised.fill', color: palette.destructive }),
+  failed: (palette) => ({ symbol: 'xmark.octagon.fill', color: palette.destructive }),
+  unread: (palette) => ({ symbol: 'circle.fill', color: palette.controlAccent }),
+  done: (palette) => ({ symbol: 'checkmark.circle.fill', color: palette.secondaryLabel }),
+  working: (palette) => ({ symbol: 'arrow.triangle.2.circlepath', color: palette.secondaryLabel }),
+};
+
 /** The row at the foot of a section that has more to show. */
 function DisclosureRow({
   palette,
@@ -572,6 +726,11 @@ function sessionSummary(listing: Listing): string {
   const listed = lastAnswer(listing);
   if (listed === undefined) return '—';
   return `${listed.length} ${listed.length === 1 ? 'session' : 'sessions'}`;
+}
+
+/** The Topics list is what the screen is for, so it is never cut to its first rows. */
+function collapsible(section: HostScreenSection): boolean {
+  return section.id !== 'topics';
 }
 
 function collapse<T>(items: T[], expanded: boolean): T[] {

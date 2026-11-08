@@ -1,4 +1,12 @@
-import type { Session } from '@/tmux/tmux-client';
+/**
+ * A Session as the Host Screen needs it, from either way the Host can say what
+ * it has: tmux's own listing, which counts Windows, or the Topics snapshot,
+ * which does not.
+ */
+export interface ListedSession {
+  name: string;
+  windowCount: number | undefined;
+}
 
 /**
  * What the Host has to say for itself, once asked.
@@ -21,8 +29,8 @@ import type { Session } from '@/tmux/tmux-client';
  * under an error would be offering Sessions that may not be there.
  */
 export type Listing =
-  | { phase: 'reading'; sessions?: Session[] }
-  | { phase: 'read'; sessions: Session[] }
+  | { phase: 'reading'; sessions?: ListedSession[] }
+  | { phase: 'read'; sessions: ListedSession[] }
   | { phase: 'failed'; message: string };
 
 /** Before the Host has been asked anything. */
@@ -35,7 +43,7 @@ export function asking(previous: Listing): Listing {
 }
 
 /** The Host answered. */
-export function answered(sessions: Session[]): Listing {
+export function answered(sessions: ListedSession[]): Listing {
   return { phase: 'read', sessions };
 }
 
@@ -45,7 +53,7 @@ export function refused(message: string): Listing {
 }
 
 /** What the Host last said, or undefined before it has said anything. */
-export function lastAnswer(listing: Listing): Session[] | undefined {
+export function lastAnswer(listing: Listing): ListedSession[] | undefined {
   return listing.phase === 'failed' ? undefined : listing.sessions;
 }
 
