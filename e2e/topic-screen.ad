@@ -1,0 +1,35 @@
+context platform=ios kind=simulator
+
+# The Topic Screen, against the Topics that e2e/topic-screen.sh makes on the
+# dev Host. Run that script, not this file: it makes the Topics, turns the
+# Topics list on and puts everything back afterwards.
+#
+# A tap on a live Topic shows its Note, its Tag and its Session. A tap on the
+# Session attaches, and Home from there is the Host Screen, not the Topic
+# Screen (D6). An Empty Topic says it has no live Sessions, and why.
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Dev Host\""
+
+wait "label=\"Topic e2e Topic Screen live\"" 15000
+press "label=\"Topic e2e Topic Screen live\""
+wait "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\"" 15000
+is "visible" "label=\"Note Seeded by e2e\""
+is "visible" "text=\"#work\""
+
+press "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
+wait "id=\"connection-status\"" 8000
+wait 8000
+is "text" "id=\"connection-status\"" "Connected"
+
+# The Host Screen: its toolbar has New Session, which the Topic Screen has not.
+press "label=\"Home\""
+wait "label=\"New Session\"" 8000
+is "visible" "label=\"Topic e2e Topic Screen live\""
+
+press "label=\"Topic e2e Topic Screen empty\""
+wait "text" "No live Sessions" 15000
+is "visible" "text=\"This Topic is Empty: it has no Sessions.\""
+
+close

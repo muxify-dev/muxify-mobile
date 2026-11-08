@@ -31,6 +31,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { SectionHeader } from '@/components/section-header';
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
@@ -348,18 +349,6 @@ function Field({
         </Text>
       ) : null}
     </VStack>
-  );
-}
-
-function SectionHeader({ children, palette }: { children: string; palette: Appearance }) {
-  return (
-    <Text
-      modifiers={[
-        font({ size: 13, weight: 'semibold' }),
-        foregroundColor(palette.sectionHeader),
-      ]}>
-      {children}
-    </Text>
   );
 }
 

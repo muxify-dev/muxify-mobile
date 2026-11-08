@@ -76,6 +76,7 @@ function AppStack() {
           }}
         />
         <Stack.Screen name="hosts/[id]" options={{ title: 'Host' }} />
+        <Stack.Screen name="topic" options={{ title: 'Topic' }} />
         <Stack.Screen
           name="session-form"
           options={{
