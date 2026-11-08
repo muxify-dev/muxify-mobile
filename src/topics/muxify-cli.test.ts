@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { createMuxifyCli } from './muxify-cli';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 
@@ -237,5 +242,111 @@ describe('reading one Topic', () => {
     await cli.show(host.exec, topicId);
 
     expect(host.ran.filter((command) => command.startsWith('command -v'))).toHaveLength(1);
+  });
+});
+
+describe('making a Topic', () => {
+  const created = {
+    changed: {
+      created: true,
+      shown: { empty_topic: { id: '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' } },
+      topic_id: '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6',
+    },
+  };
+
+  /**
+   * A Host whose `muxify` is a script that writes the arguments it got, one
+   * per line, and answers as `topic new --json` does. The command runs in a
+   * real shell, so the test sees what the Host's shell makes of the quoting.
+   */
+  function scriptedHost(answer: string, exitCode = 0) {
+    const dir = mkdtempSync(join(tmpdir(), 'muxify-cli-'));
+    const script = join(dir, 'muxify');
+    const argv = join(dir, 'argv');
+    writeFileSync(
+      script,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\nprintf '%s' '${answer}'\nexit ${exitCode}\n`,
+    );
+    chmodSync(script, 0o755);
+    const exec: TmuxTransport['exec'] = async (command) => {
+      if (command.startsWith('command -v'))
+        return { stdout: `${script}\n`, stderr: '', exitCode: 0 };
+      const run = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+      return {
+        stdout: run.stdout,
+        stderr: run.stderr,
+        exitCode: run.status ?? 1,
+      };
+    };
+    return {
+      exec,
+      argv: () => readFileSync(argv, 'utf8').split('\n').slice(0, -1),
+    };
+  }
+
+  it('gives the title and each Tag to muxify as one argument each, quotes and spaces kept', async () => {
+    const host = scriptedHost(JSON.stringify(created));
+
+    const read = await createMuxifyCli().create(host.exec, `Fix "login" it's $HOME`, [
+      'big project',
+      "o'brien",
+    ]);
+
+    expect(host.argv()).toEqual([
+      'topic',
+      'new',
+      `Fix "login" it's $HOME`,
+      '--tag',
+      'big project',
+      '--tag',
+      "o'brien",
+      '--json',
+    ]);
+    expect(read).toEqual({
+      kind: 'created',
+      topic: '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6',
+    });
+  });
+
+  it('gives no --tag with no Tags', async () => {
+    const host = scriptedHost(JSON.stringify(created));
+
+    await createMuxifyCli().create(host.exec, 'Notes', []);
+
+    expect(host.argv()).toEqual(['topic', 'new', 'Notes', '--json']);
+  });
+
+  it('fails with the message the CLI gave, as for a Tag the Config does not define', async () => {
+    const failure = {
+      failed: {
+        kind: 'tag_undefined',
+        message: 'The Config does not define #nosuchtag in topics.tags. Add a Tag there first.',
+        phase: 'nothing_changed',
+      },
+    };
+    const host = scriptedHost(JSON.stringify(failure), 1);
+
+    expect(await createMuxifyCli().create(host.exec, 'bad', ['nosuchtag'])).toEqual({
+      kind: 'failed',
+      error: 'The Config does not define #nosuchtag in topics.tags. Add a Tag there first.',
+    });
+  });
+
+  it('fails, with the path of the problem, on an answer with no Topic id', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['topic new', { exitCode: 0, stdout: '{"changed":{}}' }],
+    ]);
+
+    const read = await createMuxifyCli().create(host.exec, 'Notes', []);
+
+    expect(read.kind === 'failed' && read.error).toContain('changed.topic_id: expected a string');
+  });
+
+  it('fails, and says why, on a Host with no muxify', async () => {
+    expect(await createMuxifyCli().create(fakeHost([]).exec, 'Notes', [])).toEqual({
+      kind: 'failed',
+      error: 'Desktop Muxify is not on this Host.',
+    });
   });
 });

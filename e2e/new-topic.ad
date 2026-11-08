@@ -1,0 +1,28 @@
+context platform=ios kind=simulator
+
+# New Topic, with the Topics list on. Run e2e/new-topic.sh, not this file: it
+# turns the Topics list on, checks the Topic on the Mac and forgets it.
+#
+# + offers New Session and New Topic. New Topic makes a Topic with a title and
+# the Tag #work, and Save opens the new Topic's Topic Screen.
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Dev Host\""
+
+wait "label=\"New Session or Topic\"" 15000
+press "label=\"New Session or Topic\""
+wait "label=\"New Topic\"" 5000
+is "visible" "label=\"New Session\""
+press "label=\"New Topic\""
+
+wait "label=\"Tag #work\"" 8000
+fill "role=text-field" "e2e New Topic it's"
+press "label=\"Tag #work\""
+press "label=\"Save\""
+
+wait "text" "No live Sessions" 15000
+is "visible" "text=\"#work\""
+is "visible" "text=\"This Topic is Empty: it has no Sessions.\""
+
+close

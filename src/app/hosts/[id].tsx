@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState, type ReactNode } from 'react';
-import { Alert, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
+import { ActionSheetIOS, Alert, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 
 import {
@@ -67,6 +67,7 @@ import { execCommandRunner } from '@/tmux/exec-runner';
 import { withHostTransport } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import {
+  lastSnapshot,
   listedSessions,
   loadingTopics,
   settled,
@@ -74,6 +75,7 @@ import {
   type HostTopics,
 } from '@/topics/host-topics';
 import { createMuxifyCli } from '@/topics/muxify-cli';
+import { tagsParam } from '@/topics/new-topic';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -251,6 +253,20 @@ export default function HostScreen() {
     },
     [id, readRecords],
   );
+
+  const newSession = () => router.push({ pathname: '/session-form', params: { hostId: id } });
+  const newTopic = () => {
+    const tags = lastSnapshot(topics)?.tags ?? [];
+    router.push({ pathname: '/topic-form', params: { hostId: id, tags: tagsParam(tags) } });
+  };
+  /** With Topics on, + asks which of the two to make. With them off, it is New Session as before. */
+  const onNew = () => {
+    if (!topicsOn) return newSession();
+    ActionSheetIOS.showActionSheetWithOptions(
+      { options: ['New Session', 'New Topic', 'Cancel'], cancelButtonIndex: 2 },
+      (index) => [newSession, newTopic][index]?.(),
+    );
+  };
 
   const sections = hostScreen({ settings, recent, listing, topics, opened, appearance });
 
@@ -501,7 +517,8 @@ export default function HostScreen() {
             <ToolbarActions
               palette={palette}
               onEdit={() => router.push({ pathname: '/host-form', params: { id } })}
-              onNew={() => router.push({ pathname: '/session-form', params: { hostId: id } })}
+              newLabel={topicsOn ? 'New Session or Topic' : 'New Session'}
+              onNew={onNew}
             />
           ),
         }}
@@ -690,10 +707,12 @@ function DisclosureRow({
  */
 function ToolbarActions({
   palette,
+  newLabel,
   onEdit,
   onNew,
 }: {
   palette: Appearance;
+  newLabel: string;
   onEdit: () => void;
   onNew: () => void;
 }) {
@@ -702,7 +721,7 @@ function ToolbarActions({
       <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit Host">
         <RNText style={[styles.toolbarWord, { color: palette.toolbarTint }]}>Edit</RNText>
       </Pressable>
-      <Pressable onPress={onNew} accessibilityRole="button" accessibilityLabel="New Session">
+      <Pressable onPress={onNew} accessibilityRole="button" accessibilityLabel={newLabel}>
         <SymbolView name="plus" size={23} tintColor={palette.toolbarTint} />
       </Pressable>
     </View>

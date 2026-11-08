@@ -61,7 +61,8 @@
     "e2e:control": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/control-mode.test.ts",
     "e2e:composer": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/composer.test.ts",
     "e2e:topics": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/topics.test.ts",
-    "e2e:topic-screen": "bash e2e/topic-screen.sh"
+    "e2e:topic-screen": "bash e2e/topic-screen.sh",
+    "e2e:new-topic": "bash e2e/new-topic.sh"
   },
   "private": true,
   "jest": {

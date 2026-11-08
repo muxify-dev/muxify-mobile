@@ -208,6 +208,14 @@ Topic shows "No live Sessions" and says which of the two it is. The screen
 reads the Topic again each time it comes into view.
 _Avoid_: Topic detail, Topic page, Topic view
 
+**New Topic**:
+The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
+has a title and one button for each Tag of the Host's last Topics read, in
+Config order and in the Tag colour. Save opens the new Topic's Topic Screen. An
+error from the Host shows in the sheet, and the sheet stays open. With the
+Topics list on, + on the Host Screen offers New Session and New Topic.
+_Avoid_: Create Topic, Add Topic
+
 ### Terminal
 
 **Control Connection**:

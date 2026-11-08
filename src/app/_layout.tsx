@@ -88,6 +88,17 @@ function AppStack() {
             title: 'New Session',
           }}
         />
+        <Stack.Screen
+          name="topic-form"
+          options={{
+            // A title and a row of Tags: half height leaves the Host Screen in
+            // view, where the new Topic will be.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.5],
+            sheetGrabberVisible: true,
+            title: 'New Topic',
+          }}
+        />
         {/* No header: the Surface fills the screen to the top, and the Dock's
             Home button already goes back. */}
         <Stack.Screen name="terminal" options={{ headerShown: false }} />

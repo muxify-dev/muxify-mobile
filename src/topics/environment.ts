@@ -38,6 +38,12 @@ export type Unpinned =
   | { kind: 'in_play'; limit: number; places: Card[]; guests: Card[]; bench: Card[] }
   | { kind: 'list'; cards: Card[] };
 
+/** A Tag the Host's Config defines. A colour this phone cannot read is null. */
+export interface Tag {
+  name: string;
+  color: { light: TagColor | null; dark: TagColor | null };
+}
+
 export interface SnapshotSession {
   id: SessionId;
   name: string;
@@ -47,8 +53,8 @@ export interface SnapshotSession {
 }
 
 export interface EnvironmentSnapshot {
-  /** In Config order. A colour this phone cannot read is null. */
-  tags: { name: string; color: { light: TagColor | null; dark: TagColor | null } }[];
+  /** In Config order. */
+  tags: Tag[];
   sessions: SnapshotSession[];
   pinned: Card[];
   unpinned: Unpinned;
@@ -69,18 +75,7 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
   const root = object(json, 'environment');
   const unpinned = object(root.unpinned, 'unpinned');
   return {
-    tags: array(root.tags, 'tags').map((tag, index) => {
-      const at = `tags[${index}]`;
-      const entry = object(tag, at);
-      const color = object(entry.color, `${at}.color`);
-      return {
-        name: string(entry.name, `${at}.name`),
-        color: {
-          light: parseTagColor(string(color.light, `${at}.color.light`)),
-          dark: parseTagColor(string(color.dark, `${at}.color.dark`)),
-        },
-      };
-    }),
+    tags: parseTags(root.tags),
     sessions: array(root.sessions, 'sessions').map((session, index) => {
       const at = `sessions[${index}]`;
       const entry = object(session, at);
@@ -170,6 +165,22 @@ const MARKS: readonly string[] = ['blocked', 'failed', 'unread', 'done', 'workin
 
 function parseMark(value: unknown): Mark | null {
   return typeof value === 'string' && MARKS.includes(value) ? (value as Mark) : null;
+}
+
+/** The `tags` of `environment show --json`, in the order they came in. */
+export function parseTags(value: unknown): Tag[] {
+  return array(value, 'tags').map((tag, index) => {
+    const at = `tags[${index}]`;
+    const entry = object(tag, at);
+    const color = object(entry.color, `${at}.color`);
+    return {
+      name: string(entry.name, `${at}.name`),
+      color: {
+        light: parseTagColor(string(color.light, `${at}.color.light`)),
+        dark: parseTagColor(string(color.dark, `${at}.color.dark`)),
+      },
+    };
+  });
 }
 
 export function parseTopicState(value: unknown): TopicState {
