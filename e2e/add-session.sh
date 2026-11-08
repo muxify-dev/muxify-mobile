@@ -4,8 +4,10 @@
 # which is the dev Host, then checks on the Mac that the Topic has the Session
 # the suite made at a folder whose name has spaces.
 #
-# The Topic is forgotten, its Session is killed with tmux kill-session and the
-# app's settings file is put back when the run ends, also when it fails.
+# The Session is killed, the Topic is forgotten and the app's settings file is
+# put back when the run ends, also when it fails. The kill comes first:
+# forgetting the Topic renames its Session to muxifye2eadd, and the kill would
+# then miss it.
 #
 #   bash e2e/add-session.sh
 
@@ -19,16 +21,16 @@ SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-
 SAVED=$(mktemp)
 
 cleanup() {
-  muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
   tmux kill-session -t "=$SESSION" 2>/dev/null
+  muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
   cp "$SAVED" "$SETTINGS"
   rm -f "$SAVED"
   rmdir "$DIR" 2>/dev/null
 }
 trap cleanup EXIT
 
-muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
 tmux kill-session -t "=$SESSION" 2>/dev/null
+muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
 
 cp "$SETTINGS" "$SAVED"
 python3 - "$SETTINGS" <<'PY'
