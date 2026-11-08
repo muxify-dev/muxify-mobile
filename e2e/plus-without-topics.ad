@@ -1,0 +1,16 @@
+context platform=ios kind=simulator
+
+# With the Topics list off, + opens New Session directly, with no menu. Run
+# e2e/new-topic.sh, not this file: it turns the Topics list off for the run.
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Dev Host\""
+
+wait "label=\"New Session\"" 15000
+press "label=\"New Session\""
+# Create is the New Session sheet's own button, so + opened it with no menu
+# in between.
+wait "label=\"Create\"" 8000
+
+close

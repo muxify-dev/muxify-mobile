@@ -23,9 +23,10 @@ wait "id=\"connection-status\"" 8000
 wait 8000
 is "text" "id=\"connection-status\"" "Connected"
 
-# The Host Screen: its toolbar has New Session, which the Topic Screen has not.
+# The Host Screen: its toolbar has +, which the Topic Screen has not. With
+# the Topics list on, + is New Session or Topic.
 press "label=\"Home\""
-wait "label=\"New Session\"" 8000
+wait "label=\"New Session or Topic\"" 8000
 is "visible" "label=\"Topic e2e Topic Screen live\""
 
 press "label=\"Topic e2e Topic Screen empty\""

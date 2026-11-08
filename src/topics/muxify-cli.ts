@@ -4,6 +4,7 @@ import type { TmuxTransport } from '@/tmux/transport';
 import { parseEnvironment } from './environment';
 import type { TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
+import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
 
 type Exec = TmuxTransport['exec'];
@@ -45,6 +46,13 @@ export interface MuxifyCli {
    * fails with the reason.
    */
   show(exec: Exec, topic: TopicId): Promise<TopicRead>;
+
+  /**
+   * Makes an Empty Topic with this title and these Tags: `topic new --json`.
+   * It finds `muxify` as `read` does. A Tag the Config does not define, or any
+   * other refusal, fails with the Host's reason, and the Host makes nothing.
+   */
+  create(exec: Exec, title: string, tags: string[]): Promise<NewTopicRead>;
 }
 
 /**
@@ -100,6 +108,17 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
       const parsed = parseAnswer(result.stdout, parseTopicDetail);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'shown', topic: parsed.value };
+    },
+
+    async create(exec, title, tags) {
+      const path = await locate(exec);
+      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
+
+      const tagFlags = tags.map((tag) => ` --tag ${shellQuote(tag)}`).join('');
+      const result = await exec(`${shellQuote(path)} topic new ${shellQuote(title)}${tagFlags} --json`);
+      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+      const parsed = parseAnswer(result.stdout, parseNewTopic);
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'created', topic: parsed.value };
     },
   };
 }
