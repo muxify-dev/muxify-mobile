@@ -225,6 +225,15 @@ next Save sends only what still differs. A Tag that the Config no longer
 defines shows dashed and can only be removed.
 _Avoid_: Topic settings, Topic properties
 
+**Add a Session**:
+The sheet that Add a Session on the Topic Screen opens, and the main way out of
+an Empty Topic on the phone. It takes one folder on the Host, where a leading
+`~` is the home folder, and makes a Session there in the Topic. There is no
+Worktree choice. An error from the Host, such as a folder that is not there,
+shows in the sheet and the sheet stays open. After Save, the Topic Screen reads
+the Topic again and shows the new Session.
+_Avoid_: New Session (that sheet makes a Session in no Topic)
+
 ### Terminal
 
 **Control Connection**:

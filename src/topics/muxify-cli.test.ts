@@ -455,3 +455,88 @@ describe('changing a Topic', () => {
     ).toEqual({ kind: 'failed', error: 'Desktop Muxify is not on this Host.' });
   });
 });
+
+describe('adding a Session to a Topic', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const ADDED = JSON.stringify({
+    changed: {
+      created: false,
+      pane: '%187',
+      session: '$61',
+      session_name: 'my-project/fix-login',
+      shown: { window: { id: '@75' } },
+      topic_id: ID,
+      window: '@75',
+    },
+  });
+
+  it('gives the folder as one argument, spaces and quotes kept, and names the Topic by id', async () => {
+    const host = scriptedHost(ADDED);
+
+    const read = await createMuxifyCli().addSession(host.exec, ID, `/Users/me/my "big" project's $HOME`);
+
+    expect(host.argv()).toEqual([
+      'topic',
+      'add-session',
+      `/Users/me/my "big" project's $HOME`,
+      '--topic',
+      ID,
+      '--json',
+    ]);
+    expect(read).toEqual({ kind: 'added', session: 'my-project/fix-login' });
+  });
+
+  it.each([
+    ['~', `${process.env.HOME}`],
+    ['~/', `${process.env.HOME}/`],
+    ['~/Dev/my project', `${process.env.HOME}/Dev/my project`],
+    ['~other/x', '~other/x'],
+    ['Dev/~/x', 'Dev/~/x'],
+  ])('reads a leading ~ in %s as the home folder on the Host', async (folder, given) => {
+    const host = scriptedHost(ADDED);
+
+    await createMuxifyCli().addSession(host.exec, ID, folder);
+
+    expect(host.argv()[2]).toBe(given);
+  });
+
+  it('fails with what the CLI said, as for a folder that is not there', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['topic add-session', { exitCode: 2, stderr: "muxify: no directory '/nope'\n" }],
+    ]);
+
+    expect(await createMuxifyCli().addSession(host.exec, ID, '/nope')).toEqual({
+      kind: 'failed',
+      error: "muxify: no directory '/nope'",
+    });
+  });
+
+  it('fails with the message the CLI gave, as for a Topic the Mac has closed', async () => {
+    const message = `No open Topic matches ${ID}.`;
+    const host = scriptedHost(
+      JSON.stringify({ failed: { kind: 'x', message, phase: 'nothing_changed' } }),
+      1,
+    );
+
+    expect(await createMuxifyCli().addSession(host.exec, ID, '/tmp')).toEqual({
+      kind: 'failed',
+      error: message,
+    });
+  });
+
+  it('fails, and says why, on an answer with no Session name', async () => {
+    const host = scriptedHost(JSON.stringify({ changed: { topic_id: ID } }));
+
+    const read = await createMuxifyCli().addSession(host.exec, ID, '/tmp');
+
+    expect(read.kind === 'failed' && read.error).toContain('changed.session_name');
+  });
+
+  it('fails, and says why, on a Host with no muxify', async () => {
+    expect(await createMuxifyCli().addSession(fakeHost([]).exec, ID, '/tmp')).toEqual({
+      kind: 'failed',
+      error: 'Desktop Muxify is not on this Host.',
+    });
+  });
+});

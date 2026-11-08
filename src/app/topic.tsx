@@ -65,7 +65,8 @@ const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
  * Screen under this one.
  *
  * It reads the Topic again each time it comes into view, because the Mac can
- * change the Topic while the phone is in a Session. The last answer stays on
+ * change the Topic while the phone is in a Session, and because Add a Session
+ * and Edit come back here when they have changed it. The last answer stays on
  * screen while it reads.
  */
 export default function TopicScreen() {
@@ -224,6 +225,19 @@ export default function TopicScreen() {
                     </Text>
                   </VStack>
                 )}
+                <Button
+                  onPress={() =>
+                    router.push({ pathname: '/topic-add-session', params: { hostId, topicId } })
+                  }
+                  modifiers={[buttonStyle('plain'), accessibilityLabel('Add a Session')]}>
+                  <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+                    <Image systemName="plus.circle" size={20} color={palette.controlAccent} />
+                    <Text modifiers={[font({ size: 17 }), foregroundColor(palette.controlAccent)]}>
+                      Add a Session
+                    </Text>
+                    <Spacer />
+                  </HStack>
+                </Button>
               </Section>
             </>
           )}
