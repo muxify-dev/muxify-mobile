@@ -20,7 +20,13 @@ import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
-import { LOOKUP_START, reconnectProgress, type Lookup, type LookupStep } from '@/domain/reconnect';
+import {
+  LOOKUP_START,
+  reconnect as reconnectToSession,
+  reconnectProgress,
+  type Lookup,
+  type SessionVisit,
+} from '@/domain/reconnect';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
 import { execCommandRunner } from '@/tmux/exec-runner';
@@ -138,6 +144,15 @@ export default function TerminalScreen() {
   /** The visit that finds the Session before a cold-start reconnect attaches. */
   const [lookup, setLookup] = useState<Lookup>(reconnect ? LOOKUP_START : { kind: 'found' });
   const [reconnectHost, setReconnectHost] = useState('');
+  /** Dismissed by the user; the Attach still knows the key changed. */
+  const [keyWarningSeen, setKeyWarningSeen] = useState(false);
+  /** Bumped by Try again, to run the reconnect once more. Nothing else retries it. */
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const tryReconnectAgain = useCallback(() => {
+    setKeyWarningSeen(false);
+    setLookup(LOOKUP_START);
+    setReconnectAttempt((attempt) => attempt + 1);
+  }, []);
   const reconnecting = reconnectProgress(lookup, state?.phase ?? null);
   /** Up until the reconnect first attaches; a later drop is the Banner's. */
   const [showReconnect, setShowReconnect] = useState(reconnect !== undefined);
@@ -183,18 +198,30 @@ export default function TerminalScreen() {
         return;
       }
       setMissing(null);
-      if (reconnect) {
-        setReconnectHost(host.displayName);
-        const found = await lookForSession(host, sessionParam, (next) => {
-          if (!left) setLookup(next);
-        });
-        if (left || !found) return;
-      }
-      await holder.open({
+      const request = {
         host,
         sessionName: sessionParam,
         topicId: topicId ?? null,
         zoomed: settings.zoomMultipaneWindows,
+      };
+      if (!reconnect) {
+        await holder.open(request);
+        return;
+      }
+      setReconnectHost(host.displayName);
+      await reconnectToSession({
+        session: sessionParam,
+        visit: sessionVisit(host),
+        attach: async () => {
+          if (left) return;
+          const opened = await holder.open(request);
+          // Try again after a failed Attach: the holder hands back the same
+          // Attach, still disconnected, so it is asked for another go.
+          if (opened.state().phase.kind === 'disconnected') opened.reconnect();
+        },
+        progress: (next) => {
+          if (!left) setLookup(next);
+        },
       });
     })();
     return () => {
@@ -204,7 +231,7 @@ export default function TerminalScreen() {
     // The Zoom preference is what the Session is *opened* with; changing it in
     // Settings must not reopen a Session that is already up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holder, hostId, sessionParam]);
+  }, [holder, hostId, sessionParam, reconnectAttempt]);
 
   /** The Surface area's size in points, which every Pane is placed inside. */
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -234,8 +261,6 @@ export default function TerminalScreen() {
   const armedRef = useRef<Modifiers>(NO_MODIFIERS);
   armedRef.current = armed;
   const [picker, setPicker] = useState<PickerState>({ open: false });
-  /** Dismissed by the user; the Attach still knows the key changed. */
-  const [keyWarningSeen, setKeyWarningSeen] = useState(false);
 
   /**
    * The Theme and font size this Session was opened with.
@@ -940,7 +965,43 @@ export default function TerminalScreen() {
   }, []);
 
   const status = statusOf(state, missing);
-  const keyWarning = state?.keyChanged === true && attach ? attach.hostName : null;
+  /**
+   * A changed key, from the reconnect's visit, which stopped at it, or from an
+   * Attach, which went on. Accepting it after the visit is the user asking to
+   * go on, so the reconnect runs again.
+   */
+  const keyWarning =
+    reconnecting.kind === 'failed' && reconnecting.step === 'checking-host-key'
+      ? {
+          hostName: reconnectHost,
+          fingerprint: reconnecting.fingerprint,
+          onAccepted: tryReconnectAgain,
+        }
+      : state?.keyChanged === true && attach
+        ? { hostName: attach.hostName, fingerprint: state.fingerprint, onAccepted: () => {} }
+        : null;
+  const keyBanner = (
+    <Presence shown={keyWarning !== null && !keyWarningSeen}>
+      {keyWarning ? (
+        <HostKeyWarning
+          hostName={keyWarning.hostName}
+          appearance={appearance}
+          palette={chrome}
+          onAccept={() => {
+            setKeyWarningSeen(true);
+            void (async () => {
+              if (hostId && keyWarning.fingerprint) {
+                await deviceHostStore().rememberFingerprint(hostId, keyWarning.fingerprint);
+              }
+              keyWarning.onAccepted();
+            })();
+          }}
+          onDismiss={() => setKeyWarningSeen(true)}
+        />
+      ) : null}
+    </Presence>
+  );
+  const reconnectShown = showReconnect && reconnecting.kind !== 'attached';
 
   return (
     // The ground the Surface sits on follows the Theme, or the safe-area strip
@@ -1090,25 +1151,7 @@ export default function TerminalScreen() {
           padding does not push an absolutely positioned child down, so the grid
           used to end up underneath the battery. */}
       <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
-        <Presence shown={keyWarning !== null && !keyWarningSeen}>
-          {keyWarning ? (
-            <HostKeyWarning
-              hostName={keyWarning}
-              appearance={appearance}
-              palette={chrome}
-              onAccept={() => {
-                setKeyWarningSeen(true);
-                const accepted = state?.fingerprint;
-                void (async () => {
-                  if (hostId && accepted) {
-                    await deviceHostStore().rememberFingerprint(hostId, accepted);
-                  }
-                })();
-              }}
-              onDismiss={() => setKeyWarningSeen(true)}
-            />
-          ) : null}
-        </Presence>
+        {reconnectShown ? null : keyBanner}
 
         <Presence shown={!status.quiet}>
           <StatusBanner
@@ -1151,14 +1194,21 @@ export default function TerminalScreen() {
         </View>
       </View>
 
-      {showReconnect && reconnecting.kind !== 'attached' ? (
+      {reconnectShown ? (
         <ReconnectScreen
           hostName={reconnectHost}
           session={sessionParam ?? ''}
           progress={reconnecting}
           palette={chrome}
+          onTryAgain={tryReconnectAgain}
           onGoHome={goHome}
         />
+      ) : null}
+      {/* The reconnect stops at a changed key, so its warning sits above it. */}
+      {reconnectShown ? (
+        <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
+          {keyBanner}
+        </View>
       ) : null}
     </View>
   );
@@ -1867,40 +1917,20 @@ const styles = StyleSheet.create({
   },
 });
 
-/**
- * One short visit to the Host before a cold-start reconnect attaches, so that a
- * Session that is gone fails here and not as an Attach that cannot work. Tells
- * `progress` each step as it starts, and answers whether the Session is there.
- */
-async function lookForSession(
-  host: Host,
-  session: string,
-  progress: (lookup: Lookup) => void,
-): Promise<boolean> {
-  let step: LookupStep = 'connecting';
-  const at = (next: LookupStep) => {
-    step = next;
-    progress({ kind: 'at', step });
-  };
-  at('connecting');
-  try {
+/** The reconnect's visit to `host`, over its own short SSH Connection. */
+function sessionVisit(host: Host): SessionVisit {
+  return async ({ onHostKey, onSignedIn }) => {
     const sessions = await withHostTransport(
       host,
       deviceHostStore(),
       (transport) => {
-        at('looking-for-session');
+        onSignedIn();
         return new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).listSessions();
       },
-      // The key is compared in the moment it arrives, and the sign-in follows.
-      () => at('signing-in'),
+      onHostKey,
     );
-    const found = sessions.some((candidate) => candidate.name === session);
-    say(`reconnect: ${session} is ${found ? '' : 'not '}on ${host.displayName}`);
-    progress(found ? { kind: 'found' } : { kind: 'failed', step });
-    return found;
-  } catch (error) {
-    say(`reconnect failed while ${step}: ${describeError(error)}`);
-    progress({ kind: 'failed', step });
-    return false;
-  }
+    const names = sessions.map((candidate) => candidate.name);
+    say(`reconnect: ${host.displayName} has ${names.join(', ') || 'no Sessions'}`);
+    return names;
+  };
 }

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Appearance } from '@/constants/app-theme';
 import {
+  failureText,
   RECONNECT_STEPS,
   reconnectStepLabel,
   type ReconnectProgress,
@@ -15,6 +16,7 @@ interface ReconnectScreenProps {
   session: string;
   progress: Exclude<ReconnectProgress, { kind: 'attached' }>;
   palette: Appearance;
+  onTryAgain: () => void;
   onGoHome: () => void;
 }
 
@@ -25,12 +27,15 @@ interface ReconnectScreenProps {
  * Drawn over the Terminal Screen rather than pushed as its own, because the
  * Attach reaches its attached phase only once the Surface below has reported
  * its grid. Go Home is there at every step, the Dock's Home under another name.
+ * A failed step stays, with its reason and Try again: a reconnect never tries
+ * again by itself.
  */
 export function ReconnectScreen({
   hostName,
   session,
   progress,
   palette,
+  onTryAgain,
   onGoHome,
 }: ReconnectScreenProps) {
   const insets = useSafeAreaInsets();
@@ -61,22 +66,53 @@ export function ReconnectScreen({
       </View>
 
       {progress.kind === 'failed' ? (
-        <Text style={[styles.failure, { color: palette.destructive }]} testID="reconnect-failure">
-          Could not reconnect.
-        </Text>
+        <>
+          <Failure text={failureText(progress, { hostName, session })} palette={palette} />
+          <ScreenButton label="Try again" palette={palette} onPress={onTryAgain} />
+        </>
       ) : null}
-
-      <Pressable
-        onPress={onGoHome}
-        accessibilityRole="button"
-        accessibilityLabel="Go Home"
-        style={({ pressed }) => [
-          styles.goHome,
-          { backgroundColor: palette.rowSurface, opacity: pressed ? 0.6 : 1 },
-        ]}>
-        <Text style={[styles.goHomeText, { color: palette.controlAccent }]}>Go Home</Text>
-      </Pressable>
+      <ScreenButton label="Go Home" palette={palette} onPress={onGoHome} />
     </View>
+  );
+}
+
+function Failure({
+  text,
+  palette,
+}: {
+  text: { title: string; reason: string | null };
+  palette: Appearance;
+}) {
+  return (
+    <View style={styles.failure} testID="reconnect-failure">
+      <Text style={[styles.failureTitle, { color: palette.destructive }]}>{text.title}</Text>
+      {text.reason ? (
+        <Text style={[styles.failureReason, { color: palette.secondaryLabel }]}>{text.reason}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function ScreenButton({
+  label,
+  palette,
+  onPress,
+}: {
+  label: string;
+  palette: Appearance;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.button,
+        { backgroundColor: palette.rowSurface, opacity: pressed ? 0.6 : 1 },
+      ]}>
+      <Text style={[styles.buttonText, { color: palette.controlAccent }]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -123,17 +159,19 @@ const styles = StyleSheet.create({
   screen: { paddingHorizontal: 32 },
   title: { fontSize: 28, fontWeight: '700' },
   subtitle: { fontSize: 15, marginTop: 6 },
-  steps: { marginTop: 32, gap: 14 },
+  steps: { marginTop: 32, marginBottom: 24, gap: 14 },
   step: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   stepMark: { width: 24, alignItems: 'center' },
   stepText: { fontSize: 17 },
-  failure: { fontSize: 15, marginTop: 24 },
-  goHome: {
-    marginTop: 40,
+  failure: { gap: 6 },
+  failureTitle: { fontSize: 17, fontWeight: '600' },
+  failureReason: { fontSize: 15 },
+  button: {
+    marginTop: 16,
     alignSelf: 'stretch',
     alignItems: 'center',
     paddingVertical: 14,
     borderRadius: 12,
   },
-  goHomeText: { fontSize: 17, fontWeight: '600' },
+  buttonText: { fontSize: 17, fontWeight: '600' },
 });

@@ -12,6 +12,7 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "id=\"reconnect-failure\"" 15000
+is "visible" "label=\"e2e-reconnect-gone is no longer on Dev Host\""
 press "label=\"Go Home\""
 wait "label=\"New Session\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""

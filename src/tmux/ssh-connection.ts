@@ -42,7 +42,7 @@ export async function withHostTransport<T>(
   host: Host,
   store: HostStore,
   use: (transport: TmuxTransport) => Promise<T>,
-  onHostKey?: (verdict: KeyVerdict) => void,
+  onHostKey?: (verdict: KeyVerdict, fingerprint: string) => boolean,
 ): Promise<T> {
   const { connection, fingerprint, verdict } = await connectToHost(host, store, onHostKey);
   try {
