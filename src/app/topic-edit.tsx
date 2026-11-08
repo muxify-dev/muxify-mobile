@@ -16,20 +16,19 @@ import {
   accessibilityLabel,
   background,
   environment,
-  font,
-  foregroundColor,
-  frame,
   listRowBackground,
   scrollContentBackground,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { RetiredTagChoice, TagChoice } from '@/components/tag-choice';
 import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
@@ -118,11 +117,7 @@ function EditForm({
   );
 
   const toggle = useCallback((name: string) => {
-    setChosen((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(name)) next.add(name);
-      return next;
-    });
+    setChosen((previous) => toggled(previous, name));
   }, []);
 
   const save = useCallback(() => {
@@ -269,20 +264,6 @@ function EditForm({
         </Form>
       </Host>
     </View>
-  );
-}
-
-function FieldError({ error, palette }: { error: string | undefined; palette: Appearance }) {
-  if (error === undefined) return null;
-  return (
-    <Text
-      modifiers={[
-        font({ size: 13 }),
-        foregroundColor(palette.destructive),
-        frame({ maxWidth: 3000, alignment: 'leading' }),
-      ]}>
-      {error}
-    </Text>
   );
 }
 

@@ -85,9 +85,10 @@ export interface HostScreenInput {
  * The sections of the Host Screen below its Connection section, in the order
  * the user set in Settings.
  *
- * The Sessions list is two sections, because there are two different things
- * in it: the Sessions this phone has opened before, which Muxify remembers in
- * the order you last wanted them, and everything else the Host is running.
+ * With Recent Sessions first on, the Sessions list is two sections, because
+ * there are two different things in it: the Sessions this phone has opened
+ * before, which Muxify remembers in the order you last wanted them, and
+ * everything else the Host is running.
  *
  * The rule between them is mutual exclusion by name: a Session appears under
  * Recent or under Available, never both, because they are one Session and two

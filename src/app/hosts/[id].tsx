@@ -56,6 +56,7 @@ import {
 } from '@/domain/host-screen';
 import { describeError } from '@/lib/describe-error';
 import { timeAgoFrom } from '@/lib/relative-time';
+import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
@@ -271,18 +272,9 @@ export default function HostScreen() {
   const sections = hostScreen({ settings, recent, listing, topics, opened, appearance });
 
   const toggleExpanded = (section: HostScreenSection['id']) =>
-    setExpanded((shown) => {
-      const next = new Set(shown);
-      if (!next.delete(section)) next.add(section);
-      return next;
-    });
+    setExpanded((shown) => toggled(shown, section));
 
-  const toggleOpened = (row: OpenableRow) =>
-    setOpened((shown) => {
-      const next = new Set(shown);
-      if (!next.delete(row)) next.add(row);
-      return next;
-    });
+  const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
   const renderRow = (row: HostScreenRow, index: number) => {
     switch (row.kind) {
@@ -752,7 +744,6 @@ function sessionSummary(listing: Listing): string {
   return `${listed.length} ${listed.length === 1 ? 'session' : 'sessions'}`;
 }
 
-/** The Topics list is what the screen is for, so it is never cut to its first rows. */
 /** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */
 function collapsible(section: HostScreenSection): boolean {
   return section.id === 'recent' || section.id === 'available' || section.id === 'sessions';
