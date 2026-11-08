@@ -170,6 +170,35 @@ stopped, removed or moved away its last Session. The Host Screen shows it dimmed
 with "No live Sessions", the same as a Dormant Topic.
 _Avoid_: Dormant (when it remembers no Session), blank, cleared
 
+**In Play**:
+The Mac's limited set of places for the Topics in work now, and the Guests
+after them. With In Play on the Mac, the Host Screen shows the sections Pinned,
+In Play, Guests, then the Bench row. Without it, the Host Screen shows the
+Pinned Topics and then one list, with no section headers.
+_Avoid_: active Topics, focus Topics, WIP limit
+
+**Open Place**:
+An In Play place that no card fills. The Host Screen shows it as an empty,
+dashed row, so the user sees how many places are free.
+_Avoid_: empty slot, hole, free place
+
+**Guest**:
+A card In Play above the number of places: a Topic with the Guest mark, or a
+Locked Session. It shows in the Guests section, after the places.
+_Avoid_: visitor, extra slot
+
+**Bench**:
+The open Topics that are not Pinned, not Guests and hold no In Play place. The
+Host Screen shows them as one Bench row, with no count and no marks, that opens
+to show their cards.
+_Avoid_: backlog, hidden Topics, overflow
+
+**Tag Mark**:
+A small square in the colour of one Tag, at the end of a Topic card. The colour
+is the Tag's light or dark value for the app's appearance. A Tag the Config no
+longer defines, or a colour the phone cannot read, shows as a dashed square.
+_Avoid_: tag chip, tag dot
+
 ### Terminal
 
 **Control Connection**:

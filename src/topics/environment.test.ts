@@ -12,7 +12,10 @@ describe('parsing what `environment show --json` said on the Mac', () => {
     const snapshot = parseEnvironment(inPlay);
 
     expect(snapshot.tags.map((tag) => tag.name)).toEqual(['personal', 'work']);
-    expect(snapshot.tags[0]?.color).toEqual({ light: '#5e8c6a', dark: '#7fa88a' });
+    expect(snapshot.tags[0]?.color).toEqual({
+      light: { kind: 'rgb', hex: '#5e8c6a' },
+      dark: { kind: 'rgb', hex: '#7fa88a' },
+    });
     expect(snapshot.sessions).toHaveLength(20);
     expect(snapshot.no_topic).toHaveLength(9);
     expect(topicLabels(snapshot.pinned)).toEqual(['Chief of Staff']);
@@ -140,6 +143,27 @@ describe('what a newer desktop Muxify may send', () => {
     expect(snapshot.unpinned.cards[0]).toMatchObject({ topic: { state: 'empty' } });
     expect(snapshot.unpinned.cards[1]).toEqual({ kind: 'session', mark: 'unread', sessions: ['$3'] });
   });
+});
+
+describe('a Tag colour', () => {
+  const colorOf = (light: string, dark = light) =>
+    parseEnvironment(snapshotWith({ tags: [{ name: 'work', color: { light, dark } }] })).tags[0]
+      ?.color;
+
+  it.each([
+    ['a system colour name', 'orange', { kind: 'system', name: 'orange' }],
+    ['a system colour name in another case, with spaces', ' Teal ', { kind: 'system', name: 'teal' }],
+    ['a #rrggbb value, kept in lower case', '#5E8C6A', { kind: 'rgb', hex: '#5e8c6a' }],
+  ])('reads %s', (_name, text, color) => {
+    expect(colorOf(text)).toEqual({ light: color, dark: color });
+  });
+
+  it.each([['a name it does not know', 'chartreuse'], ['a short hex value', '#abc'], ['no #', '5e8c6a']])(
+    'turns %s into no colour, and keeps the other appearance',
+    (_name, text) => {
+      expect(colorOf(text, 'blue')).toEqual({ light: null, dark: { kind: 'system', name: 'blue' } });
+    },
+  );
 });
 
 describe('a shape it cannot use', () => {

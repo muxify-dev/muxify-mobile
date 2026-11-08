@@ -1,3 +1,5 @@
+import type { ListedSession } from '@/domain/host-listing';
+
 import type { EnvironmentSnapshot } from './environment';
 
 /**
@@ -54,4 +56,12 @@ export function lastSnapshot(topics: HostTopics): EnvironmentSnapshot | null {
     case 'old':
       return null;
   }
+}
+
+/**
+ * The snapshot's Sessions as the Listing holds them, in the order the Mac's
+ * Sessions mode shows them. The snapshot has no window counts.
+ */
+export function listedSessions(snapshot: EnvironmentSnapshot): ListedSession[] {
+  return snapshot.sessions.map(({ name }) => ({ name, windowCount: undefined }));
 }

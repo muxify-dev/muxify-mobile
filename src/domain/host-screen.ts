@@ -8,6 +8,7 @@ import type { Settings } from '@/settings/settings';
 import type { RecentSession } from '@/storage/records';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
+import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 
 /** A Session Muxify remembers opening, as the Sessions section shows it. */
 export interface RecentRow {
@@ -15,6 +16,15 @@ export interface RecentRow {
   name: string;
   lastOpenedAt: string;
   windowCount: number | undefined;
+}
+
+/**
+ * One Tag of a Topic, with the colour to draw it in. The colour is null for a
+ * Tag the Config no longer defines, or one with a colour the phone cannot read.
+ */
+export interface TagMark {
+  name: string;
+  color: string | null;
 }
 
 /** One row of a Host Screen section. A section with no Session rows has one of the others. */
@@ -32,24 +42,29 @@ export type HostScreenRow =
       id: TopicId;
       label: string;
       note: string | null;
+      tags: TagMark[];
       mark: Mark | null;
       pinned: boolean;
       dimmed: boolean;
     }
   /** A Locked Session shown as its own card. */
   | { kind: 'locked-session'; name: string; mark: Mark | null; pinned: boolean }
+  /** An empty In Play place. */
   | { kind: 'open-place'; id: string }
+  /** The In Play Bench, as one row that opens to show its cards. */
+  | { kind: 'bench'; opened: boolean }
   /** A card this phone does not know, drawn as one plain line. */
   | { kind: 'unknown-card'; text: string }
   /** The Sessions that are in no Topic, as one row that opens to list them. */
   | { kind: 'no-topic'; count: number; opened: boolean };
 
 /** The rows that the user can open in place, by the id the screen holds them under. */
-export type OpenableRow = 'no-topic';
+export type OpenableRow = 'no-topic' | 'bench';
 
 export interface HostScreenSection {
-  id: 'recent' | 'available' | 'sessions' | 'topics';
-  title: string;
+  id: 'recent' | 'available' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench';
+  /** Null for a section with no header: the Bench row is its own header. */
+  title: string | null;
   footer: string | null;
   rows: HostScreenRow[];
 }
@@ -62,6 +77,8 @@ export interface HostScreenInput {
   topics: HostTopics;
   /** The rows the user has opened. */
   opened: ReadonlySet<OpenableRow>;
+  /** The appearance the screen is drawn in, which picks each Tag's colour. */
+  appearance: ColorAppearance;
 }
 
 /**
@@ -97,6 +114,7 @@ export function hostScreen({
   listing,
   topics,
   opened,
+  appearance,
 }: HostScreenInput): HostScreenSection[] {
   const lists = settings.hostScreenLists;
   const sessionsShown = lists.includes('sessions');
@@ -108,7 +126,7 @@ export function hostScreen({
   const sessionsListing = without(listing, inTopics);
 
   return lists.flatMap((list) => {
-    if (list === 'topics') return [topicsList(topics, opened, sessionsShown)];
+    if (list === 'topics') return topicsList(topics, { opened, appearance, withNoTopic: !sessionsShown });
     return settings.recentSessionsFirst
       ? sessionsList(sessionsRecent, sessionsListing)
       : [hostOrderList(sessionsRecent, sessionsListing)];
@@ -131,69 +149,127 @@ function without(listing: Listing, names: ReadonlySet<string>): Listing {
   return { ...listing, sessions: listing.sessions.filter((session) => !names.has(session.name)) };
 }
 
-function topicsList(
-  topics: HostTopics,
-  opened: ReadonlySet<OpenableRow>,
-  sessionsShown: boolean,
-): HostScreenSection {
-  const cards = (snapshot: EnvironmentSnapshot) => cardRows(snapshot, opened, !sessionsShown);
-  const rows = ((): HostScreenRow[] => {
-    switch (topics.kind) {
-      case 'absent':
-        return [{ kind: 'note', text: 'No Topics on this Host' }];
-      case 'old':
-        return [{ kind: 'note', text: 'Update Muxify on this Host' }];
-      case 'loading':
-        return topics.last ? cards(topics.last) : [{ kind: 'checking', of: 'Topics' }];
-      case 'failed':
-        return [{ kind: 'refused', message: topics.error }, ...(topics.last ? cards(topics.last) : [])];
-      case 'listed':
-        return cards(topics.snapshot);
-    }
-  })();
-  return { id: 'topics', title: 'Topics', footer: null, rows };
+interface CardsContext {
+  opened: ReadonlySet<OpenableRow>;
+  appearance: ColorAppearance;
+  /** Whether the list ends with the No Topic row. */
+  withNoTopic: boolean;
 }
 
 /**
- * The cards in the order the Mac's Topics mode draws them: Pinned first, then
- * the list in the order it came, or with In Play the places, the Guests and
- * the Bench. Never sorted: the order is the Mac's, and a card the phone moved
- * would not be where the user looks for it on the Mac.
+ * The Topics list. Before a snapshot, it is one Topics section with a row that
+ * says why. A failed read puts its error above the last snapshot's cards.
  */
-function cardRows(
-  snapshot: EnvironmentSnapshot,
-  opened: ReadonlySet<OpenableRow>,
-  withNoTopic: boolean,
-): HostScreenRow[] {
+function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
+  const only = (row: HostScreenRow): HostScreenSection[] => [topicsSection('topics', 'Topics', [row])];
+  switch (topics.kind) {
+    case 'absent':
+      return only({ kind: 'note', text: 'No Topics on this Host' });
+    case 'old':
+      return only({ kind: 'note', text: 'Update Muxify on this Host' });
+    case 'loading':
+      return topics.last ? cardSections(topics.last, context) : only({ kind: 'checking', of: 'Topics' });
+    case 'failed': {
+      const refused: HostScreenRow = { kind: 'refused', message: topics.error };
+      if (!topics.last) return only(refused);
+      const [first, ...rest] = cardSections(topics.last, context);
+      return [{ ...first, rows: [refused, ...first.rows] }, ...rest];
+    }
+    case 'listed':
+      return cardSections(topics.snapshot, context);
+  }
+}
+
+function topicsSection(
+  id: HostScreenSection['id'],
+  title: string | null,
+  rows: HostScreenRow[],
+): HostScreenSection {
+  return { id, title, footer: null, rows };
+}
+
+/**
+ * The cards in the sections the Mac's Topics mode draws. With a list, that is
+ * the Pinned cards, with a pin, and then the list, under one header. With In
+ * Play, it is Pinned, the In Play places, the Guests, and then the Bench as one
+ * row that opens. Never sorted: the order is the Mac's, and a card the phone
+ * moved would not be where the user looks for it on the Mac.
+ *
+ * Always at least one section, so a failed read has a place for its error.
+ */
+function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): HostScreenSection[] {
   const names = new Map<SessionId, string>(
     snapshot.sessions.map((session) => [session.id, session.name]),
   );
+  const colors = new Map(
+    snapshot.tags.map((tag) => {
+      const color = tag.color[context.appearance];
+      return [tag.name, color ? tagColorHex(color, context.appearance) : null];
+    }),
+  );
+  const rows = (cards: Card[], pinned = false) =>
+    cards.map((card) => cardRow(card, { pinned, names, colors }));
+  const pinned = rows(snapshot.pinned, true);
+  const noTopic = noTopicRows(snapshot, names, context);
   const { unpinned } = snapshot;
-  const rest =
-    unpinned.kind === 'list'
-      ? unpinned.cards
-      : [...unpinned.places, ...unpinned.guests, ...unpinned.bench];
 
-  const rows = [
-    ...snapshot.pinned.map((card) => cardRow(card, true, names)),
-    ...rest.map((card) => cardRow(card, false, names)),
-  ];
-
-  if (withNoTopic && snapshot.no_topic.length > 0) {
-    const isOpened = opened.has('no-topic');
-    rows.push({ kind: 'no-topic', count: snapshot.no_topic.length, opened: isOpened });
-    if (isOpened) {
-      for (const id of snapshot.no_topic) {
-        const name = names.get(id);
-        if (name !== undefined) rows.push({ kind: 'available', name });
-      }
-    }
+  if (unpinned.kind === 'list') {
+    const all = [...pinned, ...rows(unpinned.cards), ...noTopic];
+    return [topicsSection('topics', 'Topics', all.length > 0 ? all : [{ kind: 'note', text: 'No Topics yet.' }])];
   }
 
-  return rows.length > 0 ? rows : [{ kind: 'note', text: 'No Topics yet.' }];
+  const benchOpened = context.opened.has('bench');
+  const bench: HostScreenRow[] =
+    unpinned.bench.length === 0
+      ? []
+      : [{ kind: 'bench', opened: benchOpened }, ...(benchOpened ? rows(unpinned.bench) : [])];
+  const sections = [
+    topicsSection('pinned', 'Pinned', pinned),
+    topicsSection('in-play', 'In Play', rows(unpinned.places)),
+    topicsSection('guests', 'Guests', rows(unpinned.guests)),
+    topicsSection('bench', null, [...bench, ...noTopic]),
+  ].filter((section) => section.rows.length > 0);
+  return sections.length > 0
+    ? sections
+    : [topicsSection('in-play', 'In Play', [{ kind: 'note', text: 'No Topics yet.' }])];
 }
 
-function cardRow(card: Card, pinned: boolean, names: ReadonlyMap<SessionId, string>): HostScreenRow {
+/** The No Topic row, and the Sessions under it once it is opened, in the order they came. */
+function noTopicRows(
+  snapshot: EnvironmentSnapshot,
+  names: ReadonlyMap<SessionId, string>,
+  context: CardsContext,
+): HostScreenRow[] {
+  if (!context.withNoTopic || snapshot.no_topic.length === 0) return [];
+  const opened = context.opened.has('no-topic');
+  const rows: HostScreenRow[] = [{ kind: 'no-topic', count: snapshot.no_topic.length, opened }];
+  if (opened) {
+    for (const id of snapshot.no_topic) {
+      const name = names.get(id);
+      if (name !== undefined) rows.push({ kind: 'available', name });
+    }
+  }
+  return rows;
+}
+
+/**
+ * A Topic's Tags in Config order, as the Mac draws its Tag Marks. A Tag the
+ * Config no longer defines comes last, with no colour.
+ */
+function tagMarks(tags: string[], colors: ReadonlyMap<string, string | null>): TagMark[] {
+  const defined = [...colors.keys()].filter((name) => tags.includes(name));
+  const undefinedTags = tags.filter((name) => !colors.has(name));
+  return [...defined, ...undefinedTags].map((name) => ({ name, color: colors.get(name) ?? null }));
+}
+
+interface CardRowContext {
+  pinned: boolean;
+  names: ReadonlyMap<SessionId, string>;
+  /** Each Tag the Config defines, in Config order, with its colour in this appearance. */
+  colors: ReadonlyMap<string, string | null>;
+}
+
+function cardRow(card: Card, { pinned, names, colors }: CardRowContext): HostScreenRow {
   switch (card.kind) {
     case 'topic':
       return {
@@ -201,6 +277,7 @@ function cardRow(card: Card, pinned: boolean, names: ReadonlyMap<SessionId, stri
         id: card.topic.id,
         label: card.topic.label,
         note: card.topic.note,
+        tags: tagMarks(card.topic.tags, colors),
         mark: card.mark,
         pinned,
         dimmed: card.topic.state !== 'live',

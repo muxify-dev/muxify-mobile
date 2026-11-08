@@ -52,6 +52,7 @@ import {
   type HostScreenSection,
   type OpenableRow,
   type RecentRow,
+  type TagMark,
 } from '@/domain/host-screen';
 import { describeError } from '@/lib/describe-error';
 import { timeAgoFrom } from '@/lib/relative-time';
@@ -66,7 +67,13 @@ import { execCommandRunner } from '@/tmux/exec-runner';
 import { sshTmuxTransport } from '@/tmux/ssh-transport';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { Mark } from '@/topics/environment';
-import { loadingTopics, settled, TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
+import {
+  listedSessions,
+  loadingTopics,
+  settled,
+  TOPICS_UNASKED,
+  type HostTopics,
+} from '@/topics/host-topics';
 import { createMuxifyCli } from '@/topics/muxify-cli';
 
 /** How many rows a section shows before it offers to show the rest. */
@@ -165,10 +172,7 @@ export default function HostScreen() {
           setTopics((previous) => settled(previous, read));
         }
         if (read?.kind === 'listed') {
-          const sessions = read.snapshot.sessions.map(({ name }) => ({
-            name,
-            windowCount: undefined,
-          }));
+          const sessions = listedSessions(read.snapshot);
           say(`${found.displayName} listed ${sessions.length} Sessions with its Topics`);
           setListing(answered(sessions));
         } else {
@@ -258,7 +262,7 @@ export default function HostScreen() {
     [id, readRecords],
   );
 
-  const sections = hostScreen({ settings, recent, listing, topics, opened });
+  const sections = hostScreen({ settings, recent, listing, topics, opened, appearance });
 
   const toggleExpanded = (section: HostScreenSection['id']) =>
     setExpanded((shown) => {
@@ -406,6 +410,7 @@ export default function HostScreen() {
               ) : null}
             </VStack>
             <Spacer />
+            {row.tags.length === 0 ? null : <TagMarks tags={row.tags} palette={palette} />}
             {row.mark === null ? null : <MarkImage mark={row.mark} palette={palette} />}
           </HStack>
         );
@@ -434,13 +439,31 @@ export default function HostScreen() {
           <HStack
             key={row.id}
             spacing={12}
-            modifiers={[frame({ maxWidth: 3000 }), accessibilityLabel('Open place')]}>
+            modifiers={[frame({ maxWidth: 3000 }), accessibilityLabel('Open Place')]}>
             <Image systemName="circle.dashed" size={20} color={palette.secondaryLabel} />
             <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
-              Open place
+              Open Place
             </Text>
             <Spacer />
           </HStack>
+        );
+      case 'bench':
+        return (
+          <Button
+            key="bench"
+            onPress={() => toggleOpened('bench')}
+            modifiers={[buttonStyle('plain'), accessibilityLabel('Bench')]}>
+            <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+              <Image systemName="tray.2" size={20} color={palette.rowIcon} />
+              <Text modifiers={[font({ size: 17 })]}>Bench</Text>
+              <Spacer />
+              <Image
+                systemName={row.opened ? 'chevron.up' : 'chevron.down'}
+                size={13}
+                color={palette.secondaryLabel}
+              />
+            </HStack>
+          </Button>
         );
       case 'unknown-card':
         return (
@@ -527,7 +550,11 @@ export default function HostScreen() {
           {sections.map((section) => (
             <Section
               key={section.id}
-              header={<SectionHeader palette={palette}>{section.title}</SectionHeader>}
+              header={
+                section.title === null ? undefined : (
+                  <SectionHeader palette={palette}>{section.title}</SectionHeader>
+                )
+              }
               footer={
                 section.footer === null ? undefined : (
                   <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
@@ -636,6 +663,22 @@ function MarkImage({ mark, palette }: { mark: Mark; palette: Appearance }) {
   return <Image systemName={symbol} size={17} color={color} />;
 }
 
+/** A Topic's Tags as small squares in the Tag colours, as the Mac's Tag Marks are. */
+function TagMarks({ tags, palette }: { tags: TagMark[]; palette: Appearance }) {
+  return (
+    <HStack spacing={3} modifiers={[accessibilityLabel(tags.map((tag) => `#${tag.name}`).join(' '))]}>
+      {tags.map((tag) => (
+        <Image
+          key={tag.name}
+          systemName={tag.color === null ? 'square.dashed' : 'square.fill'}
+          size={11}
+          color={tag.color ?? palette.secondaryLabel}
+        />
+      ))}
+    </HStack>
+  );
+}
+
 const MARKS: Record<Mark, (palette: Appearance) => { symbol: SFSymbol; color: string }> = {
   blocked: (palette) => ({ symbol: 'hand.raised.fill', color: palette.destructive }),
   failed: (palette) => ({ symbol: 'xmark.octagon.fill', color: palette.destructive }),
@@ -729,8 +772,9 @@ function sessionSummary(listing: Listing): string {
 }
 
 /** The Topics list is what the screen is for, so it is never cut to its first rows. */
+/** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */
 function collapsible(section: HostScreenSection): boolean {
-  return section.id !== 'topics';
+  return section.id === 'recent' || section.id === 'available' || section.id === 'sessions';
 }
 
 function collapse<T>(items: T[], expanded: boolean): T[] {

@@ -63,7 +63,9 @@ describe('Topics against the real muxify', () => {
       recent: [],
       listing: UNASKED,
       topics: settled(TOPICS_UNASKED, read),
-      opened: new Set(),
+      // With In Play, a new Topic waits on the Bench, which shows its cards only when opened.
+      opened: new Set(['bench']),
+      appearance: 'light',
     });
     const rows = sections.flatMap((section) => section.rows);
     expect(rows).toContainEqual(
