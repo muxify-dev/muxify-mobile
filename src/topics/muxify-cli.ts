@@ -31,6 +31,8 @@ const PROBE_STEPS = [
   },
 ] as const;
 
+const NO_MUXIFY = 'Desktop Muxify is not on this Host.';
+
 /** `muxify` exits 2 on a usage error, which is how a CLI with no `environment show` answers. */
 const USAGE_ERROR = 2;
 
@@ -117,6 +119,23 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     });
   }
 
+  /**
+   * The parsed answer to `muxify <args>`, which must ask for `--json`. A Host
+   * with no `muxify`, a non-zero exit or an answer of the wrong shape gives
+   * the reason instead.
+   */
+  async function answerTo<T>(
+    exec: Exec,
+    args: string,
+    parse: (json: unknown) => T,
+  ): Promise<{ value: T } | { error: string }> {
+    const path = await locate(exec);
+    if (path === null) return { error: NO_MUXIFY };
+    const result = await exec(`${shellQuote(path)} ${args}`);
+    if (result.exitCode !== 0) return { error: failureText(result) };
+    return parseAnswer(result.stdout, parse);
+  }
+
   return {
     async read(exec) {
       const path = await locate(exec);
@@ -130,29 +149,19 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     },
 
     async show(exec, topic) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
-
-      const result = await exec(`${shellQuote(path)} topic show --json --topic ${shellQuote(topic)}`);
-      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, parseTopicDetail);
+      const parsed = await answerTo(exec, `topic show --json --topic ${shellQuote(topic)}`, parseTopicDetail);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'shown', topic: parsed.value };
     },
 
     async create(exec, title, tags) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
-
       const tagFlags = tags.map((tag) => ` --tag ${shellQuote(tag)}`).join('');
-      const result = await exec(`${shellQuote(path)} topic new ${shellQuote(title)}${tagFlags} --json`);
-      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, parseNewTopic);
+      const parsed = await answerTo(exec, `topic new ${shellQuote(title)}${tagFlags} --json`, parseNewTopic);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'created', topic: parsed.value };
     },
 
     async change(exec, topic, change) {
       const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
+      if (path === null) return { kind: 'failed', error: NO_MUXIFY };
 
       const result = await exec(
         `${shellQuote(path)} ${changeCommand(change)} --topic ${shellQuote(topic)} --json`,
@@ -164,14 +173,11 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     },
 
     async addSession(exec, topic, folder) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
-
-      const result = await exec(
-        `${shellQuote(path)} topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
+      const parsed = await answerTo(
+        exec,
+        `topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
+        parseAddedSession,
       );
-      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, parseAddedSession);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'added', session: parsed.value };
     },
   };

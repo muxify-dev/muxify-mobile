@@ -8,7 +8,6 @@ import {
   HStack,
   ScrollView,
   Section,
-  Text,
   TextField,
   useNativeState,
 } from '@expo/ui/swift-ui';
@@ -16,19 +15,18 @@ import {
   accessibilityLabel,
   background,
   environment,
-  font,
-  foregroundColor,
-  frame,
   listRowBackground,
   scrollContentBackground,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { TagChoice } from '@/components/tag-choice';
 import { ToolbarWord } from '@/components/toolbar-word';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
@@ -62,11 +60,7 @@ export default function TopicFormScreen() {
   const [creating, setCreating] = useState(false);
 
   const toggle = useCallback((name: string) => {
-    setChosen((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(name)) next.add(name);
-      return next;
-    });
+    setChosen((previous) => toggled(previous, name));
   }, []);
 
   const save = useCallback(() => {
@@ -155,16 +149,7 @@ export default function TopicFormScreen() {
               placeholder="Fix login"
               modifiers={[accessibilityLabel('Topic title')]}
             />
-            {error === undefined ? null : (
-              <Text
-                modifiers={[
-                  font({ size: 13 }),
-                  foregroundColor(palette.destructive),
-                  frame({ maxWidth: 3000, alignment: 'leading' }),
-                ]}>
-                {error}
-              </Text>
-            )}
+            <FieldError error={error} palette={palette} />
           </Section>
 
           {tags.length === 0 ? null : (

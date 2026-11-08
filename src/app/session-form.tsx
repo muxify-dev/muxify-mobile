@@ -10,13 +10,13 @@ import {
   environment,
   font,
   foregroundColor,
-  frame,
   listRowBackground,
   scrollContentBackground,
   textInputAutocapitalization,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { FieldError } from '@/components/field-error';
 import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
@@ -132,16 +132,7 @@ export default function SessionFormScreen() {
                 accessibilityLabel('Session name'),
               ]}
             />
-            {error === undefined ? null : (
-              <Text
-                modifiers={[
-                  font({ size: 13 }),
-                  foregroundColor(palette.destructive),
-                  frame({ maxWidth: 3000, alignment: 'leading' }),
-                ]}>
-                {error}
-              </Text>
-            )}
+            <FieldError error={error} palette={palette} />
           </Section>
         </Form>
       </Host>

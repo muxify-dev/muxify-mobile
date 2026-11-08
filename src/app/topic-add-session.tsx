@@ -2,21 +2,19 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { Form, Host, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
+import { Form, Host, Section, TextField, useNativeState } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
   autocorrectionDisabled,
   background,
   environment,
-  font,
-  foregroundColor,
-  frame,
   listRowBackground,
   scrollContentBackground,
   textInputAutocapitalization,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { ToolbarWord } from '@/components/toolbar-word';
 import { deviceLog } from '@/diagnostics/device-log';
@@ -136,16 +134,7 @@ export default function TopicAddSessionScreen() {
                 autocorrectionDisabled(),
               ]}
             />
-            {error === undefined ? null : (
-              <Text
-                modifiers={[
-                  font({ size: 13 }),
-                  foregroundColor(palette.destructive),
-                  frame({ maxWidth: 3000, alignment: 'leading' }),
-                ]}>
-                {error}
-              </Text>
-            )}
+            <FieldError error={error} palette={palette} />
           </Section>
         </Form>
       </Host>
