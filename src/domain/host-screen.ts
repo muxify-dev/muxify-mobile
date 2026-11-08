@@ -22,14 +22,14 @@ export type HostScreenRow =
   | { kind: 'note'; text: string };
 
 export interface HostScreenSection {
-  id: 'recent' | 'available' | 'topics';
+  id: 'recent' | 'available' | 'sessions' | 'topics';
   title: string;
   footer: string | null;
   rows: HostScreenRow[];
 }
 
 export interface HostScreenInput {
-  settings: Pick<Settings, 'hostScreenLists'>;
+  settings: Pick<Settings, 'hostScreenLists' | 'recentSessionsFirst'>;
   /** This Host's Recent Sessions, newest first. */
   recent: RecentSession[];
   listing: Listing;
@@ -57,9 +57,12 @@ export interface HostScreenInput {
  * and the row comes back where it was, still knowing when you last opened it.
  */
 export function hostScreen({ settings, recent, listing }: HostScreenInput): HostScreenSection[] {
-  return settings.hostScreenLists.flatMap((list) =>
-    list === 'sessions' ? sessionsList(recent, listing) : [TOPICS_PLACEHOLDER],
-  );
+  return settings.hostScreenLists.flatMap((list) => {
+    if (list === 'topics') return [TOPICS_PLACEHOLDER];
+    return settings.recentSessionsFirst
+      ? sessionsList(recent, listing)
+      : [hostOrderList(recent, listing)];
+  });
 }
 
 const TOPICS_PLACEHOLDER: HostScreenSection = {
@@ -69,6 +72,44 @@ const TOPICS_PLACEHOLDER: HostScreenSection = {
   rows: [{ kind: 'note', text: 'Topics come in a later version.' }],
 };
 
+/**
+ * The Sessions list with Recent Sessions first turned off: one section in the
+ * order the Host lists its Sessions, which is the order the Mac shows. A
+ * remembered Session keeps its Recent row here, so it can still be forgotten
+ * or disconnected. Before the Host answers there is no Host order, so the
+ * remembered Sessions show as they do with the switch on (fail open).
+ */
+function hostOrderList(recent: RecentSession[], listing: Listing): HostScreenSection {
+  const listed = lastAnswer(listing);
+  const remembered = new Map(recent.map((session) => [session.name, session]));
+
+  const rows: HostScreenRow[] =
+    listed === undefined
+      ? [...recent.map((session) => recentRow(session, undefined)), unansweredRow(listing)]
+      : listed.map((live): HostScreenRow => {
+          const session = remembered.get(live.name);
+          return session
+            ? recentRow(session, live.windowCount)
+            : { kind: 'available', name: live.name };
+        });
+
+  return {
+    id: 'sessions',
+    title: 'Sessions',
+    footer: null,
+    rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'No Sessions on this Host.' }],
+  };
+}
+
+function recentRow(session: RecentSession, windowCount: number | undefined): RecentRow {
+  return {
+    kind: 'recent',
+    name: session.name,
+    lastOpenedAt: session.lastOpenedAt,
+    windowCount,
+  };
+}
+
 function sessionsList(recent: RecentSession[], listing: Listing): HostScreenSection[] {
   const listed = lastAnswer(listing);
   const onHost = new Map(listed?.map((session) => [session.name, session]));
@@ -77,14 +118,7 @@ function sessionsList(recent: RecentSession[], listing: Listing): HostScreenSect
   const recentRows: RecentRow[] = recent.flatMap((session) => {
     const live = onHost.get(session.name);
     if (listed !== undefined && !live) return [];
-    return [
-      {
-        kind: 'recent',
-        name: session.name,
-        lastOpenedAt: session.lastOpenedAt,
-        windowCount: live?.windowCount,
-      },
-    ];
+    return [recentRow(session, live?.windowCount)];
   });
 
   const available: Session[] = (listed ?? [])
@@ -121,9 +155,17 @@ function availableRows(available: Session[], listing: Listing): HostScreenRow[] 
   if (available.length > 0) {
     return available.map((session) => ({ kind: 'available', name: session.name }));
   }
-  // Only ever the first question. A later one is answered from what is
-  // already on screen while it is in flight, so there is nothing to see.
-  if (waitingOnFirstAnswer(listing)) return [{ kind: 'checking' }];
-  if (listing.phase === 'failed') return [{ kind: 'refused', message: listing.message }];
+  if (lastAnswer(listing) === undefined) return [unansweredRow(listing)];
   return [{ kind: 'note', text: 'No other Sessions on this Host.' }];
+}
+
+/**
+ * What stands in for the Host's Sessions while it has no answer: the first
+ * question is still in flight, or the Host refused it. A later question is
+ * answered from what is already on screen while it is in flight, so it has
+ * nothing to show.
+ */
+function unansweredRow(listing: Listing): HostScreenRow {
+  if (listing.phase === 'failed') return { kind: 'refused', message: listing.message };
+  return { kind: 'checking' };
 }

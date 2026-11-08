@@ -37,12 +37,14 @@ describe('parseSettings', () => {
         theme: 'dracula',
         zoomMultipaneWindows: false,
         hostScreenLists: ['topics', 'sessions'],
+        recentSessionsFirst: false,
       }),
     ).toEqual({
       fontSize: 14,
       theme: 'dracula',
       zoomMultipaneWindows: false,
       hostScreenLists: ['topics', 'sessions'],
+      recentSessionsFirst: false,
     });
   });
 
@@ -76,13 +78,30 @@ describe('parseSettings', () => {
 
   it('keeps each field independent, so one bad value loses only itself', () => {
     expect(
-      parseSettings({ fontSize: 13, theme: 42, zoomMultipaneWindows: 'yes', hostScreenLists: 7 }),
+      parseSettings({
+        fontSize: 13,
+        theme: 42,
+        zoomMultipaneWindows: 'yes',
+        hostScreenLists: 7,
+        recentSessionsFirst: 'no',
+      }),
     ).toEqual({
       fontSize: 13,
       theme: 'default',
       zoomMultipaneWindows: true,
       hostScreenLists: ['sessions'],
+      recentSessionsFirst: true,
     });
+  });
+
+  it.each<[string, unknown, boolean]>([
+    ['missing, as in a file from before the setting', undefined, true],
+    ['not a boolean', 'false', true],
+    ['null', null, true],
+    ['off', false, false],
+    ['on', true, true],
+  ])('reads Recent Sessions first that is %s', (_, saved, on) => {
+    expect(parseSettings({ recentSessionsFirst: saved }).recentSessionsFirst).toBe(on);
   });
 
   it.each<[string, unknown, HostScreenLists]>([
