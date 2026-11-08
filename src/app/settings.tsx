@@ -6,6 +6,7 @@ import {
   Form,
   Host,
   HStack,
+  List,
   Picker,
   Section,
   Spacer,
@@ -18,6 +19,7 @@ import {
   background,
   clipShape,
   cornerRadius,
+  deleteDisabled,
   disabled,
   environment,
   fixedSize,
@@ -26,6 +28,7 @@ import {
   frame,
   listRowBackground,
   monospacedDigit,
+  moveDisabled,
   padding,
   pickerStyle,
   scrollContentBackground,
@@ -37,9 +40,18 @@ import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/ap
 import { useSettings } from '@/settings/settings-context';
 import {
   DEFAULT_EXPLICIT_FONT_SIZE,
+  hostScreenListRows,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  moveHostScreenLists,
+  switchHostScreenList,
+  type HostScreenList,
 } from '@/settings/settings';
+
+const HOST_SCREEN_LIST_NAMES: Record<HostScreenList, string> = {
+  sessions: 'Sessions',
+  topics: 'Topics',
+};
 
 /** The few lines of code the Theme preview shows. */
 const PREVIEW_LINES: { number: string; text: string }[] = [
@@ -65,6 +77,7 @@ export default function SettingsScreen() {
   const usesDefaultSize = value.fontSize === null;
   const shownSize = value.fontSize ?? DEFAULT_EXPLICIT_FONT_SIZE;
   const theme = Themes[value.theme];
+  const lists = value.hostScreenLists;
 
   return (
     <View style={styles.fill}>
@@ -81,6 +94,10 @@ export default function SettingsScreen() {
             scrollContentBackground('hidden'),
             background(palette.background),
             tint(palette.controlAccent),
+            // Edit mode is what shows the drag handles of the Host Screen
+            // lists. Rows outside a List.ForEach have nothing to drag, so they
+            // look as they did before.
+            environment('editMode', 'active'),
           ]}>
           <Section
             header={<SectionHeader palette={palette}>Font</SectionHeader>}
@@ -156,6 +173,43 @@ export default function SettingsScreen() {
               onIsOnChange={(on) => update({ zoomMultipaneWindows: on })}
               modifiers={[tint(palette.controlAccent)]}
             />
+          </Section>
+
+          <Section
+            header={<SectionHeader palette={palette}>Host Screen</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                Every Host Screen shows the lists that are on, in this order. Drag a list to move
+                it. One list always stays on.
+              </Text>
+            }
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <List.ForEach
+              onMove={(sources, destination) =>
+                update({ hostScreenLists: moveHostScreenLists(lists, sources, destination) })
+              }>
+              {hostScreenListRows(lists).map((list) => {
+                const on = lists.includes(list);
+                return (
+                  <Toggle
+                    key={list}
+                    label={HOST_SCREEN_LIST_NAMES[list]}
+                    isOn={on}
+                    onIsOnChange={(next) =>
+                      update({ hostScreenLists: switchHostScreenList(lists, list, next) })
+                    }
+                    modifiers={[
+                      tint(palette.controlAccent),
+                      disabled(on && lists.length === 1),
+                      // A list that is off has no place on the Host Screen to
+                      // move it to.
+                      moveDisabled(!on),
+                      deleteDisabled(),
+                    ]}
+                  />
+                );
+              })}
+            </List.ForEach>
           </Section>
         </Form>
       </Host>
