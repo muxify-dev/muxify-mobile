@@ -41,11 +41,15 @@ import {
   asking,
   lastAnswer,
   refused,
-  waitingOnFirstAnswer,
   UNASKED,
   type Listing,
 } from '@/domain/host-listing';
-import { hostSessions, type RecentRow } from '@/domain/host-sessions';
+import {
+  hostScreen,
+  type HostScreenRow,
+  type HostScreenSection,
+  type RecentRow,
+} from '@/domain/host-screen';
 import { describeError } from '@/lib/describe-error';
 import { timeAgoFrom } from '@/lib/relative-time';
 import { useSettings } from '@/settings/settings-context';
@@ -68,10 +72,8 @@ const say = speakingAs(deviceLog(), 'host');
 /**
  * A Host and its Sessions.
  *
- * Two lists, because there are two different things here: the Sessions this
- * phone has opened before — which Muxify remembers, in the order you last
- * wanted them — and everything else the Host happens to be running. See
- * hostSessions for the rule that decides which is which.
+ * Below the Connection section, it draws only what hostScreen returns: the
+ * lists the user turned on in Settings, in their order.
  *
  * What is remembered is on screen before the Host is even dialled, and the
  * Host's own answer arrives underneath a moment later. A Host you cannot reach
@@ -80,13 +82,12 @@ const say = speakingAs(deviceLog(), 'host');
 export default function HostScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { appearance, palette } = useSettings();
+  const { settings, appearance, palette } = useSettings();
 
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [listing, setListing] = useState<Listing>(UNASKED);
-  const [showEveryRecent, setShowEveryRecent] = useState(false);
-  const [showEveryAvailable, setShowEveryAvailable] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<HostScreenSection['id']>>(new Set());
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
   // thumb, and the screen is short-lived enough that it will not go stale.
   const [openedAt] = useState(() => new Date());
@@ -222,7 +223,120 @@ export default function HostScreen() {
     [id, readRecords],
   );
 
-  const { recent: rows, available } = hostSessions(recent, lastAnswer(listing));
+  const sections = hostScreen({ settings, recent, listing });
+
+  const toggleExpanded = (section: HostScreenSection['id']) =>
+    setExpanded((shown) => {
+      const next = new Set(shown);
+      if (!next.delete(section)) next.add(section);
+      return next;
+    });
+
+  const renderRow = (row: HostScreenRow) => {
+    switch (row.kind) {
+      case 'recent': {
+        const attached = attachedHere?.sessionName === row.name;
+        return (
+          <SwipeActions key={row.name}>
+            <LogMenu onCopyLog={copyLog}>
+              <RecentSessionRow
+                row={row}
+                palette={palette}
+                openedAt={openedAt}
+                attached={attached ? attachedHere.phase : undefined}
+                onPress={() => open(row.name)}
+              />
+            </LogMenu>
+            <SwipeActions.Actions>
+              {/* First, so a full swipe on the attached row ends the
+                  Connection: on that row it is the verb being reached for,
+                  and Forget is the odd one. Red because it is — it ends
+                  something, unlike Forget beside it. Here rather than in the
+                  row, where a red word sat beside the phase and read as part
+                  of the status. */}
+              {attached ? (
+                <Button
+                  label="Disconnect"
+                  systemImage="bolt.slash"
+                  role="destructive"
+                  onPress={disconnect}
+                  // Said outright, because the Form's own tint reaches in here
+                  // and paints the role's red over in accent.
+                  modifiers={[
+                    tint(palette.destructive),
+                    accessibilityLabel(`Disconnect ${row.name}`),
+                  ]}
+                />
+              ) : null}
+              {/* Not destructive, and deliberately not red: this drops
+                  Muxify's memory of the Session and leaves it running. */}
+              <Button
+                label="Forget"
+                systemImage="minus.circle"
+                onPress={() => forget(row.name)}
+                modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
+              />
+            </SwipeActions.Actions>
+          </SwipeActions>
+        );
+      }
+      case 'available':
+        return (
+          <LogMenu key={row.name} onCopyLog={copyLog}>
+            <Button
+              onPress={() => open(row.name)}
+              modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+              <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+                <Image systemName="terminal" size={20} color={palette.rowIcon} />
+                <Text modifiers={[font({ size: 17 })]}>{row.name}</Text>
+                <Spacer />
+                <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
+              </HStack>
+            </Button>
+          </LogMenu>
+        );
+      case 'checking':
+        return (
+          <HStack key="checking" spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
+            <ProgressView />
+            <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+              Checking Sessions…
+            </Text>
+            <Spacer />
+          </HStack>
+        );
+      case 'refused':
+        return (
+          <VStack
+            key="refused"
+            spacing={8}
+            alignment="leading"
+            modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+            <HStack spacing={8}>
+              <Image systemName="exclamationmark.triangle" size={15} color={palette.destructive} />
+              <Text modifiers={[font({ size: 15 }), foregroundColor(palette.destructive)]}>
+                {row.message}
+              </Text>
+              <Spacer />
+            </HStack>
+            <Button
+              label="Retry"
+              onPress={() => void readHost()}
+              modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel('Retry')]}
+            />
+          </VStack>
+        );
+      case 'note':
+        return (
+          <Text
+            key="note"
+            modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+            {row.text}
+          </Text>
+        );
+    }
+  };
+
   return (
     <View style={styles.fill}>
       <Stack.Screen
@@ -268,150 +382,33 @@ export default function HostScreen() {
               <Text modifiers={[font({ size: 17 })]}>Sessions</Text>
               <Spacer />
               <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
-                {sessionSummary(rows.length + available.length, listing)}
+                {sessionSummary(listing)}
               </Text>
             </HStack>
           </Section>
 
-          <Section
-            header={<SectionHeader palette={palette}>Sessions</SectionHeader>}
-            modifiers={[listRowBackground(palette.rowSurface)]}>
-            {rows.length === 0 ? (
-              <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-                {waitingOnFirstAnswer(listing)
-                  ? 'Nothing opened on this Host yet.'
-                  : 'Nothing opened on this Host yet. Pick one below to start.'}
-              </Text>
-            ) : (
-              collapse(rows, showEveryRecent).map((row) => {
-                const attached = attachedHere?.sessionName === row.name;
-                return (
-                  <SwipeActions key={row.name}>
-                    <LogMenu onCopyLog={copyLog}>
-                      <RecentSessionRow
-                        row={row}
-                        palette={palette}
-                        openedAt={openedAt}
-                        attached={attached ? attachedHere.phase : undefined}
-                        onPress={() => open(row.name)}
-                      />
-                    </LogMenu>
-                    <SwipeActions.Actions>
-                      {/* First, so a full swipe on the attached row ends the
-                          Connection: on that row it is the verb being reached
-                          for, and Forget is the odd one. Red because it is —
-                          it ends something, unlike Forget beside it. Here
-                          rather than in the row, where a red word sat beside
-                          the phase and read as part of the status. */}
-                      {attached ? (
-                        <Button
-                          label="Disconnect"
-                          systemImage="bolt.slash"
-                          role="destructive"
-                          onPress={disconnect}
-                          // Said outright, because the Form's own tint reaches
-                          // in here and paints the role's red over in accent.
-                          modifiers={[
-                            tint(palette.destructive),
-                            accessibilityLabel(`Disconnect ${row.name}`),
-                          ]}
-                        />
-                      ) : null}
-                      {/* Not destructive, and deliberately not red: this drops
-                          Muxify's memory of the Session and leaves it running. */}
-                      <Button
-                        label="Forget"
-                        systemImage="minus.circle"
-                        onPress={() => forget(row.name)}
-                        modifiers={[accessibilityLabel(`Forget ${row.name}`)]}
-                      />
-                    </SwipeActions.Actions>
-                  </SwipeActions>
-                );
-              })
-            )}
-
-            {rows.length > COLLAPSED ? (
-              <DisclosureRow
-                palette={palette}
-                expanded={showEveryRecent}
-                onPress={() => setShowEveryRecent((shown) => !shown)}
-              />
-            ) : null}
-          </Section>
-
-          <Section
-            header={<SectionHeader palette={palette}>Available on Host</SectionHeader>}
-            footer={
-              available.length > 0 ? (
-                <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
-                  Opening one adds it to Sessions above.
-                </Text>
-              ) : undefined
-            }
-            modifiers={[listRowBackground(palette.rowSurface)]}>
-            {/* Only ever the first question. A later one is answered from what
-                is already on screen while it is in flight, so there is nothing
-                here to see — which is the whole point. */}
-            {waitingOnFirstAnswer(listing) ? (
-              <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
-                <ProgressView />
-                <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-                  Checking Sessions…
-                </Text>
-                <Spacer />
-              </HStack>
-            ) : null}
-
-            {listing.phase === 'failed' ? (
-              <VStack
-                spacing={8}
-                alignment="leading"
-                modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
-                <HStack spacing={8}>
-                  <Image systemName="exclamationmark.triangle" size={15} color={palette.destructive} />
-                  <Text modifiers={[font({ size: 15 }), foregroundColor(palette.destructive)]}>
-                    {listing.message}
+          {sections.map((section) => (
+            <Section
+              key={section.id}
+              header={<SectionHeader palette={palette}>{section.title}</SectionHeader>}
+              footer={
+                section.footer === null ? undefined : (
+                  <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                    {section.footer}
                   </Text>
-                  <Spacer />
-                </HStack>
-                <Button
-                  label="Retry"
-                  onPress={() => void readHost()}
-                  modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel('Retry')]}
+                )
+              }
+              modifiers={[listRowBackground(palette.rowSurface)]}>
+              {collapse(section.rows, expanded.has(section.id)).map(renderRow)}
+              {section.rows.length > COLLAPSED ? (
+                <DisclosureRow
+                  palette={palette}
+                  expanded={expanded.has(section.id)}
+                  onPress={() => toggleExpanded(section.id)}
                 />
-              </VStack>
-            ) : null}
-
-            {lastAnswer(listing) !== undefined && available.length === 0 ? (
-              <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-                No other Sessions on this Host.
-              </Text>
-            ) : null}
-
-            {collapse(available, showEveryAvailable).map((session) => (
-              <LogMenu key={session.name} onCopyLog={copyLog}>
-                <Button
-                  onPress={() => open(session.name)}
-                  modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${session.name}`)]}>
-                  <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-                    <Image systemName="terminal" size={20} color={palette.rowIcon} />
-                    <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
-                    <Spacer />
-                    <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
-                  </HStack>
-                </Button>
-              </LogMenu>
-            ))}
-
-            {available.length > COLLAPSED ? (
-              <DisclosureRow
-                palette={palette}
-                expanded={showEveryAvailable}
-                onPress={() => setShowEveryAvailable((shown) => !shown)}
-              />
-            ) : null}
-          </Section>
+              ) : null}
+            </Section>
+          ))}
         </Form>
       </Host>
     </View>
@@ -571,9 +568,10 @@ function SectionHeader({ children, palette }: { children: string; palette: Appea
  * Muxify borrowed `window-size smallest` to do it. A control client borrows
  * nothing, so there is nothing left to warn about. See ADR 0006.
  */
-function sessionSummary(total: number, listing: Listing): string {
-  if (lastAnswer(listing) === undefined) return '—';
-  return `${total} ${total === 1 ? 'session' : 'sessions'}`;
+function sessionSummary(listing: Listing): string {
+  const listed = lastAnswer(listing);
+  if (listed === undefined) return '—';
+  return `${listed.length} ${listed.length === 1 ? 'session' : 'sessions'}`;
 }
 
 function collapse<T>(items: T[], expanded: boolean): T[] {

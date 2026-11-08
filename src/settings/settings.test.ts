@@ -1,9 +1,13 @@
 import {
   clampFontSize,
   DEFAULT_SETTINGS,
+  hostScreenListRows,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  moveHostScreenLists,
   parseSettings,
+  switchHostScreenList,
+  type HostScreenLists,
 } from './settings';
 
 describe('clampFontSize', () => {
@@ -27,10 +31,18 @@ describe('clampFontSize', () => {
 
 describe('parseSettings', () => {
   it('reads settings written by this version', () => {
-    expect(parseSettings({ fontSize: 14, theme: 'dracula', zoomMultipaneWindows: false })).toEqual({
+    expect(
+      parseSettings({
+        fontSize: 14,
+        theme: 'dracula',
+        zoomMultipaneWindows: false,
+        hostScreenLists: ['topics', 'sessions'],
+      }),
+    ).toEqual({
       fontSize: 14,
       theme: 'dracula',
       zoomMultipaneWindows: false,
+      hostScreenLists: ['topics', 'sessions'],
     });
   });
 
@@ -63,10 +75,62 @@ describe('parseSettings', () => {
   });
 
   it('keeps each field independent, so one bad value loses only itself', () => {
-    expect(parseSettings({ fontSize: 13, theme: 42, zoomMultipaneWindows: 'yes' })).toEqual({
+    expect(
+      parseSettings({ fontSize: 13, theme: 42, zoomMultipaneWindows: 'yes', hostScreenLists: 7 }),
+    ).toEqual({
       fontSize: 13,
       theme: 'default',
       zoomMultipaneWindows: true,
+      hostScreenLists: ['sessions'],
     });
+  });
+
+  it.each<[string, unknown, HostScreenLists]>([
+    ['missing, as in a file from before the setting', undefined, ['sessions']],
+    ['not an array', 'topics', ['sessions']],
+    ['empty', [], ['sessions']],
+    ['only unknown entries', ['bench', 3, null], ['sessions']],
+    ['one list', ['topics'], ['topics']],
+    ['both lists, in their order', ['topics', 'sessions'], ['topics', 'sessions']],
+    ['unknown entries among known ones', ['bench', 'topics', 42], ['topics']],
+    [
+      'a repeated entry, kept where it first came',
+      ['topics', 'sessions', 'topics'],
+      ['topics', 'sessions'],
+    ],
+  ])('reads Host Screen lists that are %s', (_, saved, lists) => {
+    expect(parseSettings({ hostScreenLists: saved }).hostScreenLists).toEqual(lists);
+  });
+});
+
+describe('Host Screen lists in Settings', () => {
+  it.each<[HostScreenLists, string[]]>([
+    [['sessions'], ['sessions', 'topics']],
+    [['topics'], ['topics', 'sessions']],
+    [['topics', 'sessions'], ['topics', 'sessions']],
+  ])('shows %j as the rows %j: the lists that are on, then the rest', (lists, rows) => {
+    expect(hostScreenListRows(lists)).toEqual(rows);
+  });
+
+  it('turns a list on at the bottom of the Host Screen', () => {
+    expect(switchHostScreenList(['sessions'], 'topics', true)).toEqual(['sessions', 'topics']);
+  });
+
+  it('turns a list off', () => {
+    expect(switchHostScreenList(['topics', 'sessions'], 'topics', false)).toEqual(['sessions']);
+  });
+
+  it('keeps the last list on', () => {
+    expect(switchHostScreenList(['topics'], 'topics', false)).toEqual(['topics']);
+  });
+
+  it('moves a list that is on above another', () => {
+    expect(moveHostScreenLists(['sessions', 'topics'], [1], 0)).toEqual(['topics', 'sessions']);
+    expect(moveHostScreenLists(['sessions', 'topics'], [0], 2)).toEqual(['topics', 'sessions']);
+  });
+
+  it('gives a list that is off no place, so moving it changes nothing', () => {
+    expect(moveHostScreenLists(['sessions'], [1], 0)).toEqual(['sessions']);
+    expect(moveHostScreenLists(['sessions'], [0], 2)).toEqual(['sessions']);
   });
 });
