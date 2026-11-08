@@ -1,5 +1,5 @@
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import {
@@ -37,9 +37,18 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
+import { placeToReconnect } from '@/domain/reconnect';
+import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
+
+/**
+ * Whether this run of the app has looked for a Last Place yet. Module state
+ * lives as long as the JavaScript does, so it is false only on a cold start: a
+ * start from the background finds it true and stays where it was.
+ */
+let coldStartChecked = false;
 
 /**
  * The Hosts list: the app's front door.
@@ -64,6 +73,31 @@ export default function HostsScreen() {
    */
   const attach = useCurrentAttach();
   const attached = useAttachState(attach);
+
+  useEffect(() => {
+    if (coldStartChecked) return;
+    coldStartChecked = true;
+    void (async () => {
+      const [settings, records] = await Promise.all([
+        deviceSettingsStore().load(),
+        deviceHostStore().load(),
+      ]);
+      const place = placeToReconnect(settings, records);
+      if (!place) return;
+      // Pushed in the order Back walks them, so the Terminal Screen has the
+      // Host Screen and then the Hosts list under it, as if tapped to.
+      router.push({ pathname: '/hosts/[id]', params: { id: place.hostId } });
+      router.push({
+        pathname: '/terminal',
+        params: {
+          hostId: place.hostId,
+          session: place.session,
+          ...(place.topicId ? { topicId: place.topicId } : {}),
+          reconnect: '1',
+        },
+      });
+    })();
+  }, [router]);
 
   const reload = useCallback(async () => {
     const records = await deviceHostStore().load();

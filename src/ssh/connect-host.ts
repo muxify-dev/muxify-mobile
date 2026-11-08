@@ -25,7 +25,12 @@ export interface HostConnection {
  * authentication has not been vouched for by anything, so only a Connection
  * that actually succeeds is worth remembering — which the caller does.
  */
-export async function connectToHost(host: Host, store: HostStore): Promise<HostConnection> {
+export async function connectToHost(
+  host: Host,
+  store: HostStore,
+  /** Told the moment the key is checked, before the sign-in starts. */
+  onHostKey?: (verdict: KeyVerdict) => void,
+): Promise<HostConnection> {
   const credential = await store.credentialFor(host.id);
   if (credential === null || credential === '') {
     throw new MissingCredentialError();
@@ -52,6 +57,7 @@ export async function connectToHost(host: Host, store: HostStore): Promise<HostC
     verifyHostKey: (key: SshHostKey) => {
       fingerprint = key.fingerprint;
       verdict = compareHostKey(known?.value, key.fingerprint);
+      onHostKey?.(verdict);
       // A changed key does not block the Connection — someone who has just
       // rebuilt a machine still has to be able to reach it — but the caller is
       // told, and tells the user.

@@ -129,7 +129,13 @@ function fakeStore() {
   const wrote: string[] = [];
   const store: HostStore = {
     load: () =>
-      Promise.resolve({ hosts: [HOST], identities: [], fingerprints: [], recentSessions: [] }),
+      Promise.resolve({
+        hosts: [HOST],
+        identities: [],
+        fingerprints: [],
+        recentSessions: [],
+        lastPlace: null,
+      }),
     saveHost: () => Promise.reject(new Error('not used here')),
     removeHost: () => Promise.resolve(),
     credentialFor: () => Promise.resolve('secret'),
@@ -144,6 +150,11 @@ function fakeStore() {
     },
     forgetSession: () => Promise.resolve(),
     recentSessionsFor: () => Promise.resolve([]),
+    rememberLastPlace: ({ hostId, session, topicId }) => {
+      wrote.push(`last place ${hostId} ${session} ${topicId ?? 'no Topic'}`);
+      return Promise.resolve();
+    },
+    forgetLastPlace: () => Promise.resolve(),
   };
   return { store, wrote };
 }
@@ -160,6 +171,7 @@ function attachOn(
     hosts?: ReturnType<typeof fakeHost>[];
     failLink?: () => unknown;
     sessionName?: string;
+    topicId?: string;
     zoomed?: boolean;
   } = {},
 ) {
@@ -174,6 +186,7 @@ function attachOn(
   const attach = openAttach({
     host: HOST,
     sessionName: options.sessionName ?? 'work',
+    topicId: options.topicId ?? null,
     zoomed: options.zoomed ?? true,
     store,
     clock,
@@ -287,6 +300,15 @@ describe('the order an Attach happens in', () => {
     expect(kit.wrote).toContain('session host-1 work');
   });
 
+  it('records the Last Place, with its Topic, once the Session actually opened', async () => {
+    const kit = attachOn({ topicId: 'topic-7' });
+    await settle();
+    expect(kit.wrote.filter((line) => line.startsWith('last place'))).toEqual([]);
+    await connected(kit);
+    await settle();
+    expect(kit.wrote).toContain('last place host-1 work topic-7');
+  });
+
   it('ends in a disconnected phase carrying tmux’s own words for a refusal', async () => {
     const kit = attachOn();
     kit.attach.windowGridReported(GRID, PHONE);
@@ -357,6 +379,7 @@ describe('the verbs', () => {
 
     expect(kit.attach.state().sessionName).toBe('play');
     expect(kit.wrote).toContain('session host-1 play');
+    expect(kit.wrote).toContain('last place host-1 play no Topic');
     // The Session switched into has its own Window, laid out for whoever
     // attached to it last — so the size goes out again though it has not
     // changed.

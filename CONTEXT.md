@@ -110,6 +110,15 @@ memory. The distinction matters on the Host Screen, where a Session that exists
 but has never been opened here is a different row in a different section.
 _Avoid_: workspace, saved session, history
 
+**Last Place**:
+Where the user was when Muxify last closed: the Host, the Session and the Topic
+it was opened from, if any. The app writes it each time an Attach reaches its
+attached phase or switches Session, and clears it on Disconnect. With Reconnect
+on start on, a cold start opens it again behind a "Trying to reconnect" screen.
+A Disconnect means "do not take me back", so the next cold start opens the
+Hosts list.
+_Avoid_: last session, resume point, saved state
+
 **Listing**:
 What a Host last said its Sessions were. The Host Screen asks again every time
 it comes back into focus — a sheet closing over it, a return from the Terminal

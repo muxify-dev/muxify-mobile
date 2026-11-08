@@ -3,6 +3,8 @@ import {
   type Fingerprint,
   type Host,
   type Identity,
+  type LastPlace,
+  parseLastPlace,
   type RecentSession,
   type Records,
 } from './records';
@@ -47,6 +49,10 @@ export interface HostStore {
   forgetSession(hostId: string, name: string): Promise<void>;
   /** A Host's remembered Sessions, most recently opened first. */
   recentSessionsFor(hostId: string): Promise<RecentSession[]>;
+  /** Records where the user is now, for Reconnect on start. */
+  rememberLastPlace(place: LastPlace): Promise<void>;
+  /** Forgets it, so the next cold start opens the Hosts list. */
+  forgetLastPlace(): Promise<void>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -81,6 +87,7 @@ export function createHostStore(
         identities: parsed.identities ?? [],
         fingerprints: parsed.fingerprints ?? [],
         recentSessions: parsed.recentSessions ?? [],
+        lastPlace: parseLastPlace(parsed.lastPlace),
       };
     } catch {
       // Unreadable records are treated as none rather than as a crash on
@@ -112,6 +119,7 @@ export function createHostStore(
         identities: replaceById(records.identities, savedIdentity),
         fingerprints: records.fingerprints,
         recentSessions: records.recentSessions,
+        lastPlace: records.lastPlace,
       });
       // Written after the records, so a failed keychain write cannot leave a
       // credential belonging to a Host that was never saved.
@@ -141,6 +149,7 @@ export function createHostStore(
         recentSessions: records.recentSessions.filter(
           (candidate) => candidate.hostId !== hostId,
         ),
+        lastPlace: records.lastPlace?.hostId === hostId ? null : records.lastPlace,
       });
       if (!stillUsed) {
         await secrets.remove(credentialKey(host.identityId));
@@ -204,6 +213,17 @@ export function createHostStore(
       return records.recentSessions
         .filter((candidate) => candidate.hostId === hostId)
         .sort(byMostRecentlyOpened);
+    },
+
+    async rememberLastPlace(place: LastPlace): Promise<void> {
+      const records = await load();
+      await save({ ...records, lastPlace: place });
+    },
+
+    async forgetLastPlace(): Promise<void> {
+      const records = await load();
+      if (records.lastPlace === null) return;
+      await save({ ...records, lastPlace: null });
     },
   };
 }

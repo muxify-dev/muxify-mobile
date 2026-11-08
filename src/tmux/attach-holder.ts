@@ -1,5 +1,6 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Host } from '@/storage/records';
+import type { HostStore } from '@/storage/store';
 
 import type { Attach, LifecyclePhase } from './attach';
 
@@ -7,6 +8,8 @@ import type { Attach, LifecyclePhase } from './attach';
 export interface AttachRequest {
   host: Host;
   sessionName: string;
+  /** The Topic it was opened from, or null when it was not opened from one. */
+  topicId: string | null;
   /** The Zoom preference at the moment it is opened. */
   zoomed: boolean;
 }
@@ -22,7 +25,10 @@ export interface AttachHolder {
    * reason to remake a Connection that is working.
    */
   open(request: AttachRequest): Promise<Attach>;
-  /** Ends it on purpose. It does not come back on its own. */
+  /**
+   * Ends it on purpose. It does not come back on its own, and the Last Place
+   * is forgotten, so the next cold start does not bring it back either.
+   */
   disconnect(): Promise<void>;
   /** Called whenever the attached Session changes, including to none. */
   subscribe(listener: (attach: Attach | null) => void): () => void;
@@ -49,6 +55,7 @@ export interface AttachHolder {
  */
 export function createAttachHolder(
   open: (request: AttachRequest) => Attach,
+  lastPlace: Pick<HostStore, 'forgetLastPlace'>,
   log: Log = silentLog,
 ): AttachHolder {
   let current: Attach | null = null;
@@ -103,6 +110,7 @@ export function createAttachHolder(
       session = '';
       publish();
       await attached.close();
+      await lastPlace.forgetLastPlace();
     },
 
     subscribe(listener: (attach: Attach | null) => void): () => void {

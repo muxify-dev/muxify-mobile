@@ -8,6 +8,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Banner, Presence } from '@/components/banner';
+import { ReconnectScreen } from '@/components/reconnect-screen';
 import { Dock, type DockCapsule } from '@/components/dock';
 import { KeyBar } from '@/components/key-bar';
 import { ComposerPanel } from '@/composer/composer-panel';
@@ -19,7 +20,12 @@ import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
+import { LOOKUP_START, reconnectProgress, type Lookup, type LookupStep } from '@/domain/reconnect';
 import { deviceHostStore } from '@/storage/device-store';
+import type { Host } from '@/storage/records';
+import { execCommandRunner } from '@/tmux/exec-runner';
+import { withHostTransport } from '@/tmux/ssh-connection';
+import { TmuxClient } from '@/tmux/tmux-client';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
@@ -105,9 +111,18 @@ type PickerState =
  */
 export default function TerminalScreen() {
   const router = useRouter();
-  const { hostId, session: sessionParam } = useLocalSearchParams<{
+  const {
+    hostId,
+    session: sessionParam,
+    topicId,
+    reconnect,
+  } = useLocalSearchParams<{
     hostId?: string;
     session?: string;
+    /** The Topic Screen the Session was opened from, for the Last Place. */
+    topicId?: string;
+    /** Set by a cold start that reopens the Last Place: look first, then attach. */
+    reconnect?: string;
   }>();
   // The screen draws its own chrome: no navigation header, so the Surface
   // background runs to the top of the display and only the inset keeps text
@@ -120,6 +135,27 @@ export default function TerminalScreen() {
   const state = useAttachState(attach);
   /** Why the screen could not even ask for an Attach: a Host that has gone. */
   const [missing, setMissing] = useState<string | null>(null);
+  /** The visit that finds the Session before a cold-start reconnect attaches. */
+  const [lookup, setLookup] = useState<Lookup>(reconnect ? LOOKUP_START : { kind: 'found' });
+  const [reconnectHost, setReconnectHost] = useState('');
+  const reconnecting = reconnectProgress(lookup, state?.phase ?? null);
+  /** Up until the reconnect first attaches; a later drop is the Banner's. */
+  const [showReconnect, setShowReconnect] = useState(reconnect !== undefined);
+  useEffect(() => {
+    if (reconnecting.kind === 'attached') setShowReconnect(false);
+  }, [reconnecting.kind]);
+
+  // Home is the Host Screen of the Host this Session is on, where the next
+  // Session is a tap away; Back from there is the Hosts list. With no Host in
+  // the route there is no Host Screen to go to. The Session stays attached —
+  // this is navigation and nothing else.
+  const goHome = useCallback(
+    () =>
+      hostId
+        ? router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } })
+        : router.dismissTo('/'),
+    [router, hostId],
+  );
 
   /**
    * Asks the root for the Session this route names, if it is not already up.
@@ -147,7 +183,19 @@ export default function TerminalScreen() {
         return;
       }
       setMissing(null);
-      await holder.open({ host, sessionName: sessionParam, zoomed: settings.zoomMultipaneWindows });
+      if (reconnect) {
+        setReconnectHost(host.displayName);
+        const found = await lookForSession(host, sessionParam, (next) => {
+          if (!left) setLookup(next);
+        });
+        if (left || !found) return;
+      }
+      await holder.open({
+        host,
+        sessionName: sessionParam,
+        topicId: topicId ?? null,
+        zoomed: settings.zoomMultipaneWindows,
+      });
     })();
     return () => {
       left = true;
@@ -828,13 +876,7 @@ export default function TerminalScreen() {
             id: 'home',
             label: 'Home',
             systemImage: 'house',
-            // Home is the Host Screen of the Host this Session is on, where
-            // the next Session is a tap away; Back from there is the Hosts
-            // list. With no Host in the route there is no Host Screen to go
-            // to. The Session stays attached — this is navigation and nothing
-            // else.
-            onPress: () =>
-              hostId ? router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } }) : router.dismissTo('/'),
+            onPress: goHome,
           },
           {
             id: 'compose',
@@ -1108,6 +1150,16 @@ export default function TerminalScreen() {
           ) : null}
         </View>
       </View>
+
+      {showReconnect && reconnecting.kind !== 'attached' ? (
+        <ReconnectScreen
+          hostName={reconnectHost}
+          session={sessionParam ?? ''}
+          progress={reconnecting}
+          palette={chrome}
+          onGoHome={goHome}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1814,3 +1866,41 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 });
+
+/**
+ * One short visit to the Host before a cold-start reconnect attaches, so that a
+ * Session that is gone fails here and not as an Attach that cannot work. Tells
+ * `progress` each step as it starts, and answers whether the Session is there.
+ */
+async function lookForSession(
+  host: Host,
+  session: string,
+  progress: (lookup: Lookup) => void,
+): Promise<boolean> {
+  let step: LookupStep = 'connecting';
+  const at = (next: LookupStep) => {
+    step = next;
+    progress({ kind: 'at', step });
+  };
+  at('connecting');
+  try {
+    const sessions = await withHostTransport(
+      host,
+      deviceHostStore(),
+      (transport) => {
+        at('looking-for-session');
+        return new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).listSessions();
+      },
+      // The key is compared in the moment it arrives, and the sign-in follows.
+      () => at('signing-in'),
+    );
+    const found = sessions.some((candidate) => candidate.name === session);
+    say(`reconnect: ${session} is ${found ? '' : 'not '}on ${host.displayName}`);
+    progress(found ? { kind: 'found' } : { kind: 'failed', step });
+    return found;
+  } catch (error) {
+    say(`reconnect failed while ${step}: ${describeError(error)}`);
+    progress({ kind: 'failed', step });
+    return false;
+  }
+}

@@ -182,7 +182,8 @@ export default function SettingsScreen() {
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
                 Every Host Screen shows the lists that are on, in this order. Drag a list to move
                 it. One list always stays on. Turn Recent Sessions first off to list Sessions in
-                the Host&apos;s order, as the Mac does.
+                the Host&apos;s order, as the Mac does. Turn Reconnect on start on to open the
+                Session you were in when Muxify last closed.
               </Text>
             }
             modifiers={[listRowBackground(palette.rowSurface)]}>
@@ -216,6 +217,12 @@ export default function SettingsScreen() {
               label="Recent Sessions first"
               isOn={value.recentSessionsFirst}
               onIsOnChange={(on) => update({ recentSessionsFirst: on })}
+              modifiers={[tint(palette.controlAccent)]}
+            />
+            <Toggle
+              label="Reconnect on start"
+              isOn={value.reconnectOnStart}
+              onIsOnChange={(on) => update({ reconnectOnStart: on })}
               modifiers={[tint(palette.controlAccent)]}
             />
           </Section>

@@ -1,4 +1,4 @@
-import { connectToHost } from '@/ssh/connect-host';
+import { connectToHost, type KeyVerdict } from '@/ssh/connect-host';
 import { createUploader } from '@/composer/upload';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
@@ -42,8 +42,9 @@ export async function withHostTransport<T>(
   host: Host,
   store: HostStore,
   use: (transport: TmuxTransport) => Promise<T>,
+  onHostKey?: (verdict: KeyVerdict) => void,
 ): Promise<T> {
-  const { connection, fingerprint, verdict } = await connectToHost(host, store);
+  const { connection, fingerprint, verdict } = await connectToHost(host, store, onHostKey);
   try {
     if (verdict.kind === 'first-sight') await store.rememberFingerprint(host.id, fingerprint);
     return await use(sshTmuxTransport(connection));

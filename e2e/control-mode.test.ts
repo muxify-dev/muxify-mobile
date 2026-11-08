@@ -63,7 +63,7 @@ const host = (over: Partial<Host> = {}): Host => ({
 /** Everything the Attach writes down, kept in memory. */
 function memoryStore() {
   const wrote: string[] = [];
-  const records: Records = { hosts: [host()], identities: [], fingerprints: [], recentSessions: [] };
+  const records: Records = { hosts: [host()], identities: [], fingerprints: [], recentSessions: [], lastPlace: null };
   const store: HostStore = {
     load: () => Promise.resolve(records),
     saveHost: () => Promise.reject(new Error('not used by this check')),
@@ -77,6 +77,8 @@ function memoryStore() {
     },
     forgetSession: () => Promise.resolve(),
     recentSessionsFor: () => Promise.resolve([]),
+    rememberLastPlace: () => Promise.resolve(),
+    forgetLastPlace: () => Promise.resolve(),
   };
   return { store, wrote };
 }
@@ -158,6 +160,7 @@ function attachTo(options: { sessionName?: string; record?: Host } = {}) {
   const attach = openAttach({
     host: record,
     sessionName: options.sessionName ?? SESSION,
+    topicId: null,
     zoomed: true,
     store,
     openConnection: (): Promise<HostConnection> =>
