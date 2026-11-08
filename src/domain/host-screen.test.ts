@@ -44,9 +44,17 @@ const TOPICS: HostScreenSection = {
   rows: [note('Topics come in a later version.')],
 };
 
+const hostOrderSection = (...rows: HostScreenRow[]): HostScreenSection => ({
+  id: 'sessions',
+  title: 'Sessions',
+  footer: null,
+  rows,
+});
+
 interface Case {
   name: string;
   lists?: HostScreenLists;
+  recentSessionsFirst?: boolean;
   recent: RecentSession[];
   listing: Listing;
   sections: HostScreenSection[];
@@ -170,7 +178,62 @@ describe('hostScreen', () => {
         availableSection(availableRow('cook')),
       ],
     },
-  ])('$name', ({ lists = ['sessions'], recent, listing, sections }) => {
-    expect(hostScreen({ settings: { hostScreenLists: lists }, recent, listing })).toEqual(sections);
+    {
+      // The Mac's Sessions mode shows the Host's order, so the phone matches
+      // it rather than sorting.
+      name: 'with Recent Sessions first off, keeps the Host order in one section',
+      recentSessionsFirst: false,
+      recent: [remembered('muxify', '2026-09-15T11:00:00Z'), remembered('gone')],
+      listing: answered([running('zebra'), running('muxify', 3), running('alpha')]),
+      sections: [
+        hostOrderSection(
+          availableRow('zebra'),
+          recentRow('muxify', 3, '2026-09-15T11:00:00Z'),
+          availableRow('alpha'),
+        ),
+      ],
+    },
+    {
+      name: 'with Recent Sessions first off, keeps the last answer while it asks again',
+      recentSessionsFirst: false,
+      recent: [remembered('muxify')],
+      listing: asking(answered([running('cook'), running('muxify', 2)])),
+      sections: [hostOrderSection(availableRow('cook'), recentRow('muxify', 2))],
+    },
+    {
+      name: 'with Recent Sessions first off, shows everything remembered before an answer',
+      recentSessionsFirst: false,
+      recent: [remembered('muxify'), remembered('cook')],
+      listing: UNASKED,
+      sections: [hostOrderSection(recentRow('muxify'), recentRow('cook'), { kind: 'checking' })],
+    },
+    {
+      name: 'with Recent Sessions first off, shows why the Host refused',
+      recentSessionsFirst: false,
+      recent: [remembered('muxify')],
+      listing: refused('Host unreachable'),
+      sections: [
+        hostOrderSection(recentRow('muxify'), { kind: 'refused', message: 'Host unreachable' }),
+      ],
+    },
+    {
+      name: 'with Recent Sessions first off, reads a Host with nothing running as no Sessions',
+      recentSessionsFirst: false,
+      recent: [remembered('gone')],
+      listing: answered([]),
+      sections: [hostOrderSection(note('No Sessions on this Host.'))],
+    },
+    {
+      name: 'with Recent Sessions first off, keeps Topics in its place',
+      lists: ['topics', 'sessions'],
+      recentSessionsFirst: false,
+      recent: [],
+      listing: answered([running('cook')]),
+      sections: [TOPICS, hostOrderSection(availableRow('cook'))],
+    },
+  ])('$name', ({ lists = ['sessions'], recentSessionsFirst = true, recent, listing, sections }) => {
+    expect(
+      hostScreen({ settings: { hostScreenLists: lists, recentSessionsFirst }, recent, listing }),
+    ).toEqual(sections);
   });
 });

@@ -27,6 +27,11 @@ export interface Settings {
    * Never empty, so a setting cannot leave a Host Screen with nothing on it.
    */
   hostScreenLists: HostScreenLists;
+  /**
+   * Whether the Sessions list puts the Sessions this phone opened at the top.
+   * Off, it keeps the Host's own order, the order the Mac shows.
+   */
+  recentSessionsFirst: boolean;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
@@ -44,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'default',
   zoomMultipaneWindows: true,
   hostScreenLists: ['sessions'],
+  recentSessionsFirst: true,
 };
 
 /** Keeps a font size inside what the Surface will accept. */
@@ -150,6 +156,7 @@ export function parseSettings(raw: unknown): Settings {
   const fontSize = record.fontSize;
   const theme = record.theme;
   const zoom = record.zoomMultipaneWindows;
+  const recentFirst = record.recentSessionsFirst;
 
   return {
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
@@ -157,5 +164,7 @@ export function parseSettings(raw: unknown): Settings {
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
     hostScreenLists: parseHostScreenLists(record.hostScreenLists),
+    recentSessionsFirst:
+      typeof recentFirst === 'boolean' ? recentFirst : DEFAULT_SETTINGS.recentSessionsFirst,
   };
 }

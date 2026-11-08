@@ -180,7 +180,8 @@ export default function SettingsScreen() {
             footer={
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
                 Every Host Screen shows the lists that are on, in this order. Drag a list to move
-                it. One list always stays on.
+                it. One list always stays on. Turn Recent Sessions first off to list Sessions in
+                the Host&apos;s order, as the Mac does.
               </Text>
             }
             modifiers={[listRowBackground(palette.rowSurface)]}>
@@ -210,6 +211,12 @@ export default function SettingsScreen() {
                 );
               })}
             </List.ForEach>
+            <Toggle
+              label="Recent Sessions first"
+              isOn={value.recentSessionsFirst}
+              onIsOnChange={(on) => update({ recentSessionsFirst: on })}
+              modifiers={[tint(palette.controlAccent)]}
+            />
           </Section>
         </Form>
       </Host>

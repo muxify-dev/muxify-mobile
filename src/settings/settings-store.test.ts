@@ -19,6 +19,7 @@ const CHANGED: Settings = {
   theme: 'dracula',
   zoomMultipaneWindows: false,
   hostScreenLists: ['topics', 'sessions'],
+  recentSessionsFirst: false,
 };
 
 describe('settings store', () => {
