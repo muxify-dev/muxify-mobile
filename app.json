@@ -11,7 +11,7 @@
       "icon": "./assets/images/AppIcon.icon",
       "bundleIdentifier": "dev.muxify.app",
       "supportsTablet": true,
-      "appleTeamId": "BX9D4834DP"
+      "appleTeamId": "R9G7S83AGV"
     },
     "android": {
       "adaptiveIcon": {
