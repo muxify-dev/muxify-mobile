@@ -99,6 +99,16 @@ function AppStack() {
             title: 'New Topic',
           }}
         />
+        <Stack.Screen
+          name="topic-edit"
+          options={{
+            // Three fields; the Topic Screen stays in view above, where the new values will show.
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.6],
+            sheetGrabberVisible: true,
+            title: 'Edit Topic',
+          }}
+        />
         {/* No header: the Surface fills the screen to the top, and the Dock's
             Home button already goes back. */}
         <Stack.Screen name="terminal" options={{ headerShown: false }} />

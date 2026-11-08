@@ -75,7 +75,7 @@ import {
   type HostTopics,
 } from '@/topics/host-topics';
 import { createMuxifyCli } from '@/topics/muxify-cli';
-import { tagsParam } from '@/topics/new-topic';
+import { tagsParam } from '@/topics/tags-param';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -393,7 +393,12 @@ export default function HostScreen() {
             onPress={() =>
               router.push({
                 pathname: '/topic',
-                params: { hostId: id, topicId: row.id, label: row.label },
+                params: {
+                  hostId: id,
+                  topicId: row.id,
+                  label: row.label,
+                  tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
+                },
               })
             }
             modifiers={[buttonStyle('plain'), accessibilityLabel(`Topic ${row.label}`)]}>

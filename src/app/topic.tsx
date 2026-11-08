@@ -29,6 +29,7 @@ import {
 
 import { SectionHeader } from '@/components/section-header';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
+import { ToolbarWord } from '@/components/toolbar-word';
 import { MarkImage } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
 import { deviceLog } from '@/diagnostics/device-log';
@@ -47,6 +48,7 @@ import {
   type TopicSession,
   type TopicView,
 } from '@/topics/topic-detail';
+import { fieldsParam } from '@/topics/topic-edit';
 
 const say = speakingAs(deviceLog(), 'topic');
 
@@ -68,10 +70,12 @@ const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
  */
 export default function TopicScreen() {
   const router = useRouter();
-  const { hostId, topicId, label } = useLocalSearchParams<{
+  const { hostId, topicId, label, tags } = useLocalSearchParams<{
     hostId: string;
     topicId: string;
     label?: string;
+    /** The Config's Tags, for the Edit sheet. */
+    tags?: string;
   }>();
   const { appearance, palette } = useSettings();
   const [view, setView] = useState<TopicView>(TOPIC_UNASKED);
@@ -111,7 +115,34 @@ export default function TopicScreen() {
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen options={{ title: topic?.label ?? label ?? 'Topic' }} />
+      <Stack.Screen
+        options={{
+          title: topic?.label ?? label ?? 'Topic',
+          headerRight: () =>
+            topic === null ? null : (
+              <ToolbarWord
+                label="Edit"
+                color={palette.controlAccent}
+                bold={false}
+                onPress={() =>
+                  router.push({
+                    pathname: '/topic-edit',
+                    params: {
+                      hostId,
+                      topicId,
+                      topic: fieldsParam({
+                        title: topic.label,
+                        note: topic.note,
+                        tags: topic.tags,
+                      }),
+                      tags,
+                    },
+                  })
+                }
+              />
+            ),
+        }}
+      />
       <Host style={styles.fill} matchContents={false}>
         <Form
           modifiers={[

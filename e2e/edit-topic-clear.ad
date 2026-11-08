@@ -1,0 +1,23 @@
+context platform=ios kind=simulator
+
+# Clears the Note and removes #personal on the Topic that e2e/edit-topic.ad
+# renamed. Run e2e/edit-topic.sh, not this file.
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Dev Host\""
+
+wait "label=\"Topic e2e Edited it's\"" 15000
+press "label=\"Topic e2e Edited it's\""
+wait "label=\"Note e2e second note\"" 15000
+press "label=\"Edit\""
+
+wait "label=\"Tag #personal\"" 8000
+fill "label=\"Topic Note\" editable=true" ""
+press "label=\"Tag #personal\""
+press "label=\"Save\""
+
+wait "text=\"#work\"" 15000
+wait "text" "e2e Edited it's" 5000
+
+close

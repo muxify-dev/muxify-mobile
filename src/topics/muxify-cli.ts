@@ -6,6 +6,7 @@ import type { TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
+import type { TopicChange, TopicWrite } from './topic-edit';
 
 type Exec = TmuxTransport['exec'];
 
@@ -19,7 +20,10 @@ const APP_BUNDLE_CLI = '/Applications/Muxify.app/Contents/Resources/bin/muxify';
  */
 const PROBE_STEPS = [
   { step: 'PATH', command: 'command -v muxify' },
-  { step: '~/.local/bin', command: 'test -x ~/.local/bin/muxify && echo ~/.local/bin/muxify' },
+  {
+    step: '~/.local/bin',
+    command: 'test -x ~/.local/bin/muxify && echo ~/.local/bin/muxify',
+  },
   {
     step: 'app bundle',
     command: `test -x ${shellQuote(APP_BUNDLE_CLI)} && echo ${shellQuote(APP_BUNDLE_CLI)}`,
@@ -28,6 +32,14 @@ const PROBE_STEPS = [
 
 /** `muxify` exits 2 on a usage error, which is how a CLI with no `environment show` answers. */
 const USAGE_ERROR = 2;
+
+/**
+ * A usage error answers a change with the whole help text. It comes from a
+ * value that starts with -, which `muxify` reads as an option even after --,
+ * or from a `muxify` too old to have the command.
+ */
+const CHANGE_USAGE_ERROR =
+  'muxify on this Host did not take this. It reads a value that starts with - as an option, and an old muxify does not have this command.';
 
 export interface MuxifyCli {
   /**
@@ -53,6 +65,14 @@ export interface MuxifyCli {
    * other refusal, fails with the Host's reason, and the Host makes nothing.
    */
   create(exec: Exec, title: string, tags: string[]): Promise<NewTopicRead>;
+
+  /**
+   * Changes one field of a Topic: `topic rename`, `topic note` (`--clear` for
+   * no Note) or `topic tag set`. It names the Topic by id and finds `muxify`
+   * as `read` does. A refusal fails with the Host's reason, and the Host
+   * changes nothing.
+   */
+  change(exec: Exec, topic: TopicId, change: TopicChange): Promise<TopicWrite>;
 }
 
 /**
@@ -120,7 +140,32 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       const parsed = parseAnswer(result.stdout, parseNewTopic);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'created', topic: parsed.value };
     },
+
+    async change(exec, topic, change) {
+      const path = await locate(exec);
+      if (path === null) return { kind: 'failed', error: 'Desktop Muxify is not on this Host.' };
+
+      const result = await exec(
+        `${shellQuote(path)} ${changeCommand(change)} --topic ${shellQuote(topic)} --json`,
+      );
+      if (result.exitCode === USAGE_ERROR) return { kind: 'failed', error: CHANGE_USAGE_ERROR };
+      return result.exitCode === 0
+        ? { kind: 'changed' }
+        : { kind: 'failed', error: failureText(result) };
+    },
   };
+}
+
+/** The subcommand and arguments that make one change, before the `--topic` that names the Topic. */
+function changeCommand(change: TopicChange): string {
+  switch (change.field) {
+    case 'title':
+      return `topic rename ${shellQuote(change.title)}`;
+    case 'note':
+      return change.note === null ? 'topic note --clear' : `topic note ${shellQuote(change.note)}`;
+    case 'tags':
+      return ['topic tag set', ...change.tags.map(shellQuote)].join(' ');
+  }
 }
 
 /** A successful answer, parsed, or why it could not be. */

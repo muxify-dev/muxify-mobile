@@ -1,8 +1,8 @@
 import inPlay from './__fixtures__/environment-in-play.json';
 import { parseEnvironment } from './environment';
-import { tagsFromParam, tagsParam } from './new-topic';
+import { tagsFromParam, tagsParam } from './tags-param';
 
-describe('the Tags route param of the New Topic sheet', () => {
+describe('the Tags route param', () => {
   it('gives back the Tags of the snapshot, in Config order and with their colours', () => {
     const tags = parseEnvironment(inPlay).tags;
 

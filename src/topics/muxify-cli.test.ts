@@ -9,6 +9,7 @@ import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import inPlay from './__fixtures__/environment-in-play.json';
 import liveTopic from './__fixtures__/topic-live.json';
 import type { TopicId } from './environment';
+import type { TopicChange } from './topic-edit';
 
 type Answer = Partial<TmuxExecResult>;
 const NOT_FOUND: Answer = { exitCode: 1 };
@@ -245,6 +246,36 @@ describe('reading one Topic', () => {
   });
 });
 
+/**
+ * A Host whose `muxify` is a script that writes the arguments it got, one
+ * per line, and gives `answer`. The command runs in a
+ * real shell, so the test sees what the Host's shell makes of the quoting.
+ */
+function scriptedHost(answer: string, exitCode = 0) {
+  const dir = mkdtempSync(join(tmpdir(), 'muxify-cli-'));
+  const script = join(dir, 'muxify');
+  const argv = join(dir, 'argv');
+  writeFileSync(
+    script,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\nprintf '%s' '${answer}'\nexit ${exitCode}\n`,
+  );
+  chmodSync(script, 0o755);
+  const exec: TmuxTransport['exec'] = async (command) => {
+    if (command.startsWith('command -v'))
+      return { stdout: `${script}\n`, stderr: '', exitCode: 0 };
+    const run = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+    return {
+      stdout: run.stdout,
+      stderr: run.stderr,
+      exitCode: run.status ?? 1,
+    };
+  };
+  return {
+    exec,
+    argv: () => readFileSync(argv, 'utf8').split('\n').slice(0, -1),
+  };
+}
+
 describe('making a Topic', () => {
   const created = {
     changed: {
@@ -253,36 +284,6 @@ describe('making a Topic', () => {
       topic_id: '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6',
     },
   };
-
-  /**
-   * A Host whose `muxify` is a script that writes the arguments it got, one
-   * per line, and answers as `topic new --json` does. The command runs in a
-   * real shell, so the test sees what the Host's shell makes of the quoting.
-   */
-  function scriptedHost(answer: string, exitCode = 0) {
-    const dir = mkdtempSync(join(tmpdir(), 'muxify-cli-'));
-    const script = join(dir, 'muxify');
-    const argv = join(dir, 'argv');
-    writeFileSync(
-      script,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\nprintf '%s' '${answer}'\nexit ${exitCode}\n`,
-    );
-    chmodSync(script, 0o755);
-    const exec: TmuxTransport['exec'] = async (command) => {
-      if (command.startsWith('command -v'))
-        return { stdout: `${script}\n`, stderr: '', exitCode: 0 };
-      const run = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
-      return {
-        stdout: run.stdout,
-        stderr: run.stderr,
-        exitCode: run.status ?? 1,
-      };
-    };
-    return {
-      exec,
-      argv: () => readFileSync(argv, 'utf8').split('\n').slice(0, -1),
-    };
-  }
 
   it('gives the title and each Tag to muxify as one argument each, quotes and spaces kept', async () => {
     const host = scriptedHost(JSON.stringify(created));
@@ -348,5 +349,109 @@ describe('making a Topic', () => {
       kind: 'failed',
       error: 'Desktop Muxify is not on this Host.',
     });
+  });
+});
+
+describe('changing a Topic', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const CHANGED = JSON.stringify({ changed: { created: false, topic_id: ID } });
+
+  it.each<[string, TopicChange, string[]]>([
+    [
+      'renames it, the title as one argument',
+      { field: 'title', title: `Fix "login" it's $HOME` },
+      ['topic', 'rename', `Fix "login" it's $HOME`],
+    ],
+    [
+      'sets the Note, as one argument',
+      { field: 'note', note: "back at o'brien's `test` step" },
+      ['topic', 'note', "back at o'brien's `test` step"],
+    ],
+    ['clears the Note with --clear', { field: 'note', note: null }, ['topic', 'note', '--clear']],
+    [
+      'sets the Tags, each as one argument',
+      { field: 'tags', tags: ['work', "o'brien", 'big project'] },
+      ['topic', 'tag', 'set', 'work', "o'brien", 'big project'],
+    ],
+    ['removes every Tag with a set of none', { field: 'tags', tags: [] }, ['topic', 'tag', 'set']],
+  ])('%s, and names the Topic by id', async (_, change, command) => {
+    const host = scriptedHost(CHANGED);
+
+    const write = await createMuxifyCli().change(host.exec, ID, change);
+
+    expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
+    expect(write).toEqual({ kind: 'changed' });
+  });
+
+  it('quotes an id that has shell characters in it', async () => {
+    const host = scriptedHost(CHANGED);
+
+    await createMuxifyCli().change(host.exec, "x' ; rm -rf ~ '" as TopicId, {
+      field: 'note',
+      note: null,
+    });
+
+    expect(host.argv()).toEqual([
+      'topic',
+      'note',
+      '--clear',
+      '--topic',
+      "x' ; rm -rf ~ '",
+      '--json',
+    ]);
+  });
+
+  it.each<[string, TopicChange, string]>([
+    [
+      'a Tag the Config does not define',
+      { field: 'tags', tags: ['nosuchtag'] },
+      'The Config does not define #nosuchtag in topics.tags. Add a Tag there first.',
+    ],
+    [
+      'a Topic the Mac has closed',
+      { field: 'title', title: 'New' },
+      `No open Topic matches ${ID}.`,
+    ],
+  ])('fails with the message the CLI gave, as for %s', async (_, change, message) => {
+    const host = scriptedHost(
+      JSON.stringify({
+        failed: { kind: 'x', message, phase: 'nothing_changed' },
+      }),
+      1,
+    );
+
+    expect(await createMuxifyCli().change(host.exec, ID, change)).toEqual({
+      kind: 'failed',
+      error: message,
+    });
+  });
+
+  it('fails with a short reason, not the help text, on a usage error', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      [
+        'topic note',
+        {
+          exitCode: 2,
+          stderr: 'usage: muxify topic note ("text" | --clear) …',
+        },
+      ],
+    ]);
+
+    const write = await createMuxifyCli().change(host.exec, ID, {
+      field: 'note',
+      note: '-x',
+    });
+
+    expect(write.kind === 'failed' && write.error).toContain('starts with -');
+  });
+
+  it('fails, and says why, on a Host with no muxify', async () => {
+    expect(
+      await createMuxifyCli().change(fakeHost([]).exec, ID, {
+        field: 'title',
+        title: 'New',
+      }),
+    ).toEqual({ kind: 'failed', error: 'Desktop Muxify is not on this Host.' });
   });
 });

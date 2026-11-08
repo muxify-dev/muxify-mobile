@@ -216,6 +216,15 @@ error from the Host shows in the sheet, and the sheet stays open. With the
 Topics list on, + on the Host Screen offers New Session and New Topic.
 _Avoid_: Create Topic, Add Topic
 
+**Edit Topic**:
+The sheet that Edit on the Topic Screen opens. It changes the title, the Topic
+Note and the Tags. Save sends only the fields that differ from what the Host
+last had, so a phone edit does not undo a different edit made on the Mac. A
+field the Host refuses shows its error under it, the sheet stays open, and the
+next Save sends only what still differs. A Tag that the Config no longer
+defines shows dashed and can only be removed.
+_Avoid_: Topic settings, Topic properties
+
 ### Terminal
 
 **Control Connection**:
