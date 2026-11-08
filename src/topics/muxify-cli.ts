@@ -1,0 +1,105 @@
+import { shellQuote } from '@/tmux/commands';
+import type { TmuxTransport } from '@/tmux/transport';
+
+import { parseEnvironment } from './environment';
+import type { TopicsRead } from './host-topics';
+
+type Exec = TmuxTransport['exec'];
+
+const APP_BUNDLE_CLI = '/Applications/Muxify.app/Contents/Resources/bin/muxify';
+
+/**
+ * Where desktop Muxify's `muxify` can be, in the order the probe asks. An SSH
+ * exec runs `$SHELL -c` without a login shell, so its PATH can lack the
+ * folder that holds `muxify`. The second and third steps are the places the
+ * Mac app puts it.
+ */
+const PROBE_STEPS = [
+  { step: 'PATH', command: 'command -v muxify' },
+  { step: '~/.local/bin', command: 'test -x ~/.local/bin/muxify && echo ~/.local/bin/muxify' },
+  {
+    step: 'app bundle',
+    command: `test -x ${shellQuote(APP_BUNDLE_CLI)} && echo ${shellQuote(APP_BUNDLE_CLI)}`,
+  },
+] as const;
+
+/** `muxify` exits 2 on a usage error, which is how a CLI with no `environment show` answers. */
+const USAGE_ERROR = 2;
+
+export interface MuxifyCli {
+  /**
+   * One read of the Host's Topics: `environment show --json`, parsed.
+   *
+   * The first call finds `muxify` on the Host and every later call reuses
+   * what the first found, so a refresh is one exec. A call that throws, because
+   * the Connection broke, finds nothing out and leaves the next one to probe.
+   */
+  read(exec: Exec): Promise<TopicsRead>;
+}
+
+/**
+ * The only code that talks to desktop Muxify's CLI. Make one per visit to a
+ * Host: it remembers where `muxify` is for as long as it lives.
+ *
+ * `log` hears where the probe found it, which is what the Log needs to say why
+ * a Host has Topics or not.
+ */
+export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyCli {
+  let probed: Promise<string | null> | undefined;
+
+  async function probe(exec: Exec): Promise<string | null> {
+    for (const { step, command } of PROBE_STEPS) {
+      const result = await exec(command);
+      const path = result.stdout.trim().split('\n')[0] ?? '';
+      // `command -v` also prints an alias or a function name, which is not
+      // something to run with a path's quoting.
+      if (result.exitCode === 0 && path.startsWith('/')) {
+        log(`found muxify at ${path} by ${step}`);
+        return path;
+      }
+    }
+    log('muxify is not on this Host');
+    return null;
+  }
+
+  return {
+    async read(exec) {
+      probed ??= probe(exec);
+      const path = await probed.catch((error: unknown) => {
+        probed = undefined;
+        throw error;
+      });
+      if (path === null) return { kind: 'absent' };
+
+      const result = await exec(`${shellQuote(path)} environment show --json`);
+      if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
+      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+      try {
+        return { kind: 'listed', snapshot: parseEnvironment(JSON.parse(result.stdout)) };
+      } catch (error) {
+        return {
+          kind: 'failed',
+          error: `Could not read the answer of muxify: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    },
+  };
+}
+
+/**
+ * What a failed `muxify … --json` says for itself. The CLI puts the reason in
+ * `failed.message` on stdout and a human line on stderr, so the message wins,
+ * then stderr, then whatever stdout holds.
+ */
+function failureText(result: { stdout: string; stderr: string; exitCode: number }): string {
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    const message = (parsed as { failed?: { message?: unknown } } | null)?.failed?.message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  } catch {
+    // Not JSON: fall through to the plain text.
+  }
+  return (
+    result.stderr.trim() || result.stdout.trim() || `muxify exited with status ${result.exitCode}`
+  );
+}

@@ -135,6 +135,41 @@ keyboard covers for a Pane full to its last row. The Window is not resized for
 the keyboard; it is slid, and the part slid out of view is clipped.
 _Avoid_: scroll (which is the Scrollback's), offset, keyboard avoidance
 
+### Topics
+
+These words come from desktop Muxify on the Mac and keep its meanings. The phone
+reads Topics through the desktop `muxify` CLI and never writes the desktop
+record files.
+
+**Topic**:
+One thing the user wants to get done, such as "Fix reward drop bug in GS". It
+groups Sessions with no limit per folder or repository. The Host Screen shows
+the Topics of a Host in the order that the Mac's Topics mode shows them.
+_Avoid_: task, project, workspace, thread
+
+**Topic Note**:
+An optional line of text on a Topic that says what the user was doing there,
+such as "Repro with seed 4411, then bisect". The user sets, changes or clears it
+on the Mac. A Topic card shows all of it on its own line.
+_Avoid_: next step, comment, description, memo
+
+**Tag**:
+An optional short name on a Topic, such as `backend`, that is one of the Tags
+that the Host's Config defines. A Topic can have several Tags. A Tag can have a
+colour, with one value for light and one for dark.
+_Avoid_: label, category, folder, group
+
+**Dormant**:
+An open Topic that has no live Session but remembers Sessions, for example after
+a tmux restart. The Host Screen shows it dimmed, with "No live Sessions".
+_Avoid_: inactive, sleeping, suspended
+
+**Empty**:
+An open Topic that has no live Session and remembers no Session: the user
+stopped, removed or moved away its last Session. The Host Screen shows it dimmed,
+with "No live Sessions", the same as a Dormant Topic.
+_Avoid_: Dormant (when it remembers no Session), blank, cleared
+
 ### Terminal
 
 **Control Connection**:
