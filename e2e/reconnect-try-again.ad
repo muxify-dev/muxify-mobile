@@ -1,0 +1,16 @@
+context platform=ios kind=simulator
+
+# Try again on the failed reconnect that reconnect-failed.ad left on screen.
+# The script has made the Session since, so this time it attaches.
+#
+# Run with:  bash e2e/reconnect-on-start.sh
+
+open "dev.muxify.app"
+is "visible" "id=\"reconnect-failure\""
+press "label=\"Try again\""
+wait "id=\"connection-status\"" 8000
+wait 8000
+is "absent" "id=\"reconnect-screen\""
+is "text" "id=\"connection-status\"" "Connected"
+
+close

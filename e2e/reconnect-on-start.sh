@@ -23,12 +23,14 @@ cleanup() {
   cp "$SAVED_RECORDS" "$RECORDS"
   rm -f "$SAVED_SETTINGS" "$SAVED_RECORDS"
   tmux kill-session -t "=$SESSION" 2>/dev/null
+  tmux kill-session -t "=$SESSION-later" 2>/dev/null
 }
 trap cleanup EXIT
 
 cp "$SETTINGS" "$SAVED_SETTINGS"
 cp "$RECORDS" "$SAVED_RECORDS"
 tmux kill-session -t "=$SESSION" 2>/dev/null
+tmux kill-session -t "=$SESSION-later" 2>/dev/null
 tmux new-session -d -s "$SESSION" || exit 1
 
 # Sets one key of a JSON file in the app's Documents, or deletes it for "-".
@@ -55,6 +57,11 @@ agent-device test ./e2e/reconnect-off.ad || exit 1
 
 set_key "$SETTINGS" reconnectOnStart true
 host=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["lastPlace"]["hostId"])' "$RECORDS")
+set_key "$RECORDS" lastPlace "{\"hostId\": \"$host\", \"session\": \"$SESSION-later\", \"topicId\": null}"
+agent-device test ./e2e/reconnect-failed.ad || exit 1
+tmux new-session -d -s "$SESSION-later" || exit 1
+agent-device test ./e2e/reconnect-try-again.ad || exit 1
+
 set_key "$RECORDS" lastPlace "{\"hostId\": \"$host\", \"session\": \"$SESSION-gone\", \"topicId\": null}"
 agent-device test ./e2e/reconnect-go-home.ad || exit 1
 
