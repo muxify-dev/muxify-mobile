@@ -210,6 +210,18 @@ attach() {
   sleep 3
 }
 
+# Font size 10, the size the app offers once the default is turned off. At the
+# default size an iPhone 17 Pane is 30 rows, under what check 7 needs; at 10 it
+# is 40. The sandbox puts the settings file back afterwards.
+SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
+python3 - "$SETTINGS" <<'PY' || fail "could not set the font size"
+import json, sys
+path = sys.argv[1]
+settings = json.load(open(path))
+settings["fontSize"] = 10
+json.dump(settings, open(path, "w"))
+PY
+
 echo "0/10  putting the Session somewhere known"
 on_host "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
   || fail "could not reach the dev Host"
