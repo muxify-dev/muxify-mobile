@@ -1,16 +1,11 @@
-import {
-  lastAnswer,
-  waitingOnFirstAnswer,
-  type ListedSession,
-  type Listing,
-} from '@/domain/host-listing';
+import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { Settings } from '@/settings/settings';
 import type { RecentSession } from '@/storage/records';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 
-/** A Session Muxify remembers opening, as the Sessions section shows it. */
+/** A Session Muxify remembers opening, as the Recent Sessions and Sessions lists show it. */
 export interface RecentRow {
   kind: 'recent';
   name: string;
@@ -62,7 +57,7 @@ export type HostScreenRow =
 export type OpenableRow = 'no-topic' | 'bench';
 
 export interface HostScreenSection {
-  id: 'recent' | 'available' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench';
+  id: 'recent' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench';
   /** Null for a section with no header: the Bench row is its own header. */
   title: string | null;
   footer: string | null;
@@ -70,7 +65,7 @@ export interface HostScreenSection {
 }
 
 export interface HostScreenInput {
-  settings: Pick<Settings, 'hostScreenLists' | 'recentSessionsFirst'>;
+  settings: Pick<Settings, 'hostScreenLists'>;
   /** This Host's Recent Sessions, newest first. */
   recent: RecentSession[];
   listing: Listing;
@@ -82,32 +77,23 @@ export interface HostScreenInput {
 }
 
 /**
- * The sections of the Host Screen below its Connection section, in the order
- * the user set in Settings.
+ * The sections of the Host Screen below its Connection section, one list after
+ * another in the order the user set in Settings.
  *
- * With Recent Sessions first on, the Sessions list is two sections, because
- * there are two different things in it: the Sessions this phone has opened
- * before, which Muxify remembers in the order you last wanted them, and
- * everything else the Host is running.
- *
- * The rule between them is mutual exclusion by name: a Session appears under
- * Recent or under Available, never both, because they are one Session and two
- * rows would be two ways to open it.
+ * A Session shows in one list only, because two rows would be two ways to open
+ * one Session. Its Topic comes first, once a snapshot says which Topic that is.
+ * Recent Sessions comes next, and the Sessions list has the rest. With the
+ * Sessions list off, the Topics list ends with a No Topic row in its place, and
+ * the same rule holds for the Sessions under it.
  *
  * Until the Host has answered, every remembered Session is shown (fail open).
  * A Host that is unreachable, slow, or has no tmux server yet must not look
  * like a Host you have never used. The moment a real answer arrives the list
  * narrows to it.
  *
- * A remembered Session the Host no longer has is dropped from both sections,
- * but never from the records: kill it from a laptop and make it again tomorrow
+ * A remembered Session the Host no longer has is dropped from the lists, but
+ * never from the records: kill it from a laptop and make it again tomorrow
  * and the row comes back where it was, still knowing when you last opened it.
- *
- * With both lists on, a Session that is in a Topic shows under its Topic and
- * not here, once a snapshot says which they are: one Session, one row. The
- * Sessions that are in no Topic then show only in the Sessions list, so the
- * Topics list has no No Topic row. With Topics on its own, that row is the
- * only way to a Session that is in no Topic.
  */
 export function hostScreen({
   settings,
@@ -118,19 +104,30 @@ export function hostScreen({
   appearance,
 }: HostScreenInput): HostScreenSection[] {
   const lists = settings.hostScreenLists;
-  const sessionsShown = lists.includes('sessions');
+  const recentOn = lists.includes('recent');
   const snapshot = lastSnapshot(topics);
-  const inTopics =
-    sessionsShown && lists.includes('topics') && snapshot ? namesInTopics(snapshot) : NONE;
+  const inTopics = lists.includes('topics') && snapshot ? namesInTopics(snapshot) : NONE;
 
-  const sessionsRecent = recent.filter((session) => !inTopics.has(session.name));
-  const sessionsListing = without(listing, inTopics);
+  const outOfTopics = recent.filter((session) => !inTopics.has(session.name));
+  const listingOutOfTopics = without(listing, inTopics);
+  const inRecent: ReadonlySet<string> = recentOn
+    ? new Set(outOfTopics.map((session) => session.name))
+    : NONE;
 
   return lists.flatMap((list) => {
-    if (list === 'topics') return topicsList(topics, { opened, appearance, withNoTopic: !sessionsShown });
-    return settings.recentSessionsFirst
-      ? sessionsList(sessionsRecent, sessionsListing)
-      : [hostOrderList(sessionsRecent, sessionsListing)];
+    switch (list) {
+      case 'topics':
+        return topicsList(topics, {
+          opened,
+          appearance,
+          withNoTopic: !lists.includes('sessions'),
+          leaveOut: inRecent,
+        });
+      case 'recent':
+        return [recentList(outOfTopics, listingOutOfTopics)];
+      case 'sessions':
+        return [sessionsList(outOfTopics, listingOutOfTopics, recentOn)];
+    }
   });
 }
 
@@ -155,6 +152,8 @@ interface CardsContext {
   appearance: ColorAppearance;
   /** Whether the list ends with the No Topic row. */
   withNoTopic: boolean;
+  /** Sessions another list already shows, which the No Topic row leaves out. */
+  leaveOut: ReadonlySet<string>;
 }
 
 /**
@@ -241,16 +240,17 @@ function noTopicRows(
   names: ReadonlyMap<SessionId, string>,
   context: CardsContext,
 ): HostScreenRow[] {
-  if (!context.withNoTopic || snapshot.no_topic.length === 0) return [];
+  if (!context.withNoTopic) return [];
+  const sessions = snapshot.no_topic.flatMap((id) => {
+    const name = names.get(id);
+    return name === undefined || context.leaveOut.has(name) ? [] : [name];
+  });
+  if (sessions.length === 0) return [];
   const opened = context.opened.has('no-topic');
-  const rows: HostScreenRow[] = [{ kind: 'no-topic', count: snapshot.no_topic.length, opened }];
-  if (opened) {
-    for (const id of snapshot.no_topic) {
-      const name = names.get(id);
-      if (name !== undefined) rows.push({ kind: 'available', name });
-    }
-  }
-  return rows;
+  return [
+    { kind: 'no-topic', count: sessions.length, opened },
+    ...(opened ? sessions.map((name): HostScreenRow => ({ kind: 'available', name })) : []),
+  ];
 }
 
 /**
@@ -299,31 +299,63 @@ function cardRow(card: Card, { pinned, names, colors }: CardRowContext): HostScr
 }
 
 /**
- * The Sessions list with Recent Sessions first turned off: one section in the
- * order the Host lists its Sessions, which is the order the Mac shows. A
- * remembered Session keeps its Recent row here, so it can still be forgotten
- * or disconnected. Before the Host answers there is no Host order, so the
- * remembered Sessions show as they do with the switch on (fail open).
+ * The Recent Sessions list: the Sessions this phone opened that the Host still
+ * has, newest first. Before the Host answers, every one of them (fail open).
  */
-function hostOrderList(recent: RecentSession[], listing: Listing): HostScreenSection {
+function recentList(recent: RecentSession[], listing: Listing): HostScreenSection {
+  const listed = lastAnswer(listing);
+  const onHost = new Map(listed?.map((session) => [session.name, session]));
+  const rows: HostScreenRow[] = recent.flatMap((session) => {
+    const live = onHost.get(session.name);
+    if (listed !== undefined && !live) return [];
+    return [recentRow(session, live?.windowCount)];
+  });
+  return {
+    id: 'recent',
+    title: 'Recent Sessions',
+    footer: null,
+    rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'Nothing opened on this Host yet.' }],
+  };
+}
+
+/**
+ * The Sessions list: the Host's Sessions in the order the Host lists them,
+ * which is the order the Mac shows. With Recent Sessions on, the ones in it
+ * are left out. With it off, a remembered Session keeps its Recent row here,
+ * so it can still be forgotten or disconnected, and before the Host answers
+ * the remembered Sessions show (fail open).
+ */
+function sessionsList(
+  recent: RecentSession[],
+  listing: Listing,
+  recentOn: boolean,
+): HostScreenSection {
   const listed = lastAnswer(listing);
   const remembered = new Map(recent.map((session) => [session.name, session]));
 
   const rows: HostScreenRow[] =
     listed === undefined
-      ? [...recent.map((session) => recentRow(session, undefined)), unansweredRow(listing)]
-      : listed.map((live): HostScreenRow => {
+      ? [
+          ...(recentOn ? [] : recent.map((session) => recentRow(session, undefined))),
+          unansweredRow(listing),
+        ]
+      : listed.flatMap((live): HostScreenRow[] => {
           const session = remembered.get(live.name);
-          return session
-            ? recentRow(session, live.windowCount)
-            : { kind: 'available', name: live.name };
+          if (!session) return [{ kind: 'available', name: live.name }];
+          return recentOn ? [] : [recentRow(session, live.windowCount)];
         });
 
   return {
     id: 'sessions',
     title: 'Sessions',
-    footer: null,
-    rows: rows.length > 0 ? rows : [{ kind: 'note', text: 'No Sessions on this Host.' }],
+    footer:
+      recentOn && rows.some((row) => row.kind === 'available')
+        ? 'Opening one adds it to Recent Sessions.'
+        : null,
+    rows:
+      rows.length > 0
+        ? rows
+        : [{ kind: 'note', text: recentOn ? 'No other Sessions on this Host.' : 'No Sessions on this Host.' }],
   };
 }
 
@@ -334,55 +366,6 @@ function recentRow(session: RecentSession, windowCount: number | undefined): Rec
     lastOpenedAt: session.lastOpenedAt,
     windowCount,
   };
-}
-
-function sessionsList(recent: RecentSession[], listing: Listing): HostScreenSection[] {
-  const listed = lastAnswer(listing);
-  const onHost = new Map(listed?.map((session) => [session.name, session]));
-  const remembered = new Set(recent.map((session) => session.name));
-
-  const recentRows: RecentRow[] = recent.flatMap((session) => {
-    const live = onHost.get(session.name);
-    if (listed !== undefined && !live) return [];
-    return [recentRow(session, live?.windowCount)];
-  });
-
-  const available: ListedSession[] = (listed ?? [])
-    .filter((session) => !remembered.has(session.name))
-    .sort((left, right) => left.name.localeCompare(right.name));
-
-  return [
-    {
-      id: 'recent',
-      title: 'Sessions',
-      footer: null,
-      rows:
-        recentRows.length > 0
-          ? recentRows
-          : [
-              {
-                kind: 'note',
-                text: waitingOnFirstAnswer(listing)
-                  ? 'Nothing opened on this Host yet.'
-                  : 'Nothing opened on this Host yet. Pick one below to start.',
-              },
-            ],
-    },
-    {
-      id: 'available',
-      title: 'Available on Host',
-      footer: available.length > 0 ? 'Opening one adds it to Sessions above.' : null,
-      rows: availableRows(available, listing),
-    },
-  ];
-}
-
-function availableRows(available: ListedSession[], listing: Listing): HostScreenRow[] {
-  if (available.length > 0) {
-    return available.map((session) => ({ kind: 'available', name: session.name }));
-  }
-  if (lastAnswer(listing) === undefined) return [unansweredRow(listing)];
-  return [{ kind: 'note', text: 'No other Sessions on this Host.' }];
 }
 
 /**

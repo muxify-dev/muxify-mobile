@@ -56,13 +56,3 @@ export function refused(message: string): Listing {
 export function lastAnswer(listing: Listing): ListedSession[] | undefined {
   return listing.phase === 'failed' ? undefined : listing.sessions;
 }
-
-/**
- * Whether there is nothing to draw yet and the spinner has to stand in for it.
- *
- * Only ever true of the first question. Every later one is answered from what
- * is already on screen while it is in flight.
- */
-export function waitingOnFirstAnswer(listing: Listing): boolean {
-  return listing.phase === 'reading' && lastAnswer(listing) === undefined;
-}

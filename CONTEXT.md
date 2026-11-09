@@ -106,8 +106,10 @@ shows its phase and offers to end it. See ADR 0007.
 **Recent Session**:
 Muxify's memory of a Session this phone has opened, and when it last did. Not
 the Session, which lives on the Host and outlives every Connection — the
-memory. The distinction matters on the Host Screen, where a Session that exists
-but has never been opened here is a different row in a different section.
+memory. The Host Screen has a list of them, Recent Sessions, newest first,
+which shows the ones the Host still has. With that list on, the Sessions list
+leaves them out, so a Session that exists but has never been opened here is in
+a different list.
 _Avoid_: workspace, saved session, history
 
 **Last Place**:

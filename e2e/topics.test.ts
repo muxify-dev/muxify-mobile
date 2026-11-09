@@ -77,7 +77,7 @@ describe('Topics against the real muxify', () => {
     console.log(`probe: ${log.join('; ')}`);
 
     const sections = hostScreen({
-      settings: { hostScreenLists: ['topics'], recentSessionsFirst: true },
+      settings: { hostScreenLists: ['topics'] },
       recent: [],
       listing: UNASKED,
       topics: settled(TOPICS_UNASKED, read),

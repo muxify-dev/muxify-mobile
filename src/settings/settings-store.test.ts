@@ -19,7 +19,6 @@ const CHANGED: Settings = {
   theme: 'dracula',
   zoomMultipaneWindows: false,
   hostScreenLists: ['topics', 'sessions'],
-  recentSessionsFirst: false,
   reconnectOnStart: true,
   showStatusLines: false,
 };

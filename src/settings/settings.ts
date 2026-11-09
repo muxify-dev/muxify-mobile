@@ -24,14 +24,9 @@ export interface Settings {
   /**
    * Which lists the Host Screen shows, top to bottom. One array holds both
    * the order and which lists are on: a list that is off has no place in it.
-   * Never empty, so a setting cannot leave a Host Screen with nothing on it.
+   * Sessions or Topics is always on, so every Session of a Host can be reached.
    */
   hostScreenLists: HostScreenLists;
-  /**
-   * Whether the Sessions list puts the Sessions this phone opened at the top.
-   * Off, it keeps the Host's own order, the order the Mac shows.
-   */
-  recentSessionsFirst: boolean;
   /**
    * Whether a cold start opens the Last Place again, if there is one. Off by
    * default: an app that connects to a machine on launch is a surprise
@@ -47,7 +42,7 @@ export interface Settings {
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
-export const HOST_SCREEN_LISTS = ['sessions', 'topics'] as const;
+export const HOST_SCREEN_LISTS = ['recent', 'sessions', 'topics'] as const;
 export type HostScreenList = (typeof HOST_SCREEN_LISTS)[number];
 export type HostScreenLists = readonly [HostScreenList, ...HostScreenList[]];
 
@@ -60,8 +55,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: null,
   theme: 'default',
   zoomMultipaneWindows: true,
-  hostScreenLists: ['sessions'],
-  recentSessionsFirst: true,
+  hostScreenLists: ['recent', 'sessions'],
   reconnectOnStart: false,
   showStatusLines: true,
 };
@@ -95,23 +89,53 @@ function parseTheme(theme: unknown): ThemeId {
   }
 }
 
-/** The lists in the order given, or null for none. */
-function nonEmpty(lists: readonly HostScreenList[]): HostScreenLists | null {
+/**
+ * The lists that reach every Session of a Host. Recent Sessions is not one: on
+ * a Host this phone has never opened a Session of, it is empty.
+ */
+const REACH_EVERY_SESSION: readonly HostScreenList[] = ['sessions', 'topics'];
+
+/** The lists in the order given, or null when none of them reaches every Session. */
+function reachable(lists: readonly HostScreenList[]): HostScreenLists | null {
   const [first, ...rest] = lists;
-  return first === undefined ? null : [first, ...rest];
+  if (first === undefined) return null;
+  return lists.some((list) => REACH_EVERY_SESSION.includes(list)) ? [first, ...rest] : null;
+}
+
+/** Whether this list is on and turning it off would leave no way to every Session. */
+export function mustStayOn(lists: HostScreenLists, list: HostScreenList): boolean {
+  return lists.includes(list) && reachable(lists.filter((other) => other !== list)) === null;
 }
 
 /**
  * The Host Screen lists a saved value names: the known ones, each once, in
- * the saved order. A value that names none of them is the default, because a
- * Host Screen with no list on it is not a choice the user can make.
+ * the saved order. A value with no list that reaches every Session is the
+ * default, because that Host Screen is not a choice the user can make.
+ *
+ * Settings saved before Recent Sessions was a list of their own say
+ * `recentSessionsFirst` instead. On, the Sessions list was drawn with the
+ * Recent Sessions above the rest, so Recent Sessions goes in just above
+ * Sessions and the Host Screen looks as it did.
  */
-function parseHostScreenLists(raw: unknown): HostScreenLists {
-  if (!Array.isArray(raw)) return DEFAULT_SETTINGS.hostScreenLists;
-  const known = raw.filter((entry): entry is HostScreenList =>
-    (HOST_SCREEN_LISTS as readonly unknown[]).includes(entry),
-  );
-  return nonEmpty([...new Set(known)]) ?? DEFAULT_SETTINGS.hostScreenLists;
+function parseHostScreenLists(raw: unknown, recentSessionsFirst: unknown): HostScreenLists {
+  const saved = Array.isArray(raw)
+    ? [
+        ...new Set(
+          raw.filter((entry): entry is HostScreenList =>
+            (HOST_SCREEN_LISTS as readonly unknown[]).includes(entry),
+          ),
+        ),
+      ]
+    : null;
+  if (typeof recentSessionsFirst === 'boolean' && !saved?.includes('recent')) {
+    // Before the lists could be chosen, the Host Screen was the Sessions list.
+    const before = saved ?? ['sessions'];
+    const lists = recentSessionsFirst
+      ? before.flatMap((list): HostScreenList[] => (list === 'sessions' ? ['recent', list] : [list]))
+      : before;
+    return reachable(lists) ?? DEFAULT_SETTINGS.hostScreenLists;
+  }
+  return (saved && reachable(saved)) ?? DEFAULT_SETTINGS.hostScreenLists;
 }
 
 /**
@@ -123,9 +147,9 @@ export function hostScreenListRows(lists: HostScreenLists): HostScreenList[] {
 }
 
 /**
- * Turns one list on, at the bottom of the Host Screen, or off. The last list
- * that is on stays on: Settings disables its switch, and this keeps the rule
- * if a switch is pressed anyway.
+ * Turns one list on, at the bottom of the Host Screen, or off. Sessions or
+ * Topics stays on (see mustStayOn): Settings disables that switch, and this
+ * keeps the rule if a switch is pressed anyway.
  */
 export function switchHostScreenList(
   lists: HostScreenLists,
@@ -133,8 +157,7 @@ export function switchHostScreenList(
   on: boolean,
 ): HostScreenLists {
   const others = lists.filter((candidate) => candidate !== list);
-  if (on) return nonEmpty([...others, list]) ?? lists;
-  return nonEmpty(others) ?? lists;
+  return reachable(on ? [...others, list] : others) ?? lists;
 }
 
 /**
@@ -152,7 +175,7 @@ export function moveHostScreenLists(
   const before = rows.filter((_, at) => at < destination && !sources.includes(at));
   const after = rows.filter((_, at) => at >= destination && !sources.includes(at));
   const moved = [...before, ...moving, ...after].filter((list) => lists.includes(list));
-  return nonEmpty(moved) ?? lists;
+  return reachable(moved) ?? lists;
 }
 
 /**
@@ -170,7 +193,6 @@ export function parseSettings(raw: unknown): Settings {
   const fontSize = record.fontSize;
   const theme = record.theme;
   const zoom = record.zoomMultipaneWindows;
-  const recentFirst = record.recentSessionsFirst;
   const reconnect = record.reconnectOnStart;
   const statusLines = record.showStatusLines;
 
@@ -179,9 +201,7 @@ export function parseSettings(raw: unknown): Settings {
     theme: parseTheme(theme),
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
-    hostScreenLists: parseHostScreenLists(record.hostScreenLists),
-    recentSessionsFirst:
-      typeof recentFirst === 'boolean' ? recentFirst : DEFAULT_SETTINGS.recentSessionsFirst,
+    hostScreenLists: parseHostScreenLists(record.hostScreenLists, record.recentSessionsFirst),
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
     showStatusLines:

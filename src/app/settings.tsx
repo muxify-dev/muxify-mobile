@@ -6,7 +6,6 @@ import {
   Form,
   Host,
   HStack,
-  List,
   Picker,
   Section,
   Spacer,
@@ -19,7 +18,6 @@ import {
   background,
   clipShape,
   cornerRadius,
-  deleteDisabled,
   disabled,
   environment,
   fixedSize,
@@ -28,7 +26,6 @@ import {
   frame,
   listRowBackground,
   monospacedDigit,
-  moveDisabled,
   padding,
   pickerStyle,
   scrollContentBackground,
@@ -36,23 +33,11 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { HostScreenListsSection } from '@/components/host-screen-lists-section';
 import { SectionHeader } from '@/components/section-header';
 import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
-import {
-  DEFAULT_EXPLICIT_FONT_SIZE,
-  hostScreenListRows,
-  MAX_FONT_SIZE,
-  MIN_FONT_SIZE,
-  moveHostScreenLists,
-  switchHostScreenList,
-  type HostScreenList,
-} from '@/settings/settings';
-
-const HOST_SCREEN_LIST_NAMES: Record<HostScreenList, string> = {
-  sessions: 'Sessions',
-  topics: 'Topics',
-};
+import { DEFAULT_EXPLICIT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE } from '@/settings/settings';
 
 /** The few lines of code the Theme preview shows. */
 const PREVIEW_LINES: { number: string; text: string }[] = [
@@ -78,7 +63,6 @@ export default function SettingsScreen() {
   const usesDefaultSize = value.fontSize === null;
   const shownSize = value.fontSize ?? DEFAULT_EXPLICIT_FONT_SIZE;
   const theme = Themes[value.theme];
-  const lists = value.hostScreenLists;
 
   return (
     <View style={styles.fill}>
@@ -193,49 +177,20 @@ export default function SettingsScreen() {
             />
           </Section>
 
+          <HostScreenListsSection
+            lists={value.hostScreenLists}
+            onChange={(hostScreenLists) => update({ hostScreenLists })}
+            palette={palette}
+          />
+
           <Section
-            header={<SectionHeader palette={palette}>Host Screen</SectionHeader>}
+            header={<SectionHeader palette={palette}>Startup</SectionHeader>}
             footer={
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
-                Every Host Screen shows the lists that are on, in this order. Drag a list to move
-                it. One list always stays on. Turn Recent Sessions first off to list Sessions in
-                the Host&apos;s order, as the Mac does. Turn Reconnect on start on to open the
-                Session you were in when Muxify last closed.
+                Opens the Session you were in when Muxify last closed.
               </Text>
             }
             modifiers={[listRowBackground(palette.rowSurface)]}>
-            <List.ForEach
-              onMove={(sources, destination) =>
-                update({ hostScreenLists: moveHostScreenLists(lists, sources, destination) })
-              }>
-              {hostScreenListRows(lists).map((list) => {
-                const on = lists.includes(list);
-                return (
-                  <Toggle
-                    key={list}
-                    label={HOST_SCREEN_LIST_NAMES[list]}
-                    isOn={on}
-                    onIsOnChange={(next) =>
-                      update({ hostScreenLists: switchHostScreenList(lists, list, next) })
-                    }
-                    modifiers={[
-                      tint(palette.controlAccent),
-                      disabled(on && lists.length === 1),
-                      // A list that is off has no place on the Host Screen to
-                      // move it to.
-                      moveDisabled(!on),
-                      deleteDisabled(),
-                    ]}
-                  />
-                );
-              })}
-            </List.ForEach>
-            <Toggle
-              label="Recent Sessions first"
-              isOn={value.recentSessionsFirst}
-              onIsOnChange={(on) => update({ recentSessionsFirst: on })}
-              modifiers={[tint(palette.controlAccent)]}
-            />
             <Toggle
               label="Reconnect on start"
               isOn={value.reconnectOnStart}

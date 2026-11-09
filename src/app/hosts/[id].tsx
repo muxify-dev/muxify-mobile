@@ -746,7 +746,7 @@ function sessionSummary(listing: Listing): string {
 
 /** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */
 function collapsible(section: HostScreenSection): boolean {
-  return section.id === 'recent' || section.id === 'available' || section.id === 'sessions';
+  return section.id === 'recent' || section.id === 'sessions';
 }
 
 function collapse<T>(items: T[], expanded: boolean): T[] {
