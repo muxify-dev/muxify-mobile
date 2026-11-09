@@ -51,7 +51,7 @@ wait 2500
 # which also tears the Connection down. Asserting the navigation proves both
 # that the Dock is there and that its button is reachable — a bare visibility
 # check on the SwiftUI button does not match through the hosting boundary.
-press "label=\"Home\""
+press "role=button label=\"Home\""
 wait "text" "Dev Host" 8000
 
 close

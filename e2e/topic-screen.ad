@@ -28,8 +28,10 @@ wait 8000
 is "text" "id=\"connection-status\"" "Connected"
 
 # The Host Screen: its toolbar has +, which the Topic Screen has not. With
-# the Topics list on, + is New Session or Topic.
-press "label=\"Home\""
+# the Topics list on, + is New Session or Topic. The role is part of the
+# selector because a snapshot can also list the Dock capsule that holds Home
+# under the same label, and an ambiguous press is refused.
+press "role=button label=\"Home\""
 wait "label=\"New Session or Topic\"" 8000
 is "visible" "label=\"Topic e2e Topic Screen live\""
 

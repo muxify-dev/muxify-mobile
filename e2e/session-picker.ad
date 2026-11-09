@@ -37,7 +37,7 @@ is "text" "id=\"connection-status\"" "Connected"
 # Waited for by the sheet's own close button, not by the text "Sessions": the
 # Dock has a button of that name and it is on screen the whole time, so that
 # wait returned at once and everything after it raced the sheet's first frame.
-press "label=\"Sessions\""
+press "role=button label=\"Sessions\""
 wait "label=\"Close Sessions\"" 15000
 
 # The sheet is up with its own chrome. The Sessions themselves are asserted in

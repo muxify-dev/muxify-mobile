@@ -25,7 +25,7 @@ is "text" "id=\"connection-status\"" "Connected"
 
 # The Host Screen, not the Hosts list: its toolbar has New Session, the list's
 # has Settings.
-press "label=\"Home\""
+press "role=button label=\"Home\""
 wait "label=\"New Session\"" 8000
 is "visible" "label=\"New Session\""
 is "visible" "label=\"Session 0\""
