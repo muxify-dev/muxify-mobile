@@ -1,8 +1,8 @@
 context platform=ios kind=simulator
 
 # The Topic Screen, against the Topics that e2e/topic-screen.sh makes on the
-# dev Host. Run that script, not this file: it makes the Topics, turns the
-# Topics list on and puts everything back afterwards.
+# dev Host. Run that script, not this file: it makes the Topics in a sandbox
+# and turns the Topics list on.
 #
 # A tap on a live Topic shows its Note, its Tag and its Session. A tap on the
 # Session attaches, and Home from there is the Host Screen, not the Topic
@@ -20,7 +20,7 @@ wait "label=\"Topic e2e Topic Screen live\"" 15000
 press "label=\"Topic e2e Topic Screen live\""
 wait "label=\"Note Seeded by e2e\"" 15000
 is "visible" "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
-is "visible" "text=\"#work\""
+is "visible" "role=text text=\"#work\""
 
 press "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
 wait "id=\"connection-status\"" 8000

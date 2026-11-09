@@ -54,6 +54,8 @@
 # Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/regressions.sh
 
+[ -n "${MUXIFY_E2E_ROOT:-}" ] || exec bash "$(dirname "$0")/sandbox.sh" bash "$0" "$@"
+
 set -uo pipefail
 
 APP=dev.muxify.app
@@ -63,28 +65,8 @@ MARKER=MUXIFY_ENTER_RUNS
 # is how many of them survive, so anything the shell might expand is out.
 HELD=abcdefghijklmnopqrst
 
-# Runs a command on the VM: through the SSH gateway the app uses, and failing
-# that through OrbStack's own way in.
-#
-# Bounded, because the gateway sometimes accepts a connection and then says
-# nothing for minutes — measured: a run of this suite once sat nineteen minutes
-# on its first `ssh`, and a stalled `send-keys` made check 5 report that Enter
-# had run nothing when nothing had been typed for it to run. Measured too: the
-# app's own SSH library kept connecting through the gateway while OpenSSH from
-# this shell could not, for three minutes of probing every four seconds. So a
-# stall here says nothing about the app, and the command goes in by `orb`
-# instead — the same VM, the same user, the same tmux server.
-vm() {
-  local out
-  if out=$(perl -e 'alarm 20; exec @ARGV' ssh -F /dev/null \
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 \
-    -i "$HOME/.orbstack/ssh/id_ed25519" -p 32222 default@127.0.0.1 "$@" 2>/dev/null); then
-    printf '%s\n' "$out"
-    return 0
-  fi
-  out=$(perl -e 'alarm 20; exec @ARGV' orb -m ubuntu sh -c "$*" 2>/dev/null) || return 1
-  printf '%s\n' "$out"
-}
+# Runs a command on the dev Host, which is this Mac, in the sandbox.
+on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
@@ -129,9 +111,9 @@ for n in json.load(sys.stdin)['data']['nodes']:
 # Dock unmoved, and the same for the Add Host form's Name field. Nothing short
 # of a reboot brings it back. So text the Pane needs goes in through tmux, and
 # only the keys under test — Return, delete — are pressed on the glass.
-type_into_pane() { vm "tmux send-keys -t '$SESSION:' -l '$1'"; }
+type_into_pane() { on_host "tmux send-keys -t '$SESSION:' -l '$1'"; }
 # The last line the Pane is showing, which is the one being typed on.
-typed_line() { vm "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
+typed_line() { on_host "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
 
 # The lowest point in the Pane, which is just above the Dock. The Dock's own
 # padding is what stands between the two, so the Key Bar's capsule locates it.
@@ -147,16 +129,16 @@ for n in json.load(sys.stdin)['data']['nodes']:
 
 # The row a click reported, out of the SGR the Pane echoed back.
 clicked_row() {
-  vm "tmux capture-pane -t '$SESSION' -p" | tr -d '\n' | sed -n 's/.*<0;[0-9]*;\([0-9]*\)M.*/\1/p'
+  on_host "tmux capture-pane -t '$SESSION' -p" | tr -d '\n' | sed -n 's/.*<0;[0-9]*;\([0-9]*\)M.*/\1/p'
 }
 surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
-window()  { vm "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
+window()  { on_host "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
 # compared. `-w` is not optional: window-size lives there and nowhere else.
 options() {
-  vm "tmux show-options -t '$SESSION:'; tmux show-options -w -t '$SESSION:'" | sort
+  on_host "tmux show-options -t '$SESSION:'; tmux show-options -w -t '$SESSION:'" | sort
 }
-hooks() { vm "tmux show-hooks -t '$SESSION:'" | sort; }
+hooks() { on_host "tmux show-hooks -t '$SESSION:'" | sort; }
 
 agree() {
   local what=$1 s w
@@ -225,8 +207,8 @@ attach() {
 }
 
 echo "0/10  putting the Session somewhere known"
-vm "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
-  || fail "could not reach the VM"
+on_host "tmux send-keys -t '$SESSION' C-c; tmux send-keys -t '$SESSION' 'clear' Enter" \
+  || fail "could not reach the dev Host"
 sleep 1
 # The baseline every later reading is compared against. Taken before Muxify has
 # been anywhere near this Session.
@@ -275,7 +257,7 @@ echo "5/10  Enter on the device runs the command"
 # a line still holding what a previous check typed would match for the wrong
 # reason, or not match at all. The command goes in through tmux and only Enter
 # is pressed on the device, because Enter is what this is about — see key_at.
-vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+on_host "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
 sleep 1
 type_into_pane "echo $MARKER"
 sleep 1
@@ -283,7 +265,7 @@ read -r RETURN_X RETURN_Y <<<"$(key_at return)"
 [ -n "$RETURN_X" ] || fail "no Return key on screen; the keyboard is down"
 agent-device press "$RETURN_X" "$RETURN_Y" >/dev/null 2>&1
 sleep 3
-vm "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
+on_host "tmux capture-pane -t '$SESSION' -p" | grep -qE "^$MARKER$" \
   || fail "Enter did not run the command; the shell only saw a new line"
 
 echo "6/10  holding the delete key removes more than one character"
@@ -297,7 +279,7 @@ echo "6/10  holding the delete key removes more than one character"
 # Twenty characters, of which a single delete leaves nineteen and a working
 # repeat leaves none. Requiring the first ten to be gone is a margin wide
 # enough that neither answer can be mistaken for the other.
-vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+on_host "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
 sleep 1
 type_into_pane "$HELD"
 sleep 2
@@ -309,7 +291,7 @@ sleep 2
 typed_line | grep -q "${HELD:0:10}" \
   && fail "a three-second hold on delete removed fewer than ten characters: $(typed_line)"
 echo "     three seconds of delete took the line back past ten characters"
-vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
+on_host "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter"
 
 echo "7/10  a tap on the bottom row lands on the bottom row"
 # Where a terminal application draws its buttons, and where they could not be
@@ -334,18 +316,18 @@ for OFFSET in 8 24; do
   # keyboard — that is what makes an application listening for the mouse
   # typeable at all — so the tap before this one took half the Pane away.
   ensure_keyboard away
-  vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; \
+  on_host "tmux send-keys -t '$SESSION:' C-c; sleep 1; \
       tmux send-keys -t '$SESSION:' 'clear; printf \"\\033[?1000h\\033[?1006h\"; cat -v' Enter"
   sleep 2
   # A paint, so the mouse flag is read again: nothing in the control protocol
   # announces it, so it is noticed with the rest of the Pane's state.
-  vm "tmux send-keys -t '$SESSION:' 'x'"
+  on_host "tmux send-keys -t '$SESSION:' 'x'"
   sleep 2
-  [ "$(vm "tmux display-message -p -t '$SESSION:' '#{mouse_any_flag}'")" = 1 ] \
+  [ "$(on_host "tmux display-message -p -t '$SESSION:' '#{mouse_any_flag}'")" = 1 ] \
     || fail "the Pane never asked for the mouse; nothing below this means anything"
   # Read here rather than once outside: check 4 has just shown the keyboard
   # leaves it alone, and this is what makes that matter.
-  ROWS=$(vm "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
+  ROWS=$(on_host "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
   [ "$ROWS" -ge 32 ] || fail "the Pane is only $ROWS rows; this check proves nothing that short"
   BOTTOM=$(pane_bottom)
   [ -n "$BOTTOM" ] || fail "could not find the Dock, so could not find the Pane's bottom"
@@ -357,7 +339,7 @@ for OFFSET in 8 24; do
     || fail "a tap $OFFSET points up from the bottom reported row $CLICKED of $ROWS"
 done
 echo "     the bottom row answers to its own row, $CLICKED of $ROWS"
-vm "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
+on_host "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
 
 echo "8/10  the keyboard covers the Window without resizing it, and stays off the cursor"
 # ADR 0008. The Window keeps the height it has with the keyboard down and is
@@ -371,18 +353,18 @@ echo "8/10  the keyboard covers the Window without resizing it, and stays off th
 # Both halves of the slide: a Pane full to its last row is slid by the whole
 # of what the keyboard covers, and a Pane with three lines on it is not slid
 # at all — those lines would otherwise be behind the status bar.
-FULL=$(vm "tmux display-message -p -t '$SESSION:' '#{window_height}'")
+FULL=$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")
 ensure_keyboard away
-vm "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear; seq 1 100' Enter"
+on_host "tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear; seq 1 100' Enter"
 sleep 2
 ensure_keyboard up
 sleep 2
-[ "$(vm "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
-  || fail "the keyboard shrank the Window from $FULL to $(vm "tmux display-message -p -t '$SESSION:' '#{window_height}'")"
+[ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
+  || fail "the keyboard shrank the Window from $FULL to $(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")"
 cursor_on_screen() {
   # Where the bottom of the cursor's row is drawn, against where the Dock starts.
   local row
-  row=$(vm "tmux display-message -p -t '$SESSION:' '#{cursor_y}'")
+  row=$(on_host "tmux display-message -p -t '$SESSION:' '#{cursor_y}'")
   agent-device snapshot --json 2>/dev/null | ROW="$row" ROWS="$FULL" python3 -c "
 import json, os, sys
 nodes = json.load(sys.stdin)['data']['nodes']
@@ -398,7 +380,7 @@ read -r SHOWN BOTTOM DOCK <<<"$(cursor_on_screen)"
 [ "$SHOWN" = yes ] || fail "with a full Pane the cursor's row ends at $BOTTOM but the Dock starts at $DOCK"
 echo "     full Pane: Window still $FULL rows, cursor row ends at $BOTTOM above the Dock at $DOCK"
 
-vm "tmux send-keys -t '$SESSION:' 'clear; seq 1 3' Enter"
+on_host "tmux send-keys -t '$SESSION:' 'clear; seq 1 3' Enter"
 sleep 3
 read -r SHOWN BOTTOM DOCK <<<"$(cursor_on_screen)"
 [ "$SHOWN" = yes ] || fail "with three lines the cursor's row ends at $BOTTOM but the Dock starts at $DOCK"
@@ -409,7 +391,7 @@ import json, sys
 print(round(next(n['rect']['y'] for n in json.load(sys.stdin)['data']['nodes'] if n['type'] == 'TextView')))")
 echo "     short Pane: cursor row ends at $BOTTOM, Surface top at $TOP"
 ensure_keyboard away
-[ "$(vm "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
+[ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard changed the Window on the way down"
 
 echo "9/10  a second Session, opened from the Host Screen over the first, connects and paints"
@@ -422,8 +404,8 @@ echo "9/10  a second Session, opened from the Host Screen over the first, connec
 # whichever Attach is current what the Surface has said, so the second Session
 # has to reach Connected, report a grid, and take the keyboard like the first.
 SECOND=muxify-regressions-second
-vm "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
-  || fail "could not make a second Session on the VM"
+on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
+  || fail "could not make a second Session on the dev Host"
 ensure_keyboard away
 agent-device press 'label="Home"' >/dev/null 2>&1
 agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
@@ -458,7 +440,7 @@ for _ in $(seq 1 25); do
 done
 agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
   || fail "the first Session did not come back"
-vm "tmux kill-session -t '$SECOND'" >/dev/null 2>&1
+on_host "tmux kill-session -t '$SECOND'" >/dev/null 2>&1
 sleep 2
 
 echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
@@ -480,7 +462,7 @@ sleep 2
 # Reported so a reader knows it changed, and so that anything *else* appearing
 # here is a regression.
 echo "     session options, window options and hooks unchanged from before"
-echo "     zoom is left as Muxify set it: $(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")"
+echo "     zoom is left as Muxify set it: $(on_host "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")"
 
 agent-device close >/dev/null 2>&1
 echo

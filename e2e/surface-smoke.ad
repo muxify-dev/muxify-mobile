@@ -12,7 +12,7 @@ context platform=ios kind=simulator
 # exposes a bare TextView rect with no text). Verifying what is actually drawn
 # needs screenshot comparison, not selectors.
 #
-# Run with:  agent-device test ./e2e/surface-smoke.ad
+# Run with:  bash e2e/sandbox.sh agent-device test ./e2e/surface-smoke.ad
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
@@ -26,6 +26,6 @@ press "label=\"Session 0\""
 # back button — so the status indicator is what says the screen is up.
 wait "id=\"connection-status\"" 8000
 
-is "visible" "id=\"surface-grid\""
+wait "id=\"surface-grid\"" 8000
 
 close

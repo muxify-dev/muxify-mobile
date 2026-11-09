@@ -17,23 +17,23 @@
 # Requires a configured .env.local and a booted simulator running the app.
 # Usage:  bash e2e/ls-round-trip.sh
 
+[ -n "${MUXIFY_E2E_ROOT:-}" ] || exec bash "$(dirname "$0")/sandbox.sh" bash "$0" "$@"
+
 set -uo pipefail
 
 APP=dev.muxify.app
 DIR=muxify-e2e
 MARKER=PROOF_ls_WORKS.txt
 
-vm() {
-  ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -i "$HOME/.orbstack/ssh/id_ed25519" -p 32222 default@127.0.0.1 "$@" 2>/dev/null
-}
+# Runs a command on the dev Host, which is this Mac, in the sandbox.
+on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
 echo "1/5  seeding the Session with a directory containing only $MARKER"
-vm "rm -rf ~/$DIR; mkdir -p ~/$DIR; touch ~/$DIR/$MARKER; \
-    tmux send-keys -t 0 C-c; tmux send-keys -t 0 'cd ~/$DIR; clear' Enter" \
-  || fail "could not reach the VM"
+on_host "mkdir -p '$MUXIFY_E2E_ROOT/$DIR'; touch '$MUXIFY_E2E_ROOT/$DIR/$MARKER'; \
+    tmux send-keys -t 0 C-c; tmux send-keys -t 0 'cd \"$MUXIFY_E2E_ROOT/$DIR\"; clear' Enter" \
+  || fail "could not reach the dev Host"
 sleep 2
 
 echo "2/5  opening the app and attaching"
@@ -69,14 +69,14 @@ sleep 2
 #
 # What is actually being asserted is that the shell has `ls` on its input line,
 # so the rows are joined before looking.
-vm "tmux capture-pane -t 0 -p -J" | tr -d '\n' | grep -q '\$ ls' \
+on_host "tmux capture-pane -t 0 -p -J" | tr -d '\n' | grep -q '\$ ls' \
   || fail "characters typed on the device did not reach the remote shell"
 
 echo "5/5  submitting on the device, then checking what the Session rendered"
 agent-device type "
 " >/dev/null 2>&1
 sleep 3
-PANE=$(vm "tmux capture-pane -t 0 -p -J")
+PANE=$(on_host "tmux capture-pane -t 0 -p -J")
 
 echo "$PANE" | grep -q "$MARKER" || fail "command produced no output in the Session"
 echo "$PANE" | grep -qE '\$ *$' || fail "shell did not return to a prompt"

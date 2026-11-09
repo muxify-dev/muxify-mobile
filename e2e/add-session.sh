@@ -1,15 +1,15 @@
 #!/bin/bash
 #
-# Runs e2e/add-session.ad against a throwaway, pinned, Empty Topic on this Mac,
-# which is the dev Host, then checks on the Mac that the Topic has the Session
-# the suite made at a folder whose name has spaces.
+# Runs e2e/add-session.ad against a pinned, Empty Topic in a sandboxed Muxify
+# on this Mac, the dev Host (see e2e/sandbox.sh), then checks that the Topic
+# has the Session the suite made at a folder whose name has spaces.
 #
-# The Session is killed, the Topic is forgotten and the app's settings file is
-# put back when the run ends, also when it fails. The kill comes first:
-# forgetting the Topic renames its Session to muxifye2eadd, and the kill would
-# then miss it.
+# The folder is outside the sandbox, because the suite types its path. It is
+# removed when the run ends, also when it fails.
 #
 #   bash e2e/add-session.sh
+
+[ -n "${MUXIFY_E2E_ROOT:-}" ] || exec bash "$(dirname "$0")/sandbox.sh" bash "$0" "$@"
 
 set -uo pipefail
 
@@ -18,21 +18,9 @@ TITLE="e2e Add Session"
 DIR="/tmp/muxify e2e add"
 SESSION="muxifye2eadd/e2e-add-session"
 SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
-SAVED=$(mktemp)
 
-cleanup() {
-  tmux kill-session -t "=$SESSION" 2>/dev/null
-  muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
-  cp "$SAVED" "$SETTINGS"
-  rm -f "$SAVED"
-  rmdir "$DIR" 2>/dev/null
-}
-trap cleanup EXIT
+trap 'rmdir "$DIR" 2>/dev/null' EXIT
 
-tmux kill-session -t "=$SESSION" 2>/dev/null
-muxify topic forget --topic "$TITLE" --json >/dev/null 2>&1
-
-cp "$SETTINGS" "$SAVED"
 python3 - "$SETTINGS" <<'PY'
 import json, sys
 path = sys.argv[1]
