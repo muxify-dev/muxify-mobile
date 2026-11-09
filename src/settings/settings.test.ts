@@ -5,6 +5,7 @@ import {
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
   moveHostScreenLists,
+  mustStayOn,
   parseSettings,
   switchHostScreenList,
   type HostScreenLists,
@@ -36,8 +37,7 @@ describe('parseSettings', () => {
         fontSize: 14,
         theme: 'dracula',
         zoomMultipaneWindows: false,
-        hostScreenLists: ['topics', 'sessions'],
-        recentSessionsFirst: false,
+        hostScreenLists: ['topics', 'recent', 'sessions'],
         reconnectOnStart: true,
         showStatusLines: false,
       }),
@@ -45,8 +45,7 @@ describe('parseSettings', () => {
       fontSize: 14,
       theme: 'dracula',
       zoomMultipaneWindows: false,
-      hostScreenLists: ['topics', 'sessions'],
-      recentSessionsFirst: false,
+      hostScreenLists: ['topics', 'recent', 'sessions'],
       reconnectOnStart: true,
       showStatusLines: false,
     });
@@ -87,7 +86,6 @@ describe('parseSettings', () => {
         theme: 42,
         zoomMultipaneWindows: 'yes',
         hostScreenLists: 7,
-        recentSessionsFirst: 'no',
         reconnectOnStart: 'yes',
         showStatusLines: 'off',
       }),
@@ -95,8 +93,7 @@ describe('parseSettings', () => {
       fontSize: 13,
       theme: 'default',
       zoomMultipaneWindows: true,
-      hostScreenLists: ['sessions'],
-      recentSessionsFirst: true,
+      hostScreenLists: ['recent', 'sessions'],
       reconnectOnStart: false,
       showStatusLines: true,
     });
@@ -104,16 +101,6 @@ describe('parseSettings', () => {
 
   it('keeps the Status Lines on for settings saved before they could be hidden', () => {
     expect(parseSettings({ theme: 'dracula' }).showStatusLines).toBe(true);
-  });
-
-  it.each<[string, unknown, boolean]>([
-    ['missing, as in a file from before the setting', undefined, true],
-    ['not a boolean', 'false', true],
-    ['null', null, true],
-    ['off', false, false],
-    ['on', true, true],
-  ])('reads Recent Sessions first that is %s', (_, saved, on) => {
-    expect(parseSettings({ recentSessionsFirst: saved }).recentSessionsFirst).toBe(on);
   });
 
   it.each<[string, unknown, boolean]>([
@@ -127,12 +114,13 @@ describe('parseSettings', () => {
   });
 
   it.each<[string, unknown, HostScreenLists]>([
-    ['missing, as in a file from before the setting', undefined, ['sessions']],
-    ['not an array', 'topics', ['sessions']],
-    ['empty', [], ['sessions']],
-    ['only unknown entries', ['bench', 3, null], ['sessions']],
+    ['missing', undefined, ['recent', 'sessions']],
+    ['not an array', 'topics', ['recent', 'sessions']],
+    ['empty', [], ['recent', 'sessions']],
+    ['only unknown entries', ['bench', 3, null], ['recent', 'sessions']],
+    ['only Recent Sessions, which cannot reach every Session', ['recent'], ['recent', 'sessions']],
     ['one list', ['topics'], ['topics']],
-    ['both lists, in their order', ['topics', 'sessions'], ['topics', 'sessions']],
+    ['every list, in their order', ['topics', 'sessions', 'recent'], ['topics', 'sessions', 'recent']],
     ['unknown entries among known ones', ['bench', 'topics', 42], ['topics']],
     [
       'a repeated entry, kept where it first came',
@@ -142,13 +130,46 @@ describe('parseSettings', () => {
   ])('reads Host Screen lists that are %s', (_, saved, lists) => {
     expect(parseSettings({ hostScreenLists: saved }).hostScreenLists).toEqual(lists);
   });
+
+  // Settings saved before Recent Sessions was a list of its own. With Recent
+  // Sessions first on, the Sessions list was two sections, the Recent ones on
+  // top, so the Host Screen looks the same after the update.
+  it.each<[string, Record<string, unknown>, HostScreenLists]>([
+    [
+      'Recent Sessions first on',
+      { hostScreenLists: ['sessions'], recentSessionsFirst: true },
+      ['recent', 'sessions'],
+    ],
+    [
+      'Recent Sessions first on, below Topics',
+      { hostScreenLists: ['topics', 'sessions'], recentSessionsFirst: true },
+      ['topics', 'recent', 'sessions'],
+    ],
+    [
+      'Recent Sessions first off',
+      { hostScreenLists: ['sessions', 'topics'], recentSessionsFirst: false },
+      ['sessions', 'topics'],
+    ],
+    [
+      'Recent Sessions first on with the Sessions list off',
+      { hostScreenLists: ['topics'], recentSessionsFirst: true },
+      ['topics'],
+    ],
+    [
+      'Recent Sessions first off, from before the lists could be chosen',
+      { recentSessionsFirst: false },
+      ['sessions'],
+    ],
+  ])('moves over settings saved with %s', (_, saved, lists) => {
+    expect(parseSettings(saved).hostScreenLists).toEqual(lists);
+  });
 });
 
 describe('Host Screen lists in Settings', () => {
   it.each<[HostScreenLists, string[]]>([
-    [['sessions'], ['sessions', 'topics']],
-    [['topics'], ['topics', 'sessions']],
-    [['topics', 'sessions'], ['topics', 'sessions']],
+    [['sessions'], ['sessions', 'recent', 'topics']],
+    [['topics'], ['topics', 'recent', 'sessions']],
+    [['topics', 'recent', 'sessions'], ['topics', 'recent', 'sessions']],
   ])('shows %j as the rows %j: the lists that are on, then the rest', (lists, rows) => {
     expect(hostScreenListRows(lists)).toEqual(rows);
   });
@@ -161,13 +182,35 @@ describe('Host Screen lists in Settings', () => {
     expect(switchHostScreenList(['topics', 'sessions'], 'topics', false)).toEqual(['sessions']);
   });
 
-  it('keeps the last list on', () => {
-    expect(switchHostScreenList(['topics'], 'topics', false)).toEqual(['topics']);
+  it('turns Recent Sessions off whatever else is on', () => {
+    expect(switchHostScreenList(['recent', 'topics'], 'recent', false)).toEqual(['topics']);
+  });
+
+  it.each<[HostScreenLists, 'sessions' | 'topics']>([
+    [['topics'], 'topics'],
+    [['recent', 'sessions'], 'sessions'],
+    [['topics', 'recent'], 'topics'],
+  ])('keeps %j on with %s, the last list that reaches every Session', (lists, list) => {
+    expect(switchHostScreenList(lists, list, false)).toEqual(lists);
+    expect(mustStayOn(lists, list)).toBe(true);
+  });
+
+  it('lets either of Sessions and Topics go while the other is on', () => {
+    expect(mustStayOn(['sessions', 'topics'], 'sessions')).toBe(false);
+    expect(mustStayOn(['recent', 'sessions'], 'recent')).toBe(false);
   });
 
   it('moves a list that is on above another', () => {
     expect(moveHostScreenLists(['sessions', 'topics'], [1], 0)).toEqual(['topics', 'sessions']);
     expect(moveHostScreenLists(['sessions', 'topics'], [0], 2)).toEqual(['topics', 'sessions']);
+  });
+
+  it('moves one of three lists to the top', () => {
+    expect(moveHostScreenLists(['topics', 'sessions', 'recent'], [2], 0)).toEqual([
+      'recent',
+      'topics',
+      'sessions',
+    ]);
   });
 
   it('gives a list that is off no place, so moving it changes nothing', () => {

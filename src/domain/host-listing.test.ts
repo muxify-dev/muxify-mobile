@@ -3,7 +3,6 @@ import {
   asking,
   lastAnswer,
   refused,
-  waitingOnFirstAnswer,
   UNASKED,
   type Listing,
 } from './host-listing';
@@ -12,9 +11,8 @@ import type { Session } from '@/tmux/tmux-client';
 const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
 describe('what the Host last said', () => {
-  it('has nothing to show before the first answer, and says so', () => {
+  it('has nothing to show before the first answer', () => {
     expect(lastAnswer(UNASKED)).toBeUndefined();
-    expect(waitingOnFirstAnswer(UNASKED)).toBe(true);
   });
 
   it('keeps the last answer while the next question is in flight', () => {
@@ -27,7 +25,6 @@ describe('what the Host last said', () => {
     const again = asking(read);
 
     expect(lastAnswer(again)).toEqual([running('alpha'), running('beta')]);
-    expect(waitingOnFirstAnswer(again)).toBe(false);
   });
 
   it('holds the answer across any number of questions', () => {
@@ -52,6 +49,5 @@ describe('what the Host last said', () => {
 
     expect(lastAnswer(refusal)).toBeUndefined();
     expect(lastAnswer(asking(refusal))).toBeUndefined();
-    expect(waitingOnFirstAnswer(asking(refusal))).toBe(true);
   });
 });

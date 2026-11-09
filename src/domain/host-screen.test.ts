@@ -35,23 +35,31 @@ const availableRow = (name: string) => ({ kind: 'available', name }) as const;
 const note = (text: string) => ({ kind: 'note', text }) as const;
 
 const CHECKING = { kind: 'checking', of: 'Sessions' } as const;
-const NOTHING_OPENED = note('Nothing opened on this Host yet. Pick one below to start.');
-const NOTHING_OPENED_YET = note('Nothing opened on this Host yet.');
+const NOTHING_OPENED = note('Nothing opened on this Host yet.');
 const NO_OTHERS = note('No other Sessions on this Host.');
 
 const recentSection = (...rows: HostScreenRow[]): HostScreenSection => ({
   id: 'recent',
-  title: 'Sessions',
+  title: 'Recent Sessions',
   footer: null,
   rows,
 });
 
-const availableSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'available',
-  title: 'Available on Host',
+/** The Sessions list below a Recent Sessions list that is on. */
+const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
+  id: 'sessions',
+  title: 'Sessions',
   footer: rows.some((row) => row.kind === 'available')
-    ? 'Opening one adds it to Sessions above.'
+    ? 'Opening one adds it to Recent Sessions.'
     : null,
+  rows,
+});
+
+/** The Sessions list with Recent Sessions off. */
+const allSessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
+  id: 'sessions',
+  title: 'Sessions',
+  footer: null,
   rows,
 });
 
@@ -65,17 +73,9 @@ const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
 // What the Topics list shows before the Host has answered about Topics.
 const TOPICS = topicsSection({ kind: 'checking', of: 'Topics' });
 
-const hostOrderSection = (...rows: HostScreenRow[]): HostScreenSection => ({
-  id: 'sessions',
-  title: 'Sessions',
-  footer: null,
-  rows,
-});
-
 interface Case {
   name: string;
   lists?: HostScreenLists;
-  recentSessionsFirst?: boolean;
   recent: RecentSession[];
   listing: Listing;
   sections: HostScreenSection[];
@@ -86,13 +86,15 @@ describe('hostScreen', () => {
     {
       // One Session, one row: two ways to open the same thing is a list that
       // lies about how many Sessions the Host has.
-      name: 'keeps a Session out of Available once it is remembered',
+      name: 'keeps a Session out of Sessions once it is in Recent Sessions',
       recent: [remembered('muxify')],
       listing: answered([running('muxify'), running('cook')]),
-      sections: [recentSection(recentRow('muxify', 1)), availableSection(availableRow('cook'))],
+      sections: [recentSection(recentRow('muxify', 1)), sessionsSection(availableRow('cook'))],
     },
     {
-      name: 'keeps the order it was given for Recent, and sorts Available by name',
+      // The Mac's Sessions mode shows the Host's order, so the phone matches
+      // it rather than sorting.
+      name: 'keeps the order it was given for Recent Sessions, and the Host order for Sessions',
       recent: [
         remembered('zebra', '2026-09-15T11:00:00Z'),
         remembered('alpha', '2026-09-15T09:00:00Z'),
@@ -108,20 +110,20 @@ describe('hostScreen', () => {
           recentRow('zebra', 1, '2026-09-15T11:00:00Z'),
           recentRow('alpha', 1, '2026-09-15T09:00:00Z'),
         ),
-        availableSection(availableRow('aws_terraform'), availableRow('game_server')),
+        sessionsSection(availableRow('game_server'), availableRow('aws_terraform')),
       ],
     },
     {
       name: 'carries what the Host said onto the remembered row',
       recent: [remembered('muxify')],
       listing: answered([running('muxify', 4)]),
-      sections: [recentSection(recentRow('muxify', 4)), availableSection(NO_OTHERS)],
+      sections: [recentSection(recentRow('muxify', 4)), sessionsSection(NO_OTHERS)],
     },
     {
       name: 'hides a remembered Session the Host no longer has',
       recent: [remembered('gone'), remembered('here')],
       listing: answered([running('here')]),
-      sections: [recentSection(recentRow('here', 1)), availableSection(NO_OTHERS)],
+      sections: [recentSection(recentRow('here', 1)), sessionsSection(NO_OTHERS)],
     },
     {
       // Failing open is the whole point: an unreachable Host is exactly when
@@ -129,10 +131,7 @@ describe('hostScreen', () => {
       name: 'shows everything remembered while the first question is in flight',
       recent: [remembered('muxify'), remembered('cook')],
       listing: UNASKED,
-      sections: [
-        recentSection(recentRow('muxify'), recentRow('cook')),
-        availableSection(CHECKING),
-      ],
+      sections: [recentSection(recentRow('muxify'), recentRow('cook')), sessionsSection(CHECKING)],
     },
     {
       name: 'shows everything remembered when the Host refused, with why',
@@ -140,20 +139,20 @@ describe('hostScreen', () => {
       listing: refused('Host unreachable'),
       sections: [
         recentSection(recentRow('muxify')),
-        availableSection({ kind: 'refused', message: 'Host unreachable' }),
+        sessionsSection({ kind: 'refused', message: 'Host unreachable' }),
       ],
     },
     {
       name: 'keeps the last answer on screen while it asks again',
       recent: [remembered('muxify')],
       listing: asking(answered([running('muxify', 2), running('cook')])),
-      sections: [recentSection(recentRow('muxify', 2)), availableSection(availableRow('cook'))],
+      sections: [recentSection(recentRow('muxify', 2)), sessionsSection(availableRow('cook'))],
     },
     {
       name: 'reads a Host with nothing running as no Sessions at all',
       recent: [remembered('gone')],
       listing: answered([]),
-      sections: [recentSection(NOTHING_OPENED), availableSection(NO_OTHERS)],
+      sections: [recentSection(NOTHING_OPENED), sessionsSection(NO_OTHERS)],
     },
     {
       name: 'lists a Host that has Sessions nobody here has opened',
@@ -161,14 +160,8 @@ describe('hostScreen', () => {
       listing: answered([running('cook'), running('aws_terraform')]),
       sections: [
         recentSection(NOTHING_OPENED),
-        availableSection(availableRow('aws_terraform'), availableRow('cook')),
+        sessionsSection(availableRow('cook'), availableRow('aws_terraform')),
       ],
-    },
-    {
-      name: 'does not point below before the Host has answered',
-      recent: [],
-      listing: UNASKED,
-      sections: [recentSection(NOTHING_OPENED_YET), availableSection(CHECKING)],
     },
     {
       name: 'shows only the Topics list when Topics is the one list on',
@@ -178,36 +171,41 @@ describe('hostScreen', () => {
       sections: [TOPICS],
     },
     {
-      name: 'puts Topics under Sessions in that order',
-      lists: ['sessions', 'topics'],
+      name: 'shows Recent Sessions and Topics without Sessions',
+      lists: ['recent', 'topics'],
       recent: [remembered('muxify')],
       listing: answered([running('muxify'), running('cook')]),
-      sections: [
-        recentSection(recentRow('muxify', 1)),
-        availableSection(availableRow('cook')),
-        TOPICS,
-      ],
+      sections: [recentSection(recentRow('muxify', 1)), TOPICS],
     },
     {
-      name: 'puts Topics above Sessions in that order',
-      lists: ['topics', 'sessions'],
+      name: 'puts the three lists in the order set, Topics first',
+      lists: ['topics', 'recent', 'sessions'],
       recent: [remembered('muxify')],
       listing: answered([running('muxify'), running('cook')]),
       sections: [
         TOPICS,
         recentSection(recentRow('muxify', 1)),
-        availableSection(availableRow('cook')),
+        sessionsSection(availableRow('cook')),
       ],
     },
     {
-      // The Mac's Sessions mode shows the Host's order, so the phone matches
-      // it rather than sorting.
-      name: 'with Recent Sessions first off, keeps the Host order in one section',
-      recentSessionsFirst: false,
+      name: 'puts the three lists in the order set, Recent Sessions last',
+      lists: ['sessions', 'topics', 'recent'],
+      recent: [remembered('muxify')],
+      listing: answered([running('muxify'), running('cook')]),
+      sections: [
+        sessionsSection(availableRow('cook')),
+        TOPICS,
+        recentSection(recentRow('muxify', 1)),
+      ],
+    },
+    {
+      name: 'with Recent Sessions off, keeps a remembered Session in the Host order',
+      lists: ['sessions'],
       recent: [remembered('muxify', '2026-09-15T11:00:00Z'), remembered('gone')],
       listing: answered([running('zebra'), running('muxify', 3), running('alpha')]),
       sections: [
-        hostOrderSection(
+        allSessionsSection(
           availableRow('zebra'),
           recentRow('muxify', 3, '2026-09-15T11:00:00Z'),
           availableRow('alpha'),
@@ -215,47 +213,46 @@ describe('hostScreen', () => {
       ],
     },
     {
-      name: 'with Recent Sessions first off, keeps the last answer while it asks again',
-      recentSessionsFirst: false,
+      name: 'with Recent Sessions off, keeps the last answer while it asks again',
+      lists: ['sessions'],
       recent: [remembered('muxify')],
       listing: asking(answered([running('cook'), running('muxify', 2)])),
-      sections: [hostOrderSection(availableRow('cook'), recentRow('muxify', 2))],
+      sections: [allSessionsSection(availableRow('cook'), recentRow('muxify', 2))],
     },
     {
-      name: 'with Recent Sessions first off, shows everything remembered before an answer',
-      recentSessionsFirst: false,
+      name: 'with Recent Sessions off, shows everything remembered before an answer',
+      lists: ['sessions'],
       recent: [remembered('muxify'), remembered('cook')],
       listing: UNASKED,
-      sections: [hostOrderSection(recentRow('muxify'), recentRow('cook'), CHECKING)],
+      sections: [allSessionsSection(recentRow('muxify'), recentRow('cook'), CHECKING)],
     },
     {
-      name: 'with Recent Sessions first off, shows why the Host refused',
-      recentSessionsFirst: false,
+      name: 'with Recent Sessions off, shows why the Host refused',
+      lists: ['sessions'],
       recent: [remembered('muxify')],
       listing: refused('Host unreachable'),
       sections: [
-        hostOrderSection(recentRow('muxify'), { kind: 'refused', message: 'Host unreachable' }),
+        allSessionsSection(recentRow('muxify'), { kind: 'refused', message: 'Host unreachable' }),
       ],
     },
     {
-      name: 'with Recent Sessions first off, reads a Host with nothing running as no Sessions',
-      recentSessionsFirst: false,
+      name: 'with Recent Sessions off, reads a Host with nothing running as no Sessions',
+      lists: ['sessions'],
       recent: [remembered('gone')],
       listing: answered([]),
-      sections: [hostOrderSection(note('No Sessions on this Host.'))],
+      sections: [allSessionsSection(note('No Sessions on this Host.'))],
     },
     {
-      name: 'with Recent Sessions first off, keeps Topics in its place',
+      name: 'with Recent Sessions off, keeps Topics in its place',
       lists: ['topics', 'sessions'],
-      recentSessionsFirst: false,
       recent: [],
       listing: answered([running('cook')]),
-      sections: [TOPICS, hostOrderSection(availableRow('cook'))],
+      sections: [TOPICS, allSessionsSection(availableRow('cook'))],
     },
-  ])('$name', ({ lists = ['sessions'], recentSessionsFirst = true, recent, listing, sections }) => {
+  ])('$name', ({ lists = ['recent', 'sessions'], recent, listing, sections }) => {
     expect(
       hostScreen({
-        settings: { hostScreenLists: lists, recentSessionsFirst },
+        settings: { hostScreenLists: lists },
         recent,
         listing,
         topics: TOPICS_UNASKED,
@@ -269,7 +266,6 @@ describe('hostScreen', () => {
 interface TopicsCase {
   name: string;
   lists?: HostScreenLists;
-  recentSessionsFirst?: boolean;
   recent?: RecentSession[];
   listing?: Listing;
   topics: HostTopics;
@@ -570,8 +566,8 @@ describe('hostScreen with Topics', () => {
     },
     {
       // D2: one Session, one row. The Topic's Sessions are under the Topic.
-      name: 'with both lists, leaves a Session that is in a Topic out of Sessions',
-      lists: ['topics', 'sessions'],
+      name: 'with every list, leaves a Session that is in a Topic out of the others',
+      lists: ['topics', 'recent', 'sessions'],
       recent: [remembered('work'), remembered('cook')],
       listing: answered([running('work'), running('cook'), running('play')]),
       topics: listed({
@@ -586,47 +582,76 @@ describe('hostScreen with Topics', () => {
       sections: [
         topicsSection(topicRow('t1')),
         recentSection(recentRow('cook', 1)),
-        availableSection(availableRow('play')),
+        sessionsSection(availableRow('play')),
       ],
     },
     {
-      name: 'with both lists and Recent Sessions first off, leaves a Session in a Topic out too',
+      name: 'with Recent Sessions and Topics, leaves Recent Sessions out of the No Topic row',
+      lists: ['recent', 'topics'],
+      recent: [remembered('work'), remembered('cook')],
+      listing: answered([running('work'), running('cook'), running('play')]),
+      topics: listed({
+        sessions: [
+          snapshotSession('$1', 'work', 't1'),
+          snapshotSession('$2', 'cook', null),
+          snapshotSession('$3', 'play', null),
+        ],
+        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        no_topic: [sid('$2'), sid('$3')],
+      }),
+      opened: new Set<OpenableRow>(['no-topic']),
+      sections: [
+        recentSection(recentRow('cook', 1)),
+        topicsSection(
+          topicRow('t1'),
+          { kind: 'no-topic', count: 1, opened: true },
+          { kind: 'available', name: 'play' },
+        ),
+      ],
+    },
+    {
+      name: 'has no No Topic row when Recent Sessions has every Session in no Topic',
+      lists: ['topics', 'recent'],
+      recent: [remembered('cook')],
+      listing: answered([running('cook')]),
+      topics: listed({
+        sessions: [snapshotSession('$2', 'cook', null)],
+        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        no_topic: [sid('$2')],
+      }),
+      sections: [topicsSection(topicRow('t1')), recentSection(recentRow('cook', 1))],
+    },
+    {
+      name: 'with Sessions and Topics, leaves a Session in a Topic out of Sessions',
       lists: ['sessions', 'topics'],
-      recentSessionsFirst: false,
       recent: [remembered('work')],
       listing: answered([running('work'), running('cook')]),
       topics: listed({
         sessions: [snapshotSession('$1', 'work', 't1'), snapshotSession('$2', 'cook', null)],
         unpinned: { kind: 'list', cards: [topicCard('t1')] },
       }),
-      sections: [
-        hostOrderSection(availableRow('cook')),
-        topicsSection(topicRow('t1')),
-      ],
+      sections: [allSessionsSection(availableRow('cook')), topicsSection(topicRow('t1'))],
     },
     {
-      name: 'with Sessions only, a Session in a Topic stays in Sessions',
-      lists: ['sessions'],
+      name: 'with Topics off, a Session in a Topic stays in Sessions',
+      lists: ['recent', 'sessions'],
       recent: [],
       listing: answered([running('work')]),
       topics: listed({
         sessions: [snapshotSession('$1', 'work', 't1')],
         unpinned: { kind: 'list', cards: [topicCard('t1')] },
       }),
-      sections: [
-        recentSection(NOTHING_OPENED),
-        availableSection(availableRow('work')),
-      ],
+      sections: [recentSection(NOTHING_OPENED), sessionsSection(availableRow('work'))],
     },
     {
-      name: 'with both lists and no snapshot yet, leaves no Session out',
-      lists: ['topics', 'sessions'],
+      name: 'with every list and no snapshot yet, leaves no Session out',
+      lists: ['topics', 'recent', 'sessions'],
       listing: answered([running('work')]),
       topics: { kind: 'absent' },
       sections: [
         topicsSection(note('No Topics on this Host')),
         recentSection(NOTHING_OPENED),
-        availableSection(availableRow('work')),
+        sessionsSection(availableRow('work')),
       ],
     },
     {
@@ -667,7 +692,6 @@ describe('hostScreen with Topics', () => {
     },
   ])('$name', ({
     lists = ['topics'],
-    recentSessionsFirst = true,
     recent = [],
     listing = UNASKED,
     topics,
@@ -677,7 +701,7 @@ describe('hostScreen with Topics', () => {
   }) => {
     expect(
       hostScreen({
-        settings: { hostScreenLists: lists, recentSessionsFirst },
+        settings: { hostScreenLists: lists },
         recent,
         listing,
         topics,
@@ -693,7 +717,7 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
 
   it('draws the sections and cards in the order the Mac sent them', () => {
     const sections = hostScreen({
-      settings: { hostScreenLists: ['topics'], recentSessionsFirst: true },
+      settings: { hostScreenLists: ['topics'] },
       recent: [],
       listing: UNASKED,
       topics: { kind: 'listed', snapshot: mac },
@@ -713,9 +737,9 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
     expect(sections[1]?.rows[2]).toMatchObject({ tags: [{ name: 'personal', color: '#7fa88a' }] });
   });
 
-  it('with Recent Sessions first off, lists the Sessions in the order `environment show` gave', () => {
+  it('with Recent Sessions off, lists the Sessions in the order `environment show` gave', () => {
     const [sessions] = hostScreen({
-      settings: { hostScreenLists: ['sessions', 'topics'], recentSessionsFirst: false },
+      settings: { hostScreenLists: ['sessions', 'topics'] },
       recent: [remembered('chezmoi')],
       listing: answered(listedSessions(mac)),
       topics: { kind: 'listed', snapshot: mac },
