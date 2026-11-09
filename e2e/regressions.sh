@@ -76,7 +76,11 @@ keyboard_up() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 nodes = json.load(sys.stdin)['data']['nodes']
-screen = max((n['rect']['y'] + n['rect']['height'] for n in nodes if n['type'] == 'Window'), default=0)
+# The Application node is the screen. agent-device 0.21 lists no Window node,
+# and a screen of 0 read every keyboard as down.
+app = next((n['rect'] for n in nodes if n['type'] == 'Application'), None)
+if app is None: sys.exit('the snapshot has no Application node')
+screen = app['y'] + app['height']
 dock = min((n['rect']['y'] for n in nodes if n['type'] == 'ScrollView'), default=screen)
 # The keyboard is at least two hundred points tall, and the Dock rides it up,
 # so where the Dock is answers the question with room to spare. Two other
@@ -368,7 +372,11 @@ cursor_on_screen() {
   agent-device snapshot --json 2>/dev/null | ROW="$row" ROWS="$FULL" python3 -c "
 import json, os, sys
 nodes = json.load(sys.stdin)['data']['nodes']
-screen = max((n['rect']['y'] + n['rect']['height'] for n in nodes if n['type'] == 'Window'), default=0)
+# The Application node is the screen. agent-device 0.21 lists no Window node,
+# and a screen of 0 read every keyboard as down.
+app = next((n['rect'] for n in nodes if n['type'] == 'Application'), None)
+if app is None: sys.exit('the snapshot has no Application node')
+screen = app['y'] + app['height']
 dock = min((n['rect']['y'] for n in nodes if n['type'] == 'ScrollView'), default=screen)
 tv = next(n['rect'] for n in nodes if n['type'] == 'TextView')
 cell = tv['height'] / int(os.environ['ROWS'])
