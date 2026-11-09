@@ -46,7 +46,15 @@ export interface HostConnection {
   upload?: Upload;
   fingerprint: string;
   verdict: KeyVerdict;
+  /** Gives the Connection back. Others on the same Host may still use it. */
   close(): Promise<void>;
+  /** Closes the Connection for everyone, so the next one is new. Else as close. */
+  discard?(): Promise<void>;
+  /**
+   * Runs `check` when something else on the Connection finds it slow. The
+   * Attach decides what that means. Answers a function that stops it.
+   */
+  suspected?(check: () => void): () => void;
 }
 
 /** Opens one. Where the SSH library lives, and the one thing tests replace. */
@@ -513,6 +521,7 @@ export function openAttach(options: AttachOptions): Attach {
       }
       connection = opened;
       say(`Connection open; Host key ${opened.verdict.kind}`);
+      opened.suspected?.(() => checkLink(mine));
 
       // Trust on first use: remember the key the first time, and say so loudly
       // when it changes. The Connection is not blocked either way — someone
@@ -668,13 +677,32 @@ export function openAttach(options: AttachOptions): Attach {
     // Errors on the way out go nowhere on purpose: this Connection is already
     // over, and a Host that will not be said goodbye to politely is a Host the
     // socket drops anyway.
+    // A close on purpose gives the Connection back for the screens to use. Any
+    // other end is a loss or a replacement, and the next Connection must be new.
+    const onPurpose = closed;
     return (async () => {
       try {
         await closingControl?.close();
       } finally {
-        await closingConnection?.close();
+        await (onPurpose || !closingConnection?.discard
+          ? closingConnection?.close()
+          : closingConnection.discard());
       }
     })().catch(() => {});
+  }
+
+  /** A screen found the Connection slow. The control channel says whether it is alive. */
+  function checkLink(mine: number): void {
+    if (stale(mine) || state.phase.kind !== 'connected') return;
+    if (control?.isOpen() ?? false) {
+      say('a screen found the Connection slow; the link is still open');
+      return;
+    }
+    ended(
+      mine,
+      { kind: 'transport-lost', detail: 'A read on this Connection did not answer in time' },
+      suspended ? null : 'transport-loss',
+    );
   }
 
   /**

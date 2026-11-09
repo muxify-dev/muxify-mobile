@@ -180,6 +180,10 @@ function attachOn(
   const clock = createTestClock();
   const seen: AttachState[] = [];
   const opened: ReturnType<typeof fakeHost>[] = [];
+  /** How the Attach let each Connection go: given back, or discarded. */
+  const letGo: ('close' | 'discard')[] = [];
+  /** What the Attach asked to run when a screen finds its Connection slow. */
+  const suspects: (() => void)[] = [];
   const log = createLog({ clock });
 
   let next = 0;
@@ -201,7 +205,18 @@ function attachOn(
         transport: host.transport,
         fingerprint: 'SHA256:abcdef',
         verdict: { kind: 'first-sight' },
-        close: () => Promise.resolve(),
+        close: () => {
+          letGo.push('close');
+          return Promise.resolve();
+        },
+        discard: () => {
+          letGo.push('discard');
+          return Promise.resolve();
+        },
+        suspected: (check) => {
+          suspects.push(check);
+          return () => {};
+        },
       });
     },
   });
@@ -212,6 +227,8 @@ function attachOn(
     attach,
     hosts,
     opened,
+    letGo,
+    suspects,
     store,
     wrote,
     clock,
@@ -521,6 +538,53 @@ describe('saying why a Connection ended', () => {
     await connected(kit, 1);
     expect(kit.attach.state().phase.kind).toBe('connected');
     expect(kit.opened).toHaveLength(2);
+  });
+});
+
+describe('the Connection it shares with the screens', () => {
+  it('discards a Connection it lost, so the next one is new', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.hosts[0].drop();
+    await settle();
+
+    // More than once is fine: the registry's release ignores a second call.
+    expect(kit.letGo.length).toBeGreaterThan(0);
+    expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
+  });
+
+  it('gives a Connection back when it is closed on purpose', async () => {
+    const kit = attachOn();
+    await connected(kit);
+
+    await kit.attach.close();
+
+    expect(kit.letGo).toEqual(['close']);
+  });
+
+  it('carries on when a screen finds the Connection slow and the link is open', async () => {
+    const kit = attachOn();
+    await connected(kit);
+
+    kit.suspects[0]?.();
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.said()).toContain('attach: a screen found the Connection slow; the link is still open');
+  });
+
+  it('reconnects when a screen finds the Connection slow and the link is gone', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.hosts[0].dieQuietly();
+    kit.suspects[0]?.();
+    await settle();
+
+    expect(kit.phases()).toContain('disconnected');
+    expect(kit.attach.state().phase.kind).toBe('reconnecting');
+    expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
   });
 });
 

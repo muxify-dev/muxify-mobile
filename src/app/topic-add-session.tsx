@@ -22,10 +22,9 @@ import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { withHostTransport } from '@/tmux/ssh-connection';
+import { appConnections } from '@/tmux/ssh-connection';
 import type { AddSessionRead } from '@/topics/add-session';
 import type { TopicId } from '@/topics/environment';
-import { createMuxifyCli } from '@/topics/muxify-cli';
 
 const say = speakingAs(deviceLog(), 'add-session');
 
@@ -69,8 +68,8 @@ export default function TopicAddSessionScreen() {
 
       let added: AddSessionRead;
       try {
-        added = await withHostTransport(host, store, (transport) =>
-          createMuxifyCli(say).addSession(
+        added = await appConnections().write(host, (transport, muxify) =>
+          muxify.addSession(
             (command) => transport.exec(command),
             topicId as TopicId,
             wanted,

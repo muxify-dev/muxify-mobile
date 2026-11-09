@@ -131,3 +131,24 @@ background; an Attach that reconnects, then the screens on the new Connection.
 **An idle Connection stays up for 60 s after the user leaves a Host.** This is
 the cost. It is short, and the Host Screen already shows the Host the user is
 on.
+
+## What shipped, where it differs
+
+**The Attach discards a Connection; it does not give it back.** The rule above
+says that the Attach gives the old Connection back when it replaces it. A
+Connection that the Attach lost must not go to the next request, so the Attach
+discards it: the registry closes it for everyone, and the next request opens a
+new one. The Attach discards after every end that is not a close on purpose,
+also when tmux ends the Session over a Connection that still works. That costs
+the screens one new Connection, and it keeps one rule.
+
+**A read that passed its deadline under an Attach is sent again on the same
+Connection** when the Attach finds the link open. The keepalive closes that
+Connection within about 15 s if it is dead.
+
+**Measured on the simulator, against the e2e sandbox.** The visit Host Screen →
+Topic Screen → Session → Home → Topic Screen (`e2e/topic-screen.sh`) made one
+login in the sandbox's sshd log. The code before this change made three before
+it reached Home. With the sandbox's sshd frozen under an open Connection, the
+registry closed it after 18 s ("the keepalive found it dead"), and the next read
+opened a new one.

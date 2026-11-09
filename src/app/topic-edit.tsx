@@ -32,9 +32,8 @@ import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { withHostTransport } from '@/tmux/ssh-connection';
+import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
-import { createMuxifyCli } from '@/topics/muxify-cli';
 import { tagsFromParam } from '@/topics/tags-param';
 import {
   changes,
@@ -102,7 +101,6 @@ function EditForm({
 }) {
   const router = useRouter();
   const { appearance } = useSettings();
-  const [muxify] = useState(() => createMuxifyCli(say));
 
   const title = useNativeState(opened.title);
   const note = useNativeState(opened.note ?? '');
@@ -150,7 +148,7 @@ function EditForm({
         };
       } else {
         try {
-          outcome = await withHostTransport(host, store, (transport) =>
+          outcome = await appConnections().write(host, (transport, muxify) =>
             saveTopicEdit(saved, wanted, (change) =>
               muxify
                 .change((command) => transport.exec(command), topicId, change)
@@ -179,7 +177,7 @@ function EditForm({
       if (refused.length === 0) router.back();
       else setErrors(outcome.errors);
     })();
-  }, [saving, title, note, configTags, retired, chosen, saved, hostId, topicId, muxify, router]);
+  }, [saving, title, note, configTags, retired, chosen, saved, hostId, topicId, router]);
 
   return (
     <View style={styles.fill}>

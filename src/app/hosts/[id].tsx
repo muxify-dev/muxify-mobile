@@ -65,7 +65,7 @@ import type { AttachPhase } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { execCommandRunner } from '@/tmux/exec-runner';
-import { withHostTransport } from '@/tmux/ssh-connection';
+import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import {
   lastSnapshot,
@@ -75,7 +75,6 @@ import {
   TOPICS_UNASKED,
   type HostTopics,
 } from '@/topics/host-topics';
-import { createMuxifyCli } from '@/topics/muxify-cli';
 import { tagsParam } from '@/topics/tags-param';
 
 /** How many rows a section shows before it offers to show the rest. */
@@ -104,9 +103,6 @@ export default function HostScreen() {
   const [listing, setListing] = useState<Listing>(UNASKED);
   const [topics, setTopics] = useState<HostTopics>(TOPICS_UNASKED);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  // One per visit: it keeps where `muxify` was found on this Host, so a
-  // refresh is one exec instead of a probe and an exec.
-  const [muxify] = useState(() => createMuxifyCli(say));
   const topicsOn = settings.hostScreenLists.includes('topics');
   const [expanded, setExpanded] = useState<ReadonlySet<HostScreenSection['id']>>(new Set());
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
@@ -160,7 +156,7 @@ export default function HostScreen() {
     say(`asking ${found.displayName} for its ${topicsOn ? 'Topics' : 'Sessions'}`);
     let topicsRead = false;
     try {
-      await withHostTransport(found, store, async (transport) => {
+      await appConnections().read(found, async (transport, muxify) => {
         const read = topicsOn ? await muxify.read((command) => transport.exec(command)) : null;
         if (read) {
           topicsRead = true;
@@ -187,7 +183,7 @@ export default function HostScreen() {
         setTopics((previous) => settled(previous, { kind: 'failed', error: message }));
       }
     }
-  }, [id, topicsOn, muxify]);
+  }, [id, topicsOn]);
 
   /**
    * Puts the Log on the clipboard, for pasting wherever the problem is being
