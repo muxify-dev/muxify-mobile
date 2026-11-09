@@ -17,19 +17,19 @@
 # by one. They are pressed by ref instead, in the order the sheet lists them,
 # which is tmux's Pane order — see `pane_card`.
 #
-# Drives the Host's Topology itself, so it does not depend on how the VM was
+# Drives the Host's Topology itself, so it does not depend on how the dev Host was
 # left. Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/pickers.sh
+
+[ -n "${MUXIFY_E2E_ROOT:-}" ] || exec bash "$(dirname "$0")/sandbox.sh" bash "$0" "$@"
 
 set -uo pipefail
 
 APP=dev.muxify.app
 SESSION=0
 
-vm() {
-  ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -i "$HOME/.orbstack/ssh/id_ed25519" -p 32222 default@127.0.0.1 "$@" 2>/dev/null
-}
+# Runs a command on the dev Host, which is this Mac, in the sandbox.
+on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
@@ -164,8 +164,8 @@ echo "1/5  one Window, one Pane: both pickers still open, to make more"
 # Deliberately not disabled. The sheet is the only way to add a Window or a
 # split, and one of something is exactly when that is wanted — an earlier
 # version disabled the buttons here and locked the user out of the action.
-vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
-    tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true" || fail "could not reach the VM"
+on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
+    tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true" || fail "could not reach the dev Host"
 attach
 expect_enabled Windows yes
 expect_enabled Panes yes
@@ -199,7 +199,7 @@ echo "     and neither picker is badged with a count of one"
   || fail "the Dock's capsules are out of order: $(dock_order)"
 
 echo "2/5  three Windows: the Windows picker opens and lists them"
-vm "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
+on_host "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
     tmux new-window -t '$SESSION:' -n notes 'exec bash'; \
     tmux select-window -t '$SESSION:0'"
 attach
@@ -217,12 +217,12 @@ expect_badge Windows 3
 echo "     and the Dock's Windows icon is badged 3"
 
 echo "3/5  two Panes: the Session arrives zoomed, and unzooming shows the split"
-vm "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
+on_host "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
     tmux resize-pane -t '$SESSION:0' 2>/dev/null; true"
 attach
 # A phone is too narrow for side-by-side Panes, so a split Session is zoomed on
 # arrival and the Panes picker is where that is turned off.
-[ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
+[ "$(on_host "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
   || fail "a split Session should arrive with its active Pane zoomed"
 echo "     arrived zoomed"
 # Waited for, not assumed. The Dock's buttons are disabled until the Topology
@@ -247,7 +247,7 @@ agent-device press "$SWITCH" >/dev/null 2>&1
 sleep 2
 agent-device press 'label="Close Panes"' >/dev/null 2>&1
 sleep 3
-[ "$(vm "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 0 ] \
+[ "$(on_host "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 0 ] \
   || fail "turning the Zoom switch off did not unzoom the Window"
 agent-device is exists 'label="Pane 1"' >/dev/null 2>&1 \
   || fail "unzooming should show the other Pane, not one stretched across the split"
@@ -269,15 +269,15 @@ CARD=$(pane_card 2)
 [ -n "$CARD" ] || fail "the Panes sheet lists no second Pane to pick"
 agent-device press "$CARD" >/dev/null 2>&1
 sleep 4
-[ "$(vm "tmux display-message -p -t '$SESSION:0' '#{pane_index}'")" = 1 ] \
+[ "$(on_host "tmux display-message -p -t '$SESSION:0' '#{pane_index}'")" = 1 ] \
   || fail "picking the second Pane did not make it the active one"
-[ "$(vm "tmux display-message -p -t '$SESSION:0' '#{window_zoomed_flag}'")" = 1 ] \
+[ "$(on_host "tmux display-message -p -t '$SESSION:0' '#{window_zoomed_flag}'")" = 1 ] \
   || fail "picking a Pane left the Window unzoomed while Zoom was still asked for"
 echo "     the picked Pane is active, and it is the one filling the Window"
 
 echo "5/5  putting the Host back the way it was found"
 agent-device close >/dev/null 2>&1
-vm "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
+on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true"
 
 echo

@@ -11,7 +11,7 @@ context platform=ios kind=simulator
 # sheet responds to agent-device (see session-picker.ad). It leaves the same
 # stack as this path — Hosts list, Host Screen, Terminal Screen.
 #
-# Run with:  agent-device test ./e2e/home-to-host-screen.ad
+# Run with:  bash e2e/sandbox.sh agent-device test ./e2e/home-to-host-screen.ad
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000

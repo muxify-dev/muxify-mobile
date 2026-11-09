@@ -1,7 +1,7 @@
 context platform=ios kind=simulator
 
 # New Topic, with the Topics list on. Run e2e/new-topic.sh, not this file: it
-# turns the Topics list on, checks the Topic on the Mac and forgets it.
+# runs it in a sandbox with the Topics list on and checks the Topic on the Mac.
 #
 # + offers New Session and New Topic. New Topic makes a Topic with a title and
 # the Tag #work, and Save opens the new Topic's Topic Screen.

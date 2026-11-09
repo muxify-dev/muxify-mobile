@@ -1,8 +1,8 @@
 context platform=ios kind=simulator
 
 # The Edit sheet, against the Topic that e2e/edit-topic.sh makes. Run that
-# script, not this file: it makes the Topic, checks it on the Mac and forgets
-# it afterwards.
+# script, not this file: it makes the Topic in a sandbox and checks it on the
+# Mac.
 #
 # #e2eold is a Tag that the Config does not define: the sheet shows it and a
 # tap removes it. A Note that starts with - is one the Host refuses, so its

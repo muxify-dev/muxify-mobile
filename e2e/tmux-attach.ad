@@ -2,9 +2,9 @@ context platform=ios kind=simulator
 
 # tmux attach over SSH (tickets 04 and 05).
 #
-# Requires a reachable dev Host in .env.local with a tmux Session already
-# running — see .env.local.example. Skip this suite if you have not configured
-# one; it will fail at the connection banner rather than silently pass.
+# Requires a dev Host in .env.local, and the sandbox, whose tmux server has
+# Session 0 — see e2e/sandbox.sh. Without them it fails at the connection
+# banner rather than silently pass.
 #
 # The assertion is indirect by necessity. The Surface renders with Metal, so
 # tmux's output never reaches the accessibility tree and cannot be asserted on.
@@ -13,7 +13,7 @@ context platform=ios kind=simulator
 # and the Shell Channel is carrying the Session; a failure reads "Failed: ..."
 # and fails this assertion with the reason visible.
 #
-# Run with:  agent-device test ./e2e/tmux-attach.ad
+# Run with:  bash e2e/sandbox.sh agent-device test ./e2e/tmux-attach.ad
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
@@ -28,7 +28,7 @@ press "label=\"Session 0\""
 wait "id=\"connection-status\"" 8000
 
 # The Surface laid out and reported a grid.
-is "visible" "id=\"surface-grid\""
+wait "id=\"surface-grid\"" 8000
 
 # Give the Connection time to authenticate and attach.
 wait 8000

@@ -19,7 +19,7 @@ context platform=ios kind=simulator
 # It ends by closing rather than dismissing, because the sheet it opens cannot
 # be dismissed from here. Other suites are unaffected: each one relaunches.
 #
-# Run with:  agent-device test ./e2e/session-picker.ad
+# Run with:  bash e2e/sandbox.sh agent-device test ./e2e/session-picker.ad
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000

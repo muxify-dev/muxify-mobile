@@ -54,7 +54,7 @@
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "e2e": "bash e2e/seed-dev-host.sh && agent-device test ./e2e/*.ad",
+    "e2e": "bash e2e/seed-dev-host.sh && bash e2e/sandbox.sh agent-device test ./e2e/tmux-attach.ad ./e2e/surface-smoke.ad ./e2e/session-picker.ad ./e2e/home-to-host-screen.ad",
     "e2e:roundtrip": "bash e2e/ls-round-trip.sh",
     "e2e:pickers": "bash e2e/pickers.sh",
     "e2e:regressions": "bash e2e/regressions.sh",
