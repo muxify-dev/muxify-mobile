@@ -279,11 +279,17 @@ const tid = (id: string) => id as TopicId;
 
 const topicCard = (
   id: string,
-  over: { state?: TopicState; mark?: Mark | null; note?: string | null; tags?: string[] } = {},
+  over: {
+    state?: TopicState;
+    mark?: Mark | null;
+    note?: string | null;
+    tags?: string[];
+    sessions?: SessionId[];
+  } = {},
 ): Card => ({
   kind: 'topic',
   mark: over.mark ?? null,
-  sessions: [],
+  sessions: over.sessions ?? [],
   topic: {
     id: tid(id),
     label: `Topic ${id}`,
@@ -305,6 +311,8 @@ const topicRow = (
   mark: null,
   pinned: false,
   dimmed: false,
+  // The seed's content is checked once, below, and in topic-detail.test.ts.
+  seed: expect.objectContaining({ id: tid(id) }) as Extract<HostScreenRow, { kind: 'topic' }>['seed'],
   ...over,
 });
 
@@ -523,6 +531,35 @@ describe('hostScreen with Topics', () => {
       }),
       sections: [
         topicsSection({ kind: 'unknown-card', text: 'one, two' }, { kind: 'unknown-card', text: 'banner' }),
+      ],
+    },
+    {
+      name: 'gives a Topic row what the Topic Screen draws at once: the card, and its Sessions by name',
+      topics: listed({
+        sessions: [snapshotSession('$1', 'cook', 't1'), snapshotSession('$2', 'work', 't1')],
+        unpinned: {
+          kind: 'list',
+          cards: [topicCard('t1', { note: 'Repro', tags: ['work'], sessions: [sid('$2'), sid('$1')] })],
+        },
+      }),
+      sections: [
+        topicsSection(
+          topicRow('t1', {
+            note: 'Repro',
+            tags: [{ name: 'work', color: null }],
+            seed: {
+              id: tid('t1'),
+              label: 'Topic t1',
+              note: 'Repro',
+              tags: ['work'],
+              state: 'live',
+              sessions: [
+                { id: sid('$2'), name: 'work', windows: null },
+                { id: sid('$1'), name: 'cook', windows: null },
+              ],
+            },
+          }),
+        ),
       ],
     },
     {

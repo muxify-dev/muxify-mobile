@@ -217,8 +217,9 @@ The phone screen for one Topic, opened by a tap on its card on the Host Screen.
 It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
 order, each with its Windows and their Agent marks. A tap on a Session attaches
 to it, and Home from that Session goes to the Host Screen. A Dormant or Empty
-Topic shows "No live Sessions" and says which of the two it is. The screen
-reads the Topic again each time it comes into view.
+Topic shows "No live Sessions" and says which of the two it is. It shows what
+the Host Screen last read at once, and reads the Topic again each time it comes
+into view. The Windows come in with that read.
 _Avoid_: Topic detail, Topic page, Topic view
 
 **New Topic**:
