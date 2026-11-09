@@ -8,6 +8,7 @@ import {
   listWindowsCommand,
   newWindowCommand,
   paneStateCommand,
+  claimWindowCommand,
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -96,6 +97,12 @@ export interface PaneState {
    * entirely, and has to be sent cursor keys instead.
    */
   wantsMouse: boolean;
+  /**
+   * Whether the application in the Pane shows the terminal's cursor. Claude
+   * Code, Codex and most full-screen programs hide it (`ESC[?25l`) once, at
+   * their start, and draw a cursor of their own.
+   */
+  cursorShown: boolean;
 }
 
 /** The Surface's cell grid, used to size the Client. */
@@ -258,12 +265,17 @@ export class TmuxClient {
    * Tells tmux how big this Client is.
    *
    * The only size Muxify sets, and it sets no Session option to do it. Under
-   * tmux's default `window-size latest` the Window follows this Client while
-   * it is the latest to have asked, and goes back when the Client leaves —
-   * ordinary tmux sizing, with nothing to restore. See resizeClientCommand.
+   * tmux's default `window-size latest` the Window follows this Client once it
+   * is the latest, and goes back when the Client leaves — ordinary tmux
+   * sizing, with nothing to restore. See claimWindowCommand.
    */
   async resizeClient(grid: Grid): Promise<void> {
-    await this.mustRun('resize the Client', resizeClientCommand(grid.cols, grid.rows));
+    // Written together: tmux runs them in the order they arrive, and nothing
+    // else gets between the claim and the size it is for.
+    await Promise.all([
+      this.mustRun('claim the Window', claimWindowCommand()),
+      this.mustRun('resize the Client', resizeClientCommand(grid.cols, grid.rows)),
+    ]);
   }
 
   /**
@@ -353,9 +365,9 @@ export class TmuxClient {
   async paneState(paneId: string): Promise<PaneState | undefined> {
     const reply = await this.runner.run(paneStateCommand(paneId));
     if (!reply.ok) return undefined;
-    const fields = splitFields(reply.text[0] ?? '', 7);
+    const fields = splitFields(reply.text[0] ?? '', 8);
     if (!fields) return undefined;
-    const [column, row, alternate, scrollback, width, height, wantsMouse] = fields;
+    const [column, row, alternate, scrollback, width, height, wantsMouse, cursorShown] = fields;
     return {
       cursorColumn: countOf(column),
       cursorRow: countOf(row),
@@ -364,6 +376,7 @@ export class TmuxClient {
       width: countOf(width),
       height: countOf(height),
       wantsMouse: wantsMouse === '1',
+      cursorShown: cursorShown !== '0',
     };
   }
 

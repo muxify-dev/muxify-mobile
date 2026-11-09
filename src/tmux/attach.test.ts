@@ -46,7 +46,7 @@ function fakeHost() {
     ],
     ['list-panes', ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']],
     ['list-sessions', ['work\t1']],
-    ['display-message', ['0\t0\t0\t100\t49\t41\t0']],
+    ['display-message', ['0\t0\t0\t100\t49\t41\t0\t1']],
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
@@ -290,7 +290,10 @@ describe('the order an Attach happens in', () => {
     // Surface; then Zoom, then the Topology, then the Session list.
     expect(kit.hosts[0].verbs()).toEqual([
       // Size first, then the Zoom preference — read, then applied because this
-      // Window was not zoomed — then the Topology, then the Session list.
+      // Window was not zoomed — then the Topology, then the Session list. The
+      // size goes with a claim on the Window, so a laptop that typed last does
+      // not keep it.
+      'select-window',
       'refresh-client',
       'list-windows',
       'resize-pane',
@@ -299,7 +302,7 @@ describe('the order an Attach happens in', () => {
       'list-sessions',
     ]);
     // The pre-layout grid never reached tmux.
-    expect(kit.hosts[0].commands[0]).toContain("'-C' '49x41'");
+    expect(kit.hosts[0].commands[1]).toContain("'-C' '49x41'");
   });
 
   it('publishes connecting and then connected', async () => {
@@ -621,7 +624,7 @@ describe('reconnecting by hand', () => {
     kit.hosts[1].accept();
     await settle();
 
-    expect(kit.hosts[1].commands[0]).toContain("'-C' '49x41'");
+    expect(kit.hosts[1].commands[1]).toContain("'-C' '49x41'");
     expect(kit.hosts[1].verbs()).toContain('list-windows');
   });
 
@@ -911,5 +914,53 @@ describe('the Panes on screen', () => {
     await settle();
 
     expect(second.written.length).toBeGreaterThan(0);
+  });
+});
+
+describe('another Client resizing the Window', () => {
+  /** The laptop typed last, so tmux gave the Window its 115x72. */
+  const LAPTOP_TOOK_IT = '%layout-change @0 b25d,115x72,0,0,0 b25d,115x72,0,0,0 *';
+
+  async function painted() {
+    const kit = attachOn();
+    await connected(kit);
+    const surface = fakeSurface();
+    kit.attach.surfaceForPane('%0', surface);
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    return { kit, surface, since: kit.hosts[0].commands.length };
+  }
+
+  it('repaints every Pane when the Window changes size', async () => {
+    const { kit, since } = await painted();
+
+    kit.hosts[0].notify(LAPTOP_TOOK_IT);
+    await settle();
+
+    expect(kit.hosts[0].verbs().slice(since)).toContain('capture-pane');
+  });
+
+  it('takes the Window back when the phone is typed on', async () => {
+    const { kit } = await painted();
+    kit.hosts[0].notify(LAPTOP_TOOK_IT);
+    await settle();
+    const before = kit.hosts[0].commands.length;
+
+    kit.attach.view('%0').type(new TextEncoder().encode('a'));
+    await settle();
+
+    const after = kit.hosts[0].commands.slice(before).join('\n');
+    expect(after).toContain("'select-window'");
+    expect(after).toContain("'refresh-client' '-C' '49x41'");
+  });
+
+  it('leaves the Window alone when it is already the phone’s size', async () => {
+    const { kit, since } = await painted();
+
+    kit.attach.view('%0').type(new TextEncoder().encode('a'));
+    await settle();
+
+    expect(kit.hosts[0].verbs().slice(since)).not.toContain('select-window');
   });
 });

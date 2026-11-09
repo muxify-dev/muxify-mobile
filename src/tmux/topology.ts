@@ -2,7 +2,7 @@ import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 
 import type { ControlEvent } from './control-protocol';
 import { parseWindowLayout } from './layout';
-import type { Pane, Window } from './tmux-client';
+import type { Grid, Pane, Window } from './tmux-client';
 
 /** The slice of TmuxClient a Topology read needs. */
 export interface TopologyReader {
@@ -22,6 +22,21 @@ export interface Topology {
 }
 
 export const EMPTY_TOPOLOGY: Topology = { windows: [], panes: [] };
+
+/**
+ * The size of the active Window, in cells: the box round its Panes, as the
+ * Layout places them. Null before there are Panes to measure.
+ */
+export function windowGrid(topology: Topology): Grid | null {
+  if (topology.panes.length === 0) return null;
+  let cols = 0;
+  let rows = 0;
+  for (const pane of topology.panes) {
+    cols = Math.max(cols, pane.left + pane.width);
+    rows = Math.max(rows, pane.top + pane.height);
+  }
+  return cols > 0 && rows > 0 ? { cols, rows } : null;
+}
 
 /**
  * What a notification did to the model, as far as this file is concerned.

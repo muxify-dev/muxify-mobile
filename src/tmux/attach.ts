@@ -29,7 +29,7 @@ import {
   type ScrollPosition,
 } from './pane-view';
 import type { Extent } from './pane-layout';
-import { createTopologyStore, EMPTY_TOPOLOGY, type Topology, type TopologyStore } from './topology';
+import { createTopologyStore, EMPTY_TOPOLOGY, windowGrid, type Topology, type TopologyStore } from './topology';
 import type { TmuxTransport } from './transport';
 import { sameGrid, TmuxClient, type Grid, type Session } from './tmux-client';
 
@@ -413,8 +413,16 @@ export function openAttach(options: AttachOptions): Attach {
         paneState: (id) => reading().paneState(id),
         capturePane: (id) => reading().capturePane(id),
         captureScrollback: (id, start, end) => reading().captureScrollback(id, start, end),
-        sendKeys: (id, bytes) => reading().sendKeys(id, bytes),
-        sendKey: (id, key) => reading().sendKey(id, key),
+        // Input is what says the phone is the one in use, so it is what takes
+        // the Window back from a laptop that resized it.
+        sendKeys: (id, bytes) => {
+          sizing.reclaim();
+          return reading().sendKeys(id, bytes);
+        },
+        sendKey: (id, key) => {
+          sizing.reclaim();
+          return reading().sendKey(id, key);
+        },
       },
       {
         onScroll: (position) => {
@@ -596,10 +604,21 @@ export function openAttach(options: AttachOptions): Attach {
       // Publishing the Topology is all that is needed: the Surfaces on screen
       // are derived from it, so a split made on the laptop, a Window switch or
       // somebody else's `select-pane` all arrive the same way.
+      let windowSize: Grid | null = null;
       topology.subscribe((next) => {
         if (stale(mine)) return;
         pruneViews(next);
         change({ topology: next });
+        const size = windowGrid(next);
+        if (!size) return;
+        sizing.windowSized(size);
+        // A Window that changed size has its Panes drawn for the old width,
+        // and their output does not redraw all of it. Captures do.
+        if (windowSize && !sameGrid(size, windowSize)) {
+          say(`Window resized to ${size.cols}x${size.rows}; resyncing every Pane`);
+          for (const view of views.values()) view.resync();
+        }
+        windowSize = size;
       });
 
       change({ phase: { kind: 'connected' } });

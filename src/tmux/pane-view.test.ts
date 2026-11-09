@@ -28,6 +28,7 @@ const paneState = (over: Partial<PaneState> = {}): PaneState => ({
   width: 80,
   height: 24,
   wantsMouse: false,
+  cursorShown: true,
   ...over,
 });
 
@@ -928,6 +929,29 @@ describe('which Pane draws a cursor', () => {
     // hidden cursor that is nowhere in particular is one that reappears in the
     // wrong place the moment the Pane is tapped.
     expect(shown(kit.written)).toContain('<ESC>[2;6H');
+    expect(shown(kit.written)).not.toContain('<ESC>[?25h');
+  });
+
+  it('leaves it hidden after a repaint when the application hid it', async () => {
+    // Claude Code and Codex hide the terminal's cursor and draw their own. A
+    // repaint that showed it anyway put a second, blue one beside theirs.
+    const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1, cursorShown: false }));
+    const kit = viewOn(host);
+    await paints(kit);
+
+    expect(shown(kit.written)).toContain('<ESC>[2;6H');
+    expect(shown(kit.written)).not.toContain('<ESC>[?25h');
+  });
+
+  it('leaves it hidden when the Pane takes the keyboard, if the application hid it', async () => {
+    const host = fakePane(paneState({ cursorShown: false }));
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.view.setActive(false);
+    kit.written.length = 0;
+
+    kit.view.setActive(true);
+
     expect(shown(kit.written)).not.toContain('<ESC>[?25h');
   });
 

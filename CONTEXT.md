@@ -138,7 +138,10 @@ has no terminal, renders nothing, and holds no Session option of its own. A
 Session can have several Clients and tmux keeps each one's size separately — so
 a Client's size is not the Session's size and not the Surface's. Muxify's is
 the phone's screen with the keyboard down, and the keyboard does not change it
-(ADR 0008).
+(ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
+latest Client, and a laptop that types becomes it. So Muxify claims the Window
+with every size it asks for, and again on the next key typed on the phone after
+another Client has taken it.
 _Avoid_: viewer, terminal, connection
 
 **Slide**:
