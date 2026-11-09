@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 
 import {
   BottomSheet,
@@ -31,6 +31,7 @@ import {
   labelStyle,
   layoutPriority,
   offset,
+  onGeometryChange,
   padding,
   presentationBackground,
   presentationDetents,
@@ -40,12 +41,22 @@ import {
   toggleStyle,
 } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'sf-symbols-typescript';
-import { Dimensions, StyleSheet } from 'react-native';
+import { StyleSheet, useWindowDimensions } from 'react-native';
 
 import type { SheetPalette } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import type { Frame } from '@/tmux/pane-topology';
-import { gridContentHeight } from './sheet-layout';
+import {
+  ACTION_BAR_HEIGHT,
+  CONTENT_TO_ACTIONS,
+  GRID_GAP,
+  HEADER_HEIGHT,
+  HEADER_TO_CONTENT,
+  SHEET_PADDING,
+  sheetHeight,
+  sheetMetrics,
+  type Size,
+} from './sheet-layout';
 
 /** One thing that can be picked, with enough to draw a preview of it. */
 export interface PreviewCard {
@@ -89,70 +100,13 @@ export interface PickerSheetProps {
   zoom?: { on: boolean; onChange: (on: boolean) => void };
 }
 
-const SHEET_PADDING = 16;
-/** The sheet is as wide as the screen, so its content is too. */
-const CONTENT_WIDTH = Dimensions.get('window').width - SHEET_PADDING * 2;
-
-/** The gaps between the sheet's parts, top to bottom. */
-const HEADER_TO_CONTENT = 12;
-const CONTENT_TO_ACTIONS = 16;
-const ACTION_BAR_HEIGHT = 44;
-
-const GRID_GAP = 10;
-const GRID_CARD_WIDTH = Math.floor((CONTENT_WIDTH - GRID_GAP) / 2);
-/** Window tiles are slightly taller than they are wide, so the chip fits. */
-const GRID_CARD_HEIGHT = Math.ceil(GRID_CARD_WIDTH * 1.1);
-const LIST_CARD_HEIGHT = 150;
-
 /** The Pane diagram: a 4:3 well with the tiles inset inside it. */
-const BOARD_HEIGHT = Math.ceil(CONTENT_WIDTH * 0.75);
 const BOARD_INSET = 6;
 const TILE_GAP = 4;
 
 /** Corner radii, shared by whatever draws the shape and whatever outlines it. */
 const BOARD_RADIUS = 12;
 const CARD_RADIUS = 12;
-
-const HEADER_HEIGHT = 38;
-/** Room below the action bar for the home indicator. */
-const SAFE_BOTTOM = 24;
-
-/**
- * Everything in the sheet that is not the content: the height its cards have to
- * fit around.
- */
-const CHROME_HEIGHT =
-  SHEET_PADDING * 2 +
-  HEADER_HEIGHT +
-  HEADER_TO_CONTENT +
-  CONTENT_TO_ACTIONS +
-  ACTION_BAR_HEIGHT +
-  SAFE_BOTTOM;
-
-/** What is left for cards when the sheet is as tall as it is allowed to get. */
-const CONTENT_BUDGET = Math.max(0, Dimensions.get('window').height * 0.9 - CHROME_HEIGHT);
-
-/**
- * How tall this sheet should be.
- *
- * Measured, never a fraction of the screen: a fraction is the wrong height
- * twice, too tall for three Windows and too short for nine, and either way the
- * actions end up marooned below a gap. The Pane diagram is a fixed shape; a
- * grid takes what its rows need, up to the budget. See gridContentHeight.
- */
-function sheetHeight(layout: PickerSheetProps['layout'], count: number): number {
-  if (layout === 'panes') return CHROME_HEIGHT + BOARD_HEIGHT;
-  const content = gridContentHeight(
-    {
-      count,
-      perRow: layout === 'grid' ? 2 : 1,
-      cardHeight: layout === 'grid' ? GRID_CARD_HEIGHT : LIST_CARD_HEIGHT,
-      gap: GRID_GAP,
-    },
-    CONTENT_BUDGET,
-  );
-  return CHROME_HEIGHT + content;
-}
 
 /**
  * The glass sheet behind every Dock picker.
@@ -196,6 +150,12 @@ export function PickerSheet({
   // the chrome follows it immediately even though the Surface waits for the
   // next Attach.
   const { appearance, sheetPalette: palette } = useSettings();
+  // The sheet's width is known only once it is laid out, so the window stands
+  // in until then. The measurement that follows fits everything to the sheet.
+  const screen = useWindowDimensions();
+  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+  const metrics = sheetMetrics(measuredWidth ?? screen.width, screen.height);
+  const height = sheetHeight(metrics, layout, cards.length);
 
   return (
     <Host matchContents style={styles.host}>
@@ -208,10 +168,15 @@ export function PickerSheet({
           modifiers={[
             presentationDetents(
               layout === 'panes'
-                ? [{ height: sheetHeight(layout, cards.length) }]
+                ? [{ height }]
                 : // A grid that had to be cut can be dragged open; one that fits
                   // has nothing to drag to.
-                  [{ height: sheetHeight(layout, cards.length) }, 'large'],
+                  [{ height }, 'large'],
+              // The height changes once the sheet has measured itself, and the
+              // detent it opened at goes with it. Without a selection that
+              // follows, SwiftUI is left holding a detent it no longer offers,
+              // and the sheet does not open.
+              { selection: { height } },
             ),
             presentationDragIndicator('hidden'),
             // The Theme's appearance, not the phone's: Solarized is a light
@@ -223,7 +188,17 @@ export function PickerSheet({
             // over a Dracula terminal no matter what colorScheme says.
             presentationBackground(palette.sheet),
           ]}>
-          <VStack spacing={0} modifiers={[padding({ all: SHEET_PADDING })]}>
+          <VStack
+            spacing={0}
+            modifiers={[
+              padding({ all: SHEET_PADDING }),
+              // As wide as the sheet whatever the content asks for, so the
+              // measurement is the sheet's width and not its content's.
+              frame({ minWidth: 0, maxWidth: Infinity }),
+              onGeometryChange(({ width }) => {
+                if (width > 0 && width !== measuredWidth) setMeasuredWidth(width);
+              }),
+            ]}>
             <Header title={title} onDismiss={onDismiss} />
 
             <VStack spacing={0} modifiers={[padding({ top: HEADER_TO_CONTENT })]}>
@@ -236,7 +211,12 @@ export function PickerSheet({
               ) : null}
 
               {cards.length > 0 && layout === 'panes' ? (
-                <PaneBoard cards={cards} palette={palette} onSelect={onSelect} />
+                <PaneBoard
+                  cards={cards}
+                  board={metrics.board}
+                  palette={palette}
+                  onSelect={onSelect}
+                />
               ) : null}
 
               {cards.length > 0 && layout !== 'panes' ? (
@@ -249,8 +229,7 @@ export function PickerSheet({
                             key={card.id}
                             card={card}
                             palette={palette}
-                            width={layout === 'grid' ? GRID_CARD_WIDTH : CONTENT_WIDTH}
-                            height={layout === 'grid' ? GRID_CARD_HEIGHT : LIST_CARD_HEIGHT}
+                            size={layout === 'grid' ? metrics.gridCard : metrics.listCard}
                             onSelect={onSelect}
                           />
                         ))}
@@ -355,16 +334,18 @@ function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) 
  */
 function PaneBoard({
   cards,
+  board,
   palette,
   onSelect,
 }: {
   cards: PreviewCard[];
+  board: Size;
   palette: SheetPalette;
   onSelect: (id: string) => void;
 }) {
   const well = {
-    width: CONTENT_WIDTH - BOARD_INSET * 2,
-    height: BOARD_HEIGHT - BOARD_INSET * 2,
+    width: board.width - BOARD_INSET * 2,
+    height: board.height - BOARD_INSET * 2,
   };
 
   return (
@@ -374,7 +355,7 @@ function PaneBoard({
         // `alignment` on the stack settles the children against each other;
         // the frame needs its own, or SwiftUI centres the whole stack inside
         // it and every offset below is measured from the wrong corner.
-        frame({ width: CONTENT_WIDTH, height: BOARD_HEIGHT, alignment: 'topLeading' }),
+        frame({ width: board.width, height: board.height, alignment: 'topLeading' }),
         background(palette.well),
         clipShape('roundedRectangle', BOARD_RADIUS),
         outline(palette.stroke, 1, BOARD_RADIUS),
@@ -450,14 +431,12 @@ function PaneTile({
 function PreviewButton({
   card,
   palette,
-  width,
-  height,
+  size: { width, height },
   onSelect,
 }: {
   card: PreviewCard;
   palette: SheetPalette;
-  width: number;
-  height: number;
+  size: Size;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -555,7 +534,7 @@ function Footer({
     <HStack
       spacing={0}
       modifiers={[
-        frame({ width: CONTENT_WIDTH, height: ACTION_BAR_HEIGHT }),
+        frame({ maxWidth: Infinity, minHeight: ACTION_BAR_HEIGHT, maxHeight: ACTION_BAR_HEIGHT }),
         // Glass before padding, so the capsule is the bar rather than the bar
         // plus the gap above it.
         glassEffect({ glass: { variant: 'regular', interactive: true }, shape: 'capsule' }),

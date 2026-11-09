@@ -1,4 +1,4 @@
-import { gridContentHeight } from './sheet-layout';
+import { gridContentHeight, sheetHeight, sheetMetrics } from './sheet-layout';
 
 /** Cards 100 tall with 10 between them, two to a row. */
 const GRID = { perRow: 2, cardHeight: 100, gap: 10 };
@@ -39,5 +39,46 @@ describe('gridContentHeight', () => {
 
   it('has no height for nothing to show', () => {
     expect(gridContentHeight({ ...GRID, count: 0 }, 1000)).toBe(0);
+  });
+});
+
+/** iPhone 17, and an iPad Pro 11-inch card as the sheet measures it. */
+const IPHONE = { width: 402, height: 874 };
+const IPAD_CARD = { width: 834, portraitHeight: 1210, landscapeHeight: 834 };
+
+describe('sheetMetrics', () => {
+  it('gives a sheet as wide as an iPhone screen the sizes it had before', () => {
+    const metrics = sheetMetrics(IPHONE.width, IPHONE.height);
+    expect(metrics.contentWidth).toBe(370);
+    expect(metrics.gridCard).toEqual({ width: 180, height: 199 });
+    expect(metrics.listCard).toEqual({ width: 370, height: 150 });
+    expect(metrics.board).toEqual({ width: 370, height: 278 });
+  });
+
+  it('fits everything inside the width of the sheet it is given', () => {
+    const metrics = sheetMetrics(IPAD_CARD.width, IPAD_CARD.portraitHeight);
+    expect(metrics.contentWidth).toBe(IPAD_CARD.width - 32);
+    expect(metrics.board.width).toBeLessThanOrEqual(metrics.contentWidth);
+    expect(metrics.gridCard.width * 2 + 10).toBeLessThanOrEqual(metrics.contentWidth);
+  });
+
+  it('keeps a whole Pane diagram on a short landscape screen, at 4:3', () => {
+    const metrics = sheetMetrics(IPAD_CARD.width, IPAD_CARD.landscapeHeight);
+    const panes = sheetHeight(metrics, 'panes', 3);
+    expect(panes).toBeLessThanOrEqual(IPAD_CARD.landscapeHeight * 0.9);
+    expect(metrics.board.height).toBeLessThan(Math.ceil(metrics.contentWidth * 0.75));
+    expect(metrics.board.width / metrics.board.height).toBeCloseTo(4 / 3, 1);
+  });
+
+  it('gives a grid the same height budget as the diagram', () => {
+    const metrics = sheetMetrics(IPAD_CARD.width, IPAD_CARD.landscapeHeight);
+    expect(sheetHeight(metrics, 'grid', 40)).toBeLessThanOrEqual(IPAD_CARD.landscapeHeight * 0.9);
+  });
+
+  it('never goes negative on a very narrow sheet', () => {
+    const metrics = sheetMetrics(20, 300);
+    expect(metrics.contentWidth).toBe(0);
+    expect(metrics.gridCard.width).toBe(0);
+    expect(metrics.board).toEqual({ width: 0, height: 0 });
   });
 });
