@@ -56,7 +56,7 @@ agent-device press "$KB" >/dev/null 2>&1
 sleep 4
 LETTERS=$(agent-device snapshot -i 2>/dev/null | grep -cE '\[key\] "[a-z]"')
 [ "$LETTERS" -ge 20 ] || fail "software keyboard did not appear (letter keys=$LETTERS). \
-Check Simulator I/O > Keyboard > Connect Hardware Keyboard is OFF."
+Run it through e2e/sandbox.sh, which keeps iOS from minimizing the keyboard."
 
 echo "4/5  typing 'ls' on the device"
 agent-device type "ls" >/dev/null 2>&1

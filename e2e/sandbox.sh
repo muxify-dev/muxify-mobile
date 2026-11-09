@@ -28,8 +28,9 @@
 # prompt is `$ `. Suites address its Window as 0:0.0 and read that prompt back.
 #
 # When the command ends, also when it fails, the sandbox's tmux server and sshd
-# are stopped, its folder is removed and the app's records and settings files
-# are put back. The command's exit status is this script's.
+# are stopped, its folder is removed, and the app's records and settings files
+# and the simulator's keyboard setting are put back. The command's exit status
+# is this script's.
 
 set -uo pipefail
 
@@ -44,6 +45,15 @@ SETTINGS="$DOCUMENTS/muxify-settings.json"
 # while the files are swapped under it.
 stop_app() { xcrun simctl terminate booted "$APP" >/dev/null 2>&1; }
 
+# iOS minimizes the software keyboard to a bar with no keys while it believes
+# a hardware keyboard is attached, and the simulator attaches and detaches its
+# virtual one on its own schedule. AutomaticMinimizationEnabled is the iOS
+# setting behind that, so with it off every run gets the full keyboard that the
+# suites press keys on, whatever the simulator has attached.
+keyboard_minimization() {
+  xcrun simctl spawn booted defaults "$1" com.apple.keyboard.preferences AutomaticMinimizationEnabled "${@:2}"
+}
+
 cleanup() {
   stop_app
   TMUX_TMPDIR="$ROOT" env -u TMUX -u TMUX_PANE tmux kill-server >/dev/null 2>&1
@@ -51,6 +61,11 @@ cleanup() {
   for file in "$RECORDS" "$SETTINGS"; do
     [ -f "$ROOT/saved/${file##*/}" ] && cp "$ROOT/saved/${file##*/}" "$file"
   done
+  case "$(cat "$ROOT/saved/keyboard-minimization" 2>/dev/null)" in
+    1) keyboard_minimization write -bool true ;;
+    0) keyboard_minimization write -bool false ;;
+    unset) keyboard_minimization delete 2>/dev/null ;;
+  esac
   rm -rf "$ROOT"
 }
 trap cleanup EXIT
@@ -79,6 +94,8 @@ nc -z 127.0.0.1 "$PORT" 2>/dev/null || { echo "the sandbox sshd did not start"; 
 
 stop_app
 cp "$RECORDS" "$SETTINGS" "$ROOT/saved/" || exit 1
+{ keyboard_minimization read 2>/dev/null || echo unset; } >"$ROOT/saved/keyboard-minimization"
+keyboard_minimization write -bool false || exit 1
 python3 - "$RECORDS" "$PORT" <<'PY' || exit 1
 import json, sys
 path, port = sys.argv[1], int(sys.argv[2])

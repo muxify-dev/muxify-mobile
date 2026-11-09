@@ -106,15 +106,13 @@ for n in json.load(sys.stdin)['data']['nodes']:
         break
 "
 }
-# Nothing in this suite types through `agent-device type`, and the reason is
-# worth a paragraph. It types by sending hardware key events, and the simulator
-# takes the first of those as a hardware keyboard being attached: from then on
-# every software keyboard in the app — the Surface's, a plain text field's —
-# is presented below the bottom edge of the screen, where it covers nothing and
-# lifts nothing. Measured: a keyboard node at y equal to the screen height, the
-# Dock unmoved, and the same for the Add Host form's Name field. Nothing short
-# of a reboot brings it back. So text the Pane needs goes in through tmux, and
-# only the keys under test — Return, delete — are pressed on the glass.
+# Text the Pane needs goes in through tmux, and only the keys under test —
+# Return, delete — are pressed on the glass. Typing with `agent-device type`
+# sends hardware key events, and while iOS believes a hardware keyboard is
+# attached it minimizes every software keyboard in the app to a bar at the
+# bottom edge, which covers nothing and lifts nothing. e2e/sandbox.sh turns
+# that minimization off for the run; text that is only setup still has no
+# reason to depend on it.
 type_into_pane() { on_host "tmux send-keys -t '$SESSION:' -l '$1'"; }
 # The last line the Pane is showing, which is the one being typed on.
 typed_line() { on_host "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
