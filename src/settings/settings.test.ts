@@ -39,6 +39,7 @@ describe('parseSettings', () => {
         hostScreenLists: ['topics', 'sessions'],
         recentSessionsFirst: false,
         reconnectOnStart: true,
+        showStatusLines: false,
       }),
     ).toEqual({
       fontSize: 14,
@@ -47,6 +48,7 @@ describe('parseSettings', () => {
       hostScreenLists: ['topics', 'sessions'],
       recentSessionsFirst: false,
       reconnectOnStart: true,
+      showStatusLines: false,
     });
   });
 
@@ -87,6 +89,7 @@ describe('parseSettings', () => {
         hostScreenLists: 7,
         recentSessionsFirst: 'no',
         reconnectOnStart: 'yes',
+        showStatusLines: 'off',
       }),
     ).toEqual({
       fontSize: 13,
@@ -95,7 +98,12 @@ describe('parseSettings', () => {
       hostScreenLists: ['sessions'],
       recentSessionsFirst: true,
       reconnectOnStart: false,
+      showStatusLines: true,
     });
+  });
+
+  it('keeps the Status Lines on for settings saved before they could be hidden', () => {
+    expect(parseSettings({ theme: 'dracula' }).showStatusLines).toBe(true);
   });
 
   it.each<[string, unknown, boolean]>([

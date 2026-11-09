@@ -38,6 +38,12 @@ export interface Settings {
    * nobody asked for.
    */
   reconnectOnStart: boolean;
+  /**
+   * Whether the Terminal Screen shows its Status Lines. On by default, as they
+   * were before they could be hidden. Off loses nothing about the Connection:
+   * the Banner reports every state other than connected.
+   */
+  showStatusLines: boolean;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
@@ -57,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hostScreenLists: ['sessions'],
   recentSessionsFirst: true,
   reconnectOnStart: false,
+  showStatusLines: true,
 };
 
 /** Keeps a font size inside what the Surface will accept. */
@@ -165,6 +172,7 @@ export function parseSettings(raw: unknown): Settings {
   const zoom = record.zoomMultipaneWindows;
   const recentFirst = record.recentSessionsFirst;
   const reconnect = record.reconnectOnStart;
+  const statusLines = record.showStatusLines;
 
   return {
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
@@ -176,5 +184,7 @@ export function parseSettings(raw: unknown): Settings {
       typeof recentFirst === 'boolean' ? recentFirst : DEFAULT_SETTINGS.recentSessionsFirst,
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
+    showStatusLines:
+      typeof statusLines === 'boolean' ? statusLines : DEFAULT_SETTINGS.showStatusLines,
   };
 }
