@@ -1,7 +1,8 @@
 import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import type { SFSymbol } from 'sf-symbols-typescript';
@@ -9,17 +10,36 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Banner, Presence } from '@/components/banner';
 import { ReconnectScreen } from '@/components/reconnect-screen';
-import { Dock, type DockCapsule } from '@/components/dock';
 import { KeyBar } from '@/components/key-bar';
+import { KeyRow, type KeyRowButton } from '@/components/key-row';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
+import {
+  HEADER_HEIGHT,
+  TerminalHeader,
+  type HeaderTitle,
+  type OptionsItem,
+} from '@/components/terminal-header';
 import { ThemedText } from '@/components/themed-text';
+import { TitleSheet, type TitlePick } from '@/components/title-sheet';
 import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
 import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
+import { useCopyLog } from '@/hooks/use-copy-log';
+import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
+import type { TopicId } from '@/topics/environment';
+import { readTopic } from '@/topics/read-topic';
+import {
+  lastTopic,
+  loadingTopic,
+  settledTopic,
+  TOPIC_UNASKED,
+  type TopicView,
+} from '@/topics/topic-detail';
 import {
   LOOKUP_START,
   reconnect as reconnectToSession,
@@ -45,20 +65,17 @@ import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
-import { trimPreview, windowPreviewTarget } from '@/tmux/preview';
+import { trimPreview } from '@/tmux/preview';
 import type { Grid, Pane } from '@/tmux/tmux-client';
-
-/** What the Surface uses when the user has not picked a size. */
-const DEFAULT_FONT_SIZE = 13;
 
 /**
  * The screen's own voice in the Log.
  *
  * What it says is what the Attach cannot know: which Surfaces are on screen
- * and where, what the Dock was asked for and whether there was a Pane to ask
- * it of, when the keyboard moved. A Pane that went blank is described from
- * both sides — the Attach's line says what it was told, and this one says
- * what was drawn.
+ * and where, what the Options menu, the Key Row and the sheets were asked for
+ * and whether there was a Pane to ask it of, when the keyboard moved. A Pane
+ * that went blank is described from both sides — the Attach's line says what
+ * it was told, and this one says what was drawn.
  */
 const say = speakingAs(deviceLog(), 'screen');
 
@@ -88,8 +105,8 @@ type PaneSlot = {
   fillsWindow: boolean;
 };
 
-/** What a picker is picking. One sheet serves all three. */
-type PickerKind = 'sessions' | 'windows' | 'panes';
+/** What a picker is picking. One sheet serves both. */
+type PickerKind = 'sessions' | 'panes';
 
 /** The sheet: closed, or open and showing whatever it has so far. */
 type PickerState =
@@ -101,6 +118,9 @@ type PickerState =
       cards: PreviewCard[];
       error?: string;
     };
+
+/** The Title Sheet: closed, or open on the Session's Windows or the Topic's Sessions. */
+type TitleSheetState = { open: false } | { open: true; kind: 'windows' | 'topic'; error?: string };
 
 /**
  * One Session, on screen.
@@ -130,11 +150,11 @@ export default function TerminalScreen() {
     /** Set by a cold start that reopens the Last Place: look first, then attach. */
     reconnect?: string;
   }>();
-  // The screen draws its own chrome: no navigation header, so the Surface
-  // background runs to the top of the display and only the inset keeps text
-  // clear of the status bar. Going Home is the Dock's job, not a back button's.
+  // The screen draws its own chrome: no navigation header, so the terminal
+  // background runs to the top of the display and only the inset keeps the
+  // Header clear of the status bar.
   const insets = useSafeAreaInsets();
-  const { settings, terminal, ansi, appearance } = useSettings();
+  const { settings, update, terminal, ansi, appearance } = useSettings();
 
   const holder = useAttachHolder();
   const attach = useCurrentAttach();
@@ -160,17 +180,9 @@ export default function TerminalScreen() {
     if (reconnecting.kind === 'attached') setShowReconnect(false);
   }, [reconnecting.kind]);
 
-  // Home is the Host Screen of the Host this Session is on, where the next
-  // Session is a tap away; Back from there is the Hosts list. With no Host in
-  // the route there is no Host Screen to go to. The Session stays attached —
-  // this is navigation and nothing else.
-  const goHome = useCallback(
-    () =>
-      hostId
-        ? router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } })
-        : router.dismissTo('/'),
-    [router, hostId],
-  );
+  // Back goes Home, where every Host's Sessions are a tap away. The Session
+  // stays attached — this is navigation and nothing else (ADR 0007).
+  const goHome = useCallback(() => router.dismissTo('/'), [router]);
 
   /**
    * Asks the root for the Session this route names, if it is not already up.
@@ -261,15 +273,19 @@ export default function TerminalScreen() {
   const armedRef = useRef<Modifiers>(NO_MODIFIERS);
   armedRef.current = armed;
   const [picker, setPicker] = useState<PickerState>({ open: false });
+  const [titleSheet, setTitleSheet] = useState<TitleSheetState>({ open: false });
 
   /**
-   * The Theme and font size this Session was opened with.
+   * The Theme this Session was opened with.
    *
-   * Frozen on arrival rather than followed: changing the font under a live
-   * Surface would reflow the grid, which means a resize, which means tmux
-   * redrawing mid-session. Settings apply from the next Attach, a step away.
+   * Frozen on arrival rather than followed: a Theme changed under a live
+   * Surface would repaint it in colours the Host never sent. It applies from
+   * the next Attach, a step away. The font size is not frozen: the Options
+   * menu changes it live, the Surfaces reflow and report new grids, and the
+   * sizing path resizes the Client to them.
    */
-  const [opened] = useState(() => ({ font: settings.fontSize, terminal, ansi }));
+  const [opened] = useState(() => ({ terminal, ansi }));
+  const fontSize = fontSizeInForce(settings.fontSize);
 
   const topology = state?.topology;
   const visibleGrid = state?.grid ?? null;
@@ -301,7 +317,7 @@ export default function TerminalScreen() {
    * down and kept while it is up.
    *
    * The keyboard does not resize the Window — see ADR 0008. It used to: the
-   * Dock lifts, the container shrinks, the Surface reports a smaller grid and
+   * Key Row lifts, the container shrinks, the Surface reports a smaller grid and
    * the Host is told to reflow the Window to it, and back again on the way
    * down. Every keyboard toggle was a remote resize, and a resize is where a
    * terminal's text moves — up into the Scrollback on the way down, and back
@@ -424,7 +440,7 @@ export default function TerminalScreen() {
    * whose only job was to remember the last render's value. What a closing
    * sheet means for the Client's size is the sizing module's business.
    */
-  const sheetOpen = picker.open;
+  const sheetOpen = picker.open || titleSheet.open;
   useEffect(() => {
     attach?.sheetPresented(sheetOpen);
   }, [attach, sheetOpen]);
@@ -593,7 +609,7 @@ export default function TerminalScreen() {
    * The question goes to the Surface rather than to a global listener: React
    * Native's registry never heard of this view, so `Keyboard.dismiss()` was a
    * no-op and there was no way at all to raise the keyboard again. The
-   * listener below only decides which way the Dock's button points.
+   * listener below only decides which way the Key Row's button points.
    */
   const toggleKeyboard = useCallback(() => {
     if (composerOpen) {
@@ -622,8 +638,8 @@ export default function TerminalScreen() {
    * What a picker would show, from the model that is already right.
    *
    * No round trip for the rows: tmux has been pushing changes all along, so a
-   * Windows or Panes sheet opens on a Topology that is current, and a Sessions
-   * sheet on a list kept by `%sessions-changed`. Previews are the exception —
+   * Panes sheet opens on a Topology that is current, and a Sessions sheet on
+   * a list kept by `%sessions-changed`. Previews are the exception —
    * a picture of a Pane is only worth anything if it is of now — and they fill
    * in behind an already-open sheet.
    */
@@ -642,17 +658,6 @@ export default function TerminalScreen() {
           detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
           current: session.name === state.sessionName,
           preview: previewOf(state.previews, `${session.name}:`),
-        }));
-      }
-
-      if (kind === 'windows') {
-        return state.topology.windows.map((window) => ({
-          id: String(window.index),
-          title: window.name,
-          detail: `${window.command} · ${window.paneCount} ${plural(window.paneCount, 'pane')}`,
-          current: window.active,
-          badge: String(window.index),
-          preview: previewOf(state.previews, windowPreviewTarget(state.sessionName, window.index)),
         }));
       }
 
@@ -679,9 +684,9 @@ export default function TerminalScreen() {
    * Two things a notification cannot carry. **Previews** are screen content,
    * and a picture of a Pane is worth nothing unless it is of now. And **what a
    * Pane is running** — `#{pane_current_command}`, `#{pane_current_path}` —
-   * changes with no notification at all: nothing is pushed when a shell starts
-   * `vim`, so the Windows sheet's detail line and the Panes sheet's title would
-   * otherwise freeze at the last time the Topology changed shape.
+   * changes with no notification of its own: nothing is pushed when a shell
+   * starts `vim`, so the Panes sheet's title would otherwise freeze at the
+   * last time the Topology changed shape.
    *
    * It is why the rows are drawn from the model *first*. The sheet is never
    * waiting on this — it opens filled and corrects itself a round trip later.
@@ -689,15 +694,11 @@ export default function TerminalScreen() {
   const refreshBehindSheet = useCallback(
     (kind: PickerKind) => {
       if (!attach || !state) return;
-      if (kind !== 'sessions') attach.refreshTopology();
-      if (kind === 'panes') return;
-      attach.capturePreviews(
-        kind === 'sessions'
-          ? (state.sessions ?? []).map((session) => `${session.name}:`)
-          : state.topology.windows.map((window) =>
-              windowPreviewTarget(state.sessionName, window.index),
-            ),
-      );
+      if (kind === 'panes') {
+        attach.refreshTopology();
+        return;
+      }
+      attach.capturePreviews((state.sessions ?? []).map((session) => `${session.name}:`));
     },
     [attach, state],
   );
@@ -761,8 +762,6 @@ export default function TerminalScreen() {
               return;
             }
             await attach.switchSession(id);
-          } else if (kind === 'windows') {
-            await attach.selectWindow(Number(id));
           } else {
             const pane = state.topology.panes.find((each) => each.index === Number(id));
             if (!pane) return;
@@ -777,15 +776,14 @@ export default function TerminalScreen() {
     [attach, state, showPickerError],
   );
 
-  /** Zoom, split and new-Window: the sheet's bottom bar. */
+  /** The Splits: the Panes sheet's bottom bar. */
   const runSheetAction = useCallback(
     (id: string) => {
       say(`sheet action ${id}`);
       if (!attach) return;
       void (async () => {
         try {
-          if (id === 'new-window') await attach.newWindow();
-          else if (id === 'split-right') await attach.split('right');
+          if (id === 'split-right') await attach.split('right');
           else if (id === 'split-down') await attach.split('down');
           setPicker({ open: false });
         } catch (error) {
@@ -796,15 +794,7 @@ export default function TerminalScreen() {
     [attach, showPickerError],
   );
 
-  /**
-   * The quiet overlay text, in the Theme's own dim tone.
-   *
-   * It sits directly on the Surface, so a fixed colour is right for exactly one
-   * Theme and unreadable in another — Solarized's terminal is nearly white.
-   */
-  const dimText = useMemo(() => ({ color: opened.terminal.dim }), [opened.terminal.dim]);
-
-  /** The Theme's chrome colours: the Key Bar's labels, and the Dock's badges. */
+  /** The Theme's chrome colours: the Key Bar's labels and the Banners. */
   const chrome = useMemo(() => paletteFor(settings.theme), [settings.theme]);
 
   /**
@@ -829,121 +819,264 @@ export default function TerminalScreen() {
   }, []);
 
   /**
-   * The Dock's capsules, left to right.
-   *
-   * Three, because there are three kinds of thing: the things the Session is
-   * made of, the keys the phone's keyboard does not have, and the way out. One
-   * long row said none of that.
-   *
-   * The pickers lead because they are what a hand reaches for most; the Key
-   * Bar takes the middle because it is the one that grows into whatever width
-   * is left; and Home sits at the far end from the arrows, because a Home
-   * pressed by a thumb aiming for an arrow is a Session left by accident.
+   * The Topic this Session was opened from, read from the Host: the header's
+   * first line and the Title Sheet's Sessions. Read when the screen opens and
+   * again each time the sheet opens, because the Mac can change it meanwhile.
+   * The last answer stays while a read is in flight, as on the Topic Screen.
    */
-  const dockCapsules: DockCapsule[] = useMemo(() => {
+  const [topicView, setTopicView] = useState<TopicView>(TOPIC_UNASKED);
+  const rereadTopic = useCallback(() => {
+    if (!hostId || !topicId) return;
+    setTopicView(loadingTopic);
+    void readTopic(hostId, topicId as TopicId).then((read) => {
+      setTopicView((previous) => settledTopic(previous, read));
+    });
+  }, [hostId, topicId]);
+  useEffect(() => {
+    rereadTopic();
+  }, [rereadTopic]);
+  const topic = topicId ? lastTopic(topicView) : null;
+
+  /** The header's lines. Until a Topic read lands, a Topic's Session reads as a Session. */
+  const headerTitle = useMemo((): HeaderTitle | null => {
+    if (!state) return null;
+    const program = topology?.activePane?.command ?? null;
+    return topic
+      ? { kind: 'topic', topic: topic.label, program, session: state.sessionName }
+      : { kind: 'session', session: state.sessionName, program };
+  }, [state, topology, topic]);
+
+  /** The Sessions picker on its way, once the Title Sheet has left. See switchFromTitleSheet. */
+  const handover = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (handover.current) clearTimeout(handover.current);
+    },
+    [],
+  );
+
+  const openTitleSheet = useCallback(() => {
+    if (!attach) return;
+    const kind = topicId ? 'topic' : 'windows';
+    say(`title sheet opened (${kind})`);
+    setTitleSheet({ open: true, kind });
+    // The programs in the rows are a Topology read old; see refreshBehindSheet.
+    attach.refreshTopology();
+    if (kind === 'topic') rereadTopic();
+  }, [attach, topicId, rereadTopic]);
+
+  const titleSheetDismissed = useCallback(() => {
+    say('title sheet dismissed');
+    setTitleSheet({ open: false });
+  }, []);
+
+  /**
+   * Switch… closes this sheet and opens the Sessions picker in its place.
+   *
+   * After a pause, not at once: two sheets cannot be presented together, and
+   * the sheet reports a dismissal only when the user makes one (measured: a
+   * close from here fires no `onIsPresentedChange`), so there is no callback
+   * to open the picker from. The pause is the sheet's leave animation.
+   */
+  const switchFromTitleSheet = useCallback(() => {
+    say('Switch… from the title sheet');
+    setTitleSheet({ open: false });
+    handover.current = setTimeout(() => openPicker('sessions'), SHEET_HANDOVER_MS);
+  }, [openPicker]);
+
+  const titleRows = useMemo((): TitleRow[] => {
+    if (!state) return [];
+    if (titleSheet.open && titleSheet.kind === 'topic') {
+      return topic
+        ? topicTitleRows(topic, { session: state.sessionName, topology: state.topology })
+        : [];
+    }
+    return sessionTitleRows(state.topology);
+  }, [state, titleSheet, topic]);
+
+  /**
+   * A row of the Title Sheet tapped. The sheet closes on success and stays
+   * up with the reason on failure, as the pickers do.
+   */
+  const pickTitleRow = useCallback(
+    ({ session, window }: TitlePick) => {
+      say(
+        `title sheet picked ${session ?? 'this Session'}${window === null ? '' : `, Window ${window}`}`,
+      );
+      if (!attach || !state) return;
+      void (async () => {
+        try {
+          if (session !== null && session !== state.sessionName) await attach.switchSession(session);
+          if (window !== null) await attach.selectWindow(window);
+          setTitleSheet({ open: false });
+        } catch (error) {
+          setTitleSheet((previous) =>
+            previous.open ? { ...previous, error: describeError(error) } : previous,
+          );
+        }
+      })();
+    },
+    [attach, state],
+  );
+
+  /**
+   * One step of font size, from the size in force. The Surfaces follow the
+   * setting live and the sizing path resizes the Client to the new grids.
+   */
+  const stepFontSize = useCallback(
+    (step: 1 | -1) => {
+      const next = clampFontSize(fontSize + step);
+      say(`Font size ${step > 0 ? '+' : '−'}: ${fontSize} → ${next}`);
+      update({ fontSize: next });
+    },
+    [fontSize, update],
+  );
+
+  /** The active Pane's text onto the clipboard, with a word on how much. */
+  const copyPaneText = useCallback(() => {
+    if (!attach) return;
+    void (async () => {
+      try {
+        const text = await attach.capturePaneText();
+        await Clipboard.setStringAsync(text);
+        const lines = text === '' ? 0 : text.split('\n').length;
+        Alert.alert('Pane text copied', `${lines} ${plural(lines, 'line')} on the clipboard.`);
+      } catch (error) {
+        Alert.alert('Could not copy the Pane text', describeError(error));
+      }
+    })();
+  }, [attach]);
+
+  const copyLog = useCopyLog('the Options menu');
+
+  const disconnect = useCallback(() => {
+    void holder.disconnect();
+    router.dismissTo('/');
+  }, [holder, router]);
+
+  /** A tmux verb from the menu. No sheet to show a failure in, so an Alert does. */
+  const runVerb = useCallback((label: string, verb: () => Promise<void>) => {
+    void verb().catch((error: unknown) => Alert.alert(`Could not ${label}`, describeError(error)));
+  }, []);
+
+  /**
+   * The ⋯ menu, in the spec's order. Each entry is said to the Log as it is
+   * asked for, so the Log shows what the user reached for.
+   */
+  const options = useMemo((): OptionsItem[] => {
+    const action = (
+      id: string,
+      label: string,
+      systemImage: SFSymbol,
+      run: () => void,
+      over: { disabled?: boolean; destructive?: boolean } = {},
+    ): OptionsItem => ({
+      kind: 'action',
+      id,
+      label,
+      systemImage,
+      run: () => {
+        say(`Options: ${label}`);
+        run();
+      },
+      ...over,
+    });
     return [
+      action(
+        'compose',
+        composerOpen ? 'Close composer' : 'Compose',
+        'square.and.pencil',
+        toggleComposer,
+        { disabled: !activePaneId },
+      ),
       {
-        id: 'topology',
-        actions: [
-          {
-            id: 'sessions',
-            label: 'Sessions',
-            systemImage: 'square.on.square',
-            onPress: () => openPicker('sessions'),
-            disabled: !connected,
-            // What is behind the button, not what is in front of it: the Host's
-            // Sessions, this one included. Read once on connecting and kept up
-            // to date by `%sessions-changed`, so it is current without the
-            // sheet ever having been opened.
-            count: state?.sessions?.length ?? 0,
-          },
-          {
-            id: 'windows',
-            label: 'Windows',
-            systemImage: 'macwindow',
-            // Never disabled while connected: the sheet is not only a picker,
-            // it is the only way to make a Window, and a Session with one Window
-            // is exactly when that is wanted.
-            disabled: !connected,
-            onPress: () => openPicker('windows'),
-            count: topology?.windows.length ?? 0,
-          },
-          {
-            id: 'panes',
-            label: 'Panes',
-            systemImage: 'rectangle.split.2x1',
-            // Same: one Pane is when you reach for Split.
-            disabled: !connected,
-            onPress: () => openPicker('panes'),
-            // The Panes of the Window on screen, which is what the sheet shows
-            // — not every Pane in the Session.
-            count: topology?.panes.length ?? 0,
-          },
+        kind: 'toggle',
+        id: 'zoom',
+        label: 'Zoom Pane',
+        systemImage: 'arrow.up.left.and.arrow.down.right',
+        isOn: state?.zoomed ?? false,
+        set: (on) => {
+          say(`Options: Zoom Pane ${on ? 'on' : 'off'}`);
+          attach?.setZoom(on);
+        },
+      },
+      action(
+        'new-window',
+        'New Window',
+        'plus.rectangle',
+        () => runVerb('add a Window', () => attach?.newWindow() ?? Promise.resolve()),
+        { disabled: !connected },
+      ),
+      {
+        kind: 'menu',
+        id: 'split',
+        label: 'Split Pane',
+        systemImage: 'rectangle.split.2x1',
+        items: [
+          action(
+            'split-right',
+            'Split →',
+            'rectangle.split.2x1',
+            () => runVerb('split the Pane', () => attach?.split('right') ?? Promise.resolve()),
+            { disabled: !connected },
+          ),
+          action(
+            'split-down',
+            'Split ↓',
+            'rectangle.split.1x2',
+            () => runVerb('split the Pane', () => attach?.split('down') ?? Promise.resolve()),
+            { disabled: !connected },
+          ),
         ],
       },
-      {
-        id: 'keys',
-        content: (
-          <KeyBar
-            keys={BAR_KEYS}
-            armed={armed}
-            onPress={pressBarKey}
-            onArm={armModifier}
-            disabled={!connected || composerOpen}
-            palette={chrome}
-          />
-        ),
-      },
-      {
-        id: 'exit',
-        actions: [
-          {
-            id: 'home',
-            label: 'Home',
-            systemImage: 'house',
-            onPress: goHome,
-          },
-          {
-            id: 'compose',
-            label: composerOpen ? 'Close composer' : 'Compose',
-            systemImage: 'square.and.pencil',
-            // Lit in the accent while the Composer is up, the way the Key Bar
-            // shows a held modifier, rather than swapping to a filled disc that
-            // sat in the row like a different kind of button.
-            active: composerOpen,
-            onPress: toggleComposer,
-            disabled: !activePaneId,
-          },
-          {
-            id: 'keyboard',
-            label: 'Keyboard',
-            systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
-            onPress: toggleKeyboard,
-          },
-        ],
-      },
+      action('font-smaller', 'Font size −', 'textformat.size.smaller', () => stepFontSize(-1)),
+      action('font-larger', 'Font size +', 'textformat.size.larger', () => stepFontSize(1)),
+      action('copy-pane', 'Copy Pane text', 'doc.on.clipboard', copyPaneText, {
+        disabled: !activePaneId,
+      }),
+      { kind: 'divider', id: 'divider' },
+      action('copy-log', 'Copy log', 'doc.text', copyLog),
+      action('disconnect', 'Disconnect', 'xmark.circle', disconnect, { destructive: true }),
     ];
   }, [
-    router,
-    toggleKeyboard,
-    toggleComposer,
     composerOpen,
+    toggleComposer,
     activePaneId,
-    keyboardVisible,
-    openPicker,
+    state?.zoomed,
+    attach,
     connected,
-    state?.sessions,
-    topology,
-    armed,
-    pressBarKey,
-    armModifier,
-    chrome,
+    runVerb,
+    stepFontSize,
+    copyPaneText,
+    copyLog,
+    disconnect,
   ]);
 
+  /** The Key Row's fixed group: the Panes picker and the keyboard. */
+  const keyRowButtons = useMemo(
+    (): KeyRowButton[] => [
+      {
+        id: 'panes',
+        label: 'Panes',
+        systemImage: 'rectangle.split.2x1',
+        onPress: () => openPicker('panes'),
+        // One Pane is when you reach for Split, so never disabled while connected.
+        disabled: !connected,
+      },
+      {
+        id: 'keyboard',
+        label: 'Keyboard',
+        systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
+        onPress: toggleKeyboard,
+      },
+    ],
+    [openPicker, connected, keyboardVisible, toggleKeyboard],
+  );
+
   useEffect(() => {
-    // For the Dock, so it can show which way its keyboard button points, and
-    // for the Window's height, which is only measured while the keyboard is
-    // down. `Will` rather than `Did`: the Dock lifts on `keyboardWillChangeFrame`
+    // For the Key Row, so it can show which way its keyboard button points,
+    // and for the Window's height, which is only measured while the keyboard
+    // is down. `Will` rather than `Did`: the Key Row lifts on `keyboardWillChangeFrame`
     // and the container is laid out again in the same pass, so a flag set on
     // `keyboardDidShow` would arrive after the measurement it is meant to veto.
     // The action itself goes to the Surface that has focus, which no listener
@@ -1015,6 +1148,17 @@ export default function TerminalScreen() {
           near-white terminal are a status bar nobody can read. */}
       <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
 
+      <TerminalHeader
+        title={headerTitle}
+        terminal={opened.terminal}
+        appearance={appearance}
+        onBack={goHome}
+        onTitle={openTitleSheet}
+        options={options}
+        // The programs in the Topology are a read old; see refreshBehindSheet.
+        onOptionsTouched={() => attach?.refreshTopology()}
+      />
+
       <View
         style={[styles.surfaceArea, { backgroundColor: opened.terminal.background }]}
         onLayout={({ nativeEvent }) => {
@@ -1038,7 +1182,7 @@ export default function TerminalScreen() {
             // In the Window's box rather than filling the container, so that the
             // grid it measures is the Window's whatever the keyboard is doing.
             style={[styles.paneBox, { left: 0, top: -slide, ...windowArea }]}
-            fontSize={opened.font ?? DEFAULT_FONT_SIZE}
+            fontSize={fontSize}
             accessoryBar={false}
             theme={{
               background: opened.terminal.background,
@@ -1057,7 +1201,7 @@ export default function TerminalScreen() {
           <PaneSurfaceView
             key={slot.pane.id}
             slot={slot}
-            font={opened.font ?? DEFAULT_FONT_SIZE}
+            font={fontSize}
             terminal={opened.terminal}
             ansi={opened.ansi}
             onRef={adoptPaneSurface}
@@ -1132,6 +1276,21 @@ export default function TerminalScreen() {
         }
       />
 
+      <TitleSheet
+        isPresented={titleSheet.open}
+        onDismiss={titleSheetDismissed}
+        rows={titleRows}
+        loading={titleSheet.open && titleSheet.kind === 'topic' && topicView.kind === 'loading'}
+        error={
+          titleSheet.open
+            ? (titleSheet.error ??
+              (titleSheet.kind === 'topic' && topicView.kind === 'failed' ? topicView.error : undefined))
+            : undefined
+        }
+        onSwitch={switchFromTitleSheet}
+        onPick={pickTitleRow}
+      />
+
       {composerOpen && attach && activePaneId ? (
         <ComposerPanel
           key={`${attach.hostId}:${activePaneId}`}
@@ -1143,14 +1302,22 @@ export default function TerminalScreen() {
           inputRef={composerInput}
         />
       ) : null}
-      <Dock capsules={dockCapsules} palette={chrome} />
+      <KeyRow right={keyRowButtons}>
+        <KeyBar
+          keys={BAR_KEYS}
+          armed={armed}
+          onPress={pressBarKey}
+          onArm={armModifier}
+          disabled={!connected || composerOpen}
+          palette={chrome}
+        />
+      </KeyRow>
 
-      {/* Everything the screen has to say sits under the status bar, the way iOS
-          delivers a notification: the Banners first, then the quiet overlay
-          lines beneath them. Below the bar, not behind it: the container's
-          padding does not push an absolutely positioned child down, so the grid
-          used to end up underneath the battery. */}
-      <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
+      {/* Everything the screen has to say sits under the Header, the way iOS
+          delivers a notification: the Banners first, then the trouble line
+          beneath them. Below the bar, not behind it: the container's padding
+          does not push an absolutely positioned child down. */}
+      <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
         {reconnectShown ? null : keyBanner}
 
         <Presence shown={!status.quiet}>
@@ -1163,28 +1330,6 @@ export default function TerminalScreen() {
         </Presence>
 
         <View style={styles.overlay} pointerEvents="none">
-          {/* The Status Lines. With the setting on, `connection-status` is
-              always rendered, so its value can be asserted rather than its
-              absence. `surface-grid` appears only once the Surface has reported
-              a grid, so its presence is the signal that layout and `onResize`
-              completed; the value is device-specific, so select on the id. */}
-          {settings.showStatusLines ? (
-            <>
-              <ThemedText type="code" style={dimText} testID="connection-status">
-                {status.label}
-              </ThemedText>
-              {visibleGrid ? (
-                <ThemedText type="code" style={dimText} testID="surface-grid">
-                  {visibleGrid.cols}x{visibleGrid.rows}
-                </ThemedText>
-              ) : null}
-              {state?.sessionName ? (
-                <ThemedText type="code" style={dimText} testID="attached-session">
-                  {state.sessionName}
-                </ThemedText>
-              ) : null}
-            </>
-          ) : null}
           {state?.trouble ? (
             // Loud enough to notice over whatever the Session is painting, quiet
             // enough not to be a Banner: the Connection is fine, one command was
@@ -1211,7 +1356,7 @@ export default function TerminalScreen() {
       ) : null}
       {/* The reconnect stops at a changed key, so its warning sits above it. */}
       {reconnectShown ? (
-        <View style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
+        <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
           {keyBanner}
         </View>
       ) : null}
@@ -1390,9 +1535,8 @@ function PaneSurfaceView({
         style={styles.surface}
         fontSize={font}
         // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
-        // turned off by a local patch. It was the reason ADR 0003 ruled out
-        // a modifier group in the Dock, so that decision is now open again —
-        // with the bar gone there are no modifier keys at all.
+        // turned off by a local patch. The Key Bar stands in its place; see
+        // ADR 0003.
         accessoryBar={false}
         theme={{
           background: terminal.background,
@@ -1483,7 +1627,7 @@ const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
  *
  * So the trade is made explicitly and only where it is wanted. While something
  * is listening for the mouse the finger belongs to it, and the keyboard is
- * raised from the Dock — which is what that button is for. The moment nothing
+ * raised from the Key Row — which is what that button is for. The moment nothing
  * is listening this layer is gone and the Surface behaves exactly as it did.
  */
 function MouseLayer({
@@ -1699,7 +1843,7 @@ function ScrollBackIndicator({
       accessibilityLabel="Jump to latest"
       // The pill is as tall as its own text and sits at the very bottom of the
       // Pane, which makes it the smallest target in the app at around thirty
-      // points. iOS asks for forty-four, and a thumb reaching past the Dock
+      // points. iOS asks for forty-four, and a thumb reaching past the Key Row
       // for it is not aiming carefully. The slop costs nothing: there is
       // nothing else down there to press.
       hitSlop={PILL_SLOP}
@@ -1756,30 +1900,29 @@ function StatusBanner({
 
 const PICKER_TITLES: Record<PickerKind, string> = {
   sessions: 'Sessions',
-  windows: 'Windows',
   panes: 'Panes',
 };
 
 const PICKER_EMPTY: Record<PickerKind, string> = {
   sessions: 'No Sessions on this Host',
-  windows: 'No Windows in this Session',
   panes: 'No Panes in this Window',
 };
 
-const PICKER_LAYOUTS: Record<PickerKind, 'grid' | 'panes' | 'list'> = {
+const PICKER_LAYOUTS: Record<PickerKind, 'panes' | 'list'> = {
   sessions: 'list',
-  windows: 'grid',
   panes: 'panes',
 };
 
 const PICKER_ACTIONS: Record<PickerKind, SheetAction[]> = {
   sessions: [],
-  windows: [{ id: 'new-window', label: 'New Window', systemImage: 'plus' }],
   panes: [
     { id: 'split-right', label: 'Split →' },
     { id: 'split-down', label: 'Split ↓' },
   ],
 };
+
+/** How long a sheet takes to leave, so the next one can be presented. */
+const SHEET_HANDOVER_MS = 450;
 
 /** How many captured lines a preview box can show before it is just noise. */
 const PREVIEW_LINES = 14;
@@ -1876,7 +2019,7 @@ const styles = StyleSheet.create({
   surfaceArea: {
     flex: 1,
     // The Window is taller than this while the keyboard is up, and slid; what
-    // is past either edge is clipped rather than drawn under the glass Dock.
+    // is past either edge is clipped rather than drawn under the glass Key Row.
     overflow: 'hidden',
   },
   paneBox: {
@@ -1906,7 +2049,7 @@ const styles = StyleSheet.create({
   },
   top: {
     position: 'absolute',
-    // Inset from the sides as far as the Dock is from the bottom.
+    // Inset from the sides as far as the Key Row is from the bottom.
     left: 8,
     right: 8,
     gap: 8,

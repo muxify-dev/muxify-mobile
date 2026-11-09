@@ -308,7 +308,7 @@ function size(value: number): number {
  * `-H` takes one hex byte per argument, which is how typed input reaches a
  * Pane with no PTY anywhere in the path. It is also why tmux's prefix key
  * never fires: these bytes go *into* the Pane, not through tmux's key table.
- * Every tmux verb therefore has to come from the Dock. See ADR 0006.
+ * Every tmux verb therefore has to come from the app's own chrome. See ADR 0006.
  */
 export function sendKeysCommand(paneId: string, bytes: Uint8Array): TmuxArgv {
   const hex: string[] = [];
@@ -411,6 +411,17 @@ export function paneStateCommand(paneId: string): TmuxArgv {
  */
 export function capturePanesCommand(targets: string[]): TmuxArgv[] {
   return targets.map((target) => ['capture-pane', '-t', target, '-p']);
+}
+
+/**
+ * A Pane's text, for the clipboard.
+ *
+ * No `-e`: this is pasted into a chat or a file, where colour escapes are
+ * noise. `-J` joins the lines the Pane wrapped, so a long command comes back
+ * as the one line it was typed as.
+ */
+export function capturePaneTextCommand(paneId: string): TmuxArgv {
+  return ['capture-pane', '-t', paneId, '-p', '-J'];
 }
 
 /**

@@ -33,12 +33,6 @@ export interface Settings {
    * nobody asked for.
    */
   reconnectOnStart: boolean;
-  /**
-   * Whether the Terminal Screen shows its Status Lines. On by default, as they
-   * were before they could be hidden. Off loses nothing about the Connection:
-   * the Banner reports every state other than connected.
-   */
-  showStatusLines: boolean;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
@@ -50,6 +44,8 @@ export const MIN_FONT_SIZE = 5;
 export const MAX_FONT_SIZE = 24;
 /** Where the stepper starts when the user first turns the default off. */
 export const DEFAULT_EXPLICIT_FONT_SIZE = 10;
+/** What the Surface uses when the user has not picked a size. */
+export const DEFAULT_FONT_SIZE = 13;
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: null,
@@ -57,13 +53,17 @@ export const DEFAULT_SETTINGS: Settings = {
   zoomMultipaneWindows: true,
   hostScreenLists: ['recent', 'sessions'],
   reconnectOnStart: false,
-  showStatusLines: true,
 };
 
 /** Keeps a font size inside what the Surface will accept. */
 export function clampFontSize(size: number): number {
   if (!Number.isFinite(size)) return DEFAULT_EXPLICIT_FONT_SIZE;
   return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(size)));
+}
+
+/** The size the Surface draws at: the user's, or the default while there is none. */
+export function fontSizeInForce(fontSize: number | null): number {
+  return fontSize ?? DEFAULT_FONT_SIZE;
 }
 
 /**
@@ -194,7 +194,6 @@ export function parseSettings(raw: unknown): Settings {
   const theme = record.theme;
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
-  const statusLines = record.showStatusLines;
 
   return {
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
@@ -204,7 +203,5 @@ export function parseSettings(raw: unknown): Settings {
     hostScreenLists: parseHostScreenLists(record.hostScreenLists, record.recentSessionsFirst),
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
-    showStatusLines:
-      typeof statusLines === 'boolean' ? statusLines : DEFAULT_SETTINGS.showStatusLines,
   };
 }

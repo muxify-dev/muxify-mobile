@@ -21,7 +21,7 @@ interface SettingsContextValue {
   appearance: 'light' | 'dark';
   /** The chrome colours for that appearance. */
   palette: Appearance;
-  /** The colours the Dock's pickers are drawn with. */
+  /** The colours the Terminal Screen's sheets are drawn with. */
   sheetPalette: SheetPalette;
   /** What the Surface is painted with. */
   terminal: TerminalPalette;

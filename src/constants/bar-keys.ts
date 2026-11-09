@@ -4,7 +4,7 @@ import { modifierPrefix, type Modifiers } from '@/lib/modifier-keys';
  * The keys a phone keyboard does not have, in the order the Key Bar shows them.
  *
  * ADR 0003 dropped a modifier group because the terminal library drew its own
- * bar above the system keyboard. That bar is off — it covered the Dock — which
+ * bar above the system keyboard. That bar is off — it covered the Key Row — which
  * left the app with no escape, no tab and no arrows at all. This is what went
  * in its place.
  *
@@ -70,10 +70,10 @@ export const BAR_KEYS: BarKey[] = [
   { key: 'PageDown', label: '⤓', spoken: 'page down' },
   { key: 'M-', label: 'alt', modifier: 'alt' },
   // Spoken as what they do rather than what they are called. `home` and the
-  // Dock's own Home button are two different journeys, and a screen that
-  // offers both under one name is ambiguous to a reader and to automation
-  // alike — measured: `press label="Home"` matched this key and tapped where
-  // it would have been if the bar were not scrolled.
+  // Home screen are two different journeys, and a screen that offers both
+  // under one name is ambiguous to a reader and to automation alike —
+  // measured, when the Dock had a Home button: `press label="Home"` matched
+  // this key and tapped where it would have been if the bar were not scrolled.
   { key: 'Home', label: 'home', spoken: 'line start' },
   { key: 'End', label: 'end', spoken: 'line end' },
 ];

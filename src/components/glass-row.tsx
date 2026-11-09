@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
  * A tappable Liquid Glass card.
  *
  * The press is React Native's rather than SwiftUI's, deliberately. `@expo/ui`
- * Buttons work in the Dock but do not respond to a synthesised tap anywhere in
+ * Buttons work in the Key Row but do not respond to a synthesised tap anywhere in
  * these screens, and a list whose rows cannot be proven to work is worse than
  * one that looks slightly less native. The glass itself is still the real API.
  */

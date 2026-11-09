@@ -52,7 +52,7 @@ attach() {
   agent-device press 'label="Session 0"' >/dev/null 2>&1
   # Wait for the Connection rather than sleeping a fixed guess.
   for _ in $(seq 1 20); do
-    agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && return 0
+    agent-device is exists 'id="pane-command"' >/dev/null 2>&1 && return 0
     sleep 1
   done
   echo "WARN: never reached Connected"

@@ -166,14 +166,24 @@ describe('what a notification can settle on its own', () => {
     return { store, asked };
   }
 
-  it('renames a Window without asking the Host anything', async () => {
-    const { store, asked } = await opened();
-    store.apply({ kind: 'window-renamed', window: '@0', name: 'logs' });
+  it('renames another Window without asking the Host anything', async () => {
+    const { store, asked } = await opened([window(), window({ id: '@1', index: 1, active: false })]);
+    store.apply({ kind: 'window-renamed', window: '@1', name: 'logs' });
     await settle();
 
-    expect(store.current().windows[0].name).toBe('logs');
-    expect(store.current().activeWindow?.name).toBe('logs');
+    expect(store.current().windows[1].name).toBe('logs');
+    expect(store.current().activeWindow?.name).toBe('shell');
     expect(asked).toEqual([]);
+  });
+
+  it('reads again when the active Window is renamed, because its program may have changed', async () => {
+    // automatic-rename follows the program in the Pane, and nothing else tmux
+    // pushes says what a Pane is running.
+    const { store, asked } = await opened();
+    store.apply({ kind: 'window-renamed', window: '@0', name: 'vim' });
+    await settle();
+
+    expect(asked).toEqual(['windows work', 'panes work:0']);
   });
 
   it('ignores a rename of a Window this Session does not hold', async () => {

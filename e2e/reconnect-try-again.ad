@@ -8,9 +8,8 @@ context platform=ios kind=simulator
 open "dev.muxify.app"
 is "visible" "id=\"reconnect-failure\""
 press "label=\"Try again\""
-wait "id=\"connection-status\"" 8000
-wait 8000
+wait "id=\"pane-command\"" 20000
 is "absent" "id=\"reconnect-screen\""
-is "text" "id=\"connection-status\"" "Connected"
+is "text" "id=\"attached-session\"" "e2e-reconnect-later"
 
 close

@@ -34,8 +34,7 @@ press "label=\"Save\""
 
 wait "label=\"Session muxifye2eadd/e2e-add-session\"" 15000
 press "label=\"Session muxifye2eadd/e2e-add-session\""
-wait "id=\"connection-status\"" 8000
-wait 8000
-is "text" "id=\"connection-status\"" "Connected"
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "muxifye2eadd/e2e-add-session"
 
 close

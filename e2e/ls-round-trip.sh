@@ -45,13 +45,12 @@ agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait 'label="Session 0"' 15000 >/dev/null 2>&1
 agent-device press 'label="Session 0"' >/dev/null 2>&1
-agent-device wait 10000 >/dev/null 2>&1
-agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
   || fail "never reached Connected"
 
-echo "3/5  raising the keyboard from the Dock"
+echo "3/5  raising the keyboard from the Key Row"
 KB=$(agent-device snapshot -i 2>/dev/null | grep -E '^@e[0-9]+ \[button\] "Keyboard"' | head -1 | awk '{print $1}')
-[ -n "$KB" ] || fail "no Keyboard button in the Dock"
+[ -n "$KB" ] || fail "no Keyboard button in the Key Row"
 agent-device press "$KB" >/dev/null 2>&1
 sleep 4
 LETTERS=$(agent-device snapshot -i 2>/dev/null | grep -cE '\[key\] "[a-z]"')

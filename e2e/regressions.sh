@@ -4,7 +4,8 @@
 #
 # Each check here stands for a bug that actually happened:
 #
-#   1  the navigation header, removed so the Surface reaches the top
+#   1  the navigation header, removed so the Surface reaches the top; the
+#      screen draws its own Header with Back in it
 #   2  the library's own Accessory Bar, hidden by a local patch
 #   3  the Session's options, which Muxify used to borrow and now never touches
 #   4  the resize, which has broken four separate ways — and the keyboard,
@@ -82,8 +83,8 @@ app = next((n['rect'] for n in nodes if n['type'] == 'Application'), None)
 if app is None: sys.exit('the snapshot has no Application node')
 screen = app['y'] + app['height']
 dock = min((n['rect']['y'] for n in nodes if n['type'] == 'ScrollView'), default=screen)
-# The keyboard is at least two hundred points tall, and the Dock rides it up,
-# so where the Dock is answers the question with room to spare. Two other
+# The keyboard is at least two hundred points tall, and the Key Row rides it
+# up, so where the Key Row is answers the question with room to spare. Two other
 # readings were tried and neither is honest any more. The grid: a Window held
 # back from filling the screen keeps its height whatever the keyboard does.
 # The accessibility tree's own Keyboard node: the simulator reports it at the
@@ -117,7 +118,7 @@ type_into_pane() { on_host "tmux send-keys -t '$SESSION:' -l '$1'"; }
 # The last line the Pane is showing, which is the one being typed on.
 typed_line() { on_host "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
 
-# The lowest point in the Pane, which is just above the Dock. The Dock's own
+# The lowest point in the Pane, which is just above the Key Row. The row's own
 # padding is what stands between the two, so the Key Bar's capsule locates it.
 pane_bottom() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
@@ -133,7 +134,25 @@ for n in json.load(sys.stdin)['data']['nodes']:
 clicked_row() {
   on_host "tmux capture-pane -t '$SESSION' -p" | tr -d '\n' | sed -n 's/.*<0;[0-9]*;\([0-9]*\)M.*/\1/p'
 }
-surface() { snap | grep -oE '\[text\] "[0-9]+x[0-9]+"' | head -1 | grep -oE '[0-9]+x[0-9]+'; }
+# The grid the Surface last reported, read from the Log: ⋯ → Copy log puts it
+# on the clipboard, and the Pane view's line says what the Surface measured.
+# The Status Lines used to show it on screen; the Header does not.
+surface() {
+  local line
+  for _ in 1 2 3; do
+    agent-device press 'label="Options"' >/dev/null 2>&1
+    if agent-device wait 'label="Copy log"' 3000 >/dev/null 2>&1; then
+      agent-device press 'role=button label="Copy log"' >/dev/null 2>&1
+      agent-device wait 'label="OK"' 8000 >/dev/null 2>&1
+      agent-device press 'label="OK"' >/dev/null 2>&1
+      sleep 1
+      line=$(xcrun simctl pbpaste booted | grep -oE 'Surface for %[0-9]+ reported [0-9]+x[0-9]+' | tail -1)
+      echo "$line" | grep -oE '[0-9]+x[0-9]+'
+      return 0
+    fi
+  done
+  echo ""
+}
 window()  { on_host "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
 # compared. `-w` is not optional: window-size lives there and nowhere else.
@@ -150,7 +169,7 @@ agree() {
   echo "     $what: surface=$s window=$w"
 }
 
-# Presses the Dock's Keyboard button and waits for the keyboard to actually move.
+# Presses the Key Row's Keyboard button and waits for the keyboard to actually move.
 #
 # The button toggles, so pressing it blindly is only correct if you already
 # know the state — and a press that silently does not register leaves every
@@ -201,11 +220,8 @@ attach() {
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
-  for _ in $(seq 1 20); do
-    agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
-    sleep 1
-  done
-  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+  # The program line renders once the Topology is in, which is after Connected.
+  agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
     || fail "never reached Connected"
   sleep 3
 }
@@ -232,12 +248,12 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/10  the Terminal Screen has no navigation header"
+echo "1/10  the Terminal Screen has its own Header, not a navigation header"
 snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
   && fail "a navigation title is back; the Surface no longer reaches the top"
-snap | grep -qE '^@e[0-9]+ \[button\] "Muxify"$' \
-  && fail "a back button is back; Home in the Dock is what leaves this screen"
-echo "     no header, no back button"
+snap | grep -qE '^@e[0-9]+ \[button\] "Back"$' \
+  || fail "the Header's Back button is missing"
+echo "     no navigation title, Back in the Header"
 
 echo "2/10  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Bar offers ctrl, esc and tab
@@ -346,7 +362,7 @@ for OFFSET in 8 24; do
   ROWS=$(on_host "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
   [ "$ROWS" -ge 32 ] || fail "the Pane is only $ROWS rows; this check proves nothing that short"
   BOTTOM=$(pane_bottom)
-  [ -n "$BOTTOM" ] || fail "could not find the Dock, so could not find the Pane's bottom"
+  [ -n "$BOTTOM" ] || fail "could not find the Key Row, so could not find the Pane's bottom"
   agent-device press 200 "$((BOTTOM - OFFSET))" >/dev/null 2>&1
   sleep 2
   CLICKED=$(clicked_row)
@@ -363,8 +379,8 @@ echo "8/10  the keyboard covers the Window without resizing it, and stays off th
 # them. Two readings prove it. tmux's Window height, which must not move — the
 # old behaviour reflowed it to the strip above the keys, and a reflow is where
 # text gets stranded. And where the cursor's row is drawn, which must be above
-# the Dock: the Surface's frame and tmux's cursor row give it, at the cell the
-# frame divides into.
+# the Key Row: the Surface's frame and tmux's cursor row give it, at the cell
+# the frame divides into.
 #
 # Both halves of the slide: a Pane full to its last row is slid by the whole
 # of what the keyboard covers, and a Pane with three lines on it is not slid
@@ -378,7 +394,7 @@ sleep 2
 [ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard shrank the Window from $FULL to $(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")"
 cursor_on_screen() {
-  # Where the bottom of the cursor's row is drawn, against where the Dock starts.
+  # Where the bottom of the cursor's row is drawn, against where the Key Row starts.
   local row
   row=$(on_host "tmux display-message -p -t '$SESSION:' '#{cursor_y}'")
   agent-device snapshot --json 2>/dev/null | ROW="$row" ROWS="$FULL" python3 -c "
@@ -397,13 +413,13 @@ print('yes' if bottom <= dock + 1 and bottom > 0 else 'no', round(bottom), round
 "
 }
 read -r SHOWN BOTTOM DOCK <<<"$(cursor_on_screen)"
-[ "$SHOWN" = yes ] || fail "with a full Pane the cursor's row ends at $BOTTOM but the Dock starts at $DOCK"
-echo "     full Pane: Window still $FULL rows, cursor row ends at $BOTTOM above the Dock at $DOCK"
+[ "$SHOWN" = yes ] || fail "with a full Pane the cursor's row ends at $BOTTOM but the Key Row starts at $DOCK"
+echo "     full Pane: Window still $FULL rows, cursor row ends at $BOTTOM above the Key Row at $DOCK"
 
 on_host "tmux send-keys -t '$SESSION:' 'clear; seq 1 3' Enter"
 sleep 3
 read -r SHOWN BOTTOM DOCK <<<"$(cursor_on_screen)"
-[ "$SHOWN" = yes ] || fail "with three lines the cursor's row ends at $BOTTOM but the Dock starts at $DOCK"
+[ "$SHOWN" = yes ] || fail "with three lines the cursor's row ends at $BOTTOM but the Key Row starts at $DOCK"
 # Not slid: the Surface's top is where the container's is. Read as the frame's
 # y against the full Pane's, which was the slid one.
 TOP=$(agent-device snapshot --json 2>/dev/null | python3 -c "
@@ -427,18 +443,15 @@ SECOND=muxify-regressions-second
 on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
   || fail "could not make a second Session on the dev Host"
 ensure_keyboard away
-agent-device press 'role=button label="Home"' >/dev/null 2>&1
-agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
+# Back lands on Home, and All opens the Host Screen with the new Session.
+agent-device press 'role=button label="Back"' >/dev/null 2>&1
+agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
 agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
 agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SECOND\"" >/dev/null 2>&1
-for _ in $(seq 1 25); do
-  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
-  sleep 1
-done
-agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+agent-device wait 'id="pane-command"' 25000 >/dev/null 2>&1 \
   || fail "the second Session never reached Connected"
 agent-device is text 'id="attached-session"' "$SECOND" >/dev/null 2>&1 \
   || fail "the screen is not showing the second Session"
@@ -451,18 +464,14 @@ toggle_keyboard
 ensure_keyboard away
 echo "     second Session connected at $(surface), keyboard rose and fell"
 # Back to the first, the same way round, so what follows leaves it as found.
-agent-device press 'role=button label="Home"' >/dev/null 2>&1
-agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
+agent-device press 'role=button label="Back"' >/dev/null 2>&1
+agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
 agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
 agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
-for _ in $(seq 1 25); do
-  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
-  sleep 1
-done
-agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+agent-device wait 'id="pane-command"' 25000 >/dev/null 2>&1 \
   || fail "the first Session did not come back"
 on_host "tmux kill-session -t '$SECOND'" >/dev/null 2>&1
 sleep 2
@@ -470,8 +479,8 @@ sleep 2
 echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
 # The keyboard is already away: check 8 put it there, and toggling it again
 # here would only raise it on the way out.
-agent-device press 'role=button label="Home"' >/dev/null 2>&1
-agent-device wait text "No Hosts yet" 8000 >/dev/null 2>&1
+agent-device press 'role=button label="Back"' >/dev/null 2>&1
+agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
 sleep 2
 [ "$(options)" = "$BEFORE" ] || {
   diff <(echo "$BEFORE") <(options)
@@ -490,7 +499,7 @@ echo "     zoom is left as Muxify set it: $(on_host "tmux display-message -p -t 
 
 agent-device close >/dev/null 2>&1
 echo
-echo "PASS: no header, no Accessory Bar, the Session's and Window's options"
+echo "PASS: Back in the Header, no Accessory Bar, the Session's and Window's options"
 echo "      untouched throughout, sizes agree in both keyboard states, Enter"
 echo "      runs commands, a held delete key keeps deleting, a tap on the"
 echo "      bottom row lands on the bottom row, the keyboard covers the"

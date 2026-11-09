@@ -54,7 +54,7 @@ export const AppPalettes: Record<'light' | 'dark', Appearance> = {
 };
 
 /**
- * The Dock's pickers, which are their own small world of colour.
+ * The Terminal Screen's sheets, which are their own small world of colour.
  *
  * Separate from `Appearance` because a sheet is not a grouped list: it has a
  * well behind the Pane diagram, tiles that are and are not the current one, and

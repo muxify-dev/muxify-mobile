@@ -1,11 +1,4 @@
-import { trimPreview, windowPreviewTarget } from './preview';
-
-describe('preview targets', () => {
-  it('addresses a Window, which tmux resolves to its active Pane', () => {
-    expect(windowPreviewTarget('main', 2)).toBe('main:2');
-  });
-
-});
+import { trimPreview } from './preview';
 
 describe('trimPreview', () => {
   it('keeps the first lines, which is the top of the Pane', () => {

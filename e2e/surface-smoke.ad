@@ -3,9 +3,9 @@ context platform=ios kind=simulator
 # Surface smoke test (ticket 03).
 #
 # Proves the app launches, navigates to the Terminal Screen, and that the
-# Surface lays out and reports a cell grid — `surface-grid` only renders once
-# `onResize` has fired, so its presence is the signal that the native terminal
-# view came up.
+# Surface lays out and reports a cell grid — the header's `pane-command` renders
+# only once the Attach has connected on a settled grid and read the Topology,
+# so its presence is the signal that the native terminal view came up.
 #
 # What this CANNOT assert: the Surface's contents. ghostty renders cells with
 # Metal, so the terminal text is absent from the accessibility tree (the view
@@ -25,11 +25,10 @@ wait "label=\"Edit Host\"" 15000
 wait 1500
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
-# The Terminal Screen has no navigation header to wait for — it draws the
-# Surface to the top of the display, and the Dock's Home button replaces the
-# back button — so the status indicator is what says the screen is up.
-wait "id=\"connection-status\"" 8000
-
-wait "id=\"surface-grid\"" 8000
+# The header's program line renders once the Topology has an active Pane,
+# which the Attach reads only after it is connected on a settled grid — so
+# its presence says the Surface laid out, the Connection is attached and the
+# Topology is in.
+wait "id=\"pane-command\"" 20000
 
 close

@@ -8,10 +8,9 @@ context platform=ios kind=simulator
 #
 # The assertion is indirect by necessity. The Surface renders with Metal, so
 # tmux's output never reaches the accessibility tree and cannot be asserted on.
-# What CAN be asserted is the connection indicator, which is always present and
-# carries the phase as its text. "Connected" means the Connection authenticated
-# and the Shell Channel is carrying the Session; a failure reads "Failed: ..."
-# and fails this assertion with the reason visible.
+# What CAN be asserted is the header: its program line renders only once the
+# Attach is connected and has read the Topology, so its presence is the proof,
+# and the Session name beside it says which Session.
 #
 # Run with:  bash e2e/sandbox.sh agent-device test ./e2e/tmux-attach.ad
 
@@ -26,21 +25,14 @@ wait "label=\"Edit Host\"" 15000
 wait 1500
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
-# The Terminal Screen has no navigation header to wait for — it draws the
-# Surface to the top of the display, and the Dock's Home button replaces the
-# back button — so the status indicator is what says the screen is up.
-wait "id=\"connection-status\"" 8000
+# The header's program line renders once the Topology has an active Pane,
+# which the Attach reads only after it is connected on a settled grid — so
+# its presence says the Surface laid out, the Connection is attached and the
+# Topology is in.
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "0"
 
-# The Surface laid out and reported a grid.
-wait "id=\"surface-grid\"" 8000
-
-# Give the Connection time to authenticate and attach.
-wait 8000
-
-# Connected: the Shell Channel is attached to the Session.
-is "text" "id=\"connection-status\"" "Connected"
-
-# The Dock's keyboard button toggles the system keyboard in both directions.
+# The Key Row's keyboard button toggles the system keyboard in both directions.
 # A letter key is the signal: the library's Accessory Bar used to serve, but it
 # is hidden now (see ADR 0003), and the system keyboard only exists while the
 # Surface holds first responder.
@@ -51,11 +43,9 @@ is "visible" "label=\"q\""
 press "label=\"Keyboard\""
 wait 2500
 
-# The glass Dock rendered and works: pressing Home leaves the Terminal Screen,
-# which also tears the Connection down. Asserting the navigation proves both
-# that the Dock is there and that its button is reachable — a bare visibility
-# check on the SwiftUI button does not match through the hosting boundary.
-press "role=button label=\"Home\""
-wait "text" "Dev Host" 8000
+# Back leaves the Terminal Screen for Home. The Session stays attached (ADR
+# 0007); e2e/back-to-home.ad proves that half.
+press "role=button label=\"Back\""
+wait "label=\"All of Dev Host\"" 8000
 
 close

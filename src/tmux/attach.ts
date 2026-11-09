@@ -96,7 +96,7 @@ export interface AttachState {
   trouble: string | null;
   /** Whether the active Pane should fill the Window on its own. */
   zoomed: boolean;
-  /** The grid the Client is sized to, for the screen's own overlay. */
+  /** The grid the Client is sized to; the slot of a Surface spanning the Window takes its rows from it. */
   grid: Grid | null;
   /**
    * How far back the active Pane is being viewed, or null at the live bottom.
@@ -125,8 +125,8 @@ export interface Attach {
   /** Called on every change, and once with the current state on subscribing. */
   subscribe(listener: (state: AttachState) => void): () => void;
 
-  // The verbs the Dock and the pickers need. Each re-applies the Zoom
-  // preference and refreshes the Topology itself.
+  // The verbs the Options menu, the Key Row and the sheets need. Each
+  // re-applies the Zoom preference and refreshes the Topology itself.
   switchSession(name: string): Promise<void>;
   selectWindow(index: number): Promise<void>;
   /** Optimistic: moves the Pane here first and puts it back if refused. */
@@ -136,6 +136,8 @@ export interface Attach {
   setZoom(on: boolean): void;
   /** Fills in the previews for a sheet that is already open. */
   capturePreviews(targets: string[]): void;
+  /** The active Pane's text, for the clipboard. Rejects with no Pane or no Connection. */
+  capturePaneText(): Promise<string>;
   /** Re-reads the Host's Session list, which no notification describes. */
   refreshSessions(): void;
   /** Reads the Topology again. For a sheet correcting itself behind its own back. */
@@ -544,9 +546,9 @@ export function openAttach(options: AttachOptions): Attach {
       });
 
       // Sized from a grid that has stopped moving, not merely the latest. The
-      // Surface reports one while the Dock's glass is still being measured and
-      // a smaller one once the Dock has taken its height; the first would
-      // leave tmux drawing a taller Window than the Surface has.
+      // Surface reports one while the Key Row's glass is still being measured
+      // and a smaller one once the Key Row has taken its height; the first
+      // would leave tmux drawing a taller Window than the Surface has.
       if (!sizing.stableGrid()) say('waiting for a grid that has stopped moving');
       const settled = await sizing.settledGrid();
       if (stale(mine)) return;
@@ -930,6 +932,15 @@ export function openAttach(options: AttachOptions): Attach {
           // Not worth a line of trouble over, and not the Connection's fault.
         }
       })();
+    },
+
+    async capturePaneText(): Promise<string> {
+      const current = client;
+      const pane = state.topology.activePane;
+      if (!current) throw new Error('Not connected.');
+      if (!pane) throw new Error('No active Pane.');
+      say(`copying the text of ${pane.id}`);
+      return current.capturePaneText(pane.id);
     },
 
     refreshSessions,

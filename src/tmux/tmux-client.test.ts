@@ -325,6 +325,22 @@ describe('previews', () => {
   });
 });
 
+describe('Pane text', () => {
+  it('joins the lines and drops the empty ones under the prompt', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', '%3', '-p', '-J'])]: ['$ echo hi', 'hi', '', '  ', ''],
+    });
+    expect(await client.capturePaneText('%3')).toBe('$ echo hi\nhi');
+  });
+
+  it('reports a Pane tmux cannot capture', async () => {
+    const { client } = fakeTmux({
+      [renderControlCommand(['capture-pane', '-t', '%9', '-p', '-J'])]: { error: ["can't find pane: %9"] },
+    });
+    await expect(client.capturePaneText('%9')).rejects.toBeInstanceOf(TmuxError);
+  });
+});
+
 describe('nothing borrows anything', () => {
   it('has no way to set a Session option at all', () => {
     const surface = Object.getOwnPropertyNames(TmuxClient.prototype);

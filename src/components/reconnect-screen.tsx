@@ -26,7 +26,7 @@ interface ReconnectScreenProps {
  *
  * Drawn over the Terminal Screen rather than pushed as its own, because the
  * Attach reaches its attached phase only once the Surface below has reported
- * its grid. Go Home is there at every step, the Dock's Home under another name.
+ * its grid. Go Home is there at every step, the Header's Back under another name.
  * A failed step stays, with its reason and Try again: a reconnect never tries
  * again by itself.
  */

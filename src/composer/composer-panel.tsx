@@ -14,7 +14,7 @@ import { stageFile } from './staging';
 /**
  * The Composer: where a message for a Pane is prepared before it is sent.
  *
- * A Liquid Glass card above the Dock, drawn in the Theme's appearance rather
+ * A Liquid Glass card above the Key Row, drawn in the Theme's appearance rather
  * than the phone's — the glass is told which one, the same way the Banner is,
  * since left alone it follows the phone's setting and a light phone would put
  * a white card over a Dracula terminal — and its text in the Theme's chrome

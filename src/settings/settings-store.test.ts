@@ -20,7 +20,6 @@ const CHANGED: Settings = {
   zoomMultipaneWindows: false,
   hostScreenLists: ['topics', 'sessions'],
   reconnectOnStart: true,
-  showStatusLines: false,
 };
 
 describe('settings store', () => {

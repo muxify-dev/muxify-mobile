@@ -19,8 +19,7 @@ press "role=button label=\"Muxify\""
 wait "label=\"Settings\"" 8000
 
 press "label=\"Session 0\""
-wait "id=\"connection-status\"" 8000
-wait 8000
-is "text" "id=\"connection-status\"" "Connected"
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "0"
 
 close

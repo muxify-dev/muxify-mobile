@@ -50,7 +50,6 @@ describe('sheetMetrics', () => {
   it('gives a sheet as wide as an iPhone screen the sizes it had before', () => {
     const metrics = sheetMetrics(IPHONE.width, IPHONE.height);
     expect(metrics.contentWidth).toBe(370);
-    expect(metrics.gridCard).toEqual({ width: 180, height: 199 });
     expect(metrics.listCard).toEqual({ width: 370, height: 150 });
     expect(metrics.board).toEqual({ width: 370, height: 278 });
   });
@@ -59,7 +58,7 @@ describe('sheetMetrics', () => {
     const metrics = sheetMetrics(IPAD_CARD.width, IPAD_CARD.portraitHeight);
     expect(metrics.contentWidth).toBe(IPAD_CARD.width - 32);
     expect(metrics.board.width).toBeLessThanOrEqual(metrics.contentWidth);
-    expect(metrics.gridCard.width * 2 + 10).toBeLessThanOrEqual(metrics.contentWidth);
+    expect(metrics.listCard.width).toBe(metrics.contentWidth);
   });
 
   it('keeps a whole Pane diagram on a short landscape screen, at 4:3', () => {
@@ -70,15 +69,15 @@ describe('sheetMetrics', () => {
     expect(metrics.board.width / metrics.board.height).toBeCloseTo(4 / 3, 1);
   });
 
-  it('gives a grid the same height budget as the diagram', () => {
+  it('gives a list the same height budget as the diagram', () => {
     const metrics = sheetMetrics(IPAD_CARD.width, IPAD_CARD.landscapeHeight);
-    expect(sheetHeight(metrics, 'grid', 40)).toBeLessThanOrEqual(IPAD_CARD.landscapeHeight * 0.9);
+    expect(sheetHeight(metrics, 'list', 40)).toBeLessThanOrEqual(IPAD_CARD.landscapeHeight * 0.9);
   });
 
   it('never goes negative on a very narrow sheet', () => {
     const metrics = sheetMetrics(20, 300);
     expect(metrics.contentWidth).toBe(0);
-    expect(metrics.gridCard.width).toBe(0);
+    expect(metrics.listCard.width).toBe(0);
     expect(metrics.board).toEqual({ width: 0, height: 0 });
   });
 });

@@ -92,11 +92,12 @@ export interface TopologyStore {
  * `%window-add`, `%window-close`, `%window-renamed` and `%window-pane-changed`
  * carry the rest.
  *
- * Two kinds of notification, and the difference is what they carry. A rename, a
- * close and a layout change each say enough to act on, so they are applied here
- * and the model is right before the sheet opens. An add says only that a Window
- * now exists, so it marks the model stale and the caller reads again — once,
- * when it happened, rather than every time somebody looks.
+ * Two kinds of notification, and the difference is what they carry. A rename
+ * of another Window, a close and a layout change each say enough to act on, so
+ * they are applied here and the model is right before the sheet opens. An add
+ * says only that a Window now exists, and a rename of the active Window says
+ * its program may have changed, so each marks the model stale and the store
+ * reads again — once, when it happened, rather than every time somebody looks.
  */
 export function createTopologyStore(
   reader: TopologyReader,
@@ -182,8 +183,13 @@ export function createTopologyStore(
       switch (event.kind) {
         case 'window-renamed':
         case 'unlinked-window-renamed': {
-          // A Window renamed on the laptop renames here, with no round trip:
-          // the notification carries the new name and the id it belongs to.
+          // The active Window is read again. Nothing is pushed when the
+          // program in a Pane changes, and the header shows that program; but
+          // under tmux's automatic-rename the Window's name follows it, so its
+          // rename is the one signal that the program did. Another Window
+          // renames here with no round trip: the notification carries the new
+          // name and the id it belongs to.
+          if (event.window === topology.activeWindow?.id) return 'stale';
           const windows = topology.windows.map((window) =>
             window.id === event.window ? { ...window, name: event.name } : window,
           );

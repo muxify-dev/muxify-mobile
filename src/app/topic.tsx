@@ -32,13 +32,9 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { ToolbarWord } from '@/components/toolbar-word';
 import { MarkImage } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
-import { deviceLog } from '@/diagnostics/device-log';
-import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/connect-host';
-import { deviceHostStore } from '@/storage/device-store';
-import { appConnections } from '@/tmux/ssh-connection';
 import type { TopicId, TopicState } from '@/topics/environment';
+import { readTopic } from '@/topics/read-topic';
 import {
   lastTopic,
   loadingTopic,
@@ -50,8 +46,6 @@ import {
 } from '@/topics/topic-detail';
 import { fieldsParam } from '@/topics/topic-edit';
 
-const say = speakingAs(deviceLog(), 'topic');
-
 /** Why a Topic with no live Session has none, in the Mac's words for its state. */
 const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
   dormant: 'This Topic is Dormant: it remembers Sessions, but none of them runs on the Host now.',
@@ -61,8 +55,7 @@ const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
 /**
  * One Topic of a Host: its Note, its Tags and its live Sessions with their
  * Windows and Agent marks. A tap on a Session attaches to it, on the same path
- * as a tap on the Host Screen, so Home from that Session goes to the Host
- * Screen under this one.
+ * as a tap on the Host Screen, and Back from that Session goes Home.
  *
  * It reads the Topic again each time it comes into view, because the Mac can
  * change the Topic while the phone is in a Session, and because Add a Session
@@ -83,31 +76,16 @@ export default function TopicScreen() {
   const { appearance, palette } = useSettings();
   const [view, setView] = useState<TopicView>(() => topicStartingFrom(topicSeedFromParam(seed)));
 
-  const readTopic = useCallback(async () => {
+  const reread = useCallback(async () => {
     setView(loadingTopic);
-    const store = deviceHostStore();
-    const host = (await store.load()).hosts.find((candidate) => candidate.id === hostId);
-    if (!host) {
-      setView((previous) => settledTopic(previous, { kind: 'failed', error: 'This Host is no longer saved.' }));
-      return;
-    }
-    try {
-      const read = await appConnections().read(host, (transport, muxify) =>
-        muxify.show((command) => transport.exec(command), topicId as TopicId),
-      );
-      say(read.kind === 'shown' ? `${host.displayName} showed a Topic` : `${host.displayName} could not show a Topic: ${read.error}`);
-      setView((previous) => settledTopic(previous, read));
-    } catch (error) {
-      const message = describeConnectionFailure(error);
-      say(`${host.displayName} refused the Topic: ${message}`);
-      setView((previous) => settledTopic(previous, { kind: 'failed', error: message }));
-    }
+    const read = await readTopic(hostId, topicId as TopicId);
+    setView((previous) => settledTopic(previous, read));
   }, [hostId, topicId]);
 
   useFocusEffect(
     useCallback(() => {
-      void readTopic();
-    }, [readTopic]),
+      void reread();
+    }, [reread]),
   );
 
   const open = (session: string) =>
@@ -168,7 +146,7 @@ export default function TopicScreen() {
                 </HStack>
                 <Button
                   label="Retry"
-                  onPress={() => void readTopic()}
+                  onPress={() => void reread()}
                   modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel('Retry')]}
                 />
               </VStack>

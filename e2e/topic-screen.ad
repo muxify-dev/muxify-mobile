@@ -5,8 +5,9 @@ context platform=ios kind=simulator
 # and turns the Topics list on.
 #
 # A tap on a live Topic shows its Note, its Tag and its Session. A tap on the
-# Session attaches, and Home from there is the Host Screen, not the Topic
-# Screen (D6). An Empty Topic says it has no live Sessions, and why.
+# Session attaches; the header then names the Topic over the program over the
+# Session, and Back from there is Home. An Empty Topic says it has no live
+# Sessions, and why.
 #
 # The Host Screen also has each Session row and the "No live Sessions" line of
 # an Empty Topic's card. So each wait after a tap on a Topic is for text that
@@ -27,16 +28,16 @@ is "visible" "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
 is "visible" "role=text text=\"#work\""
 
 press "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
-wait "id=\"connection-status\"" 8000
-wait 8000
-is "text" "id=\"connection-status\"" "Connected"
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "muxify-e2e-topic-screen/e2e-topic-screen-live"
+# The Topic read lands a moment after the Attach; until then the first line
+# is the Session name.
+wait "id=\"topic-title\"" 15000
+is "text" "id=\"topic-title\"" "e2e Topic Screen live"
 
-# The Host Screen: its toolbar has +, which the Topic Screen has not. With
-# the Topics list on, + is New Session or Topic. The role is part of the
-# selector because a snapshot can also list the Dock capsule that holds Home
-# under the same label, and an ambiguous press is refused.
-press "role=button label=\"Home\""
-wait "label=\"New Session or Topic\"" 8000
+# Back is Home, which has every Host's rows: the Topic cards among them.
+press "role=button label=\"Back\""
+wait "label=\"All of Dev Host\"" 8000
 is "visible" "label=\"Topic e2e Topic Screen live\""
 
 press "label=\"Topic e2e Topic Screen empty\""
