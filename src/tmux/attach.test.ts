@@ -138,6 +138,7 @@ function fakeStore() {
       }),
     saveHost: () => Promise.reject(new Error('not used here')),
     removeHost: () => Promise.resolve(),
+    reorderHosts: () => Promise.resolve(),
     credentialFor: () => Promise.resolve('secret'),
     rememberFingerprint: (hostId, value) => {
       wrote.push(`fingerprint ${hostId} ${value}`);

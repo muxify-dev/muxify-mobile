@@ -1,0 +1,81 @@
+import { useCallback, useState } from 'react';
+
+import { deviceLog } from '@/diagnostics/device-log';
+import { speakingAs } from '@/diagnostics/log';
+import { answered, asking, refused, UNASKED, type Listing } from '@/domain/host-listing';
+import { describeConnectionFailure } from '@/ssh/connect-host';
+import { deviceHostStore } from '@/storage/device-store';
+import { execCommandRunner } from '@/tmux/exec-runner';
+import { appConnections } from '@/tmux/ssh-connection';
+import { TmuxClient } from '@/tmux/tmux-client';
+import {
+  listedSessions,
+  loadingTopics,
+  settled,
+  TOPICS_UNASKED,
+  type HostTopics,
+} from '@/topics/host-topics';
+
+/** The screens' own voice in the Log: what the Host answered when asked. */
+const say = speakingAs(deviceLog(), 'host');
+
+/**
+ * What one Host has said about its Sessions and Topics, and the way to ask it
+ * again. The Host Screen and each section of Home read a Host through this, on
+ * the app's one Connection to it (ADR 0012).
+ *
+ * Asking again does not take down the last answer: see host-listing.
+ *
+ * With Topics on, the one exec of each read is `environment show`, whose
+ * snapshot has the Sessions too. When it gives no snapshot — no desktop
+ * Muxify, an old one, a failed read — the Sessions still need their own
+ * answer, so tmux is asked after all.
+ */
+export function useHostReading(hostId: string, topicsOn: boolean) {
+  const [listing, setListing] = useState<Listing>(UNASKED);
+  const [topics, setTopics] = useState<HostTopics>(TOPICS_UNASKED);
+
+  const read = useCallback(async () => {
+    setListing(asking);
+    if (topicsOn) setTopics(loadingTopics);
+    const records = await deviceHostStore().load();
+    const found = records.hosts.find((candidate) => candidate.id === hostId);
+    if (!found) {
+      setListing(refused('This Host is no longer saved.'));
+      return;
+    }
+
+    say(`asking ${found.displayName} for its ${topicsOn ? 'Topics' : 'Sessions'}`);
+    let topicsRead = false;
+    try {
+      await appConnections().read(found, async (transport, muxify) => {
+        const result = topicsOn ? await muxify.read((command) => transport.exec(command)) : null;
+        if (result) {
+          topicsRead = true;
+          setTopics((previous) => settled(previous, result));
+        }
+        if (result?.kind === 'listed') {
+          const sessions = listedSessions(result.snapshot);
+          say(`${found.displayName} listed ${sessions.length} Sessions with its Topics`);
+          setListing(answered(sessions));
+        } else {
+          const client = new TmuxClient(execCommandRunner(transport, found.tmuxExecutablePath));
+          // A Host with no tmux server is a Host with no Sessions, which the
+          // client already forgives — it must not read as a failure here.
+          const sessions = await client.listSessions();
+          say(`${found.displayName} listed ${sessions.length} Sessions`);
+          setListing(answered(sessions));
+        }
+      });
+    } catch (error) {
+      const message = describeConnectionFailure(error);
+      say(`${found.displayName} refused the listing: ${message}`);
+      setListing(refused(message));
+      if (topicsOn && !topicsRead) {
+        setTopics((previous) => settled(previous, { kind: 'failed', error: message }));
+      }
+    }
+  }, [hostId, topicsOn]);
+
+  return { listing, topics, read };
+}

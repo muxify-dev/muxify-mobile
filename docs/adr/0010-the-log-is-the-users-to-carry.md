@@ -62,3 +62,9 @@ and it is the reason the Log is not a dump of the byte stream.
 - The Log lives for the process and no longer. A failure that kills the app
   takes its Log with it.
 - `expo-clipboard` is a dependency, for the one thing the Log has to do.
+
+## Where Copy log is now
+
+Copy log is a long press on a Host in Settings, under Hosts. It left the
+Host Screen's Session rows when Home became the front door and the Hosts moved
+to Settings. The report and its head are the same.

@@ -68,6 +68,7 @@ function memoryStore() {
     load: () => Promise.resolve(records),
     saveHost: () => Promise.reject(new Error('not used by this check')),
     removeHost: () => Promise.resolve(),
+    reorderHosts: () => Promise.resolve(),
     credentialFor: () => Promise.resolve('unused'),
     rememberFingerprint: () => Promise.resolve(),
     fingerprintFor: () => Promise.resolve(undefined),

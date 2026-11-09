@@ -11,7 +11,8 @@ proves natively — built to find out whether Expo's Liquid Glass UI and
 
 **Host**:
 A saved, named description of a remote machine — address, port, user, and which
-Identity authenticates to it. Persists whether or not anything is connected.
+Identity authenticates to it. Persists whether or not anything is connected. The saved Hosts have an order,
+which the user sets in Settings, and Home shows them in it.
 _Avoid_: Server, box, machine, target
 
 **Identity**:
@@ -119,13 +120,25 @@ Where the user was when Muxify last closed: the Host, the Session and the Topic
 it was opened from, if any. The app writes it each time an Attach reaches its
 attached phase or switches Session, and clears it on Disconnect. With Reconnect
 on start on, a cold start opens it again behind a "Trying to reconnect" screen.
-A Disconnect means "do not take me back", so the next cold start opens the
-Hosts list.
+A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
+**Home**:
+The screen the app opens on: one section for each Host, in the Host order. The
+section's header is the Host's name, a dot for its Connection (green when its
+Listing has come back, orange while the first read is in flight, red when the
+Host refused) and **All**, which opens that Host's Host Screen. Under it are
+the first 5 rows the Host Screen would show, in the lists and the order the
+user set in Settings, so one tap attaches to a Session or opens a Topic Screen.
+Hosts are never mixed in one section. A Host that refused shows its reason and
+Retry in its own section, and the other sections read on. Home reads every
+Host's Listing each time it comes into focus, on that Host's one Connection.
+Adding, editing, deleting and ordering Hosts is in Settings. See ADR 0013.
+_Avoid_: Hosts list, front door, dashboard
+
 **Listing**:
-What a Host last said its Sessions were. The Host Screen asks again every time
-it comes back into focus — a sheet closing over it, a return from the Terminal
+What a Host last said its Sessions were. The Host Screen and each Host section
+of Home ask again every time they come back into focus — a sheet closing over it, a return from the Terminal
 Screen — and the asking is invisible: the answer it is holding stays on screen
 until a better one arrives. Only the first question has nothing to show and a
 spinner to stand in for it. A refusal is the exception and drops the list,
@@ -216,7 +229,8 @@ longer defines, or a colour the phone cannot read, shows as a dashed square.
 _Avoid_: tag chip, tag dot
 
 **Topic Screen**:
-The phone screen for one Topic, opened by a tap on its card on the Host Screen.
+The phone screen for one Topic, opened by a tap on its card on the Host Screen
+or on Home.
 It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
 order, each with its Windows and their Agent marks. A tap on a Session attaches
 to it, and Home from that Session goes to the Host Screen. A Dormant or Empty
@@ -361,8 +375,8 @@ _Avoid_: status bar (that is the system's), overlay, HUD
 
 **Log**:
 Muxify's own record of what it decided, kept in memory for the life of the
-app and carried out by the user: a long press on any Session row of the Host
-Screen offers **Copy log**, which puts it on the clipboard with a head saying
+app and carried out by the user: a long press on a Host in Settings offers
+**Copy log**, which puts it on the clipboard with a head saying
 what is attached and how the Attach stands. Every module that makes a decision
 a screen cannot show says so in one line — which Pane got a Surface and when
 it reported its grid, what the Topology became and why, what went down the

@@ -1,6 +1,6 @@
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import {
   Button,
@@ -10,7 +10,6 @@ import {
   List,
   Section,
   Spacer,
-  SwipeActions,
   Text,
   VStack,
 } from '@expo/ui/swift-ui';
@@ -23,25 +22,28 @@ import {
   font,
   foregroundColor,
   frame,
-  lineLimit,
   listRowBackground,
   listStyle,
   multilineTextAlignment,
   padding,
   scrollContentBackground,
   tint,
-  truncationMode,
 } from '@expo/ui/swift-ui/modifiers';
+import { HostScreenRowView, rowKey, type RowActions } from '@/components/host-screen-row-view';
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
-import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
+import { homeSection, type HostConnection } from '@/domain/home';
 import { placeToReconnect } from '@/domain/reconnect';
+import { useHostReading } from '@/hooks/use-host-reading';
 import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host as HostRecord } from '@/storage/records';
+import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
+import { lastSnapshot } from '@/topics/host-topics';
+import { tagsParam } from '@/topics/tags-param';
+import { topicSeedParam } from '@/topics/topic-detail';
 
 /**
  * Whether this run of the app has looked for a Last Place yet. Module state
@@ -51,28 +53,30 @@ import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 let coldStartChecked = false;
 
 /**
- * The Hosts list: the app's front door.
- *
- * Re-reads on focus rather than holding state, because the form writes through
- * the store and this screen would otherwise show a Host that was just renamed
- * under its old name.
- *
- * Laid out after remux, with its own nouns: a Host here is what remux calls a
- * server, and the glossary in CONTEXT.md is the thing to keep consistent.
+ * The dot beside a Host's name. System green and orange rather than palette
+ * colours: the palette has no "ready" or "waiting", and these two are the ones
+ * the phone already uses for it.
  */
-export default function HostsScreen() {
+const CONNECTION_DOT: Record<HostConnection, { color: string; label: string }> = {
+  answered: { color: '#34c759', label: 'Connected' },
+  checking: { color: '#ff9f0a', label: 'Checking' },
+  refused: { color: '#ff453a', label: 'Unreachable' },
+};
+
+/**
+ * Home: the app's front door. One section per Host, in the order Settings
+ * gives, each with the first rows of that Host's Host Screen, so one tap
+ * attaches or opens a Topic.
+ *
+ * Re-reads the Hosts on focus rather than holding them, because the form
+ * writes through the store and this screen would otherwise show a Host that
+ * was just renamed under its old name. Each section reads its own Host on
+ * focus too; see ADR 0013.
+ */
+export default function HomeScreen() {
   const router = useRouter();
   const { appearance, palette } = useSettings();
   const [hosts, setHosts] = useState<HostRecord[] | null>(null);
-  /**
-   * Which Host, if any, has the attached Session.
-   *
-   * Going Home leaves the Session attached, so the list has to say so — a
-   * Connection nobody can see is a Connection nobody remembers to end. See
-   * ADR 0007.
-   */
-  const attach = useCurrentAttach();
-  const attached = useAttachState(attach);
 
   useEffect(() => {
     if (coldStartChecked) return;
@@ -85,7 +89,7 @@ export default function HostsScreen() {
       const place = placeToReconnect(settings, records);
       if (!place) return;
       // Pushed in the order Back walks them, so the Terminal Screen has the
-      // Host Screen and then the Hosts list under it, as if tapped to.
+      // Host Screen and then Home under it, as if tapped to.
       router.push({ pathname: '/hosts/[id]', params: { id: place.hostId } });
       router.push({
         pathname: '/terminal',
@@ -110,27 +114,6 @@ export default function HostsScreen() {
     }, [reload]),
   );
 
-  const confirmRemove = useCallback(
-    (host: HostRecord) => {
-      Alert.alert(`Delete ${host.displayName}?`, 'Its stored credential goes with it.', [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              await deviceHostStore().removeHost(host.id);
-              await reload();
-            })();
-          },
-        },
-      ]);
-    },
-    [reload],
-  );
-
-  const addHost = useCallback(() => router.push('/host-form'), [router]);
-
   return (
     <View style={styles.fill}>
       <Stack.Screen
@@ -144,14 +127,6 @@ export default function HostsScreen() {
               onPress={() => router.push('/settings')}
             />
           ),
-          headerRight: () => (
-            <ToolbarGlyphButton
-              systemImage="plus"
-              label="Add Host"
-              tint={palette.toolbarTint}
-              onPress={addHost}
-            />
-          ),
         }}
       />
 
@@ -159,7 +134,7 @@ export default function HostsScreen() {
         <EmptyState
           appearance={appearance}
           palette={palette}
-          onAddHost={addHost}
+          onAddHost={() => router.push('/host-form')}
           onAddDevHost={() => void addDevHost(reload)}
         />
       ) : (
@@ -173,84 +148,131 @@ export default function HostsScreen() {
               background(palette.background),
               tint(palette.controlAccent),
             ]}>
-            <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-              {hosts.map((host) => {
-                const attachedHere = attach?.hostId === host.id ? attached : null;
-                return (
-                <SwipeActions key={host.id}>
-                  <Button
-                    onPress={() =>
-                      router.push({ pathname: '/hosts/[id]', params: { id: host.id } })
-                    }
-                    modifiers={[buttonStyle('plain'), accessibilityLabel(host.displayName)]}>
-                    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-                      <Image
-                        systemName="server.rack"
-                        size={20}
-                        color={attachedHere ? palette.controlAccent : palette.rowIcon}
-                      />
-                      <VStack spacing={2} alignment="leading">
-                        {/* One line each, however long the name: a row that
-                            wraps is taller than its neighbours and the list
-                            stops reading as a list. Both lose their tail. */}
-                        <Text
-                          modifiers={[
-                            font({ size: 17, weight: 'bold' }),
-                            lineLimit(1),
-                            truncationMode('tail'),
-                          ]}>
-                          {host.displayName}
-                        </Text>
-                        <Text
-                          modifiers={[
-                            font({ size: 13, design: 'monospaced' }),
-                            foregroundColor(palette.secondaryLabel),
-                            lineLimit(1),
-                            truncationMode('tail'),
-                          ]}>
-                          {`${host.address}:${host.port}`}
-                        </Text>
-                        {/* Added rather than substituted: the address is what
-                            tells two Hosts of the same name apart, and it is
-                            wanted most on the row that is doing something. */}
-                        {attachedHere ? (
-                          <Text
-                            modifiers={[
-                              font({ size: 13 }),
-                              foregroundColor(palette.controlAccent),
-                            ]}>
-                            {`Attached to ${attachedHere.sessionName}`}
-                          </Text>
-                        ) : null}
-                      </VStack>
-                      <Spacer />
-                      <Image
-                        systemName="chevron.right"
-                        size={13}
-                        color={palette.secondaryLabel}
-                      />
-                    </HStack>
-                  </Button>
-
-                  <SwipeActions.Actions>
-                    <Button
-                      label="Delete"
-                      systemImage="trash"
-                      role="destructive"
-                      onPress={() => confirmRemove(host)}
-                      modifiers={[accessibilityLabel(`Delete ${host.displayName}`)]}
-                    />
-                  </SwipeActions.Actions>
-                </SwipeActions>
-                );
-              })}
-            </Section>
+            {hosts.map((host) => (
+              <HostSection key={host.id} host={host} appearance={appearance} palette={palette} />
+            ))}
           </List>
         </Host>
       )}
     </View>
   );
 }
+
+/**
+ * One Host's section. It reads its own Host, so a Host that cannot be reached
+ * waits in its own section and the others draw what they have.
+ */
+function HostSection({
+  host,
+  appearance,
+  palette,
+}: {
+  host: HostRecord;
+  appearance: 'light' | 'dark';
+  palette: Appearance;
+}) {
+  const router = useRouter();
+  const { settings } = useSettings();
+  const topicsOn = settings.hostScreenLists.includes('topics');
+  const { listing, topics, read } = useHostReading(host.id, topicsOn);
+  const [recent, setRecent] = useState<RecentSession[]>([]);
+  // Frozen per visit, as the Host Screen does: "2 hr ago" must not renumber
+  // itself under the user's thumb.
+  const [openedAt] = useState(() => new Date());
+  const attach = useCurrentAttach();
+  const attachState = useAttachState(attach);
+  const attachedHere = attach?.hostId === host.id && attachState ? attachState : null;
+
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        setRecent(await deviceHostStore().recentSessionsFor(host.id));
+        await read();
+      })();
+    }, [host.id, read]),
+  );
+
+  const section = homeSection(host, {
+    settings,
+    recent,
+    listing,
+    topics,
+    opened: NOTHING_OPENED,
+    appearance,
+  });
+
+  const openHostScreen = () =>
+    router.push({ pathname: '/hosts/[id]', params: { id: host.id } });
+
+  const actions: RowActions = {
+    onOpenSession: (session) =>
+      router.push({ pathname: '/terminal', params: { hostId: host.id, session } }),
+    onOpenTopic: (row) =>
+      router.push({
+        pathname: '/topic',
+        params: {
+          hostId: host.id,
+          topicId: row.id,
+          label: row.label,
+          tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
+          seed: topicSeedParam(row.seed),
+        },
+      }),
+    // The Bench and No Topic open in place on the Host Screen, which Home has
+    // no room for.
+    onToggle: openHostScreen,
+    onRetry: () => void read(),
+  };
+
+  const dot = CONNECTION_DOT[section.connection];
+
+  return (
+    <Section
+      header={
+        <HStack spacing={8} modifiers={[frame({ maxWidth: 3000 })]}>
+          <Image
+            systemName="circle.fill"
+            size={9}
+            color={dot.color}
+            modifiers={[accessibilityLabel(dot.label)]}
+          />
+          <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.sectionHeader)]}>
+            {host.displayName}
+          </Text>
+          <Spacer />
+          <Button
+            label="All ›"
+            onPress={openHostScreen}
+            modifiers={[
+              buttonStyle('plain'),
+              font({ size: 15 }),
+              accessibilityLabel(`All of ${host.displayName}`),
+            ]}
+          />
+        </HStack>
+      }
+      modifiers={[listRowBackground(palette.rowSurface)]}>
+      {section.rows.map((row, index) => (
+        <HostScreenRowView
+          // Flattened from several lists, which may each have a note or a
+          // checking row of their own.
+          key={`${index}:${rowKey(row, index)}`}
+          row={row}
+          palette={palette}
+          openedAt={openedAt}
+          attached={
+            row.kind === 'recent' && attachedHere?.sessionName === row.name
+              ? attachedHere.phase
+              : undefined
+          }
+          actions={actions}
+        />
+      ))}
+    </Section>
+  );
+}
+
+const NOTHING_OPENED: ReadonlySet<never> = new Set();
 
 /** Nothing saved yet: what this app is for, and the one thing to do about it. */
 function EmptyState({

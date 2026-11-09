@@ -377,3 +377,44 @@ describe('the Last Place', () => {
     expect(records.hosts).toHaveLength(1);
   });
 });
+
+describe('reorderHosts', () => {
+  async function savedHosts(names: string[]) {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const saved = [];
+    for (const displayName of names) {
+      saved.push(await store.saveHost({ host: { ...HOST, displayName }, identity: IDENTITY, credential: 'x' }));
+    }
+    return { store, saved };
+  }
+  const order = async (store: ReturnType<typeof createHostStore>) =>
+    (await store.load()).hosts.map((host) => host.displayName);
+
+  it('puts a new Host at the end', async () => {
+    const { store } = await savedHosts(['one', 'two', 'three']);
+
+    expect(await order(store)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('keeps the order it is given, and editing a Host does not move it', async () => {
+    const { store, saved } = await savedHosts(['one', 'two', 'three']);
+
+    await store.reorderHosts([saved[2]!.id, saved[0]!.id, saved[1]!.id]);
+    await store.saveHost({
+      host: { ...HOST, id: saved[0]!.id, displayName: 'one, renamed' },
+      identity: { ...IDENTITY, id: saved[0]!.identityId },
+      credential: '',
+    });
+
+    expect(await order(store)).toEqual(['three', 'one, renamed', 'two']);
+  });
+
+  it('keeps a Host the order leaves out, and ignores an id that is no Host', async () => {
+    const { store, saved } = await savedHosts(['one', 'two', 'three']);
+
+    await store.reorderHosts([saved[2]!.id, 'gone']);
+
+    expect(await order(store)).toEqual(['three', 'one', 'two']);
+  });
+});

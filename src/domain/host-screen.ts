@@ -77,6 +77,12 @@ export interface HostScreenInput {
   opened: ReadonlySet<OpenableRow>;
   /** The appearance the screen is drawn in, which picks each Tag's colour. */
   appearance: ColorAppearance;
+  /**
+   * Keep only the first this many rows, counted across the sections. Home asks
+   * for a few rows of each Host and the Host Screen asks for none, so both
+   * draw what one builder says.
+   */
+  limit?: number;
 }
 
 /**
@@ -99,6 +105,29 @@ export interface HostScreenInput {
  * and the row comes back where it was, still knowing when you last opened it.
  */
 export function hostScreen({
+  settings,
+  recent,
+  listing,
+  topics,
+  opened,
+  appearance,
+  limit,
+}: HostScreenInput): HostScreenSection[] {
+  const sections = allSections({ settings, recent, listing, topics, opened, appearance });
+  return limit === undefined ? sections : firstRows(sections, limit);
+}
+
+/** The sections cut after `limit` rows. A section the cut leaves empty goes. */
+function firstRows(sections: HostScreenSection[], limit: number): HostScreenSection[] {
+  let left = limit;
+  return sections.flatMap((section) => {
+    const rows = section.rows.slice(0, left);
+    left -= rows.length;
+    return rows.length === 0 ? [] : [{ ...section, rows }];
+  });
+}
+
+function allSections({
   settings,
   recent,
   listing,

@@ -5,8 +5,8 @@ context platform=ios kind=simulator
 # so the screen stays up: the dev Host is this Mac and reconnects too fast to
 # press anything before it is attached.
 #
-# A Disconnect then clears the Last Place, so the next cold start opens the
-# Hosts list.
+# A Disconnect then clears the Last Place, so the next cold start opens
+# Home.
 #
 # Run with:  bash e2e/reconnect-on-start.sh
 

@@ -33,6 +33,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { HostsSection } from '@/components/hosts-section';
 import { HostScreenListsSection } from '@/components/host-screen-lists-section';
 import { SectionHeader } from '@/components/section-header';
 import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/app-theme';
@@ -79,11 +80,13 @@ export default function SettingsScreen() {
             scrollContentBackground('hidden'),
             background(palette.background),
             tint(palette.controlAccent),
-            // Edit mode is what shows the drag handles of the Host Screen
-            // lists. Rows outside a List.ForEach have nothing to drag, so they
+            // Edit mode is what shows the drag handles of the Hosts and of
+            // the Host Screen lists. Rows outside a List.ForEach have nothing to drag, so they
             // look as they did before.
             environment('editMode', 'active'),
           ]}>
+          <HostsSection palette={palette} />
+
           <Section
             header={<SectionHeader palette={palette}>Font</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>

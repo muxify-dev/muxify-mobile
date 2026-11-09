@@ -39,6 +39,13 @@ export interface HostStore {
   load(): Promise<Records>;
   saveHost(input: SaveHostInput): Promise<Host>;
   removeHost(hostId: string): Promise<void>;
+  /**
+   * Puts the Hosts in the order of these ids, which is the order Home and
+   * Settings show them in. A Host the ids leave out keeps its place after the
+   * ones they name, and an id that is no Host is ignored, so a reorder made
+   * from a stale list cannot drop a Host.
+   */
+  reorderHosts(hostIds: string[]): Promise<void>;
   /** The credential for a Host, read from the keychain at Connection time. */
   credentialFor(hostId: string): Promise<string | null>;
   rememberFingerprint(hostId: string, value: string): Promise<void>;
@@ -154,6 +161,13 @@ export function createHostStore(
       if (!stillUsed) {
         await secrets.remove(credentialKey(host.identityId));
       }
+    },
+
+    async reorderHosts(hostIds: string[]): Promise<void> {
+      const records = await load();
+      const named = hostIds.flatMap((id) => records.hosts.find((host) => host.id === id) ?? []);
+      const rest = records.hosts.filter((host) => !named.includes(host));
+      await save({ ...records, hosts: [...new Set(named), ...rest] });
     },
 
     async credentialFor(hostId: string): Promise<string | null> {

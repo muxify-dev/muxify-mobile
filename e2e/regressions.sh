@@ -198,7 +198,9 @@ attach() {
   agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
   # The real flow: a saved Host, its Sessions, then one of them.
-  agent-device press 'label="Dev Host"' >/dev/null 2>&1
+  agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+  agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+  agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
   for _ in $(seq 1 20); do
@@ -417,7 +419,9 @@ on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$S
 ensure_keyboard away
 agent-device press 'role=button label="Home"' >/dev/null 2>&1
 agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
-agent-device press 'label="Dev Host"' >/dev/null 2>&1
+agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SECOND\"" >/dev/null 2>&1
 for _ in $(seq 1 25); do
@@ -439,7 +443,9 @@ echo "     second Session connected at $(surface), keyboard rose and fell"
 # Back to the first, the same way round, so what follows leaves it as found.
 agent-device press 'role=button label="Home"' >/dev/null 2>&1
 agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
-agent-device press 'label="Dev Host"' >/dev/null 2>&1
+agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
 for _ in $(seq 1 25); do
