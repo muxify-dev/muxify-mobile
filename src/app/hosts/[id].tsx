@@ -76,6 +76,7 @@ import {
   type HostTopics,
 } from '@/topics/host-topics';
 import { tagsParam } from '@/topics/tags-param';
+import { topicSeedParam } from '@/topics/topic-detail';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -386,6 +387,7 @@ export default function HostScreen() {
                   topicId: row.id,
                   label: row.label,
                   tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
+                  seed: topicSeedParam(row.seed),
                 },
               })
             }

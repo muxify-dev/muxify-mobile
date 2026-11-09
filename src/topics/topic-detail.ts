@@ -8,6 +8,7 @@ import {
   parseTopicState,
   sessionId,
   topicId,
+  type Card,
   type Mark,
   type SessionId,
   type TopicId,
@@ -31,7 +32,8 @@ export interface TopicWindow {
 export interface TopicSession {
   id: SessionId;
   name: string;
-  windows: TopicWindow[];
+  /** Null until `topic show` is read: the Host Screen's snapshot has no Windows. */
+  windows: TopicWindow[] | null;
 }
 
 export interface TopicDetail {
@@ -131,6 +133,63 @@ export type TopicView =
   | { kind: 'shown'; topic: TopicDetail };
 
 export const TOPIC_UNASKED: TopicView = { kind: 'loading', last: null };
+
+/** Where the screen starts: on the seed, when there is one, while it reads. */
+export function topicStartingFrom(seed: TopicDetail | null): TopicView {
+  return seed ? { kind: 'loading', last: seed } : TOPIC_UNASKED;
+}
+
+/**
+ * A Topic as the Host Screen's `environment show` already knows it: its card,
+ * with the names of its live Sessions in card order. No Windows: the snapshot
+ * has none, and `topic show` fills them in. A Session id the snapshot has no
+ * name for is left out.
+ */
+export function seededTopic(
+  card: Extract<Card, { kind: 'topic' }>,
+  names: ReadonlyMap<SessionId, string>,
+): TopicDetail {
+  return {
+    ...card.topic,
+    sessions: card.sessions.flatMap((id) => {
+      const name = names.get(id);
+      return name === undefined ? [] : [{ id, name, windows: null }];
+    }),
+  };
+}
+
+/** The seed as a route param, from the Host Screen to the Topic Screen. */
+export function topicSeedParam(seed: TopicDetail): string {
+  return JSON.stringify({
+    ...seed,
+    sessions: seed.sessions.map(({ id, name }) => ({ id, name })),
+  });
+}
+
+/** A route param is open to any deep link, so a bad one gives no seed and the screen reads as before. */
+export function topicSeedFromParam(param: string | undefined): TopicDetail | null {
+  if (param === undefined) return null;
+  try {
+    const topic = object(JSON.parse(param), 'seed');
+    return {
+      id: topicId(topic.id, 'seed.id'),
+      label: string(topic.label, 'seed.label'),
+      note: topic.note === null ? null : string(topic.note, 'seed.note'),
+      tags: array(topic.tags, 'seed.tags').map((tag, i) => string(tag, `seed.tags[${i}]`)),
+      state: parseTopicState(topic.state),
+      sessions: array(topic.sessions, 'seed.sessions').map((value, i) => {
+        const session = object(value, `seed.sessions[${i}]`);
+        return {
+          id: sessionId(session.id, `seed.sessions[${i}].id`),
+          name: string(session.name, `seed.sessions[${i}].name`),
+          windows: null,
+        };
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function loadingTopic(previous: TopicView): TopicView {
   return { kind: 'loading', last: lastTopic(previous) };

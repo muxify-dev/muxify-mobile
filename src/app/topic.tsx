@@ -43,7 +43,8 @@ import {
   lastTopic,
   loadingTopic,
   settledTopic,
-  TOPIC_UNASKED,
+  topicSeedFromParam,
+  topicStartingFrom,
   type TopicSession,
   type TopicView,
 } from '@/topics/topic-detail';
@@ -70,15 +71,17 @@ const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
  */
 export default function TopicScreen() {
   const router = useRouter();
-  const { hostId, topicId, label, tags } = useLocalSearchParams<{
+  const { hostId, topicId, label, tags, seed } = useLocalSearchParams<{
     hostId: string;
     topicId: string;
     label?: string;
     /** The Config's Tags, for the Edit sheet. */
     tags?: string;
+    /** What the Host Screen already read about this Topic. See topicSeedParam. */
+    seed?: string;
   }>();
   const { appearance, palette } = useSettings();
-  const [view, setView] = useState<TopicView>(TOPIC_UNASKED);
+  const [view, setView] = useState<TopicView>(() => topicStartingFrom(topicSeedFromParam(seed)));
 
   const readTopic = useCallback(async () => {
     setView(loadingTopic);
@@ -263,7 +266,7 @@ function SessionRow({
         <Image systemName="terminal" size={20} color={palette.rowIcon} />
         <VStack spacing={4} alignment="leading">
           <Text modifiers={[font({ size: 17 })]}>{session.name}</Text>
-          {session.windows.map((window) => (
+          {(session.windows ?? []).map((window) => (
             <HStack key={window.id} spacing={6}>
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
                 {`${window.index}  ${window.name}`}

@@ -4,6 +4,7 @@ import type { RecentSession } from '@/storage/records';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
+import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /** A Session Muxify remembers opening, as the Recent Sessions and Sessions lists show it. */
 export interface RecentRow {
@@ -41,6 +42,8 @@ export type HostScreenRow =
       mark: Mark | null;
       pinned: boolean;
       dimmed: boolean;
+      /** What the Topic Screen draws at once, before it reads the Topic. */
+      seed: TopicDetail;
     }
   /** A Locked Session shown as its own card. */
   | { kind: 'locked-session'; name: string; mark: Mark | null; pinned: boolean }
@@ -282,6 +285,7 @@ function cardRow(card: Card, { pinned, names, colors }: CardRowContext): HostScr
         mark: card.mark,
         pinned,
         dimmed: card.topic.state !== 'live',
+        seed: seededTopic(card, names),
       };
     case 'session': {
       const name = names.get(card.sessions[0]);

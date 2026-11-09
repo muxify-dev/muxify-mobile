@@ -1,6 +1,17 @@
 import dormant from './__fixtures__/topic-dormant.json';
 import live from './__fixtures__/topic-live.json';
-import { loadingTopic, parseTopicDetail, settledTopic, TOPIC_UNASKED, type TopicDetail } from './topic-detail';
+import type { Card, SessionId, TopicId } from './environment';
+import {
+  loadingTopic,
+  parseTopicDetail,
+  seededTopic,
+  settledTopic,
+  topicSeedFromParam,
+  topicSeedParam,
+  topicStartingFrom,
+  TOPIC_UNASKED,
+  type TopicDetail,
+} from './topic-detail';
 
 /** An answer with one Session whose Windows hold the Agents given, one Pane each. */
 function withAgents(windows: (Record<string, unknown> | null)[][]) {
@@ -59,7 +70,7 @@ describe('parsing what `topic show --json` said on the Mac', () => {
 
     expect(topic.note).toBe('Repro with seed 4411');
     expect(topic.tags).toEqual(['backend', 'ux']);
-    expect(topic.sessions[0]?.windows.map((window) => window.index)).toEqual([1, 2, 3]);
+    expect(topic.sessions[0]?.windows?.map((window) => window.index)).toEqual([1, 2, 3]);
   });
 
   it('marks each Window with its strongest Agent, as the Mac does', () => {
@@ -72,7 +83,7 @@ describe('parsing what `topic show --json` said on the Mac', () => {
       ]),
     );
 
-    expect(topic.sessions[0]?.windows.map((window) => window.mark)).toEqual([
+    expect(topic.sessions[0]?.windows?.map((window) => window.mark)).toEqual([
       'done',
       'blocked',
       null,
@@ -106,6 +117,72 @@ describe('what the Topic Screen holds', () => {
       kind: 'failed',
       error: 'x',
       last: null,
+    });
+  });
+});
+
+describe('the seed: what the Host Screen already read about a Topic', () => {
+  const sid = (id: string) => id as SessionId;
+  const card: Extract<Card, { kind: 'topic' }> = {
+    kind: 'topic',
+    mark: null,
+    sessions: [sid('$2'), sid('$9'), sid('$1')],
+    topic: {
+      id: 't1' as TopicId,
+      label: 'Fix login',
+      note: 'Repro with seed 4411',
+      tags: ['backend'],
+      state: 'live',
+    },
+  };
+  const names = new Map([
+    [sid('$1'), 'gs/fix-login'],
+    [sid('$2'), 'gs/web'],
+  ]);
+
+  it('has the card’s title, Note, Tags, state and Sessions in card order, with no Windows read yet', () => {
+    expect(seededTopic(card, names)).toEqual<TopicDetail>({
+      id: 't1' as TopicId,
+      label: 'Fix login',
+      note: 'Repro with seed 4411',
+      tags: ['backend'],
+      state: 'live',
+      sessions: [
+        { id: sid('$2'), name: 'gs/web', windows: null },
+        { id: sid('$1'), name: 'gs/fix-login', windows: null },
+      ],
+    });
+  });
+
+  it('goes through a route param and back unchanged', () => {
+    const seed = seededTopic(card, names);
+    expect(topicSeedFromParam(topicSeedParam(seed))).toEqual(seed);
+  });
+
+  it('is no seed for a param that is missing or does not decode', () => {
+    expect(topicSeedFromParam(undefined)).toBeNull();
+    expect(topicSeedFromParam('not json')).toBeNull();
+    expect(topicSeedFromParam(JSON.stringify({ label: 3 }))).toBeNull();
+  });
+
+  it('starts the screen with the seed on it while the read is in flight', () => {
+    const seed = seededTopic(card, names);
+    expect(topicStartingFrom(seed)).toEqual({ kind: 'loading', last: seed });
+    expect(topicStartingFrom(null)).toEqual(TOPIC_UNASKED);
+  });
+
+  it('gives way to the read, and stays under a failed one', () => {
+    const seed = seededTopic(card, names);
+    const read = parseTopicDetail(live);
+
+    expect(settledTopic(topicStartingFrom(seed), { kind: 'shown', topic: read })).toEqual({
+      kind: 'shown',
+      topic: read,
+    });
+    expect(settledTopic(topicStartingFrom(seed), { kind: 'failed', error: 'x' })).toEqual({
+      kind: 'failed',
+      error: 'x',
+      last: seed,
     });
   });
 });
