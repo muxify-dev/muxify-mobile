@@ -792,3 +792,25 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
     expect(sessions?.rows.find((row) => row.kind === 'recent')).toMatchObject({ name: 'chezmoi' });
   });
 });
+
+describe('hostScreen with a limit', () => {
+  const input = {
+    settings: { hostScreenLists: ['recent', 'sessions'] as HostScreenLists },
+    recent: [remembered('a'), remembered('b')],
+    listing: answered([running('a'), running('b'), running('c'), running('d')]),
+    topics: TOPICS_UNASKED,
+    opened: CLOSED,
+    appearance: 'dark' as const,
+  };
+  const names = (sections: HostScreenSection[]) =>
+    sections.flatMap((section) => section.rows.map((row) => ('name' in row ? row.name : row.kind)));
+
+  it('keeps the first rows across the sections, and leaves out a section it emptied', () => {
+    expect(names(hostScreen({ ...input, limit: 3 }))).toEqual(['a', 'b', 'c']);
+    expect(hostScreen({ ...input, limit: 2 }).map((section) => section.id)).toEqual(['recent']);
+  });
+
+  it('shows everything with no limit', () => {
+    expect(names(hostScreen(input))).toEqual(['a', 'b', 'c', 'd']);
+  });
+});

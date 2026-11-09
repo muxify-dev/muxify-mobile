@@ -4,14 +4,18 @@ context platform=ios kind=simulator
 #
 # Attaching to e2e-reconnect, a Session the script makes, writes the Last
 # Place. A relaunch then shows "Trying to reconnect" with Go Home, and ends on
-# that Session, Connected, with the Host Screen and then the Hosts list under
+# that Session, Connected, with the Host Screen and then Home under
 # it.
 #
 # Run with:  bash e2e/reconnect-on-start.sh
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"Dev Host\""
+press "label=\"All of Dev Host\""
+wait "label=\"Edit Host\"" 15000
+# Home is still under the Host Screen until the push settles, and has the
+# same Session and Topic rows.
+wait 1500
 wait "label=\"Session e2e-reconnect\"" 15000
 press "label=\"Session e2e-reconnect\""
 wait "id=\"connection-status\"" 8000
@@ -25,7 +29,7 @@ wait 10000
 is "text" "id=\"connection-status\"" "Connected"
 is "absent" "id=\"reconnect-screen\""
 
-# Home is that Host's Host Screen, and one Back below it is the Hosts list.
+# Home is that Host's Host Screen, and one Back below it is Home.
 press "role=button label=\"Home\""
 wait "label=\"New Session\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""

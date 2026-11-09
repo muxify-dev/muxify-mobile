@@ -2,7 +2,7 @@
 #
 # Makes sure a Host is saved before the .ad suites run.
 #
-# The suites start from the Hosts list, which is empty on a fresh install. The
+# The suites start from Home, which is empty on a fresh install. The
 # app offers a one-press way to save the Host described by .env.local, which is
 # what this presses — an ordinary Host record through the ordinary store, not a
 # connection path of its own.

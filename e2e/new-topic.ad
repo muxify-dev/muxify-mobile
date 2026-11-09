@@ -8,7 +8,11 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"Dev Host\""
+press "label=\"All of Dev Host\""
+wait "label=\"Edit Host\"" 15000
+# Home is still under the Host Screen until the push settles, and has the
+# same Session and Topic rows.
+wait 1500
 
 wait "label=\"New Session or Topic\"" 15000
 press "label=\"New Session or Topic\""
