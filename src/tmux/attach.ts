@@ -1,6 +1,6 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { createComposer, type Composer } from '@/composer/composer';
-import { checkAborted, uniqueId, type Upload } from '@/composer/types';
+import { checkAborted, uniqueId, type AttachmentFile, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { systemClock } from '@/lib/clock';
@@ -9,6 +9,7 @@ import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
 import { createClientSizing, type ClientSizing } from './client-sizing';
+import { shellQuote } from './commands';
 import {
   openControlConnection,
   type ClosedCause,
@@ -117,6 +118,20 @@ export interface AttachState {
   cursorRow: number | null;
 }
 
+/** What the Key Row's ⌘v delivers: the clipboard's text, or its image as a staged file. */
+export type Paste = { kind: 'text'; text: string } | { kind: 'image'; file: AttachmentFile };
+
+/**
+ * How long the program in a Pane has to answer `C-l` before the Scrollback is
+ * dropped behind it.
+ *
+ * A shell answers by clearing its screen, and tmux moves a screen cleared
+ * from the top into the Scrollback. Measured on tmux 3.8 down one Control
+ * Connection: with no wait, `clear-history` ran first and the 24 lines came
+ * back ten times out of ten; with 150 ms, none did.
+ */
+export const CLEAR_SETTLE_MS = 250;
+
 export interface Attach {
   readonly hostId: string;
   readonly hostName: string;
@@ -138,6 +153,20 @@ export interface Attach {
   capturePreviews(targets: string[]): void;
   /** The active Pane's text, for the clipboard. Rejects with no Pane or no Connection. */
   capturePaneText(): Promise<string>;
+  /**
+   * Pastes into the active Pane and presses nothing after it: a paste is not
+   * a send. An image goes up to the Host first, and its path is what is pasted.
+   *
+   * `runLines` is asked when the text has a line break and the program in the
+   * Pane did not ask for bracketed paste, because that program takes each
+   * line break as an Enter. Nothing is pasted when it answers false.
+   */
+  paste(content: Paste, runLines: () => Promise<boolean>): Promise<void>;
+  /**
+   * What ⌘K does in a terminal: the active Pane's screen and its Scrollback
+   * go, and the program draws itself again.
+   */
+  clearPane(): Promise<void>;
   /** Re-reads the Host's Session list, which no notification describes. */
   refreshSessions(): void;
   /** Reads the Topology again. For a sheet correcting itself behind its own back. */
@@ -243,43 +272,66 @@ export function openAttach(options: AttachOptions): Attach {
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
 
-  const composer = createComposer((paneId) => {
+  /**
+   * The two ways into a Pane that are not typing, on the Connection in force
+   * now: an upload to the Host, and a paste through a tmux buffer. The
+   * Composer's Send and the Key Row's ⌘v both go through this.
+   *
+   * `kept` ends each refusal with what became of the caller's text.
+   */
+  function openDelivery(kept: string) {
     const mine = generation;
     const current = client;
     const link = connection;
+    if (!current) throw new Error(`The Connection changed.${kept}`);
     const check = () => {
-      if (stale(mine) || suspended || !current || client !== current || state.phase.kind !== 'connected') {
-        throw new Error('The Connection changed. Draft kept.');
+      if (stale(mine) || suspended || client !== current || state.phase.kind !== 'connected') {
+        throw new Error(`The Connection changed.${kept}`);
       }
     };
     check();
+    const upload: Upload = (file, signal, progress) => {
+      check();
+      if (!link?.upload) throw new Error('This Connection cannot upload attachments.');
+      return link.upload(file, signal, progress);
+    };
     return {
-      upload: (file, signal, progress) => {
-        check();
-        if (!link?.upload) throw new Error('This Connection cannot upload attachments.');
-        return link.upload(file, signal, progress);
-      },
-      async deliver(text, signal, started) {
-        const valid = () => { checkAborted(signal); check(); };
+      check,
+      upload,
+      /** `started` is called immediately before the command that reaches the Pane. */
+      async paste(paneId: string, text: string, valid: () => void, started: () => void): Promise<void> {
         valid();
-        const buffer = await current!.preparePaste(text, `muxify-${uniqueId()}`, valid);
+        const buffer = await current.preparePaste(text, `muxify-${uniqueId()}`, valid);
         try {
           valid();
           // Check that the captured Pane still exists, even after switching
           // Windows or Sessions. The current Topology only lists visible Panes.
-          if (!await current!.paneState(paneId)) throw new Error('The destination Pane has gone. Draft kept.');
+          if (!await current.paneState(paneId)) throw new Error(`The destination Pane has gone.${kept}`);
           valid();
           started();
-          say(`composer delivery to ${paneId} (${text.length} characters)`);
+          say(`pasting into ${paneId} (${text.length} characters)`);
           await buffer.paste(paneId);
-          // As in remux, let the receiving application settle its pasted text
-          // before the separate Enter. Never replay either after a reconnect.
-          await new Promise<void>((resolve) => setTimeout(resolve, 150));
-          valid();
-          await current!.sendKey(paneId, 'Enter');
         } finally {
           await buffer.dispose().catch(() => {});
         }
+      },
+      pressEnter: (paneId: string) => current.sendKey(paneId, 'Enter'),
+      paneState: (paneId: string) => current.paneState(paneId),
+    };
+  }
+
+  const composer = createComposer((paneId) => {
+    const delivery = openDelivery(' Draft kept.');
+    return {
+      upload: delivery.upload,
+      async deliver(text, signal, started) {
+        const valid = () => { checkAborted(signal); delivery.check(); };
+        await delivery.paste(paneId, text, valid, started);
+        // As in remux, let the receiving application settle its pasted text
+        // before the separate Enter. Never replay either after a reconnect.
+        await new Promise<void>((resolve) => setTimeout(resolve, 150));
+        valid();
+        await delivery.pressEnter(paneId);
       },
     };
   });
@@ -941,6 +993,36 @@ export function openAttach(options: AttachOptions): Attach {
       if (!pane) throw new Error('No active Pane.');
       say(`copying the text of ${pane.id}`);
       return current.capturePaneText(pane.id);
+    },
+
+    async paste(content: Paste, runLines: () => Promise<boolean>): Promise<void> {
+      const pane = state.topology.activePane;
+      if (!pane) throw new Error('No active Pane.');
+      const delivery = openDelivery('');
+      const text =
+        content.kind === 'text'
+          ? content.text
+          : shellQuote(await delivery.upload(content.file, new AbortController().signal, () => {}));
+      if (/[\r\n]/.test(text)) {
+        const program = await delivery.paneState(pane.id);
+        if (program && !program.bracketedPaste && !(await runLines())) return;
+      }
+      await delivery.paste(pane.id, text, delivery.check, () => {});
+    },
+
+    async clearPane(): Promise<void> {
+      const mine = generation;
+      const current = client;
+      const pane = state.topology.activePane;
+      if (!current) throw new Error('Not connected.');
+      if (!pane) throw new Error('No active Pane.');
+      say(`clearing ${pane.id}`);
+      await current.sendKey(pane.id, 'C-l');
+      await new Promise<void>((resolve) => clock.after(CLEAR_SETTLE_MS, resolve));
+      if (stale(mine)) return;
+      await current.clearHistory(pane.id);
+      // A Surface that shows the Scrollback shows lines that are gone now.
+      views.get(pane.id)?.jumpToLatest();
     },
 
     refreshSessions,

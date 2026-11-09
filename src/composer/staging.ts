@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import { uniqueId, type AttachmentFile } from './types';
@@ -30,5 +31,25 @@ export async function stageFile(uri: string, name: string, image: boolean): Prom
   } catch (error) {
     if (directory.exists) directory.delete();
     throw error;
+  }
+}
+
+/**
+ * The image on the clipboard as a staged file, or null when it holds none.
+ *
+ * For a paste that starts outside a text view. The Composer's own input gets
+ * a pasted image from its paste event; see native-input.
+ */
+export async function stageClipboardImage(): Promise<AttachmentFile | null> {
+  if (!(await Clipboard.hasImageAsync())) return null;
+  const image = await Clipboard.getImageAsync({ format: 'png' });
+  if (!image) return null;
+  const read = new File(stagingRoot(), `${uniqueId()}.png`);
+  try {
+    // `data` is a data URI: the base64 starts after the comma.
+    read.write(image.data.slice(image.data.indexOf(',') + 1), { encoding: 'base64' });
+    return await stageFile(read.uri, 'pasted-image.png', true);
+  } finally {
+    if (read.exists) read.delete();
   }
 }

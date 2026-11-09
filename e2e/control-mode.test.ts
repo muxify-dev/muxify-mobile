@@ -253,7 +253,7 @@ describe('the Attach, against a real tmux', () => {
     await wait(900);
     expect(tmux(['capture-pane', '-p', '-t', paneId])).toContain('LIVE_CHECK_OK');
 
-    // Every Key Bar key, by tmux's name for it, into a `cat -v` that prints
+    // Named keys, by tmux's name for each, into a `cat -v` that prints
     // back exactly what arrived. This is the half that cannot be driven from
     // the device: a SwiftUI menu's cells report no usable frame.
     view.type(new TextEncoder().encode('cat -v\r'));

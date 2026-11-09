@@ -4,7 +4,15 @@ import { MissingCredentialError } from '@/ssh/failures';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
-import { openAttach, type Attach, type AttachState, type HostConnection } from './attach';
+import type { AttachmentFile, Upload } from '@/composer/types';
+
+import {
+  CLEAR_SETTLE_MS,
+  openAttach,
+  type Attach,
+  type AttachState,
+  type HostConnection,
+} from './attach';
 import { GRID_SETTLE_MS } from './client-sizing';
 import type { PaneSurface } from './pane-view';
 import type { ControlChannel, ControlChannelEvents, TmuxTransport } from './transport';
@@ -46,7 +54,7 @@ function fakeHost() {
     ],
     ['list-panes', ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']],
     ['list-sessions', ['work\t1']],
-    ['display-message', ['0\t0\t0\t100\t49\t41\t0\t1']],
+    ['display-message', ['0\t0\t0\t100\t49\t41\t0\t1\t1']],
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
@@ -174,6 +182,7 @@ function attachOn(
     sessionName?: string;
     topicId?: string;
     zoomed?: boolean;
+    upload?: Upload;
   } = {},
 ) {
   const hosts = options.hosts ?? [fakeHost()];
@@ -206,6 +215,7 @@ function attachOn(
         transport: host.transport,
         fingerprint: 'SHA256:abcdef',
         verdict: { kind: 'first-sight' },
+        upload: options.upload,
         close: () => {
           letGo.push('close');
           return Promise.resolve();
@@ -471,6 +481,120 @@ describe('the verbs', () => {
     expect(kit.attach.state().zoomed).toBe(false);
     expect(kit.attach.state().trouble).not.toBeNull();
     expect(kit.attach.state().phase.kind).toBe('connected');
+  });
+});
+
+describe('the Key Row’s Shortcuts', () => {
+  /** The answer to a question that a paste of one line never asks. */
+  const never = () => Promise.reject(new Error('asked to run lines'));
+
+  const stagedImage: AttachmentFile = {
+    uri: 'file:///cache/composer/1/pasted-image.png',
+    name: 'pasted-image.png',
+    size: 3,
+    image: true,
+    open: () => ({ readBytes: () => new Uint8Array(), close: () => {} }),
+    dispose: () => {},
+  };
+
+  it('pastes text into the active Pane and presses nothing after it', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].commands.length = 0;
+
+    await kit.attach.paste({ kind: 'text', text: 'rm -rf build' }, never);
+
+    const sent = kit.hosts[0].commands.join('\n');
+    expect(sent).toContain("'set-buffer'");
+    expect(sent).toContain("'rm -rf build'");
+    expect(sent).toMatch(/'paste-buffer'.*'-t' '%0'/);
+    // A paste is not a send: no Enter, and no other key either.
+    expect(kit.hosts[0].verbs()).not.toContain('send-keys');
+  });
+
+  it('uploads a pasted image and pastes its path, quoted for a shell', async () => {
+    const uploaded: AttachmentFile[] = [];
+    const kit = attachOn({
+      upload: (file) => {
+        uploaded.push(file);
+        return Promise.resolve("/tmp/muxify/it's a shot.png");
+      },
+    });
+    await connected(kit);
+    kit.hosts[0].commands.length = 0;
+
+    await kit.attach.paste({ kind: 'image', file: stagedImage }, never);
+
+    expect(uploaded).toEqual([stagedImage]);
+    // The path as the Composer writes one into a message: single-quoted, with
+    // its own quote closed, escaped and reopened. Inside tmux's double quotes
+    // the backslash is doubled.
+    const sent = kit.hosts[0].commands.join('\n');
+    expect(sent).toContain(`"'/tmp/muxify/it'\\\\''s a shot.png'"`);
+    expect(sent).toMatch(/'paste-buffer'.*'-t' '%0'/);
+    expect(kit.hosts[0].verbs()).not.toContain('send-keys');
+  });
+
+  it('refuses an image on a Connection that cannot upload, and pastes nothing', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].commands.length = 0;
+
+    await expect(kit.attach.paste({ kind: 'image', file: stagedImage }, never)).rejects.toThrow(
+      'This Connection cannot upload attachments.',
+    );
+    expect(kit.hosts[0].commands).toEqual([]);
+  });
+
+  it('refuses to paste once the Connection is gone', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].exit('server exited');
+    await settle();
+
+    await expect(kit.attach.paste({ kind: 'text', text: 'late' }, never)).rejects.toThrow(
+      'The Connection changed.',
+    );
+  });
+
+  it('pastes two lines whole into a program that asked for bracketed paste', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].commands.length = 0;
+
+    await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, never);
+
+    expect(kit.hosts[0].verbs()).toContain('paste-buffer');
+  });
+
+  it('asks before two lines go to a program that runs each line, and pastes nothing on a no', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].answering('display-message', ['0\t0\t0\t100\t49\t41\t0\t1\t0']);
+    kit.hosts[0].commands.length = 0;
+
+    await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, () => Promise.resolve(false));
+    expect(kit.hosts[0].verbs()).not.toContain('set-buffer');
+    expect(kit.hosts[0].verbs()).not.toContain('paste-buffer');
+
+    await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, () => Promise.resolve(true));
+    expect(kit.hosts[0].verbs()).toContain('paste-buffer');
+  });
+
+  it('clears by letting the program redraw before it drops the Scrollback', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].commands.length = 0;
+
+    const cleared = kit.attach.clearPane();
+    await settle();
+    // Measured on tmux: a shell answers C-l by clearing its screen, and that
+    // screen lands in the Scrollback if the Scrollback was dropped first.
+    expect(kit.hosts[0].commands).toEqual(["'send-keys' '-t' '%0' 'C-l'"]);
+
+    kit.clock.advance(CLEAR_SETTLE_MS);
+    await cleared;
+    expect(kit.hosts[0].commands.slice(1)).toEqual(["'clear-history' '-t' '%0'"]);
   });
 });
 

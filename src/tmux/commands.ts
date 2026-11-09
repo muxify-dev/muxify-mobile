@@ -85,7 +85,7 @@ export function renderControlCommand(argv: TmuxArgv): string {
  *
  * Everything but what the user typed. `send-keys -H` carries the keystrokes
  * as hex, so a Log that quoted it would be a Log of passwords; it is written
- * down as a count of bytes instead. A named key from the Key Bar — `Up`,
+ * down as a count of bytes instead. A named key from the Key Row — `Up`,
  * `C-c` — is a key and not text, and stays.
  */
 export function describeCommand(argv: TmuxArgv): string {
@@ -393,7 +393,7 @@ export function paneStateCommand(paneId: string): TmuxArgv {
     '-t',
     paneId,
     '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
-      '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}',
+      '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}\t#{bracket_paste_flag}',
   ];
 }
 
@@ -422,6 +422,19 @@ export function capturePanesCommand(targets: string[]): TmuxArgv[] {
  */
 export function capturePaneTextCommand(paneId: string): TmuxArgv {
   return ['capture-pane', '-t', paneId, '-p', '-J'];
+}
+
+/**
+ * Drops a Pane's Scrollback. What is on its screen stays.
+ *
+ * Not `send-keys -R` in front of it, which is the usual way to take the
+ * screen too. Measured on tmux 3.8: `-R` resets the modes the program in the
+ * Pane asked for. A program that hid the cursor gets it back, DECCKM goes off,
+ * and bracketed paste goes off, so the next multi-line paste runs line by
+ * line. The program clears its own screen instead; see `clearPane` in attach.
+ */
+export function clearHistoryCommand(paneId: string): TmuxArgv {
+  return ['clear-history', '-t', paneId];
 }
 
 /**

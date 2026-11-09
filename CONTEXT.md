@@ -328,7 +328,10 @@ from a Topic, one section per live Session of the Topic with its Windows and
 their Agent marks, read from the Mac through `muxify` each time the sheet
 opens. A tap on a Window goes to it, switching Session first when it belongs
 to another one. **Switch…** at the top closes the sheet and opens the Sessions
-picker. The sheet draws no previews; the Sessions picker keeps its own.
+picker. The sheet draws no previews; the Sessions picker keeps its own. With
+the Topics list on in Settings, the Sessions picker lists the Host's Topics
+under its Sessions, as the rows of the Host Screen, with the Bench open. A tap
+on a Topic opens its Topic Screen over the Attach, which stays up.
 _Avoid_: Windows picker, Windows sheet (the old grid of previews), Topic sheet
 
 **Options**:
@@ -342,26 +345,37 @@ _Avoid_: menu (on its own), actions, overflow
 **Accessory Bar**:
 The modifier-key row (ctrl, esc, tab, arrows) that `expo-libghostty` draws above
 the system keyboard. Supplied by the library, not built by Muxify, and visible
-only while the keyboard is up. Muxify turns it off; the Key Bar is what stands
+only while the keyboard is up. Muxify turns it off; the Key Row is what stands
 in its place.
-_Avoid_: Toolbar, key bar (reserved for the Key Row's middle)
+_Avoid_: Toolbar, key bar
 
 **Key Row**:
 Muxify's own Liquid Glass row pinned to the bottom of the Terminal Screen,
-riding the keyboard. The Key Bar in the middle, and a fixed group at the right:
-Panes, which opens the Panes picker, and Keyboard, which shows or hides the
-system keyboard. No counts on its buttons. It is what the Dock was, with the
-pickers moved to the Header and the Title Sheet and Home become Back.
-_Avoid_: Dock (the old name), toolbar, tab bar, bottom bar
+riding the keyboard: the keys a phone keyboard does not have, in three groups.
+At the left, fixed: ⎋ escape, ⌃ control, ⌥ option and ⇥ tab. In the middle,
+scrolling sideways: twelve pair keys, each with two symbols. A tap types the
+top symbol. A touch dragged down types the bottom one, and a bubble over the
+key shows which symbol the release will type. At the right, fixed: the four
+arrows, Panes, which opens the Panes picker, ⌘ command, and Keyboard, which
+shows or hides the system keyboard. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
+and spent on the next key from either the row or the system keyboard. ⌥ is
+tmux's `M-`. ⌘ makes the next letter a Shortcut. While the Composer is open,
+or with no Connection, the keys are disabled.
+_Avoid_: Dock (the old name), Key Bar (the old middle), toolbar, tab bar,
+bottom bar, modifiers
 
-**Key Bar**:
-The Key Row's middle capsule: the keys a phone keyboard does not have — ctrl,
-esc, tab, the arrows, page up and down, alt, home and end. Up to three are on
-screen, as space allows, and the rest are a sideways swipe away. Every visible
-key has the same width, so a four-letter label shrinks rather than widening
-its key. ctrl and alt are *sticky*: armed by a tap, and spent on the next key
-from either the bar or the system keyboard.
-_Avoid_: Accessory Bar (that is the library's), toolbar, modifiers
+**Shortcut**:
+What ⌘ and a letter do on the phone. ⌘c copies the active Pane's text, as Copy
+Pane text does. ⌘v pastes the clipboard into the active Pane and presses
+nothing after it: text goes in as it is, and an image goes up to the Host as
+the Composer sends an Attachment, with its path pasted. Text goes through a
+tmux buffer with bracketed paste, so a program that asked for bracketed paste
+gets many lines as one piece and runs none. For text with a line break into a
+program that did not ask, the phone asks first, because that program runs
+each line as the line arrives. ⌘k clears the active
+Pane: the program in it draws its screen again and the Scrollback goes. ⌘ and
+any other key is that key.
+_Avoid_: hotkey, command (on its own)
 
 **Composer**:
 The place to prepare a message for a Pane before sending it: multiline text,

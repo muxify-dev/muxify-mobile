@@ -41,7 +41,9 @@ import {
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
-import type { SheetPalette } from '@/constants/app-theme';
+import { HostScreenRowView, rowKey, type TopicRow } from '@/components/host-screen-row-view';
+import type { Appearance, SheetPalette } from '@/constants/app-theme';
+import type { HostScreenSection } from '@/domain/host-screen';
 import { useSettings } from '@/settings/settings-context';
 import type { Frame } from '@/tmux/pane-topology';
 import { SheetHeader, SheetNote } from './sheet-chrome';
@@ -78,6 +80,15 @@ export interface SheetAction {
   systemImage?: SFSymbol;
 }
 
+/** The Host's Topics under the Sessions: the rows of the Host Screen's Topics list. */
+export interface SheetTopics {
+  sections: HostScreenSection[];
+  /** The chrome colours the Host Screen draws the same rows in. */
+  palette: Appearance;
+  onOpenTopic: (row: TopicRow) => void;
+  onRetry: () => void;
+}
+
 export interface PickerSheetProps {
   title: string;
   isPresented: boolean;
@@ -94,6 +105,19 @@ export interface PickerSheetProps {
   onAction?: (id: string) => void;
   /** The Zoom switch, shown only for Panes, and only when there are two. */
   zoom?: { on: boolean; onChange: (on: boolean) => void };
+  /** Sessions only: the Host's Topics, under the cards. */
+  topics?: SheetTopics;
+}
+
+/** One Topic row and one section header, as the sheet's height counts them. */
+const TOPIC_ROW_HEIGHT = 56;
+const TOPIC_HEADER_HEIGHT = 32;
+
+function topicsHeight(sections: HostScreenSection[]): number {
+  return sections.reduce(
+    (height, section) => height + TOPIC_HEADER_HEIGHT + section.rows.length * TOPIC_ROW_HEIGHT,
+    0,
+  );
 }
 
 /** The Pane diagram: a 4:3 well with the tiles inset inside it. */
@@ -139,6 +163,7 @@ export function PickerSheet({
   actions,
   onAction,
   zoom,
+  topics,
 }: PickerSheetProps) {
   // The live setting, not the one the Session was opened with: the Theme
   // decides whether the app is light or dark, and CONTEXT.md is explicit that
@@ -150,7 +175,10 @@ export function PickerSheet({
   const screen = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
   const metrics = sheetMetrics(measuredWidth ?? screen.width, screen.height);
-  const height = sheetHeight(metrics, layout, cards.length);
+  const sections = topics?.sections ?? [];
+  const height = sheetHeight(metrics, layout, cards.length, topicsHeight(sections));
+  // Only a Recent Session row shows a time, and no such row is drawn here.
+  const [openedAt] = useState(() => new Date());
 
   return (
     <Host matchContents style={styles.host}>
@@ -226,6 +254,41 @@ export function PickerSheet({
                         onSelect={onSelect}
                       />
                     ))}
+                    {topics
+                      ? sections.map((section) => (
+                          <VStack key={section.id} spacing={0} alignment="leading">
+                            <HStack modifiers={[frame({ height: TOPIC_HEADER_HEIGHT })]}>
+                              <Text
+                                modifiers={[
+                                  font({ size: 13, weight: 'semibold' }),
+                                  foregroundColor(palette.secondary),
+                                ]}>
+                                {section.title ?? ''}
+                              </Text>
+                              <Spacer />
+                            </HStack>
+                            {section.rows.map((row, index) => (
+                              <HStack
+                                key={rowKey(row, index)}
+                                modifiers={[frame({ minHeight: TOPIC_ROW_HEIGHT })]}>
+                                <HostScreenRowView
+                                  row={row}
+                                  palette={topics.palette}
+                                  openedAt={openedAt}
+                                  actions={{
+                                    onOpenTopic: topics.onOpenTopic,
+                                    onRetry: topics.onRetry,
+                                    // No Session row and no row that opens in
+                                    // place is among these: see topicSections.
+                                    onOpenSession: () => {},
+                                    onToggle: () => {},
+                                  }}
+                                />
+                              </HStack>
+                            ))}
+                          </VStack>
+                        ))
+                      : null}
                   </VStack>
                 </ScrollView>
               ) : null}

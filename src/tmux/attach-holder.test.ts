@@ -47,6 +47,8 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     setZoom: () => {},
     capturePreviews: () => {},
     capturePaneText: () => Promise.resolve(''),
+    paste: () => Promise.resolve(),
+    clearPane: () => Promise.resolve(),
     refreshSessions: () => {},
     refreshTopology: () => {},
     reconnect: () => {},

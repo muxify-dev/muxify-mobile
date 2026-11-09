@@ -74,6 +74,13 @@ describe('sheetMetrics', () => {
     expect(sheetHeight(metrics, 'list', 40)).toBeLessThanOrEqual(IPAD_CARD.landscapeHeight * 0.9);
   });
 
+  it('makes a list taller for the rows under its cards, up to the same budget', () => {
+    const metrics = sheetMetrics(393, 852);
+    const cards = sheetHeight(metrics, 'list', 1);
+    expect(sheetHeight(metrics, 'list', 1, 88)).toBeGreaterThan(cards + 88);
+    expect(sheetHeight(metrics, 'list', 1, 5000)).toBeLessThanOrEqual(852 * 0.9);
+  });
+
   it('never goes negative on a very narrow sheet', () => {
     const metrics = sheetMetrics(20, 300);
     expect(metrics.contentWidth).toBe(0);
