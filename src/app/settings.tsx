@@ -177,6 +177,23 @@ export default function SettingsScreen() {
           </Section>
 
           <Section
+            header={<SectionHeader palette={palette}>Terminal</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                The dim lines in the top right of a Session: the Connection, the grid size and the
+                Session name. A Banner still shows when the Connection is not connected.
+              </Text>
+            }
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Toggle
+              label="Show status lines"
+              isOn={value.showStatusLines}
+              onIsOnChange={(on) => update({ showStatusLines: on })}
+              modifiers={[tint(palette.controlAccent)]}
+            />
+          </Section>
+
+          <Section
             header={<SectionHeader palette={palette}>Host Screen</SectionHeader>}
             footer={
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>

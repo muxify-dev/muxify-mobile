@@ -1163,22 +1163,27 @@ export default function TerminalScreen() {
         </Presence>
 
         <View style={styles.overlay} pointerEvents="none">
-          {/* Always rendered, so its value can be asserted rather than its
+          {/* The Status Lines. With the setting on, `connection-status` is
+              always rendered, so its value can be asserted rather than its
               absence. `surface-grid` appears only once the Surface has reported
               a grid, so its presence is the signal that layout and `onResize`
               completed; the value is device-specific, so select on the id. */}
-          <ThemedText type="code" style={dimText} testID="connection-status">
-            {status.label}
-          </ThemedText>
-          {visibleGrid ? (
-            <ThemedText type="code" style={dimText} testID="surface-grid">
-              {visibleGrid.cols}x{visibleGrid.rows}
-            </ThemedText>
-          ) : null}
-          {state?.sessionName ? (
-            <ThemedText type="code" style={dimText} testID="attached-session">
-              {state.sessionName}
-            </ThemedText>
+          {settings.showStatusLines ? (
+            <>
+              <ThemedText type="code" style={dimText} testID="connection-status">
+                {status.label}
+              </ThemedText>
+              {visibleGrid ? (
+                <ThemedText type="code" style={dimText} testID="surface-grid">
+                  {visibleGrid.cols}x{visibleGrid.rows}
+                </ThemedText>
+              ) : null}
+              {state?.sessionName ? (
+                <ThemedText type="code" style={dimText} testID="attached-session">
+                  {state.sessionName}
+                </ThemedText>
+              ) : null}
+            </>
           ) : null}
           {state?.trouble ? (
             // Loud enough to notice over whatever the Session is painting, quiet

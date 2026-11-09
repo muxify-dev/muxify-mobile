@@ -341,6 +341,14 @@ white card over a Dracula terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
 
+**Status Lines**:
+The dim lines in the top right of the Terminal Screen: the Connection's state,
+the Surface's grid, and the attached Session's name. A setting hides them; it
+is on by default. Hidden, they lose nothing about the Connection, because the
+Banner is where any state other than connected is shown. The red line under
+them that reports a failed Pane command is not a Status Line, and always shows.
+_Avoid_: status bar (that is the system's), overlay, HUD
+
 ### Diagnosing
 
 **Log**:

@@ -21,6 +21,7 @@ const CHANGED: Settings = {
   hostScreenLists: ['topics', 'sessions'],
   recentSessionsFirst: false,
   reconnectOnStart: true,
+  showStatusLines: false,
 };
 
 describe('settings store', () => {
