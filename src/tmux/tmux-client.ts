@@ -1,5 +1,6 @@
 import {
   capturePaneCommand,
+  capturePaneTextCommand,
   captureScrollbackCommand,
   capturePanesCommand,
   createSessionCommand,
@@ -403,6 +404,20 @@ export class TmuxClient {
       if (reply?.ok) previews.set(target, reply.text);
     });
     return previews;
+  }
+
+  /**
+   * What a Pane shows, as text for the clipboard: wrapped lines joined, and
+   * the empty lines under the prompt left off.
+   *
+   * A failure is reported, unlike a preview: the user asked for this text.
+   */
+  async capturePaneText(paneId: string): Promise<string> {
+    const reply = await this.runner.run(capturePaneTextCommand(paneId));
+    if (!reply.ok) throw failure('copy the Pane text', reply);
+    let end = reply.text.length;
+    while (end > 0 && reply.text[end - 1].trim() === '') end -= 1;
+    return reply.text.slice(0, end).join('\n');
   }
 
   /** Toggles zoom on the Session's active Pane. */

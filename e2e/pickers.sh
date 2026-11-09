@@ -1,16 +1,17 @@
 #!/bin/bash
 #
-# Window and Pane pickers (ticket 09).
+# The Title Sheet's Windows and the Panes picker (ticket 09, redrawn for the
+# Header).
 #
-# Covers the two things the .ad suites cannot: whether a Dock button is
+# Covers the two things the .ad suites cannot: whether a Key Row button is
 # genuinely disabled — `agent-device is` has no `enabled` predicate, so this
-# reads the flag out of the snapshot JSON — and the Windows and Panes sheets,
-# which cannot both be exercised in one .ad run because a presented sheet
-# cannot be dismissed from automation (see e2e/session-picker.ad).
+# reads the flag out of the snapshot JSON — and the Title Sheet and the Panes
+# sheet, which cannot both be exercised in one .ad run because a presented
+# sheet cannot be dismissed from automation (see e2e/session-picker.ad).
 #
 # What this proves is that the Host's real Topology reaches both sheets, that
-# each sheet carries its own actions, that a button with nothing to offer says
-# so, and that the counts the Dock badges its icons with are the Host's own.
+# the Panes sheet carries its own actions and ⋯ carries New Window, and that
+# the Key Row reads keys, Panes, Keyboard from left to right.
 #
 # A Pane card carries its directory rather than a name of its own, so two Panes
 # in one directory are two buttons with the same label and cannot be told apart
@@ -43,17 +44,13 @@ attach() {
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
-  for _ in $(seq 1 20); do
-    agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 && break
-    sleep 1
-  done
-  agent-device is text 'id="connection-status"' "Connected" >/dev/null 2>&1 \
+  # The program line renders once the Topology is in, which is after Connected.
+  agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
     || fail "never reached Connected"
 }
 
-# The Topology read that decides the Dock's buttons lands a few round trips
-# after Connected, so this waits for the answer rather than guessing how long
-# those take on the day.
+# The Key Row's Panes button is disabled until Connected, so this waits for
+# the answer rather than guessing how long that takes on the day.
 expect_enabled() {
   local label=$1 want=$2
   for _ in $(seq 1 15); do
@@ -63,7 +60,7 @@ expect_enabled() {
   fail "$label button should be ${want/yes/enabled}${want/no/disabled}, it is $(enabled "$label")"
 }
 
-# Whether the Dock button with this label is pressable.
+# Whether the button with this label is pressable.
 enabled() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json,sys
@@ -75,45 +72,17 @@ else: print('missing')
 " "$1"
 }
 
-# Each card is a Button carrying its Window name or its Pane's directory.
+# Each row or card is a Button carrying its Window name or its Pane's directory.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
-# The number badged on a Dock button, or "none" for a button that carries no
-# badge — which is what one of something looks like.
-badge() {
-  agent-device snapshot --json 2>/dev/null | python3 -c "
-import json, sys
-label = sys.argv[1]
-nodes = json.load(sys.stdin)['data']['nodes']
-button = next((n for n in nodes if n['type'] == 'Button' and n.get('label') == label), None)
-if button is None:
-    print('missing')
-else:
-    on_it = [n['label'] for n in nodes
-             if n.get('parentIndex') == button['index'] and n['type'] == 'StaticText']
-    print(on_it[0] if on_it else 'none')
-" "$1"
-}
-
-# Same reason as expect_enabled: the counts come from the Topology read that
-# lands a few round trips after Connected.
-expect_badge() {
-  local label=$1 want=$2
-  for _ in $(seq 1 15); do
-    [ "$(badge "$label")" = "$want" ] && return 0
-    sleep 1
-  done
-  fail "the $label button should be badged $want, it is $(badge "$label")"
-}
-
-# The Dock's capsules, left to right, as the accessibility tree orders them.
-# The Key Bar is the scroll view; everything else is a button.
-dock_order() {
+# The Key Row, left to right, as the accessibility tree orders it. The Key
+# Bar is the scroll view; the fixed group is buttons.
+key_row_order() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 across = []
 for n in json.load(sys.stdin)['data']['nodes']:
-    if n['type'] == 'Button' and n.get('label') in ('Sessions', 'Windows', 'Panes', 'Home', 'Keyboard'):
+    if n['type'] == 'Button' and n.get('label') in ('Panes', 'Keyboard'):
         across.append(n['label'])
     elif n['type'] == 'ScrollView':
         across.append('keys')
@@ -121,12 +90,22 @@ print(' '.join(across))
 "
 }
 
+# Opens ⋯ and checks that it offers New Window. The menu is left up: the
+# next step relaunches the app, and nothing else is read before then.
+offers_new_window() {
+  for _ in 1 2 3; do
+    agent-device press 'label="Options"' >/dev/null 2>&1
+    agent-device wait 'label="New Window"' 3000 >/dev/null 2>&1 && return 0
+  done
+  fail "the Options menu does not offer New Window"
+}
+
 # The ref of the nth Pane card in an open Panes sheet, in tmux's Pane order.
 # Everything else in the sheet is an action with a name of its own.
 #
 # Empty unless the sheet is actually up. Without that guard the buttons it
-# finds are the Dock's own, still there behind a sheet that never opened, and
-# pressing one of those is a check that quietly tests nothing.
+# finds are the Key Row's own, still there behind a sheet that never opened,
+# and pressing one of those is a check that quietly tests nothing.
 pane_card() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
@@ -143,16 +122,16 @@ else:
 
 # Waits for a sheet to actually be up.
 #
-# Not `wait text "Panes"`: the Dock has a button of that name too and it is on
-# screen the whole time, so the wait returned at once and everything after it
-# raced the sheet's first frame. The close button belongs to the sheet alone.
+# Not `wait text "Panes"`: the Key Row has a button of that name too and it is
+# on screen the whole time, so the wait returned at once and everything after
+# it raced the sheet's first frame. The close button belongs to the sheet alone.
 sheet() { agent-device wait "label=\"Close $1\"" 15000 >/dev/null 2>&1; }
 
-# Presses a Dock button until its sheet is actually up.
+# Presses the Key Row's Panes button until its sheet is actually up.
 #
 # One press is not enough: a press landing while the screen is still settling
 # after an attach does nothing at all, measured, and what follows then reads
-# the Dock through where the sheet should have been — so the failure names
+# the Key Row through where the sheet should have been — so the failure names
 # whatever was asserted next rather than the sheet that never opened.
 open_sheet() {
   for _ in 1 2 3; do
@@ -162,18 +141,25 @@ open_sheet() {
   fail "the $1 sheet never opened"
 }
 
-echo "1/5  one Window, one Pane: both pickers still open, to make more"
-# Deliberately not disabled. The sheet is the only way to add a Window or a
-# split, and one of something is exactly when that is wanted — an earlier
-# version disabled the buttons here and locked the user out of the action.
+# Taps the header's title until the Title Sheet is up, for the same reason.
+open_title_sheet() {
+  for _ in 1 2 3; do
+    agent-device press 'id="header-title"' >/dev/null 2>&1
+    sheet Windows && return 0
+  done
+  fail "the Title Sheet never opened"
+}
+
+echo "1/5  one Window, one Pane: the sheets still open, and ⋯ still offers New Window"
+# Deliberately not disabled. The Panes sheet is the only way to a split, and
+# one of something is exactly when that is wanted — an earlier version
+# disabled the buttons here and locked the user out of the action.
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux kill-pane -a -t '$SESSION:0.0' 2>/dev/null; true" || fail "could not reach the dev Host"
 attach
-expect_enabled Windows yes
 expect_enabled Panes yes
-open_sheet Windows
-agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
-  || fail "a Session with one Window must still offer New Window"
+open_title_sheet
+[ "$(named 'bash')" -eq 1 ] || fail "the one Window is missing from the Title Sheet"
 agent-device press 'label="Close Windows"' >/dev/null 2>&1
 sleep 1
 open_sheet Panes
@@ -187,36 +173,26 @@ agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
 agent-device press 'label="Close Panes"' >/dev/null 2>&1
 sleep 1
 
-# One of something gets no badge. A number there would read as a count worth
-# watching rather than as the "there is more here than you can see" it is.
-expect_badge Windows none
-expect_badge Panes none
-echo "     and neither picker is badged with a count of one"
+# Left to right: the keys the phone's keyboard does not have, then the two
+# things done to the screen itself.
+[ "$(key_row_order)" = "keys Panes Keyboard" ] \
+  || fail "the Key Row is out of order: $(key_row_order)"
+echo "     and the Key Row reads keys, Panes, Keyboard"
+offers_new_window
+echo "     and ⋯ offers New Window with one Window"
 
-# Left to right: the things the Session is made of, the keys the phone's
-# keyboard does not have, and the way out. Home sits at the far end from the
-# arrows, because a Home pressed by a thumb aiming for one is a Session left by
-# accident.
-[ "$(dock_order)" = "Sessions Windows Panes keys Home Keyboard" ] \
-  || fail "the Dock's capsules are out of order: $(dock_order)"
-
-echo "2/5  three Windows: the Windows picker opens and lists them"
+echo "2/5  three Windows: the Title Sheet lists them"
 on_host "tmux new-window -t '$SESSION:' -n logs 'exec bash'; \
     tmux new-window -t '$SESSION:' -n notes 'exec bash'; \
     tmux select-window -t '$SESSION:0'"
 attach
-expect_enabled Windows yes
-open_sheet Windows
-[ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the sheet"
-[ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the sheet"
-# `exists` rather than `visible`: SwiftUI content inside the sheet reports
-# itself unhittable to agent-device even when a finger can press it.
-agent-device is exists 'label="New Window"' >/dev/null 2>&1 \
-  || fail "the Windows sheet has no New Window action"
+open_title_sheet
+[ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the Title Sheet"
+[ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the Title Sheet"
 agent-device press 'label="Close Windows"' >/dev/null 2>&1
 sleep 1
-expect_badge Windows 3
-echo "     and the Dock's Windows icon is badged 3"
+offers_new_window
+echo "     logs and notes listed, and ⋯ offers New Window"
 
 echo "3/5  two Panes: the Session arrives zoomed, and unzooming shows the split"
 on_host "tmux split-window -t '$SESSION:0' 'exec bash'; tmux select-pane -t '$SESSION:0.0'; \
@@ -227,11 +203,10 @@ attach
 [ "$(on_host "tmux display-message -p -t '$SESSION' '#{window_zoomed_flag}'")" = 1 ] \
   || fail "a split Session should arrive with its active Pane zoomed"
 echo "     arrived zoomed"
-# Waited for, not assumed. The Dock's buttons are disabled until the Topology
-# read that follows Connected lands, and a press that arrives before that does
-# nothing at all — which shows up here as a sheet that never opened and an
-# action that is "missing" from it. Checks 1 and 2 wait; this one did not, and
-# failed exactly once that way.
+# Waited for, not assumed. The Key Row's Panes button is disabled until
+# Connected, and a press that arrives before that does nothing at all — which
+# shows up here as a sheet that never opened and an action that is "missing"
+# from it. Check 1 waits; this one did not, and failed exactly once that way.
 expect_enabled Panes yes
 open_sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "the Panes sheet has no Split → action"
@@ -264,7 +239,6 @@ echo "4/5  picking a Pane keeps the Zoom the switch is still asking for"
 # A fresh Attach, so the preference is the Setting's again rather than the off
 # check 3 left behind.
 attach
-expect_badge Panes 2
 expect_enabled Panes yes
 open_sheet Panes
 CARD=$(pane_card 2)
@@ -284,6 +258,6 @@ on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
 
 echo
 echo "PASS: a split Session arrives zoomed, unzooming shows a Surface per Pane,"
-echo "      picking a Pane keeps it zoomed, Topology reaches both sheets and the"
-echo "      Dock's badges, and both sheets stay reachable with one of something"
-echo "      so more can be made."
+echo "      picking a Pane keeps it zoomed, Topology reaches the Title Sheet and"
+echo "      the Panes sheet, the Key Row is in order, and the sheets and New"
+echo "      Window stay reachable with one of something so more can be made."

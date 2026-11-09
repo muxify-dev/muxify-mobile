@@ -39,7 +39,6 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: false,
         hostScreenLists: ['topics', 'recent', 'sessions'],
         reconnectOnStart: true,
-        showStatusLines: false,
       }),
     ).toEqual({
       fontSize: 14,
@@ -47,7 +46,6 @@ describe('parseSettings', () => {
       zoomMultipaneWindows: false,
       hostScreenLists: ['topics', 'recent', 'sessions'],
       reconnectOnStart: true,
-      showStatusLines: false,
     });
   });
 
@@ -87,7 +85,6 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: 'yes',
         hostScreenLists: 7,
         reconnectOnStart: 'yes',
-        showStatusLines: 'off',
       }),
     ).toEqual({
       fontSize: 13,
@@ -95,12 +92,7 @@ describe('parseSettings', () => {
       zoomMultipaneWindows: true,
       hostScreenLists: ['recent', 'sessions'],
       reconnectOnStart: false,
-      showStatusLines: true,
     });
-  });
-
-  it('keeps the Status Lines on for settings saved before they could be hidden', () => {
-    expect(parseSettings({ theme: 'dracula' }).showStatusLines).toBe(true);
   });
 
   it.each<[string, unknown, boolean]>([

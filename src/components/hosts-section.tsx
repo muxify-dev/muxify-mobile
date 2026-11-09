@@ -42,7 +42,7 @@ import type { Host } from '@/storage/records';
  */
 export function HostsSection({ palette }: { palette: Appearance }) {
   const router = useRouter();
-  const copyLog = useCopyLog();
+  const copyLog = useCopyLog('Settings');
   const [hosts, setHosts] = useState<Host[]>([]);
 
   const reload = useCallback(async () => {

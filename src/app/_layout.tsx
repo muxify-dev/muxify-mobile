@@ -119,8 +119,8 @@ function AppStack() {
             title: 'Add a Session',
           }}
         />
-        {/* No header: the Surface fills the screen to the top, and the Dock's
-            Home button already goes back. */}
+        {/* No navigation header: the screen draws its own Header, on the
+            terminal background, with Back in it. */}
         <Stack.Screen name="terminal" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>

@@ -45,13 +45,13 @@ describe('the bar itself', () => {
     ]);
   });
 
-  it('calls nothing what the Dock already calls something else', () => {
-    // `press label="Home"` matched this bar's `home` rather than the Dock's
-    // Home button and tapped where the key would have been if the bar were not
-    // scrolled — off the capsule entirely. Ambiguous to a reader too: one goes
-    // to the Hosts list and the other to the start of a line.
+  it('calls nothing what the Terminal Screen already calls something else', () => {
+    // `press label="Home"` once matched this bar's `home` rather than the
+    // Dock's Home button and tapped where the key would have been if the bar
+    // were not scrolled — off the capsule entirely. Ambiguous to a reader too:
+    // one goes to the Home screen and the other to the start of a line.
     const spoken = BAR_KEYS.map((each) => (each.spoken ?? each.label).toLowerCase());
-    for (const taken of ['home', 'keyboard', 'sessions', 'windows', 'panes', 'zoom']) {
+    for (const taken of ['home', 'back', 'options', 'keyboard', 'panes', 'zoom']) {
       expect(spoken).not.toContain(taken);
     }
   });

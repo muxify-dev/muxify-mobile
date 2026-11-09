@@ -1,11 +1,11 @@
 /**
- * How tall a picker sheet should be.
+ * How tall a sheet should be.
  *
  * A sheet given a fraction of the screen is the wrong height twice: too tall
- * for three Windows, and too short for nine, with the actions marooned at the
+ * for three rows, and too short for nine, with the actions marooned at the
  * bottom either way. So the height is measured from what is actually in it.
  *
- * The rule for a grid, taken from remux: show the whole thing whenever it fits,
+ * The rule for rows, taken from remux: show the whole thing whenever it fits,
  * and when it does not, show complete rows plus half of the next one — so the
  * cut is unmistakably an invitation to scroll rather than a row that happens to
  * be missing its bottom edge.
@@ -47,7 +47,7 @@ export const ACTION_BAR_HEIGHT = 44;
 export const GRID_GAP = 10;
 const LIST_CARD_HEIGHT = 150;
 /** Room below the action bar for the home indicator. */
-const SAFE_BOTTOM = 24;
+export const SAFE_BOTTOM = 24;
 
 /** Everything in the sheet that is not the content: the height its cards have to fit around. */
 const CHROME_HEIGHT =
@@ -65,7 +65,6 @@ export interface Size {
 
 export interface SheetMetrics {
   contentWidth: number;
-  gridCard: Size;
   listCard: Size;
   /** The Pane diagram: 4:3, and never taller than the sheet can hold. */
   board: Size;
@@ -86,10 +85,6 @@ export function sheetMetrics(sheetWidth: number, windowHeight: number): SheetMet
   const contentWidth = Math.max(0, sheetWidth - SHEET_PADDING * 2);
   const contentBudget = Math.max(0, windowHeight * 0.9 - CHROME_HEIGHT);
 
-  const gridWidth = Math.max(0, Math.floor((contentWidth - GRID_GAP) / 2));
-  // Window tiles are slightly taller than they are wide, so the chip fits.
-  const gridCard = { width: gridWidth, height: Math.ceil(gridWidth * 1.1) };
-
   const fullBoardHeight = Math.ceil(contentWidth * 0.75);
   const board =
     fullBoardHeight <= contentBudget
@@ -98,7 +93,6 @@ export function sheetMetrics(sheetWidth: number, windowHeight: number): SheetMet
 
   return {
     contentWidth,
-    gridCard,
     listCard: { width: contentWidth, height: LIST_CARD_HEIGHT },
     board,
     contentBudget,
@@ -109,19 +103,14 @@ export function sheetMetrics(sheetWidth: number, windowHeight: number): SheetMet
  * How tall this sheet should be.
  *
  * Measured, never a fraction of the screen: a fraction is the wrong height
- * twice, too tall for three Windows and too short for nine, and either way the
+ * twice, too tall for three Sessions and too short for nine, and either way the
  * actions end up marooned below a gap. The Pane diagram is a fixed shape; a
- * grid takes what its rows need, up to the budget. See gridContentHeight.
+ * list takes what its rows need, up to the budget. See gridContentHeight.
  */
-export function sheetHeight(
-  metrics: SheetMetrics,
-  layout: 'grid' | 'panes' | 'list',
-  count: number,
-): number {
+export function sheetHeight(metrics: SheetMetrics, layout: 'panes' | 'list', count: number): number {
   if (layout === 'panes') return CHROME_HEIGHT + metrics.board.height;
-  const card = layout === 'grid' ? metrics.gridCard : metrics.listCard;
   const content = gridContentHeight(
-    { count, perRow: layout === 'grid' ? 2 : 1, cardHeight: card.height, gap: GRID_GAP },
+    { count, perRow: 1, cardHeight: metrics.listCard.height, gap: GRID_GAP },
     metrics.contentBudget,
   );
   return CHROME_HEIGHT + content;

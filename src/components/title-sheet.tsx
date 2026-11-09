@@ -1,0 +1,267 @@
+import {
+  BottomSheet,
+  Button,
+  Group,
+  Host,
+  HStack,
+  Image,
+  ScrollView,
+  Spacer,
+  Text,
+  VStack,
+} from '@expo/ui/swift-ui';
+import {
+  accessibilityLabel,
+  background,
+  buttonStyle,
+  cornerRadius,
+  environment,
+  font,
+  foregroundColor,
+  frame,
+  padding,
+  presentationBackground,
+  presentationDetents,
+  presentationDragIndicator,
+} from '@expo/ui/swift-ui/modifiers';
+import { StyleSheet, useWindowDimensions } from 'react-native';
+
+import type { Appearance, SheetPalette } from '@/constants/app-theme';
+import { countTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
+import { useSettings } from '@/settings/settings-context';
+
+import { SheetHeader, SheetNote } from './sheet-chrome';
+import { MarkImage } from './topic-marks';
+import {
+  gridContentHeight,
+  HEADER_HEIGHT,
+  HEADER_TO_CONTENT,
+  SAFE_BOTTOM,
+  SHEET_PADDING,
+} from './sheet-layout';
+
+/**
+ * What a tap on a row asks for: a Session by name, or null for the attached
+ * one, and one of its Windows when a Window row was tapped.
+ */
+export interface TitlePick {
+  session: string | null;
+  window: number | null;
+}
+
+export interface TitleSheetProps {
+  isPresented: boolean;
+  onDismiss: () => void;
+  rows: TitleRow[];
+  /** A Topic read in flight with nothing read before it. */
+  loading: boolean;
+  error?: string;
+  /** Opens the Sessions picker in this sheet's place. */
+  onSwitch: () => void;
+  onPick: (pick: TitlePick) => void;
+}
+
+/** The sheet's name, which its close button carries. */
+const TITLE = 'Windows';
+const ROW_HEIGHT = 44;
+const SWITCH_ROW_HEIGHT = 44;
+
+/**
+ * The sheet the header's title opens: the Windows of the attached Session, or
+ * each live Session of the Topic with its Windows, and Switch… at the top for
+ * every other Session of the Host.
+ *
+ * Rows rather than previews. The old Windows picker drew a capture of each
+ * Window, and a row of name, program and Agent mark says more in less: which
+ * Window has the editor, which one the Agent is working in. The Sessions
+ * picker keeps its previews, because Sessions have no program line.
+ *
+ * Rows are Buttons rather than List selection, as in the pickers: a tap is a
+ * one-shot command to the Host, not state the sheet owns, and a Button is the
+ * one form that carries a pressable label through the SwiftUI hosting
+ * boundary into the accessibility tree.
+ */
+export function TitleSheet({
+  isPresented,
+  onDismiss,
+  rows,
+  loading,
+  error,
+  onSwitch,
+  onPick,
+}: TitleSheetProps) {
+  const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
+  const screen = useWindowDimensions();
+  const height = titleSheetHeight(countTitleRows(rows), screen.height);
+
+  return (
+    <Host matchContents style={styles.host}>
+      <BottomSheet
+        isPresented={isPresented}
+        onIsPresentedChange={(presented) => {
+          if (!presented) onDismiss();
+        }}>
+        <Group
+          modifiers={[
+            presentationDetents([{ height }, 'large'], { selection: { height } }),
+            presentationDragIndicator('hidden'),
+            environment('colorScheme', appearance),
+            presentationBackground(palette.sheet),
+          ]}>
+          <VStack
+            spacing={0}
+            modifiers={[padding({ all: SHEET_PADDING }), frame({ minWidth: 0, maxWidth: Infinity })]}>
+            <SheetHeader title={TITLE} onDismiss={onDismiss} />
+
+            <VStack spacing={0} alignment="leading" modifiers={[padding({ top: HEADER_TO_CONTENT })]}>
+              <Button
+                onPress={onSwitch}
+                modifiers={[buttonStyle('plain'), accessibilityLabel('Switch…')]}>
+                <HStack spacing={10} modifiers={[frame({ maxWidth: Infinity, height: SWITCH_ROW_HEIGHT })]}>
+                  <Image systemName="plus" size={17} color={palette.accent} />
+                  <Text modifiers={[font({ size: 17 }), foregroundColor(palette.accent)]}>Switch…</Text>
+                  <Spacer />
+                </HStack>
+              </Button>
+
+              {error !== undefined ? (
+                <Text modifiers={[foregroundColor(chrome.destructive), padding({ vertical: 8 })]}>
+                  {error}
+                </Text>
+              ) : null}
+              {loading && rows.length === 0 ? (
+                <SheetNote palette={palette}>Reading…</SheetNote>
+              ) : null}
+              {!loading && rows.length === 0 && error === undefined ? (
+                <SheetNote palette={palette}>No Windows</SheetNote>
+              ) : null}
+
+              {rows.length > 0 ? (
+                <ScrollView>
+                  <VStack spacing={0} alignment="leading">
+                    {rows.map((row) =>
+                      row.kind === 'window' ? (
+                        <WindowRow
+                          key={row.index}
+                          row={row}
+                          palette={palette}
+                          chrome={chrome}
+                          onPress={() => onPick({ session: null, window: row.index })}
+                        />
+                      ) : (
+                        <VStack key={row.name} spacing={0} alignment="leading">
+                          <Button
+                            onPress={() => onPick({ session: row.name, window: null })}
+                            modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
+                            <HStack spacing={10} modifiers={[frame({ maxWidth: Infinity, height: ROW_HEIGHT })]}>
+                              <Image
+                                systemName="terminal"
+                                size={17}
+                                color={row.current ? palette.accent : palette.secondary}
+                              />
+                              <Text
+                                modifiers={[
+                                  font({ size: 17, weight: 'semibold' }),
+                                  foregroundColor(row.current ? palette.accent : palette.primary),
+                                ]}>
+                                {row.name}
+                              </Text>
+                              <Spacer />
+                            </HStack>
+                          </Button>
+                          {row.windows.map((window) => (
+                            <WindowRow
+                              key={window.index}
+                              row={window}
+                              palette={palette}
+                              chrome={chrome}
+                              indented
+                              onPress={() => onPick({ session: row.name, window: window.index })}
+                            />
+                          ))}
+                        </VStack>
+                      ),
+                    )}
+                  </VStack>
+                </ScrollView>
+              ) : null}
+            </VStack>
+
+            <Spacer />
+          </VStack>
+        </Group>
+      </BottomSheet>
+    </Host>
+  );
+}
+
+/** Index badge, name, program, and the Agent mark; the Window on screen in the accent. */
+function WindowRow({
+  row,
+  palette,
+  chrome,
+  indented,
+  onPress,
+}: {
+  row: TitleWindowRow;
+  palette: SheetPalette;
+  chrome: Appearance;
+  indented?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Button onPress={onPress} modifiers={[buttonStyle('plain'), accessibilityLabel(row.name)]}>
+      <HStack
+        spacing={10}
+        modifiers={[
+          frame({ maxWidth: Infinity, height: ROW_HEIGHT }),
+          padding({ leading: indented ? 28 : 0 }),
+        ]}>
+        <Text
+          modifiers={[
+            font({ size: 12, weight: 'bold' }),
+            frame({ width: 24, height: 24 }),
+            foregroundColor(row.current ? '#ffffff' : palette.primary),
+            background(row.current ? palette.accent : palette.well),
+            cornerRadius(6),
+          ]}>
+          {String(row.index)}
+        </Text>
+        <Text
+          modifiers={[
+            font({ size: 17 }),
+            foregroundColor(row.current ? palette.accent : palette.primary),
+          ]}>
+          {row.name}
+        </Text>
+        {row.program === null ? null : (
+          <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondary)]}>
+            {row.program}
+          </Text>
+        )}
+        <Spacer />
+        {row.mark === null ? null : <MarkImage mark={row.mark} palette={chrome} />}
+      </HStack>
+    </Button>
+  );
+}
+
+/** Every row when they fit, else whole rows and half of the next. See gridContentHeight. */
+function titleSheetHeight(rowCount: number, windowHeight: number): number {
+  const chrome =
+    SHEET_PADDING * 2 + HEADER_HEIGHT + HEADER_TO_CONTENT + SWITCH_ROW_HEIGHT + SAFE_BOTTOM;
+  const budget = Math.max(0, windowHeight * 0.9 - chrome);
+  const rows = gridContentHeight(
+    { count: Math.max(1, rowCount), perRow: 1, cardHeight: ROW_HEIGHT, gap: 0 },
+    budget,
+  );
+  return chrome + rows;
+}
+
+const styles = StyleSheet.create({
+  host: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+  },
+});

@@ -26,9 +26,7 @@ import {
   font,
   foregroundColor,
   frame,
-  buttonBorderShape,
   glassEffect,
-  labelStyle,
   layoutPriority,
   offset,
   onGeometryChange,
@@ -46,11 +44,11 @@ import { StyleSheet, useWindowDimensions } from 'react-native';
 import type { SheetPalette } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import type { Frame } from '@/tmux/pane-topology';
+import { SheetHeader, SheetNote } from './sheet-chrome';
 import {
   ACTION_BAR_HEIGHT,
   CONTENT_TO_ACTIONS,
   GRID_GAP,
-  HEADER_HEIGHT,
   HEADER_TO_CONTENT,
   SHEET_PADDING,
   sheetHeight,
@@ -62,16 +60,14 @@ import {
 export interface PreviewCard {
   /** Stable identity, handed back to `onSelect`. */
   id: string;
-  /** The large label: a Session or Window name, or a Pane's directory. */
+  /** The large label: a Session name, or a Pane's directory. */
   title: string;
-  /** The small one underneath: what is running, and how many Panes. */
+  /** The small one underneath: what is running, and how many Windows or Panes. */
   detail: string;
   /** Whether this is where the Surface is attached right now. */
   current: boolean;
   /** What the Pane behind this card is showing, already trimmed to fit. */
   preview: string[];
-  /** Shown over a Window's preview, as tmux numbers them. */
-  badge?: string;
   /** Where a Pane sits in the diagram, as fractions. Panes only. */
   frame?: Frame;
 }
@@ -87,13 +83,13 @@ export interface PickerSheetProps {
   isPresented: boolean;
   onDismiss: () => void;
   cards: PreviewCard[];
-  /** Panes are a diagram of the Window; everything else is a grid or a list. */
-  layout: 'grid' | 'panes' | 'list';
+  /** Panes are a diagram of the Window; Sessions are a list of previews. */
+  layout: 'panes' | 'list';
   loading: boolean;
   error?: string;
   emptyMessage: string;
   onSelect: (id: string) => void;
-  /** The bar along the bottom: New Window, or the two Splits. */
+  /** The bar along the bottom: the two Splits. */
   actions?: SheetAction[];
   onAction?: (id: string) => void;
   /** The Zoom switch, shown only for Panes, and only when there are two. */
@@ -109,14 +105,13 @@ const BOARD_RADIUS = 12;
 const CARD_RADIUS = 12;
 
 /**
- * The glass sheet behind every Dock picker.
+ * The glass sheet behind the Sessions and Panes pickers.
  *
- * Two shapes, because two questions. Sessions and Windows are a *grid of
- * previews*: a Window called "bash" among three others called "bash" is not a
- * choice on a phone, and what it is showing is the only thing that tells them
- * apart. Panes are a *diagram*: they are all in front of you already, so the
- * question is which part of the screen you mean, and pointing at where it sits
- * beats reading an index.
+ * Two shapes, because two questions. Sessions are a *list of previews*: a
+ * Session called "0" among others is not a choice on a phone, and what it is
+ * showing is the only thing that tells them apart. Panes are a *diagram*: they
+ * are all in front of you already, so the question is which part of the screen
+ * you mean, and pointing at where it sits beats reading an index.
  *
  * The diagram deliberately does not show Pane contents. Four tiles of
  * six-point terminal text is a picture of a wall; the directory and the command
@@ -169,7 +164,7 @@ export function PickerSheet({
             presentationDetents(
               layout === 'panes'
                 ? [{ height }]
-                : // A grid that had to be cut can be dragged open; one that fits
+                : // A list that had to be cut can be dragged open; one that fits
                   // has nothing to drag to.
                   [{ height }, 'large'],
               // The height changes once the sheet has measured itself, and the
@@ -199,15 +194,15 @@ export function PickerSheet({
                 if (width > 0 && width !== measuredWidth) setMeasuredWidth(width);
               }),
             ]}>
-            <Header title={title} onDismiss={onDismiss} />
+            <SheetHeader title={title} onDismiss={onDismiss} />
 
             <VStack spacing={0} modifiers={[padding({ top: HEADER_TO_CONTENT })]}>
               {loading ? (
-                <Note palette={palette}>Reading…</Note>
+                <SheetNote palette={palette}>Reading…</SheetNote>
               ) : error !== undefined ? (
                 <Text modifiers={[foregroundColor('#ff6b6b')]}>{error}</Text>
               ) : cards.length === 0 ? (
-                <Note palette={palette}>{emptyMessage}</Note>
+                <SheetNote palette={palette}>{emptyMessage}</SheetNote>
               ) : null}
 
               {cards.length > 0 && layout === 'panes' ? (
@@ -219,24 +214,17 @@ export function PickerSheet({
                 />
               ) : null}
 
-              {cards.length > 0 && layout !== 'panes' ? (
+              {cards.length > 0 && layout === 'list' ? (
                 <ScrollView>
                   <VStack spacing={GRID_GAP}>
-                    {rowsOf(cards, layout === 'grid' ? 2 : 1).map((row, index) => (
-                      <HStack key={row.map((card) => card.id).join('|') || index} spacing={GRID_GAP}>
-                        {row.map((card) => (
-                          <PreviewButton
-                            key={card.id}
-                            card={card}
-                            palette={palette}
-                            size={layout === 'grid' ? metrics.gridCard : metrics.listCard}
-                            onSelect={onSelect}
-                          />
-                        ))}
-                        {/* A lone card on the last row keeps its column rather
-                            than stretching across both. */}
-                        {row.length === 1 && layout === 'grid' ? <Spacer /> : null}
-                      </HStack>
+                    {cards.map((card) => (
+                      <PreviewButton
+                        key={card.id}
+                        card={card}
+                        palette={palette}
+                        size={metrics.listCard}
+                        onSelect={onSelect}
+                      />
                     ))}
                   </VStack>
                 </ScrollView>
@@ -276,51 +264,6 @@ function outline(color: string, lineWidth: number, cornerRadius: number) {
     shape: 'roundedRectangle',
     cornerRadius,
   });
-}
-
-/** A line of explanation where the content would be. */
-function Note({ children, palette }: { children: string; palette: SheetPalette }) {
-  return (
-    <HStack>
-      <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondary)]}>{children}</Text>
-      <Spacer />
-    </HStack>
-  );
-}
-
-/**
- * Close on the left, title centred over it.
- *
- * `role="close"` rather than an xmark of our own. The glyph used to sit off
- * centre, and the reason is in the Button's own contract: `systemImage` is
- * "only used when `label` is provided", so `label=""` was still a label — an
- * empty title laid out beside the icon, pushing it off the middle of its own
- * button. The close role draws the system's circular xmark, centred, with no
- * title slot to be empty.
- *
- * The accessibility label is still set by hand: the role draws a glyph, and a
- * glyph is unreadable to anything but an eye and unpressable to the e2e suite.
- */
-function Header({ title, onDismiss }: { title: string; onDismiss: () => void }) {
-  return (
-    <ZStack>
-      <Text modifiers={[font({ size: 17, weight: 'semibold' })]}>{title}</Text>
-      <HStack modifiers={[frame({ height: HEADER_HEIGHT })]}>
-        <Button
-          role="close"
-          onPress={onDismiss}
-          modifiers={[
-            labelStyle('iconOnly'),
-            buttonStyle('glass'),
-            buttonBorderShape('circle'),
-            frame({ width: 34, height: 34 }),
-            accessibilityLabel(`Close ${title}`),
-          ]}
-        />
-        <Spacer />
-      </HStack>
-    </ZStack>
-  );
 }
 
 /**
@@ -427,7 +370,7 @@ function PaneTile({
   );
 }
 
-/** A Session or Window: its preview, with a badge and a label chip over it. */
+/** A Session: its preview, with a label chip over it. */
 function PreviewButton({
   card,
   palette,
@@ -458,20 +401,6 @@ function PreviewButton({
         ]}>
         <PreviewText lines={card.preview} palette={palette} />
 
-        {card.badge !== undefined ? (
-          <Text
-            modifiers={[
-              font({ size: 12, weight: 'bold' }),
-              frame({ width: 28, height: 28 }),
-              foregroundColor(card.current ? '#ffffff' : palette.primary),
-              background(card.current ? palette.accent : palette.well),
-              cornerRadius(8),
-              offset({ x: 8, y: 8 }),
-            ]}>
-            {card.badge}
-          </Text>
-        ) : null}
-
         <VStack>
           <Spacer />
           <HStack>
@@ -493,7 +422,7 @@ function PreviewButton({
   );
 }
 
-/** What the Window is showing, in the smallest readable monospace. */
+/** What the Session is showing, in the smallest readable monospace. */
 function PreviewText({ lines, palette }: { lines: string[]; palette: SheetPalette }) {
   return (
     <VStack alignment="leading" spacing={0} modifiers={[padding({ all: 8 })]}>
@@ -516,8 +445,8 @@ function PreviewText({ lines, palette }: { lines: string[]; palette: SheetPalett
 
 /**
  * The bar along the bottom: one piece of glass holding every command the sheet
- * offers, divided rather than separated — the same shape as the Dock, because
- * it is the same kind of thing.
+ * offers, divided rather than separated — the same shape as the Key Row,
+ * because it is the same kind of thing.
  */
 function Footer({
   actions,
@@ -579,14 +508,6 @@ function Footer({
       ) : null}
     </HStack>
   );
-}
-
-function rowsOf(cards: PreviewCard[], perRow: number): PreviewCard[][] {
-  const rows: PreviewCard[][] = [];
-  for (let index = 0; index < cards.length; index += perRow) {
-    rows.push(cards.slice(index, index + perRow));
-  }
-  return rows;
 }
 
 const styles = StyleSheet.create({

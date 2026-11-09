@@ -1,5 +1,6 @@
 import {
   capturePaneCommand,
+  capturePaneTextCommand,
   captureScrollbackCommand,
   capturePanesCommand,
   controlAttachCommand,
@@ -251,5 +252,11 @@ describe('reading a Pane back', () => {
 
   it('captures nothing for nobody', () => {
     expect(capturePanesCommand([])).toEqual([]);
+  });
+});
+
+describe('capturePaneTextCommand', () => {
+  it('reads a Pane as plain text with its wrapped lines joined', () => {
+    expect(capturePaneTextCommand('%3')).toEqual(['capture-pane', '-t', '%3', '-p', '-J']);
   });
 });

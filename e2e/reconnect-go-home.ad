@@ -1,7 +1,6 @@
 context platform=ios kind=simulator
 
-# Go Home on "Trying to reconnect" opens the Host Screen of the Last Place's
-# Host. The script points the Last Place at a Session the Host does not have,
+# Go Home on "Trying to reconnect" opens Home. The script points the Last Place at a Session the Host does not have,
 # so the screen stays up: the dev Host is this Mac and reconnects too fast to
 # press anything before it is attached.
 #
@@ -14,14 +13,15 @@ open "dev.muxify.app" --relaunch
 wait "id=\"reconnect-failure\"" 15000
 is "visible" "label=\"e2e-reconnect-gone is no longer on Dev Host\""
 press "label=\"Go Home\""
-wait "label=\"New Session\"" 8000
+wait "label=\"Settings\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""
 
 press "label=\"Session e2e-reconnect\""
-wait "id=\"connection-status\"" 8000
-wait 8000
-is "text" "id=\"connection-status\"" "Connected"
-press "role=button label=\"Home\""
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "e2e-reconnect"
+press "role=button label=\"Back\""
+wait "label=\"Settings\"" 8000
+press "label=\"All of Dev Host\""
 wait "label=\"New Session\"" 8000
 
 # The attached row is the first Recent Session; a swipe left shows Disconnect.

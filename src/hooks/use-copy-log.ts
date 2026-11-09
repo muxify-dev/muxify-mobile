@@ -15,14 +15,17 @@ const say = speakingAs(deviceLog(), 'host');
  * looked at. The report's head describes the Attach as it stands, so a Log
  * copied with a Session still attached says what state it was left in. See
  * ADR 0010.
+ *
+ * `from` names the place that offered Copy log, so the Log's last line says
+ * where it was carried out from.
  */
-export function useCopyLog(): () => void {
+export function useCopyLog(from: string): () => void {
   const attach = useCurrentAttach();
   const attachState = useAttachState(attach);
 
   return useCallback(() => {
     const book = deviceLog();
-    say('Log copied from Settings');
+    say(`Log copied from ${from}`);
     const text = renderReport(book, {
       app: describeApp(),
       device: describeDevice(),
@@ -40,5 +43,5 @@ export function useCopyLog(): () => void {
         Alert.alert('Could not copy the Log', describeError(error));
       },
     );
-  }, [attach, attachState]);
+  }, [attach, attachState, from]);
 }

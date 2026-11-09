@@ -65,8 +65,9 @@ _Avoid_: Topology (which is what exists, not where it is), geometry
 **Zoom**:
 tmux's term for one Pane filling its Window on its own. Muxify attaches zoomed
 by default, because a phone is too narrow to read two Panes side by side; the
-Panes picker is where it is turned off, and turning it off shows the real
-split — a Surface per Pane, each laid out where the Layout puts it.
+Panes picker, reached from the Key Row, and Zoom Pane in the Options menu are where
+it is turned off, and turning it off shows the real split — a Surface per
+Pane, each laid out where the Layout puts it.
 
 Muxify's is a *preference*, not tmux's flag: it says what a Session should
 arrive as and what the switch asks for, while what is on screen follows tmux.
@@ -233,7 +234,7 @@ The phone screen for one Topic, opened by a tap on its card on the Host Screen
 or on Home.
 It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
 order, each with its Windows and their Agent marks. A tap on a Session attaches
-to it, and Home from that Session goes to the Host Screen. A Dormant or Empty
+to it; its Header then shows the Topic, and Back from it goes Home. A Dormant or Empty
 Topic shows "No live Sessions" and says which of the two it is. It shows what
 the Host Screen last read at once, and reads the Topic again each time it comes
 into view. The Windows come in with that read.
@@ -289,7 +290,7 @@ each with its own grid, cursor and Scrollback.
 
 It runs under a local patch — `patches/expo-libghostty.patch` — for the things
 the published library does not offer and the app cannot do from outside it:
-hiding the Accessory Bar, which covered the Dock (see ADR 0003); telling UIKit
+hiding the Accessory Bar, which covered the Key Row (see ADR 0003); telling UIKit
 the view has a document behind its caret, without which a held delete key
 removes exactly one character; reporting the size of a cell with the grid,
 without which nothing outside the Surface can turn a touch into a cell; and
@@ -304,41 +305,70 @@ and not by the Pane: the difference is a quarter of a point a row, which is
 nothing at the top and a whole row by the bottom. See `cellOf`.
 _Avoid_: Terminal, emulator, view
 
+**Header**:
+The row at the top of the Terminal Screen, on the terminal background under
+the status bar: Back on the left, the title in the middle, Options on the
+right. Back goes Home and leaves the Session attached (ADR 0007). The title is
+the Session name over the program that runs in the active Pane, as tmux's
+`#{pane_current_command}` names it; for a Session opened from a Topic it is
+the Topic title, the program, and the Session name in the dim tone. The
+program follows the Topology, which is read again when the active Window is
+renamed, when the title sheet or the Options menu opens, and after every verb;
+a Window with a fixed name can show the program of the last read. A tap on the
+title opens the Title Sheet. The red line under the Header that reports a
+failed Pane command is not a Banner and always shows: the Connection is fine,
+one command was not.
+_Avoid_: navigation bar (that is the system's, and this screen has none),
+title bar, toolbar
+
+**Title Sheet**:
+The sheet the Header's title opens. For a Session, one row per Window of the
+Topology: index, name, program, the one on screen marked. For a Session opened
+from a Topic, one section per live Session of the Topic with its Windows and
+their Agent marks, read from the Mac through `muxify` each time the sheet
+opens. A tap on a Window goes to it, switching Session first when it belongs
+to another one. **Switch…** at the top closes the sheet and opens the Sessions
+picker. The sheet draws no previews; the Sessions picker keeps its own.
+_Avoid_: Windows picker, Windows sheet (the old grid of previews), Topic sheet
+
+**Options**:
+The Header's ⋯ menu, in this order: Compose, Zoom Pane, New Window, Split
+Pane (Split → and Split ↓), Font size − and +, Copy Pane text, then Copy log
+and Disconnect. Font size changes the setting live, and the Surfaces reflow to
+it. Copy Pane text puts the active Pane's text on the clipboard, plain and
+with its wrapped lines joined. Disconnect ends the Attach and goes Home.
+_Avoid_: menu (on its own), actions, overflow
+
 **Accessory Bar**:
 The modifier-key row (ctrl, esc, tab, arrows) that `expo-libghostty` draws above
 the system keyboard. Supplied by the library, not built by Muxify, and visible
 only while the keyboard is up. Muxify turns it off; the Key Bar is what stands
 in its place.
-_Avoid_: Toolbar, key bar (reserved for the Dock)
+_Avoid_: Toolbar, key bar (reserved for the Key Row's middle)
 
-**Dock**:
-Muxify's own Liquid Glass bar pinned to the bottom of the Terminal Screen. Three
-capsules, left to right: the Session/Window/Pane pickers, the Key Bar, and
-Home/Compose/Keyboard. The pickers lead because they are reached for most; the Key Bar
-takes the middle because it is the one that grows into whatever width is left;
-Home sits at the far end from the arrows, because a Home pressed by a thumb
-aiming for an arrow is a Session left by accident.
-
-Each picker's icon is badged with how many things are behind it — the Host's
-Sessions, the Session's Windows, the Window's Panes — and only above one, since
-one is what everything looks like until somebody splits it.
-_Avoid_: Toolbar, tab bar, bottom bar
+**Key Row**:
+Muxify's own Liquid Glass row pinned to the bottom of the Terminal Screen,
+riding the keyboard. The Key Bar in the middle, and a fixed group at the right:
+Panes, which opens the Panes picker, and Keyboard, which shows or hides the
+system keyboard. No counts on its buttons. It is what the Dock was, with the
+pickers moved to the Header and the Title Sheet and Home become Back.
+_Avoid_: Dock (the old name), toolbar, tab bar, bottom bar
 
 **Key Bar**:
-The Dock's middle capsule: the keys a phone keyboard does not have — ctrl, esc,
-tab, the arrows, page up and down, alt, home and end. Up to three are on screen,
-as space allows, and the rest are a sideways swipe away. Every visible key has
-the same width, so a
-four-letter label shrinks rather than widening its key. ctrl and alt are
-*sticky*: armed by a tap, and spent on the next key from either the bar or the
-system keyboard.
+The Key Row's middle capsule: the keys a phone keyboard does not have — ctrl,
+esc, tab, the arrows, page up and down, alt, home and end. Up to three are on
+screen, as space allows, and the rest are a sideways swipe away. Every visible
+key has the same width, so a four-letter label shrinks rather than widening
+its key. ctrl and alt are *sticky*: armed by a tap, and spent on the next key
+from either the bar or the system keyboard.
 _Avoid_: Accessory Bar (that is the library's), toolbar, modifiers
 
 **Composer**:
 The place to prepare a message for a Pane before sending it: multiline text,
 images pasted or chosen from Photos, and files chosen from Files. Opened from
-Compose between Home and Keyboard. Send submits the message and leaves the
-Composer open for the next one; closing it keeps the Draft.
+Compose at the top of the Options menu, which reads Close composer while it is
+up. Send submits the message and leaves the Composer open for the next one;
+closing it keeps the Draft.
 _Avoid_: terminal input (which sends keystrokes immediately)
 
 **Draft**:
@@ -354,7 +384,7 @@ includes its remote path in the message delivered to the Pane.
 
 **Banner**:
 The Terminal Screen's one kind of notice: a Liquid Glass card that slides in
-under the status bar, the way iOS delivers a notification over whatever is on
+under the Header, the way iOS delivers a notification over whatever is on
 screen. It says what the Attach is doing while that is anything other than
 connected — Connecting, Reconnecting, a disconnect reason with Reconnect where
 retrying could work — and it is where the changed-host-key warning is shown.
@@ -363,21 +393,13 @@ white card over a Dracula terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
 
-**Status Lines**:
-The dim lines in the top right of the Terminal Screen: the Connection's state,
-the Surface's grid, and the attached Session's name. A setting hides them; it
-is on by default. Hidden, they lose nothing about the Connection, because the
-Banner is where any state other than connected is shown. The red line under
-them that reports a failed Pane command is not a Status Line, and always shows.
-_Avoid_: status bar (that is the system's), overlay, HUD
-
 ### Diagnosing
 
 **Log**:
 Muxify's own record of what it decided, kept in memory for the life of the
-app and carried out by the user: a long press on a Host in Settings offers
-**Copy log**, which puts it on the clipboard with a head saying
-what is attached and how the Attach stands. Every module that makes a decision
+app and carried out by the user: a long press on a Host in Settings, and Copy
+log in the Terminal Screen's Options menu, put it on the clipboard with a head
+saying what is attached and how the Attach stands. Every module that makes a decision
 a screen cannot show says so in one line — which Pane got a Surface and when
 it reported its grid, what the Topology became and why, what went down the
 Control Connection and what tmux answered, what the Terminal Screen put on

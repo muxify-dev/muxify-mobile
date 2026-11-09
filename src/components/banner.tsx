@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   },
   card: {
     // The system's notification card: generous corners, and inset from the
-    // sides the same distance as the Dock is from the bottom.
+    // sides the same distance as the Key Row is from the bottom.
     borderRadius: 22,
     overflow: 'hidden',
     paddingHorizontal: 14,

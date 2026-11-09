@@ -104,7 +104,7 @@ export interface PaneView {
    */
   reportGrid(grid: Grid): void;
   /**
-   * Whether this is the Pane the keyboard and the Dock are about.
+   * Whether this is the Pane the keyboard and the Key Row are about.
    *
    * Owns the cursor: only one Pane of a split has the keyboard, and a cursor
    * in each of the others reads as several places to type.

@@ -1,8 +1,3 @@
-/** tmux's address for a Window — which resolves to its active Pane. */
-export function windowPreviewTarget(sessionName: string, windowIndex: number): string {
-  return `${sessionName}:${windowIndex}`;
-}
-
 /**
  * Cuts captured content down to what a preview box can actually show.
  *

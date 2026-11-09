@@ -18,33 +18,32 @@ export interface KeyBarProps {
   /**
    * The chrome colours of the Theme in use.
    *
-   * The rest of the Dock is SwiftUI and takes the system tint on its own; this
-   * capsule draws its own text, so it has to be told. A dark label on Dracula's
+   * The rest of the Key Row is SwiftUI and takes the system tint on its own;
+   * this capsule draws its own text, so it has to be told. A dark label on Dracula's
    * glass is a key nobody can read.
    */
   palette: Appearance;
 }
 
 /**
- * The Dock's middle capsule: the keys a phone keyboard does not have.
+ * The Key Row's middle capsule: the keys a phone keyboard does not have.
  *
  * Built from React Native views over a `GlassView` rather than from SwiftUI
- * like the rest of the Dock, and that is a deliberate exception. Two of the
+ * like the rest of the Key Row, and that is a deliberate exception. Two of the
  * things this has to do have no SwiftUI equivalent reachable through
  * `@expo/ui`: scrolling sideways inside a capsule that is only three keys wide,
  * and drawing a key as *held* — the filled disc behind an armed ctrl. A menu
  * was tried first and is the wrong shape for this: it closes on every pick, so
  * an arrow costs a reopen each time it is pressed.
  *
- * It fills whatever width the pickers on its left and the way out on its right
- * leave, and scrolls the rest — so more keys cost nothing: they simply sit past
+ * It fills whatever width the buttons beside it leave, and scrolls the rest — so more keys cost nothing: they simply sit past
  * the edge.
  */
 export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBarProps) {
   const glass = isGlassEffectAPIAvailable();
   const Capsule = glass ? GlassView : View;
   /**
-   * How wide the capsule turned out to be, once the Dock's other groups had
+   * How wide the capsule turned out to be, once the Key Row's buttons had
    * taken theirs.
    *
    * The keys are sized from it rather than the other way round, so that
@@ -98,7 +97,7 @@ export function KeyBar({ keys, armed, onPress, onArm, disabled, palette }: KeyBa
                 // Every key is the same width, so the label is what gives.
                 // `pgup`, `pgdn` and `home` are four characters in the space
                 // an arrow leaves — they fit at 15pt on an iPhone 17 Pro with
-                // little to spare, and a narrower phone or a wider Dock group
+                // little to spare, and a narrower phone or a wider button group
                 // would take that away. Shrinking the few that need it keeps
                 // the row a row: a key wider than its neighbours reads as a
                 // different kind of key. The phone's text size is left out of
@@ -138,8 +137,8 @@ const KEYS_ON_SCREEN = 3;
  * The narrowest a key may be before the bar shows one fewer of them.
  *
  * Narrower than a finger wants, but a key is only as wide as the bar allows
- * and the bar only as wide as the Dock's buttons leave it — see BUTTON_WIDTH in
- * dock.tsx, which is chosen so that three keys of this width fit on the
+ * and the bar only as wide as the Key Row's buttons leave it — see BUTTON_WIDTH
+ * in key-row.tsx, which is chosen so that three keys of this width fit on the
  * narrowest phone. The labels already shrink to fit, so a four-letter label
  * still reads at this width.
  */
@@ -164,7 +163,7 @@ const MIN_LABEL_SCALE = 0.7;
 
 const styles = StyleSheet.create({
   capsule: {
-    // Takes what the other Dock groups leave rather than a width of its own:
+    // Takes what the Key Row's buttons leave rather than a width of its own:
     // there are more keys than fit on any phone, so the bar scrolls and the
     // width is simply how many are on screen.
     flex: 1,

@@ -2,13 +2,13 @@ context platform=ios kind=simulator
 
 # Session picker (ticket 08).
 #
-# Covers everything automation can reach: the Dock button, the sheet, and the
-# Sessions read live off the Host appearing as rows.
+# Covers everything automation can reach: the header's title, the Title Sheet,
+# Switch… in it, and the Sessions picker it opens.
 #
 # What this deliberately stops short of: selecting a row. Nothing inside a
 # presented sheet responds to agent-device — not a row at its own measured
 # coordinates, not iOS's own drag indicator, not swipe-to-dismiss — while the
-# same Buttons in the Dock press fine. Verified by hand on the simulator: the
+# same Buttons in the Key Row press fine. Verified by hand on the simulator: the
 # sheet works perfectly for a finger, so this is the harness not reaching a
 # presented sheet, the same class of limitation as the on-screen return key.
 #
@@ -32,16 +32,19 @@ wait "label=\"Edit Host\"" 15000
 wait 1500
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
-wait "id=\"connection-status\"" 8000
-wait 8000
-is "text" "id=\"connection-status\"" "Connected"
+# The header's program line renders once the Topology has an active Pane,
+# which the Attach reads only after it is connected on a settled grid — so
+# its presence says the Surface laid out, the Connection is attached and the
+# Topology is in.
+wait "id=\"pane-command\"" 20000
 
-# The Dock's Sessions button opens the sheet.
-#
-# Waited for by the sheet's own close button, not by the text "Sessions": the
-# Dock has a button of that name and it is on screen the whole time, so that
-# wait returned at once and everything after it raced the sheet's first frame.
-press "role=button label=\"Sessions\""
+# The title opens the Title Sheet, waited for by its own close button.
+press "id=\"header-title\""
+wait "label=\"Close Windows\"" 15000
+is "exists" "label=\"Switch…\""
+
+# Switch… closes it and opens the Sessions picker in its place.
+press "label=\"Switch…\""
 wait "label=\"Close Sessions\"" 15000
 
 # The sheet is up with its own chrome. The Sessions themselves are asserted in
