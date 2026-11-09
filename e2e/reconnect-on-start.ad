@@ -26,7 +26,7 @@ is "text" "id=\"connection-status\"" "Connected"
 is "absent" "id=\"reconnect-screen\""
 
 # Home is that Host's Host Screen, and one Back below it is the Hosts list.
-press "label=\"Home\""
+press "role=button label=\"Home\""
 wait "label=\"New Session\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""
 press "role=button label=\"Muxify\""

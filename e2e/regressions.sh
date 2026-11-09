@@ -407,7 +407,7 @@ SECOND=muxify-regressions-second
 on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
   || fail "could not make a second Session on the dev Host"
 ensure_keyboard away
-agent-device press 'label="Home"' >/dev/null 2>&1
+agent-device press 'role=button label="Home"' >/dev/null 2>&1
 agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
 agent-device press 'label="Dev Host"' >/dev/null 2>&1
 agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
@@ -429,7 +429,7 @@ toggle_keyboard
 ensure_keyboard away
 echo "     second Session connected at $(surface), keyboard rose and fell"
 # Back to the first, the same way round, so what follows leaves it as found.
-agent-device press 'label="Home"' >/dev/null 2>&1
+agent-device press 'role=button label="Home"' >/dev/null 2>&1
 agent-device wait text "Dev Host" 8000 >/dev/null 2>&1
 agent-device press 'label="Dev Host"' >/dev/null 2>&1
 agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
@@ -446,7 +446,7 @@ sleep 2
 echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
 # The keyboard is already away: check 8 put it there, and toggling it again
 # here would only raise it on the way out.
-agent-device press 'label="Home"' >/dev/null 2>&1
+agent-device press 'role=button label="Home"' >/dev/null 2>&1
 agent-device wait text "No Hosts yet" 8000 >/dev/null 2>&1
 sleep 2
 [ "$(options)" = "$BEFORE" ] || {

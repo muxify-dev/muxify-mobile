@@ -21,7 +21,7 @@ press "label=\"Session e2e-reconnect\""
 wait "id=\"connection-status\"" 8000
 wait 8000
 is "text" "id=\"connection-status\"" "Connected"
-press "label=\"Home\""
+press "role=button label=\"Home\""
 wait "label=\"New Session\"" 8000
 
 # The attached row is the first Recent Session; a swipe left shows Disconnect.
