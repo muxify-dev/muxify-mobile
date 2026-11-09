@@ -208,18 +208,22 @@ describe('zoom', () => {
 });
 
 describe('sizing the Client', () => {
-  it('asks tmux, and sets no Session option to do it', async () => {
+  it('takes the Window and asks tmux for the size, and sets no Session option to do it', async () => {
     const { client, asked } = fakeTmux({
+      [renderControlCommand(['select-window'])]: [],
       [renderControlCommand(['refresh-client', '-C', '40x20'])]: [],
     });
     await client.resizeClient({ cols: 40, rows: 20 });
-    expect(asked).toEqual(["'refresh-client' '-C' '40x20'"]);
+    // The claim first: without it, a laptop that typed last keeps the Window
+    // at its own size whatever this Client asks for. See claimWindowCommand.
+    expect(asked).toEqual(["'select-window'", "'refresh-client' '-C' '40x20'"]);
     expect(asked.join(' ')).not.toContain('set-option');
   });
 
   it('reports a refusal rather than swallowing it', async () => {
     // The resize scheduler must not record a size it never sent.
     const { client } = fakeTmux({
+      [renderControlCommand(['select-window'])]: [],
       [renderControlCommand(['refresh-client', '-C', '40x20'])]: { error: ['no client'] },
     });
     await expect(client.resizeClient({ cols: 40, rows: 20 })).rejects.toThrow(TmuxError);
@@ -268,8 +272,8 @@ describe('reading a Pane back', () => {
         '-t',
         '%1',
         '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
-          '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}',
-      ])]: ['43\t2\t1\t120\t80\t24\t1'],
+          '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}',
+      ])]: ['43\t2\t1\t120\t80\t24\t1\t0'],
     });
     expect(await client.paneState('%1')).toEqual({
       cursorColumn: 43,
@@ -279,6 +283,7 @@ describe('reading a Pane back', () => {
       width: 80,
       height: 24,
       wantsMouse: true,
+      cursorShown: false,
     });
   });
 
@@ -333,6 +338,7 @@ describe('nothing borrows anything', () => {
     const { client, asked } = fakeTmux({
       [LIST_SESSIONS]: ['work\t1'],
       [listWindows('work')]: ['@0\t0\t1\t1\t0\tshell\tzsh'],
+      [renderControlCommand(['select-window'])]: [],
       [renderControlCommand(['refresh-client', '-C', '40x20'])]: [],
       [renderControlCommand(['send-keys', '-t', '%0', '-H', '61'])]: [],
     });

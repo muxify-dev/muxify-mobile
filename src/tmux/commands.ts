@@ -273,12 +273,29 @@ export function switchSessionCommand(sessionName: string): TmuxArgv {
  * Window never matches the phone.
  *
  * This sets no Session option. Under the default `window-size latest` the
- * Window follows this Client while it is the latest to have asked, and reverts
- * when the Client goes. Nothing is left behind to restore, which is the whole
- * of ADR 0006.
+ * Window follows the latest Client, and reverts when the Client goes. Nothing
+ * is left behind to restore, which is the whole of ADR 0006. Asking for a size
+ * is not enough to be the latest, though: see claimWindowCommand.
  */
 export function resizeClientCommand(cols: number, rows: number): TmuxArgv {
   return ['refresh-client', '-C', `${size(cols)}x${size(rows)}`];
+}
+
+/**
+ * Makes this Client the latest one on its Window, so the size it asks for next
+ * is the size the Window takes.
+ *
+ * Measured against tmux 3.8 with a laptop client and a control client on one
+ * Window. Once the laptop has typed, it is the latest, and `refresh-client -C`
+ * from the control client changes nothing — not again, not at another size and
+ * back. `send-keys` does not count as activity either. A bare `select-window`
+ * does: it selects the Window that is already selected, which leaves the
+ * Session's last-window mark alone, and it makes the control client the latest.
+ * The phone got 115 columns of Claude Code written into a 49-column Surface
+ * before this.
+ */
+export function claimWindowCommand(): TmuxArgv {
+  return ['select-window'];
 }
 
 function size(value: number): number {
@@ -359,7 +376,7 @@ export function captureScrollbackCommand(
 
 /**
  * Everything about a Pane that a resync needs and the Layout does not say:
- * where the cursor is, whether the Pane is on the alternate screen, how much
+ * where the cursor is and whether the application shows it, whether the Pane is on the alternate screen, how much
  * Scrollback it has (tmux calls that `history_size`), and how big it is.
  *
  * The last two decide how a scroll behaves. On the alternate screen the
@@ -376,7 +393,7 @@ export function paneStateCommand(paneId: string): TmuxArgv {
     '-t',
     paneId,
     '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
-      '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}',
+      '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}',
   ];
 }
 

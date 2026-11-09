@@ -66,6 +66,16 @@ export interface ClientSizing {
    * for.
    */
   stableGrid(): Grid | null;
+  /**
+   * The size the active Window has now, read from its Layout. Different from
+   * the size this Client last asked for means another Client has the Window.
+   */
+  windowSized(grid: Grid): void;
+  /**
+   * The user did something on the phone. If another Client has the Window,
+   * take it back: the phone is the one in use now.
+   */
+  reclaim(): void;
   /** Nothing more is wanted. Cancels the settle and strands no waiter. */
   dispose(): void;
 }
@@ -133,6 +143,10 @@ export function createClientSizing(
   let live = false;
   /** Whether a sheet is up, so its closing can be noticed here. */
   let sheetUp = false;
+  /** The grid last asked of tmux, to compare the Window against. */
+  let asked: Grid | null = null;
+  /** Whether the Window is at a size this Client did not ask for. */
+  let taken = false;
   let disposed = false;
 
   let settleTimer: Timer | null = null;
@@ -157,6 +171,8 @@ export function createClientSizing(
       return;
     }
     say(`asking for ${next.cols}x${next.rows}${force ? ', even if unchanged' : ''}`);
+    asked = next;
+    taken = false;
     scheduler.request(next, force);
   }
 
@@ -270,6 +286,24 @@ export function createClientSizing(
     },
 
     stableGrid: () => stable,
+
+    windowSized(grid: Grid): void {
+      if (disposed || !asked) return;
+      const now = !sameGrid(grid, asked);
+      if (now === taken) return;
+      taken = now;
+      say(
+        now
+          ? `the Window is ${grid.cols}x${grid.rows}, not the ${asked.cols}x${asked.rows} asked for: another Client has it`
+          : `the Window is back at ${grid.cols}x${grid.rows}`,
+      );
+    },
+
+    reclaim(): void {
+      if (disposed || !taken) return;
+      say('the phone is in use; taking the Window back');
+      push(true);
+    },
 
     dispose(): void {
       disposed = true;

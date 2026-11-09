@@ -22,7 +22,9 @@ export interface ScreenPaint {
   cursor?: { column: number; row: number };
   /**
    * Whether the Pane draws its cursor. False for a Pane of a split that is not
-   * the one being typed into.
+   * the one being typed into, and for a Pane whose application hid it — a
+   * repaint that showed it anyway gave Claude Code a second, blue cursor
+   * beside the one it draws itself.
    *
    * Separate from `cursor` on purpose, because a cursor that is not drawn is
    * still *somewhere*: output arriving in an unattended Pane moves it, and the
@@ -59,6 +61,11 @@ export function paintScreen(paint: ScreenPaint): Uint8Array {
   // Attributes first: whatever the last screen left set would otherwise colour
   // the first cell of this one.
   write('[0m[H[2J');
+  // Autowrap off while the lines land, so a line wider than the Surface is cut
+  // at its edge instead of wrapping onto the row below and pushing every row
+  // after it down. A capture is wider than the Surface while another Client
+  // has the Window at its own size.
+  write('[?7l');
 
   paint.lines.forEach((line, at) => {
     // No newline after the last line. A terminal at the bottom row scrolls on
@@ -67,7 +74,7 @@ export function paintScreen(paint: ScreenPaint): Uint8Array {
     parts.push(line);
   });
 
-  write('[0m');
+  write('[0m[?7h');
 
   if (paint.cursor) {
     // tmux counts from zero and terminals count from one.

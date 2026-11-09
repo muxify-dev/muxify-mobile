@@ -158,6 +158,12 @@ export interface PaneView {
   /** Back to the live bottom, and a repaint to prove it. */
   jumpToLatest(): void;
   /**
+   * Repaints from a fresh capture. For a Window that changed size: what is on
+   * the Surface was drawn for the old width, and output alone does not redraw
+   * all of it.
+   */
+  resync(): void;
+  /**
    * Whether the Surface is showing the past rather than the present.
    *
    * What a tap means depends on it: a tap on a Pane that has been dragged back
@@ -445,7 +451,7 @@ export function createPaneView(
           // Where it is, and whether it is drawn, are two different questions:
           // an unattended Pane's cursor still moves with its output.
           cursor: next ? { column: next.cursorColumn, row: next.cursorRow } : undefined,
-          cursorVisible,
+          cursorVisible: cursorVisible && (next?.cursorShown ?? true),
         }),
       );
       say(
@@ -613,8 +619,11 @@ export function createPaneView(
     setActive(active: boolean): void {
       if (disposed || active === cursorVisible) return;
       cursorVisible = active;
-      say(active ? 'active: cursor shown' : 'inactive: cursor hidden');
-      write(asciiBytes(active ? '\u001b[?25h' : '\u001b[?25l'));
+      // Shown only if the application shows it: one that hid its cursor would
+      // otherwise get a second one back the moment its Pane took the keyboard.
+      const shows = active && state?.cursorShown !== false;
+      say(active ? `active: cursor ${shows ? 'shown' : 'left hidden, as the application has it'}` : 'inactive: cursor hidden');
+      write(asciiBytes(shows ? '\u001b[?25h' : '\u001b[?25l'));
     },
 
     focusKeyboard(): void {
@@ -658,6 +667,12 @@ export function createPaneView(
       }
       // What arrived while nobody was looking is not worth replaying; the
       // capture is the truth, exactly as it is after any resync.
+      armPaint();
+    },
+
+    resync(): void {
+      if (disposed) return;
+      say('resync asked for');
       armPaint();
     },
 

@@ -84,6 +84,14 @@ describe('painting a Pane onto the Surface', () => {
   it('paints an empty Pane without falling over', () => {
     expect(shown(paintScreen({ lines: [], alternate: false }))).toContain('<ESC>[2J');
   });
+
+  it('cuts a line wider than the Surface at its edge rather than wrapping it', () => {
+    // A capture taken while another Client has the Window at its own width.
+    const painted = shown(paintScreen({ lines: [line('a'.repeat(115))], alternate: false }));
+    const lineAt = painted.indexOf('a');
+    expect(painted.lastIndexOf('<ESC>[?7l', lineAt)).toBeGreaterThan(-1);
+    expect(painted.indexOf('<ESC>[?7h', lineAt)).toBeGreaterThan(lineAt);
+  });
 });
 
 describe('how far back a drag may go', () => {
