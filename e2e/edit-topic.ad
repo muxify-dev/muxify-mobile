@@ -17,6 +17,9 @@ press "label=\"Dev Host\""
 wait "label=\"Topic e2e Edit Topic\"" 15000
 press "label=\"Topic e2e Edit Topic\""
 wait "label=\"Note e2e first note\"" 15000
+# The Topic shows during the push, before the new navigation bar and its
+# Edit: wait for the button itself.
+wait "label=\"Edit\"" 8000
 press "label=\"Edit\""
 
 wait "label=\"Tag #e2eold\"" 8000
