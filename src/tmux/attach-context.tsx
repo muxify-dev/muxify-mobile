@@ -6,7 +6,7 @@ import { deviceHostStore } from '@/storage/device-store';
 
 import { openAttach, type Attach, type AttachState, type LifecyclePhase } from './attach';
 import { createAttachHolder, type AttachHolder } from './attach-holder';
-import { sshConnection } from './ssh-connection';
+import { appConnections } from './ssh-connection';
 
 const AttachContext = createContext<AttachHolder | null>(null);
 
@@ -31,7 +31,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
           openAttach({
             ...request,
             store: deviceHostStore(),
-            openConnection: sshConnection(deviceHostStore()),
+            openConnection: appConnections().openConnection,
             log: deviceLog(),
           }),
         deviceHostStore(),
@@ -42,6 +42,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (status: AppStateStatus) => {
+      appConnections().lifecycleChanged(lifecycleOf(status));
       holder.lifecycleChanged(lifecycleOf(status));
     });
     return () => subscription.remove();

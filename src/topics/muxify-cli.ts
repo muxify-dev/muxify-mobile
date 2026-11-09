@@ -87,8 +87,9 @@ export interface MuxifyCli {
 }
 
 /**
- * The only code that talks to desktop Muxify's CLI. Make one per visit to a
- * Host: it remembers where `muxify` is for as long as it lives.
+ * The only code that talks to desktop Muxify's CLI. The registry of
+ * Connections makes one per Connection: it remembers where `muxify` is for as
+ * long as it lives, so a read is one exec. See ADR 0012.
  *
  * `log` hears where the probe found it, which is what the Log needs to say why
  * a Host has Topics or not.

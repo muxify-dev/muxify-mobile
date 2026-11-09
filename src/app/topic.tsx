@@ -37,9 +37,8 @@ import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { withHostTransport } from '@/tmux/ssh-connection';
+import { appConnections } from '@/tmux/ssh-connection';
 import type { TopicId, TopicState } from '@/topics/environment';
-import { createMuxifyCli } from '@/topics/muxify-cli';
 import {
   lastTopic,
   loadingTopic,
@@ -80,7 +79,6 @@ export default function TopicScreen() {
   }>();
   const { appearance, palette } = useSettings();
   const [view, setView] = useState<TopicView>(TOPIC_UNASKED);
-  const [muxify] = useState(() => createMuxifyCli(say));
 
   const readTopic = useCallback(async () => {
     setView(loadingTopic);
@@ -91,7 +89,7 @@ export default function TopicScreen() {
       return;
     }
     try {
-      const read = await withHostTransport(host, store, (transport) =>
+      const read = await appConnections().read(host, (transport, muxify) =>
         muxify.show((command) => transport.exec(command), topicId as TopicId),
       );
       say(read.kind === 'shown' ? `${host.displayName} showed a Topic` : `${host.displayName} could not show a Topic: ${read.error}`);
@@ -101,7 +99,7 @@ export default function TopicScreen() {
       say(`${host.displayName} refused the Topic: ${message}`);
       setView((previous) => settledTopic(previous, { kind: 'failed', error: message }));
     }
-  }, [hostId, topicId, muxify]);
+  }, [hostId, topicId]);
 
   useFocusEffect(
     useCallback(() => {

@@ -1,54 +1,46 @@
-import { connectToHost, type KeyVerdict } from '@/ssh/connect-host';
 import { createUploader } from '@/composer/upload';
-import type { Host } from '@/storage/records';
+import { deviceLog } from '@/diagnostics/device-log';
+import { connectToHost } from '@/ssh/connect-host';
+import { createHostConnections, type Dial, type HostConnections } from '@/ssh/host-connections';
+import { deviceHostStore } from '@/storage/device-store';
 import type { HostStore } from '@/storage/store';
 
-import type { HostConnection, OpenConnection } from './attach';
 import { sshTmuxTransport } from './ssh-transport';
-import type { TmuxTransport } from './transport';
 
 /**
- * Opens a Host link over SSH.
+ * Opens a Host link over SSH, for the registry of Connections.
  *
- * The production half of the one dependency Attach takes on the outside world.
- * Deliberately three lines of its own: everything with a decision in it —
- * which key is trusted, when to size, what a closure means — lives above, and
- * this is the part verified by running the app rather than by a test.
- *
- * The control-mode harness passes a local process in its place, and the unit
- * tests a fake; that is the whole reason this is a parameter and not an import
- * inside Attach.
+ * The production half of the one dependency the registry takes on the outside
+ * world. Everything with a decision in it lives above, and this is the part
+ * verified by running the app rather than by a test.
  */
-export function sshConnection(store: HostStore): OpenConnection {
-  return async (host: Host): Promise<HostConnection> => {
-    const { connection, fingerprint, verdict } = await connectToHost(host, store);
+export function sshDial(store: HostStore): Dial {
+  return async (host, dropped) => {
+    const { connection, fingerprint, verdict } = await connectToHost(
+      host,
+      store,
+      undefined,
+      dropped,
+    );
     return {
       transport: sshTmuxTransport(connection),
       upload: createUploader((command, events) => connection.openShell({ term: '', command }, events)),
       fingerprint,
       verdict,
-      close: () => connection.disconnect(),
+      isConnected: () => connection.isConnected,
+      disconnect: () => connection.disconnect(),
     };
   };
 }
 
-/**
- * One short visit to a Host for the screens that ask it something and leave:
- * connect, run `use` over the Connection, and disconnect, also when `use`
- * throws. A Fingerprint seen for the first time is recorded once the
- * Connection succeeds, as an Attach records it.
- */
-export async function withHostTransport<T>(
-  host: Host,
-  store: HostStore,
-  use: (transport: TmuxTransport) => Promise<T>,
-  onHostKey?: (verdict: KeyVerdict, fingerprint: string) => boolean,
-): Promise<T> {
-  const { connection, fingerprint, verdict } = await connectToHost(host, store, onHostKey);
-  try {
-    if (verdict.kind === 'first-sight') await store.rememberFingerprint(host.id, fingerprint);
-    return await use(sshTmuxTransport(connection));
-  } finally {
-    await connection.disconnect();
-  }
+let app: HostConnections | null = null;
+
+/** The app's Connections, one per Host, for the Attach and every screen. See ADR 0012. */
+export function appConnections(): HostConnections {
+  app ??= createHostConnections({
+    dial: sshDial(deviceHostStore()),
+    store: deviceHostStore(),
+    log: deviceLog(),
+  });
+  return app;
 }

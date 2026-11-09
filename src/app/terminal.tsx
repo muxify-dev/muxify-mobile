@@ -30,7 +30,7 @@ import {
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
 import { execCommandRunner } from '@/tmux/exec-runner';
-import { withHostTransport } from '@/tmux/ssh-connection';
+import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
@@ -1922,17 +1922,16 @@ const styles = StyleSheet.create({
   },
 });
 
-/** The reconnect's visit to `host`, over its own short SSH Connection. */
+/** The reconnect's visit to `host`, on the Host's Connection. */
 function sessionVisit(host: Host): SessionVisit {
   return async ({ onHostKey, onSignedIn }) => {
-    const sessions = await withHostTransport(
+    const sessions = await appConnections().read(
       host,
-      deviceHostStore(),
       (transport) => {
         onSignedIn();
         return new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).listSessions();
       },
-      onHostKey,
+      { onHostKey },
     );
     const names = sessions.map((candidate) => candidate.name);
     say(`reconnect: ${host.displayName} has ${names.join(', ') || 'no Sessions'}`);

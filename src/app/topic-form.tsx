@@ -24,18 +24,14 @@ import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { TagChoice } from '@/components/tag-choice';
 import { ToolbarWord } from '@/components/toolbar-word';
-import { deviceLog } from '@/diagnostics/device-log';
-import { speakingAs } from '@/diagnostics/log';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
-import { withHostTransport } from '@/tmux/ssh-connection';
-import { createMuxifyCli } from '@/topics/muxify-cli';
+import { appConnections } from '@/tmux/ssh-connection';
 import type { NewTopicRead } from '@/topics/new-topic';
 import { tagsFromParam } from '@/topics/tags-param';
 
-const say = speakingAs(deviceLog(), 'new-topic');
 
 /**
  * Makes an Empty Topic on a Host, as New Topic on the Mac does, and then opens
@@ -85,8 +81,8 @@ export default function TopicFormScreen() {
 
       let made: NewTopicRead;
       try {
-        made = await withHostTransport(host, store, (transport) =>
-          createMuxifyCli(say).create(
+        made = await appConnections().write(host, (transport, muxify) =>
+          muxify.create(
             (command) => transport.exec(command),
             wanted,
             // In Config order, as the Mac lists a Topic's Tags.

@@ -21,10 +21,12 @@ _Avoid_: Credential, auth, login, key (when the record rather than the key mater
 
 **Connection**:
 One live SSH link to a Host. Held by the app rather than by a screen: leaving
-the Terminal Screen, going Home and backgrounding Muxify all leave it up. It
-ends when the user disconnects it, when another Session is opened, or when the
-transport is lost and cannot be restored. Muxify holds one at a time. See ADR
-0007.
+the Terminal Screen, going Home and backgrounding Muxify all leave it up.
+Muxify holds at most one per Host, and the Attach and the screens share it:
+the Attach's Control Connection and each screen read are channels on it. It
+ends when the transport is lost, when its keepalive goes unanswered for about
+15 s, or a minute after the last screen read once no Attach holds it. See ADR
+0007 and ADR 0012.
 _Avoid_: SSH session, link, socket
 
 **Fingerprint**:

@@ -33,6 +33,8 @@ export async function connectToHost(
    * whether to go on: false ends the attempt with HOST_KEY_REJECTED.
    */
   onHostKey?: (verdict: KeyVerdict, fingerprint: string) => boolean,
+  /** Told when the keepalive finds the Connection dead. */
+  onDisconnected?: (reason: string) => void,
 ): Promise<HostConnection> {
   const credential = await store.credentialFor(host.id);
   if (credential === null || credential === '') {
@@ -65,6 +67,11 @@ export async function connectToHost(
       // caller is told, and tells the user, or refuses it.
       return onHostKey?.(verdict, key.fingerprint) ?? true;
     },
+    // Three unanswered keepalives, 5 s apart: a dead Connection is found in
+    // about 15 s, also when nothing reads from it. See ADR 0012.
+    keepaliveIntervalMs: 5_000,
+    keepaliveMax: 3,
+    onDisconnected,
   });
 
   return { connection, fingerprint, verdict };
