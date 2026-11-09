@@ -105,13 +105,19 @@ export function sheetMetrics(sheetWidth: number, windowHeight: number): SheetMet
  * Measured, never a fraction of the screen: a fraction is the wrong height
  * twice, too tall for three Sessions and too short for nine, and either way the
  * actions end up marooned below a gap. The Pane diagram is a fixed shape; a
- * list takes what its rows need, up to the budget. See gridContentHeight.
+ * list takes what its rows need, up to the budget. See gridContentHeight. With
+ * rows under the cards, the list takes what both need, up to the budget.
  */
-export function sheetHeight(metrics: SheetMetrics, layout: 'panes' | 'list', count: number): number {
+export function sheetHeight(
+  metrics: SheetMetrics,
+  layout: 'panes' | 'list',
+  count: number,
+  /** The height of what a list shows under its cards. */
+  below = 0,
+): number {
   if (layout === 'panes') return CHROME_HEIGHT + metrics.board.height;
-  const content = gridContentHeight(
-    { count, perRow: 1, cardHeight: metrics.listCard.height, gap: GRID_GAP },
-    metrics.contentBudget,
-  );
-  return CHROME_HEIGHT + content;
+  const grid = { count, perRow: 1, cardHeight: metrics.listCard.height, gap: GRID_GAP };
+  if (below === 0) return CHROME_HEIGHT + gridContentHeight(grid, metrics.contentBudget);
+  const cards = gridContentHeight(grid, Infinity);
+  return CHROME_HEIGHT + Math.min(metrics.contentBudget, cards + (count > 0 ? GRID_GAP : 0) + below);
 }

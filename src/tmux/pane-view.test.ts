@@ -29,6 +29,7 @@ const paneState = (over: Partial<PaneState> = {}): PaneState => ({
   height: 24,
   wantsMouse: false,
   cursorShown: true,
+  bracketedPaste: true,
   ...over,
 });
 
@@ -483,7 +484,7 @@ describe('typing', () => {
   });
 });
 
-describe('a key from the Key Bar', () => {
+describe('a key from the Key Row', () => {
   it('sends tmux the name, not the bytes', async () => {
     const host = fakePane();
     const kit = viewOn(host, '%4');

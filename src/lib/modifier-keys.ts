@@ -1,45 +1,48 @@
 /**
- * Sticky ctrl and alt, for a keyboard that has neither.
+ * Sticky ctrl, option and command, for a keyboard that has none of them.
  *
  * A phone's keyboard has no modifier keys and no way to hold one down while
- * pressing another. The Key Bar's answer is the one every mobile terminal
+ * pressing another. The Key Row's answer is the one every mobile terminal
  * arrives at: arm the modifier with a tap, and it applies to the next key
  * typed. Which is why these are *sticky* — armed, then spent — rather than
  * held.
  *
- * What comes out is a tmux key name, not bytes. `C-f` rather than `0x06`, for
- * the same reason the rest of the app sends names: tmux knows what the Pane is
- * running and this does not. It also means one path for every key, whether it
- * came from the Key Bar or from the system keyboard with a modifier armed.
+ * What comes out for ctrl and option is a tmux key name, not bytes. `C-f`
+ * rather than `0x06`, for the same reason the rest of the app sends names:
+ * tmux knows what the Pane is running and this does not. It also means one
+ * path for every key, whether it came from the Key Row or from the system
+ * keyboard with a modifier armed. Command never reaches tmux: it turns the
+ * next key into something the phone does.
  *
- * Pure: bytes and flags in, a name and the leftover bytes out.
+ * Pure: bytes and flags in, a name or a Shortcut and the leftover bytes out.
  */
 
+export type Modifier = 'ctrl' | 'alt' | 'cmd';
+
 /** Which sticky modifiers are armed. */
-export interface Modifiers {
-  ctrl: boolean;
-  alt: boolean;
-}
+export type Modifiers = Record<Modifier, boolean>;
 
-export const NO_MODIFIERS: Modifiers = { ctrl: false, alt: false };
+export const NO_MODIFIERS: Modifiers = { ctrl: false, alt: false, cmd: false };
 
-/** Whether anything is armed at all. */
-export function anyArmed(modifiers: Modifiers): boolean {
-  return modifiers.ctrl || modifiers.alt;
-}
-
-/** What tmux calls this combination, ready to put in front of a key name. */
+/**
+ * What tmux calls this combination, ready to put in front of a key name.
+ * Command has no part in it: tmux has no such modifier to give a Pane.
+ */
 export function modifierPrefix(modifiers: Modifiers): string {
   return `${modifiers.ctrl ? 'C-' : ''}${modifiers.alt ? 'M-' : ''}`;
 }
 
-/** What typing turned into: at most one modified key, then ordinary bytes. */
-export interface ModifiedInput {
-  /** The tmux name for the key the modifiers applied to, if there was one. */
-  key?: string;
-  /** Everything after it, to be typed as it arrived. */
-  rest: Uint8Array;
-}
+/** What command and a letter do on the phone. */
+export type Shortcut = 'copy' | 'paste' | 'clear';
+
+const SHORTCUTS: Record<string, Shortcut> = { c: 'copy', v: 'paste', k: 'clear' };
+
+/** What typing turned into. `rest` is typed as it arrived, after the rest. */
+export type ModifiedInput =
+  | { kind: 'typed'; rest: Uint8Array }
+  /** One key by its tmux name, with ctrl and option applied to it. */
+  | { kind: 'key'; key: string; rest: Uint8Array }
+  | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array };
 
 /**
  * Applies the armed modifiers to the first key of what was typed.
@@ -48,16 +51,36 @@ export interface ModifiedInput {
  * input, so a fast typist's ctrl-r can arrive with the search term already
  * behind it — modifying the whole batch would send a line of control codes.
  *
+ * Command and a letter that is not a Shortcut is that letter, with ctrl and
+ * option applied as if command were not armed.
+ *
  * A key with no honest tmux name is left alone and typed as it arrived. There
  * is no `C-` form of an emoji, and inventing one would send something the user
  * never pressed.
  */
 export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): ModifiedInput {
-  if (!anyArmed(modifiers) || bytes.length === 0) return { rest: bytes };
+  if (bytes.length === 0) return { kind: 'typed', rest: bytes };
 
-  const name = keyNameOf(bytes[0], modifiers);
-  if (name === undefined) return { rest: bytes };
-  return { key: `${modifierPrefix(modifiers)}${name}`, rest: bytes.subarray(1) };
+  if (modifiers.cmd) {
+    const shortcut = SHORTCUTS[String.fromCharCode(bytes[0]).toLowerCase()];
+    if (shortcut !== undefined) return { kind: 'shortcut', shortcut, rest: bytes.subarray(1) };
+  }
+
+  const key = modifiedKeyName(bytes[0], modifiers);
+  if (key === undefined) return { kind: 'typed', rest: bytes };
+  return { kind: 'key', key, rest: bytes.subarray(1) };
+}
+
+/**
+ * What stays armed after typed input.
+ *
+ * A Shortcut or a modified key spends everything. Input that the modifiers
+ * could not apply to spends command only: command is for the next key whatever
+ * it is, while ctrl waits for a key it has a form of.
+ */
+export function armedAfter(input: ModifiedInput, armed: Modifiers): Modifiers {
+  if (input.kind !== 'typed') return NO_MODIFIERS;
+  return input.rest.length > 0 && armed.cmd ? { ...armed, cmd: false } : armed;
 }
 
 /**
@@ -72,24 +95,42 @@ export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): Modifie
  * sends that instead.
  */
 const NAMED_KEYS: Record<number, string> = {
+  0x20: 'Space',
   0x0d: 'Enter',
   0x09: 'Tab',
   0x7f: 'BSpace',
   0x08: 'BSpace',
 };
 
-/** tmux's name for one typed byte, for the keys a modifier makes sense of. */
-function keyNameOf(byte: number, modifiers: Modifiers): string | undefined {
-  // Space has no printable form, and `C-Space` is a key people genuinely press.
-  if (byte === 0x20) return 'Space';
+/** The Key Row's symbols. Option applies to each: `M--` is `ESC -`. */
+const SYMBOLS = new Set('-_:|/\\~\'[]{}<>()"`=+*&$#');
+
+/**
+ * The symbols that have a control code: `C-[` is Escape, `C-_` is 0x1f.
+ *
+ * Measured on tmux 3.8 for every symbol in SYMBOLS. tmux refuses none of the
+ * others, and sends something nobody pressed for each: `C-:` arrives as `;`,
+ * `C-(` as `9`, and `C-*` as the three characters `C-*`. So ctrl is dropped
+ * for a symbol outside this set.
+ */
+const CTRL_SYMBOLS = new Set('-_/|\\~[]{}`');
+
+/** The first typed byte as a tmux key name with ctrl and option applied. */
+function modifiedKeyName(byte: number, modifiers: Modifiers): string | undefined {
   const named = NAMED_KEYS[byte];
-  if (named !== undefined) return named;
-
   const character = String.fromCharCode(byte);
-  if (/^[0-9]$/.test(character)) return character;
-  if (!/^[A-Za-z]$/.test(character)) return undefined;
-
+  let ctrl = modifiers.ctrl;
+  let name: string;
+  if (named !== undefined) name = named;
+  else if (/^[0-9]$/.test(character)) name = character;
   // Ctrl folds case and alt does not, because ctrl-F and ctrl-shift-F are the
   // same control code while M-F and M-f are two different keys.
-  return modifiers.ctrl ? character.toLowerCase() : character;
+  else if (/^[A-Za-z]$/.test(character)) name = ctrl ? character.toLowerCase() : character;
+  else if (SYMBOLS.has(character)) {
+    name = character;
+    ctrl = ctrl && CTRL_SYMBOLS.has(character);
+  } else return undefined;
+
+  const prefix = modifierPrefix({ ...modifiers, ctrl });
+  return prefix === '' ? undefined : `${prefix}${name}`;
 }

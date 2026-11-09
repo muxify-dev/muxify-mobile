@@ -131,7 +131,7 @@ export interface PaneView {
   /**
    * One key by tmux's name for it: `Up`, `Escape`, `Tab`, `C-c`, `M-b`.
    *
-   * The Key Bar's path. A name rather than the bytes for it, because which
+   * The Key Row's path. A name rather than the bytes for it, because which
    * bytes are right depends on what the Pane is running — see sendKeyCommand.
    */
   press(key: string): void;
@@ -293,7 +293,7 @@ export function createPaneView(
    * What is on its way into the Pane, and whether a send is in flight.
    *
    * Two kinds, because there are two ways in. Typed input is bytes, and a
-   * burst of them coalesces into one `send-keys -H`. A Key Bar key is a
+   * burst of them coalesces into one `send-keys -H`. A Key Row key is a
    * *name*, which tmux turns into the right bytes for whatever the Pane is
    * running — and which therefore cannot be merged with the bytes either side
    * of it. One queue rather than two, so a key pressed mid-burst still arrives
@@ -562,7 +562,7 @@ export function createPaneView(
   }
 
   /**
-   * One named key, from the Key Bar.
+   * One named key, from the Key Row.
    *
    * Queued behind anything already typed rather than sent past it, so an
    * arrow pressed in the middle of a burst of keystrokes arrives where it was

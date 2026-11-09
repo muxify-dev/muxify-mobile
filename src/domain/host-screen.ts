@@ -165,6 +165,25 @@ function allSections({
 
 const NONE: ReadonlySet<string> = new Set();
 
+/**
+ * The Host's Topics alone, for a list that shows the Host's Sessions itself:
+ * every Topic in the sections of the Topics list, and the rows that say why
+ * there are none. The Bench is open, because nothing opens in place there.
+ */
+export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
+  return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, leaveOut: NONE })
+    .map((section) => ({
+      ...section,
+      title: section.title ?? 'Bench',
+      rows: section.rows.filter((row) => ABOUT_TOPICS.has(row.kind)),
+    }))
+    .filter((section) => section.rows.length > 0);
+}
+
+const BENCH_OPENED: ReadonlySet<OpenableRow> = new Set(['bench']);
+
+const ABOUT_TOPICS: ReadonlySet<HostScreenRow['kind']> = new Set(['topic', 'checking', 'refused', 'note']);
+
 function namesInTopics(snapshot: EnvironmentSnapshot): ReadonlySet<string> {
   return new Set(
     snapshot.sessions.filter((session) => session.topic !== null).map((session) => session.name),

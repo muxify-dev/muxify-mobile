@@ -88,3 +88,24 @@ One measured hole, recorded because nothing warns about it: `C-Escape` is not a
 key tmux knows, and `send-keys` does not refuse it — it types the eight
 characters `C-Escape` into the Pane. So Escape is marked as taking no ctrl and
 the modifier is dropped for it. Every other key on the bar takes both.
+
+## The Key Row replaces the Key Bar
+
+The Dock is gone, and the Key Row takes the Key Bar's place in three groups:
+esc, ctrl, opt and tab at the left; pair keys that scroll in the middle; the
+small arrows, Panes, ⌘ and the keyboard key at the right. Page up, page down,
+home and end left the row. The decision above does not change. Every key still
+goes to tmux by name, and ctrl and opt are still sticky.
+
+Three facts are new:
+
+- **⌘ never reaches tmux.** It arms like ctrl, and the next key is a phone
+  Shortcut: c copies, v pastes, k clears.
+- **ctrl goes only to symbols that have a control code**: `- _ / | \ ~ [ ] { }`
+  and the backtick. Measured on tmux 3.8, `C-:` arrives as `;`, and `C-*`,
+  `C-&`, `C-$` and `C-#` are typed as text. So ctrl is dropped for the other
+  symbols, as it is for Escape.
+- **Clear does not use `send-keys -R`.** Measured on tmux 3.8, `-R` turns
+  bracketed paste off for a program that asked for it, and a multi-line paste
+  after it runs line by line. Clear sends `C-l`, waits 250 ms, and then runs
+  `clear-history`. Without the wait, the lines came back into the Scrollback.

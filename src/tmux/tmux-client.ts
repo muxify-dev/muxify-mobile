@@ -1,6 +1,7 @@
 import {
   capturePaneCommand,
   capturePaneTextCommand,
+  clearHistoryCommand,
   captureScrollbackCommand,
   capturePanesCommand,
   createSessionCommand,
@@ -104,6 +105,14 @@ export interface PaneState {
    * their start, and draw a cursor of their own.
    */
   cursorShown: boolean;
+  /**
+   * Whether the program in the Pane asked for bracketed paste, so that a
+   * paste reaches it as one piece. `paste-buffer -p` brackets a paste only
+   * for a program that asked; for any other, each line break of the paste is
+   * an Enter. Measured on tmux 3.8: true for bash 5, false for `cat` and for
+   * a bash with `enable-bracketed-paste off`. False where tmux cannot say.
+   */
+  bracketedPaste: boolean;
 }
 
 /** The Surface's cell grid, used to size the Client. */
@@ -321,7 +330,7 @@ export class TmuxClient {
   /**
    * Sends one named key into a Pane: `Up`, `Escape`, `C-c`, `M-b`.
    *
-   * The Meta menu's path. Named rather than the bytes for it, because which
+   * The Key Row's path. Named rather than the bytes for it, because which
    * bytes are right depends on what the Pane is running and tmux is the only
    * one here that knows — see sendKeyCommand.
    */
@@ -366,9 +375,9 @@ export class TmuxClient {
   async paneState(paneId: string): Promise<PaneState | undefined> {
     const reply = await this.runner.run(paneStateCommand(paneId));
     if (!reply.ok) return undefined;
-    const fields = splitFields(reply.text[0] ?? '', 8);
+    const fields = splitFields(reply.text[0] ?? '', 9);
     if (!fields) return undefined;
-    const [column, row, alternate, scrollback, width, height, wantsMouse, cursorShown] = fields;
+    const [column, row, alternate, scrollback, width, height, wantsMouse, cursorShown, bracketedPaste] = fields;
     return {
       cursorColumn: countOf(column),
       cursorRow: countOf(row),
@@ -378,6 +387,7 @@ export class TmuxClient {
       height: countOf(height),
       wantsMouse: wantsMouse === '1',
       cursorShown: cursorShown !== '0',
+      bracketedPaste: bracketedPaste === '1',
     };
   }
 
@@ -418,6 +428,11 @@ export class TmuxClient {
     let end = reply.text.length;
     while (end > 0 && reply.text[end - 1].trim() === '') end -= 1;
     return reply.text.slice(0, end).join('\n');
+  }
+
+  /** Drops a Pane's Scrollback. */
+  async clearHistory(paneId: string): Promise<void> {
+    await this.mustRun('clear the Scrollback', clearHistoryCommand(paneId));
   }
 
   /** Toggles zoom on the Session's active Pane. */

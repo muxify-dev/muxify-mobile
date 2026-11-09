@@ -10,10 +10,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Banner, Presence } from '@/components/banner';
 import { ReconnectScreen } from '@/components/reconnect-screen';
-import { KeyBar } from '@/components/key-bar';
-import { KeyRow, type KeyRowButton } from '@/components/key-row';
+import { KeyRow } from '@/components/key-row';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
+import { stageClipboardImage } from '@/composer/staging';
+import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
   HEADER_HEIGHT,
@@ -24,21 +25,26 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { TitleSheet, type TitlePick } from '@/components/title-sheet';
 import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
-import { barKeyName, BAR_KEYS, type BarKey } from '@/constants/bar-keys';
+import { namedKeyName, type NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
+import { topicSections } from '@/domain/host-screen';
 import { useCopyLog } from '@/hooks/use-copy-log';
+import { useHostReading } from '@/hooks/use-host-reading';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
+import { lastSnapshot } from '@/topics/host-topics';
 import { readTopic } from '@/topics/read-topic';
+import { tagsParam } from '@/topics/tags-param';
 import {
   lastTopic,
   loadingTopic,
   settledTopic,
   TOPIC_UNASKED,
   type TopicView,
+  topicSeedParam,
 } from '@/topics/topic-detail';
 import {
   LOOKUP_START,
@@ -56,14 +62,21 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
-import { applyModifiers, NO_MODIFIERS, type Modifiers } from '@/lib/modifier-keys';
+import {
+  applyModifiers,
+  armedAfter,
+  NO_MODIFIERS,
+  type ModifiedInput,
+  type Modifier,
+  type Modifiers,
+} from '@/lib/modifier-keys';
 import { toShellInput } from '@/lib/terminal-input';
 import type { AttachPhase, AttachState } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
-import type { PaneSurface } from '@/tmux/pane-view';
+import type { PaneSurface, PaneView } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
 import type { Grid, Pane } from '@/tmux/tmux-client';
@@ -262,10 +275,10 @@ export default function TerminalScreen() {
    */
   const keyboardUp = useRef(false);
   /**
-   * The sticky modifiers the Key Bar is holding down.
+   * The sticky modifiers the Key Row is holding down.
    *
    * A phone keyboard cannot hold a key while another is pressed, so ctrl is
-   * armed by a tap and spent on whatever comes next — from the bar or from the
+   * armed by a tap and spent on whatever comes next — from the row or from the
    * system keyboard. See modifier-keys.
    */
   const [armed, setArmed] = useState<Modifiers>(NO_MODIFIERS);
@@ -573,6 +586,66 @@ export default function TerminalScreen() {
     [attach, windowArea],
   );
 
+  /** The active Pane's text onto the clipboard, with a word on how much. */
+  const copyPaneText = useCallback(() => {
+    if (!attach) return;
+    void (async () => {
+      try {
+        const text = await attach.capturePaneText();
+        await Clipboard.setStringAsync(text);
+        const lines = text === '' ? 0 : text.split('\n').length;
+        Alert.alert('Pane text copied', `${lines} ${plural(lines, 'line')} on the clipboard.`);
+      } catch (error) {
+        Alert.alert('Could not copy the Pane text', describeError(error));
+      }
+    })();
+  }, [attach]);
+
+  /**
+   * The clipboard into the active Pane, with nothing pressed after it.
+   *
+   * An image first, then text: a copied image often carries its file name as
+   * text too, and the name is not what was copied.
+   */
+  const pasteClipboard = useCallback(() => {
+    if (!attach) return;
+    void (async () => {
+      try {
+        const image = await stageClipboardImage();
+        if (image) {
+          try {
+            await attach.paste({ kind: 'image', file: image }, confirmRunLines);
+          } finally {
+            image.dispose();
+          }
+          return;
+        }
+        const text = await Clipboard.getStringAsync();
+        if (text !== '') await attach.paste({ kind: 'text', text }, confirmRunLines);
+      } catch (error) {
+        Alert.alert('Could not paste', describeError(error));
+      }
+    })();
+  }, [attach]);
+
+  const clearPane = useCallback(() => {
+    void attach
+      ?.clearPane()
+      .catch((error: unknown) => Alert.alert('Could not clear the Pane', describeError(error)));
+  }, [attach]);
+
+  /** What typing or a pair key turned into, on its way to a Pane or to the phone. */
+  const deliverInput = useCallback(
+    (view: PaneView, input: ModifiedInput) => {
+      if (input.kind === 'key') view.press(input.key);
+      else if (input.kind === 'shortcut') {
+        ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[input.shortcut]();
+      }
+      if (input.rest.length > 0) view.type(input.rest);
+    },
+    [copyPaneText, pasteClipboard, clearPane],
+  );
+
   /**
    * Bytes typed into one Pane's Surface.
    *
@@ -590,17 +663,16 @@ export default function TerminalScreen() {
       // keystroke arrives wrapped as a bracketed paste. See toShellInput.
       const typed = toShellInput(base64ToBytes(data));
 
-      // Whatever the Key Bar is holding down applies to the first key of this
+      // Whatever the Key Row is holding down applies to the first key of this
       // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
       // of a fast typist's burst behind it as ordinary input.
-      const { key, rest } = applyModifiers(typed, armedRef.current);
-      if (key !== undefined) {
-        view.press(key);
-        setArmed(NO_MODIFIERS);
-      }
-      if (rest.length > 0) view.type(rest);
+      const held = armedRef.current;
+      const input = applyModifiers(typed, held);
+      deliverInput(view, input);
+      const left = armedAfter(input, held);
+      if (left !== held) setArmed(left);
     },
-    [attach],
+    [attach, deliverInput],
   );
 
   /**
@@ -633,6 +705,37 @@ export default function TerminalScreen() {
     carriedLines.current = 0;
     activeView()?.jumpToLatest();
   }, [activeView]);
+
+  /**
+   * The Host's Topics, for the Sessions picker: read when the picker opens,
+   * through the reading that Home and the Host Screen use.
+   */
+  const topicsOn = settings.hostScreenLists.includes('topics');
+  const { topics: hostTopics, read: readHost } = useHostReading(hostId ?? '', topicsOn);
+  const pickerTopics = useMemo(
+    () => (topicsOn ? topicSections(hostTopics, appearance) : []),
+    [topicsOn, hostTopics, appearance],
+  );
+
+  /** A Topic picked in the Sessions picker: its Topic Screen, as Home opens it. */
+  const openTopic = useCallback(
+    (row: TopicRow) => {
+      say(`picked Topic ${row.id}`);
+      if (!hostId) return;
+      setPicker({ open: false });
+      router.push({
+        pathname: '/topic',
+        params: {
+          hostId,
+          topicId: row.id,
+          label: row.label,
+          tags: tagsParam(lastSnapshot(hostTopics)?.tags ?? []),
+          seed: topicSeedParam(row.seed),
+        },
+      });
+    },
+    [hostId, hostTopics, router],
+  );
 
   /**
    * What a picker would show, from the model that is already right.
@@ -699,8 +802,9 @@ export default function TerminalScreen() {
         return;
       }
       attach.capturePreviews((state.sessions ?? []).map((session) => `${session.name}:`));
+      if (topicsOn) void readHost();
     },
-    [attach, state],
+    [attach, state, topicsOn, readHost],
   );
 
   /**
@@ -794,27 +898,38 @@ export default function TerminalScreen() {
     [attach, showPickerError],
   );
 
-  /** The Theme's chrome colours: the Key Bar's labels and the Banners. */
+  /** The Theme's chrome colours: the Key Row's labels and the Banners. */
   const chrome = useMemo(() => paletteFor(settings.theme), [settings.theme]);
 
   /**
-   * A key from the Key Bar, into the Pane that has the keyboard.
+   * Escape, tab or an arrow from the Key Row, into the Pane that has the
+   * keyboard.
    *
    * Carries whatever is armed with it, so ctrl and then the left arrow is
    * `C-Left` — one key, named, for tmux to encode. The modifiers are spent
    * either way: a key that cannot take them still clears them, or ctrl tapped
    * by mistake would stay on until something happened to use it.
    */
-  const pressBarKey = useCallback(
-    (key: BarKey) => {
-      activeView()?.press(barKeyName(key, armed));
+  const pressKey = useCallback(
+    (key: NamedKey) => {
+      activeView()?.press(namedKeyName(key, armed));
       setArmed(NO_MODIFIERS);
     },
     [activeView, armed],
   );
 
-  /** ctrl or alt tapped: on if it was off, and off if it was on. */
-  const armModifier = useCallback((modifier: 'ctrl' | 'alt') => {
+  /** One symbol of a pair key: typed as the system keyboard would type it. */
+  const pressSymbol = useCallback(
+    (symbol: string) => {
+      const view = activeView();
+      if (view) deliverInput(view, applyModifiers(new TextEncoder().encode(symbol), armed));
+      setArmed(NO_MODIFIERS);
+    },
+    [activeView, armed, deliverInput],
+  );
+
+  /** A modifier tapped: on if it was off, and off if it was on. */
+  const armModifier = useCallback((modifier: Modifier) => {
     setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
   }, []);
 
@@ -932,21 +1047,6 @@ export default function TerminalScreen() {
     [fontSize, update],
   );
 
-  /** The active Pane's text onto the clipboard, with a word on how much. */
-  const copyPaneText = useCallback(() => {
-    if (!attach) return;
-    void (async () => {
-      try {
-        const text = await attach.capturePaneText();
-        await Clipboard.setStringAsync(text);
-        const lines = text === '' ? 0 : text.split('\n').length;
-        Alert.alert('Pane text copied', `${lines} ${plural(lines, 'line')} on the clipboard.`);
-      } catch (error) {
-        Alert.alert('Could not copy the Pane text', describeError(error));
-      }
-    })();
-  }, [attach]);
-
   const copyLog = useCopyLog('the Options menu');
 
   const disconnect = useCallback(() => {
@@ -1052,26 +1152,7 @@ export default function TerminalScreen() {
     disconnect,
   ]);
 
-  /** The Key Row's fixed group: the Panes picker and the keyboard. */
-  const keyRowButtons = useMemo(
-    (): KeyRowButton[] => [
-      {
-        id: 'panes',
-        label: 'Panes',
-        systemImage: 'rectangle.split.2x1',
-        onPress: () => openPicker('panes'),
-        // One Pane is when you reach for Split, so never disabled while connected.
-        disabled: !connected,
-      },
-      {
-        id: 'keyboard',
-        label: 'Keyboard',
-        systemImage: keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard',
-        onPress: toggleKeyboard,
-      },
-    ],
-    [openPicker, connected, keyboardVisible, toggleKeyboard],
-  );
+  const openPanes = useCallback(() => openPicker('panes'), [openPicker]);
 
   useEffect(() => {
     // For the Key Row, so it can show which way its keyboard button points,
@@ -1274,6 +1355,16 @@ export default function TerminalScreen() {
             ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) }
             : undefined
         }
+        topics={
+          picker.open && picker.kind === 'sessions' && topicsOn
+            ? {
+                sections: pickerTopics,
+                palette: chrome,
+                onOpenTopic: openTopic,
+                onRetry: () => void readHost(),
+              }
+            : undefined
+        }
       />
 
       <TitleSheet
@@ -1302,16 +1393,19 @@ export default function TerminalScreen() {
           inputRef={composerInput}
         />
       ) : null}
-      <KeyRow right={keyRowButtons}>
-        <KeyBar
-          keys={BAR_KEYS}
-          armed={armed}
-          onPress={pressBarKey}
-          onArm={armModifier}
-          disabled={!connected || composerOpen}
-          palette={chrome}
-        />
-      </KeyRow>
+      <KeyRow
+        armed={armed}
+        onArm={armModifier}
+        onKey={pressKey}
+        onSymbol={pressSymbol}
+        onPanes={openPanes}
+        onKeyboard={toggleKeyboard}
+        keyboardVisible={keyboardVisible}
+        keysDisabled={!connected || composerOpen}
+        // One Pane is when you reach for Split, so never disabled while connected.
+        panesDisabled={!connected}
+        palette={chrome}
+      />
 
       {/* Everything the screen has to say sits under the Header, the way iOS
           delivers a notification: the Banners first, then the trouble line
@@ -1535,7 +1629,7 @@ function PaneSurfaceView({
         style={styles.surface}
         fontSize={font}
         // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
-        // turned off by a local patch. The Key Bar stands in its place; see
+        // turned off by a local patch. The Key Row stands in its place; see
         // ADR 0003.
         accessoryBar={false}
         theme={{
@@ -1930,6 +2024,24 @@ const PREVIEW_COLUMNS = 46;
 
 function previewOf(previews: Map<string, string[]>, target: string): string[] {
   return trimPreview(previews.get(target) ?? [], PREVIEW_LINES, PREVIEW_COLUMNS);
+}
+
+/**
+ * Asks before a paste that the program in the Pane will run line by line.
+ * See `paste` on the Attach.
+ */
+function confirmRunLines(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Paste more than one line?',
+      'The program in this Pane did not ask for bracketed paste. It can run each line as the line arrives.',
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Paste', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { onDismiss: () => resolve(false) },
+    );
+  });
 }
 
 function plural(count: number, word: string): string {

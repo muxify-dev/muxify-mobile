@@ -272,8 +272,8 @@ describe('reading a Pane back', () => {
         '-t',
         '%1',
         '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
-          '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}',
-      ])]: ['43\t2\t1\t120\t80\t24\t1\t0'],
+          '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}\t#{bracket_paste_flag}',
+      ])]: ['43\t2\t1\t120\t80\t24\t1\t0\t1'],
     });
     expect(await client.paneState('%1')).toEqual({
       cursorColumn: 43,
@@ -284,6 +284,7 @@ describe('reading a Pane back', () => {
       height: 24,
       wantsMouse: true,
       cursorShown: false,
+      bracketedPaste: true,
     });
   });
 

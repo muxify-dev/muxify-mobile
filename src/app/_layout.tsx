@@ -121,7 +121,7 @@ function AppStack() {
         />
         {/* No navigation header: the screen draws its own Header, on the
             terminal background, with Back in it. */}
-        <Stack.Screen name="terminal" options={{ headerShown: false }} />
+        <Stack.Screen name="terminal" options={{ headerShown: false, title: 'Session' }} />
       </Stack>
     </ThemeProvider>
   );

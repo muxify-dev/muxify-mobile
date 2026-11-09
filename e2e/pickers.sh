@@ -11,7 +11,7 @@
 #
 # What this proves is that the Host's real Topology reaches both sheets, that
 # the Panes sheet carries its own actions and ⋯ carries New Window, and that
-# the Key Row reads keys, Panes, Keyboard from left to right.
+# the Key Row reads its three groups from left to right.
 #
 # A Pane card carries its directory rather than a name of its own, so two Panes
 # in one directory are two buttons with the same label and cannot be told apart
@@ -75,17 +75,18 @@ else: print('missing')
 # Each row or card is a Button carrying its Window name or its Pane's directory.
 named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] \"$1\""; }
 
-# The Key Row, left to right, as the accessibility tree orders it. The Key
-# Bar is the scroll view; the fixed group is buttons.
+# The Key Row, left to right, as the accessibility tree orders it. The pairs
+# are the scroll view; the fixed groups are buttons.
 key_row_order() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
+FIXED = ('escape', 'control', 'option', 'tab', 'up', 'left', 'down', 'right', 'Panes', 'command', 'Keyboard')
 across = []
 for n in json.load(sys.stdin)['data']['nodes']:
-    if n['type'] == 'Button' and n.get('label') in ('Panes', 'Keyboard'):
+    if n['type'] == 'Button' and n.get('label') in FIXED:
         across.append(n['label'])
     elif n['type'] == 'ScrollView':
-        across.append('keys')
+        across.append('pairs')
 print(' '.join(across))
 "
 }
@@ -173,11 +174,11 @@ agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
 agent-device press 'label="Close Panes"' >/dev/null 2>&1
 sleep 1
 
-# Left to right: the keys the phone's keyboard does not have, then the two
-# things done to the screen itself.
-[ "$(key_row_order)" = "keys Panes Keyboard" ] \
+# Left to right: the fixed modifiers, the pairs, then the arrows, Panes, ⌘ and
+# the keyboard.
+[ "$(key_row_order)" = "escape control option tab pairs up left down right Panes command Keyboard" ] \
   || fail "the Key Row is out of order: $(key_row_order)"
-echo "     and the Key Row reads keys, Panes, Keyboard"
+echo "     and the Key Row reads modifiers, pairs, arrows, Panes, ⌘, Keyboard"
 offers_new_window
 echo "     and ⋯ offers New Window with one Window"
 

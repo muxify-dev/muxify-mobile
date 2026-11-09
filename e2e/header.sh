@@ -9,12 +9,17 @@
 #   3  Font size − and + change the setting live: the Surface reflows, reports
 #      a new grid, and tmux's Window follows it both ways
 #   4  Copy Pane text puts the Pane's text on the clipboard
-#   5  Disconnect ends the Attach, so the Host has no Client left, and lands
+#   5  Switch… lists the Host's Topics under its Sessions, a Topic opens its
+#      Topic Screen, and Back finds the Session still attached
+#   6  Disconnect ends the Attach, so the Host has no Client left, and lands
 #      on Home
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Each check reads the Host instead: tmux's Window size for
 # the font, the clipboard for the Pane text, `list-clients` for the Attach.
+#
+# The Topics list is off by default, so the app's settings get it for the run,
+# as e2e/topic-screen.sh does. The sandbox puts the settings back.
 #
 # Requires a configured .env.local and a booted simulator.
 # Usage:  bash e2e/header.sh
@@ -26,6 +31,7 @@ set -uo pipefail
 APP=dev.muxify.app
 SESSION=0
 MARKER=header-e2e-marker
+TOPIC="e2e Switch Topic"
 
 # Runs a command on the dev Host, which is this Mac, in the sandbox.
 on_host() { sh -c "$*" 2>/dev/null; }
@@ -67,20 +73,28 @@ ok() {
   sleep 1
 }
 
-echo "0/5  a Session with one Window, and the Pane at a prompt"
+echo "0/6  a Session with one Window, and the Pane at a prompt"
+python3 - "$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+settings = json.load(open(path))
+settings["hostScreenLists"] = ["topics", "sessions"]
+json.dump(settings, open(path, "w"))
+PY
+muxify topic new "$TOPIC" --json >/dev/null || fail "could not make a Topic on the dev Host"
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; \
     tmux send-keys -t '$SESSION:' C-c; tmux send-keys -t '$SESSION:' 'clear' Enter; true" \
   || fail "could not reach the dev Host"
 attach
 
-echo "1/5  the title is the Session name over the program"
+echo "1/6  the title is the Session name over the program"
 agent-device is text 'id="attached-session"' "$SESSION" >/dev/null 2>&1 \
   || fail "the header does not name Session $SESSION"
 agent-device is text 'id="pane-command"' "bash" >/dev/null 2>&1 \
   || fail "the header does not say the Pane runs bash"
 echo "     $SESSION over bash"
 
-echo "2/5  a Window made on the Host is a row of the Title Sheet"
+echo "2/6  a Window made on the Host is a row of the Title Sheet"
 on_host "tmux new-window -t '$SESSION:' -n logs 'exec bash'; tmux select-window -t '$SESSION:0'"
 sleep 2
 agent-device press 'id="header-title"' >/dev/null 2>&1
@@ -91,7 +105,7 @@ agent-device press 'label="Close Windows"' >/dev/null 2>&1
 sleep 1
 echo "     logs listed, with Switch… above it"
 
-echo "3/5  Font size − grows the Window, and Font size + brings it back"
+echo "3/6  Font size − grows the Window, and Font size + brings it back"
 BEFORE=$(window)
 option "Font size −"
 sleep 5
@@ -107,7 +121,7 @@ sleep 5
 [ "$(window)" = "$BEFORE" ] || fail "Font size + did not bring the Window back: $BEFORE → $(window)"
 echo "     and back to $BEFORE"
 
-echo "4/5  Copy Pane text puts the Pane on the clipboard"
+echo "4/6  Copy Pane text puts the Pane on the clipboard"
 on_host "tmux send-keys -t '$SESSION:' 'echo $MARKER' Enter"
 sleep 1
 option "Copy Pane text"
@@ -116,7 +130,25 @@ xcrun simctl pbpaste booted | grep -q "$MARKER" \
   || fail "the clipboard does not hold the Pane's text"
 echo "     the marker is on the clipboard"
 
-echo "5/5  Disconnect ends the Attach and goes Home"
+echo "5/6  Switch… lists the Host's Topics, and a Topic opens its Topic Screen"
+agent-device press 'id="header-title"' >/dev/null 2>&1
+agent-device wait 'label="Close Windows"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
+agent-device press 'label="Switch…"' >/dev/null 2>&1
+agent-device wait 'label="Close Sessions"' 15000 >/dev/null 2>&1 || fail "Switch… did not open the Sessions picker"
+agent-device wait "label=\"Topic $TOPIC\"" 15000 >/dev/null 2>&1 || fail "the Sessions picker does not list the Topic"
+# The row is in the tree before the sheet has come to rest, and a press on a
+# sheet that still moves lands nowhere.
+sleep 1
+agent-device press "label=\"Topic $TOPIC\"" >/dev/null 2>&1
+agent-device wait 'text="This Topic is Empty: it has no Sessions."' 15000 >/dev/null 2>&1 \
+  || fail "the Topic did not open its Topic Screen"
+agent-device wait "text=\"$TOPIC\"" 5000 >/dev/null 2>&1 || fail "the Topic Screen is not the one of $TOPIC"
+agent-device press 'id="BackButton"' >/dev/null 2>&1
+# ADR 0007: the Attach stays up behind the Topic Screen, so there is nothing to wait for.
+agent-device wait 'id="pane-command"' 3000 >/dev/null 2>&1 || fail "Back did not find the Session attached"
+echo "     $TOPIC listed, opened, and the Session still attached behind it"
+
+echo "6/6  Disconnect ends the Attach and goes Home"
 option "Disconnect"
 agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1 || fail "Disconnect did not land on Home"
 sleep 2
@@ -129,5 +161,6 @@ on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; true"
 echo
 echo "PASS: the Header names the Session and its program, the Title Sheet lists"
 echo "      the Host's Windows, the font follows the Options menu live both"
-echo "      ways, Copy Pane text reaches the clipboard, and Disconnect leaves"
-echo "      no Client behind."
+echo "      ways, Copy Pane text reaches the clipboard, Switch… lists the Host's"
+echo "      Topics and opens one over the Attach, and Disconnect leaves no"
+echo "      Client behind."

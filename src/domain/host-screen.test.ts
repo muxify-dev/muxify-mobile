@@ -1,6 +1,7 @@
 import { answered, asking, refused, UNASKED, type Listing } from './host-listing';
 import {
   hostScreen,
+  topicSections,
   type HostScreenRow,
   type HostScreenSection,
   type OpenableRow,
@@ -790,6 +791,30 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
       inNoTopic.map((session) => session.name),
     );
     expect(sessions?.rows.find((row) => row.kind === 'recent')).toMatchObject({ name: 'chezmoi' });
+  });
+});
+
+describe('topicSections, the Topics a list of Sessions shows under itself', () => {
+  const mac = parseEnvironment(inPlayFixture);
+
+  it('lists every Topic of the Host, the Bench too, and no Session or place', () => {
+    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
+    const topicIds = (cards: Card[]) => cards.flatMap((card) => (card.kind === 'topic' ? [card.topic.id] : []));
+    const sections = topicSections({ kind: 'listed', snapshot: mac }, 'dark');
+    const rows = sections.flatMap((section) => section.rows);
+
+    expect(rows.every((row) => row.kind === 'topic')).toBe(true);
+    expect(rows.flatMap((row) => (row.kind === 'topic' ? [row.id] : []))).toEqual(
+      topicIds([...mac.pinned, ...mac.unpinned.places, ...mac.unpinned.guests, ...mac.unpinned.bench]),
+    );
+    expect(sections.every((section) => section.title !== null)).toBe(true);
+  });
+
+  it('says why there are no Topics', () => {
+    expect(topicSections(TOPICS_UNASKED, 'dark').flatMap((section) => section.rows)).toHaveLength(1);
+    expect(topicSections({ kind: 'failed', error: 'no route', last: null }, 'dark')[0]?.rows).toEqual([
+      { kind: 'refused', message: 'no route' },
+    ]);
   });
 });
 

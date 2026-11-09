@@ -119,7 +119,7 @@ type_into_pane() { on_host "tmux send-keys -t '$SESSION:' -l '$1'"; }
 typed_line() { on_host "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
 
 # The lowest point in the Pane, which is just above the Key Row. The row's own
-# padding is what stands between the two, so the Key Bar's capsule locates it.
+# padding is what stands between the two, so the capsule of the pairs locates it.
 pane_bottom() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
@@ -256,9 +256,9 @@ snap | grep -qE '^@e[0-9]+ \[button\] "Back"$' \
 echo "     no navigation title, Back in the Header"
 
 echo "2/10  the library's Accessory Bar stays hidden"
-# Capitalised, every one of them. Muxify's own Key Bar offers ctrl, esc and tab
-# — lowercase, which is what keeps this check able to tell the two apart. The
-# library's bar spells them `Control`, `Escape` and `Tab`.
+# Capitalised, every one of them. Muxify's own Key Row calls its keys control,
+# escape and tab — lowercase, which is what keeps this check able to tell the
+# two apart. The library's bar spells them `Control`, `Escape` and `Tab`.
 snap | grep -qE '\[button\] "(Control|Escape|Tab|Command|Option)"' \
   && fail "the Accessory Bar is back; the accessoryBar prop or its patch is gone"
 echo "     no ctrl/esc/tab bar"
