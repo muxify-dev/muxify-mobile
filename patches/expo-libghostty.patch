@@ -1975,7 +1975,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..3bc8a423639810872de1d253930ec827
              setupApplicationLifecycleObservers()
              syncApplicationActiveState()
 diff --git a/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
-index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..53a3806719c1cbd3c10f92573518fc52cd2e88b1 100644
+index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7553e65fd 100644
 --- a/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
 +++ b/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
 @@ -62,6 +62,17 @@ final class TerminalSurfaceCoordinator {
@@ -1996,7 +1996,18 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..53a3806719c1cbd3c10f92573518fc52
      private var lastMetrics: TerminalViewportMetrics?
      private var isDisplayVisible = true
      private var isApplicationActive = true
-@@ -321,6 +332,9 @@ final class TerminalSurfaceCoordinator {
+@@ -135,6 +146,10 @@ final class TerminalSurfaceCoordinator {
+         let newSurface = TerminalSurface(rawSurface)
+         surface = newSurface
+         newSurface.setOcclusion(effectiveSurfaceVisible)
++        // Muxify: ghostty makes a surface focused, and this view is not
++        // until it becomes first responder. Told nothing, a Surface whose
++        // keyboard was never raised drew a focused, blinking cursor.
++        newSurface.setFocus(isSurfaceFocused)
+         controller.shouldProcessWakeup = { [weak self] in
+             self?.canRenderFrame == true
+         }
+@@ -321,6 +336,9 @@ final class TerminalSurfaceCoordinator {
          surface?.setFocus(false)
          surface?.free()
          surface = nil
