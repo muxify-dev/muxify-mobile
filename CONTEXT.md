@@ -131,6 +131,9 @@ Listing has come back, orange while the first read is in flight, red when the
 Host refused) and **All**, which opens that Host's Host Screen. Under it are
 the first 5 rows the Host Screen would show, in the lists and the order the
 user set in Settings, so one tap attaches to a Session or opens a Topic Screen.
+For a Host whose Topics are in In Play, Home instead shows every Pinned card,
+every In Play Topic and every Guest, and no Open Place or Bench: the Host's live
+work never falls off Home. There are no section headers.
 Hosts are never mixed in one section. A Host that refused shows its reason and
 Retry in its own section, and the other sections read on. Home reads every
 Host's Listing each time it comes into focus, on that Host's one Connection.

@@ -2,7 +2,9 @@ import { answered, asking, refused, UNASKED, type Listing } from './host-listing
 import { homeSection } from './home';
 import type { HostScreenLists } from '@/settings/settings';
 import type { Host, RecentSession } from '@/storage/records';
-import { TOPICS_UNASKED } from '@/topics/host-topics';
+import inPlayFixture from '@/topics/__fixtures__/environment-in-play.json';
+import { parseEnvironment } from '@/topics/environment';
+import { TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
 
 const HOST: Host = {
   id: 'host1',
@@ -22,12 +24,13 @@ const section = (
   listing: Listing,
   recent: RecentSession[] = [],
   lists: HostScreenLists = ['recent', 'sessions'],
+  topics: HostTopics = TOPICS_UNASKED,
 ) =>
   homeSection(HOST, {
     settings: { hostScreenLists: lists },
     recent,
     listing,
-    topics: TOPICS_UNASKED,
+    topics,
     opened: new Set(),
     appearance: 'dark',
   });
@@ -69,5 +72,38 @@ describe('homeSection', () => {
 
     expect(shown.connection).toBe('refused');
     expect(shown.rows).toEqual([{ kind: 'refused', message: 'Host unreachable' }]);
+  });
+
+  describe('of a Host in In Play', () => {
+    const mac = parseEnvironment(inPlayFixture);
+    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
+    const { places, guests, bench } = mac.unpinned;
+    const listed: HostTopics = { kind: 'listed', snapshot: mac };
+    const topicIds = (cards: typeof places) =>
+      cards.flatMap((card) => (card.kind === 'topic' ? [card.topic.id] : []));
+    const shownTopics = (rows: { kind: string; id?: string }[]) =>
+      rows.flatMap((row) => (row.kind === 'topic' && row.id ? [row.id] : []));
+
+    it('shows every Pinned, In Play and Guest Topic, with no cut at 5', () => {
+      const shown = section(UNASKED, [], ['topics'], listed);
+
+      expect(shownTopics(shown.rows)).toEqual(
+        topicIds([...mac.pinned, ...places, ...guests]),
+      );
+      expect(guests.length).toBe(2);
+    });
+
+    it('hides Open Places and the Bench', () => {
+      const shown = section(UNASKED, [], ['topics'], listed);
+
+      expect(shown.rows.some((row) => row.kind === 'open-place' || row.kind === 'bench')).toBe(false);
+      expect(shownTopics(shown.rows)).not.toContain(topicIds(bench)[0]);
+    });
+
+    it('still caps a Host that has the Topics list off at 5', () => {
+      const shown = section(answered(sessions('a', 'b', 'c', 'd', 'e', 'f')), [], ['sessions'], listed);
+
+      expect(names(shown.rows)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
   });
 });
