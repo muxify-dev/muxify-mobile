@@ -50,3 +50,51 @@ function matchesAt(input: Uint8Array, at: number, marker: number[]): boolean {
   if (at + marker.length > input.length) return false;
   return marker.every((byte, offset) => input[at + offset] === byte);
 }
+
+/** tmux answers Pane queries. The Surface's duplicate replies are not typed input. */
+export function withoutTerminalReplies(input: Uint8Array): Uint8Array {
+  const output: number[] = [];
+
+  for (let index = 0; index < input.length; ) {
+    const end = terminalReplyEnd(input, index);
+    if (end > index) index = end;
+    else output.push(input[index++]);
+  }
+
+  return Uint8Array.from(output);
+}
+
+function terminalReplyEnd(input: Uint8Array, start: number): number {
+  if (input[start] !== 0x1b) return start;
+  const introducer = input[start + 1];
+
+  if (introducer === 0x5d || introducer === 0x50) {
+    for (let end = start + 2; end < input.length; end += 1) {
+      if (introducer === 0x5d && input[end] === 0x07) return end + 1;
+      if (input[end] === 0x1b && input[end + 1] === 0x5c) return end + 2;
+    }
+    return start;
+  }
+
+  if (introducer !== 0x5b) return start;
+  let end = start + 2;
+  let sequence = '';
+  while (input[end] >= 0x30 && input[end] <= 0x3f) {
+    sequence += String.fromCharCode(input[end++]);
+  }
+  while (input[end] >= 0x20 && input[end] <= 0x2f) {
+    sequence += String.fromCharCode(input[end++]);
+  }
+  if (!(input[end] >= 0x40 && input[end] <= 0x7e)) return start;
+  sequence += String.fromCharCode(input[end]);
+
+  const reply =
+    /^[?>][\d;]+c$/.test(sequence) ||
+    /^\?[\d;]+\$y$/.test(sequence) ||
+    /^\?\d+u$/.test(sequence) ||
+    /^[03]n$/.test(sequence) ||
+    /^\d+(;\d+)+t$/.test(sequence) ||
+    // Row-one cursor reports share their encoding with modified F3.
+    (/^\d+;\d+R$/.test(sequence) && !/^1;\d+R$/.test(sequence));
+  return reply ? end + 1 : start;
+}

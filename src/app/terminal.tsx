@@ -82,7 +82,7 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
-import { toShellInput } from '@/lib/terminal-input';
+import { toShellInput, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
@@ -777,7 +777,8 @@ export default function TerminalScreen() {
       //
       // What comes out of the Surface is not quite what a shell expects — every
       // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-      const typed = toShellInput(base64ToBytes(data));
+      const typed = toShellInput(withoutTerminalReplies(base64ToBytes(data)));
+      if (typed.length === 0) return;
 
       // Whatever the Key Row is holding down applies to the first key of this
       // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
