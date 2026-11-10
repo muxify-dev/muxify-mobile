@@ -15,11 +15,13 @@ wait "label=\"Tag #work\"" 8000
 fill "role=text-field" "e2e New Topic it's"
 press "label=\"Tag #work\""
 press "label=\"Save\""
-wait "label=\"Folder\"" 15000
+wait "text" "Add a Session" 15000
+wait "role=text-field" 15000
 press "label=\"Cancel\""
 wait "label=\"Topic e2e New Topic it's\"" 15000
 press "label=\"Topic e2e New Topic it's\""
-wait "label=\"Folder\"" 15000
+wait "text" "Add a Session" 15000
+wait "role=text-field" 15000
 press "label=\"Cancel\""
 
 close

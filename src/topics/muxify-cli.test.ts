@@ -623,3 +623,40 @@ describe('reading the Tabs of a Window', () => {
     });
   });
 });
+
+describe('Session Path choices', () => {
+  const id = "topic'quoted" as TopicId;
+  const paths = { topic: { id, label: 'Topic' }, rows: [], sessions: [] };
+
+  it('quotes the Topic and reuses CLI discovery', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['session-paths', { exitCode: 0, stdout: JSON.stringify(paths) }]]);
+    const cli = createMuxifyCli();
+    expect(await cli.sessionPaths(host.exec, id)).toEqual({ kind: 'listed', choices: [] });
+    await cli.sessionPaths(host.exec, id);
+    expect(host.ran).toEqual(['command -v muxify',
+      `'/opt/bin/muxify' topic session-paths --topic 'topic'\\''quoted' --json`,
+      `'/opt/bin/muxify' topic session-paths --topic 'topic'\\''quoted' --json`]);
+  });
+
+  it.each([1, 2, 127])('only exit code 2 selects the old form, with code %s', async (exitCode) => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['session-paths', { exitCode, stderr: 'refused' }]]);
+    expect(await createMuxifyCli().sessionPaths(host.exec, id)).toEqual(exitCode === 2 ? { kind: 'old' } : { kind: 'failed', error: 'refused' });
+  });
+
+  it('reports a missing CLI', async () => {
+    expect(await createMuxifyCli().sessionPaths(fakeHost([]).exec, id)).toEqual({ kind: 'failed', error: 'Desktop Muxify is not on this Host.' });
+  });
+
+  it.each(['not json', JSON.stringify({ ...paths, rows: [{}] })])('reports an invalid answer', async (stdout) => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['session-paths', { exitCode: 0, stdout }]]);
+    expect(await createMuxifyCli().sessionPaths(host.exec, id)).toMatchObject({ kind: 'failed' });
+  });
+
+  it('passes a transport failure to the shared Connection read', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND]]);
+    await expect(createMuxifyCli().sessionPaths(async (command) => {
+      if (command.includes('session-paths')) throw new Error('lost');
+      return host.exec(command);
+    }, id)).rejects.toThrow('lost');
+  });
+});

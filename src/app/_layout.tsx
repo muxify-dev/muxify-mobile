@@ -111,7 +111,7 @@ function AppStack() {
           name="topic-add-session"
           options={{
             presentation: 'formSheet',
-            sheetAllowedDetents: [0.4],
+            sheetAllowedDetents: [0.65, 1],
             sheetGrabberVisible: true,
             title: 'Add a Session',
           }}

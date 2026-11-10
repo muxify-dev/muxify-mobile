@@ -20,7 +20,7 @@ press "label=\"Close Windows\""
 press "role=button label=\"Back\""
 wait "label=\"All of Dev Host\"" 8000
 press "label=\"Topic e2e Topic Screen empty\""
-wait "label=\"Folder\"" 15000
+wait "role=text-field" 15000
 press "label=\"Cancel\""
 wait "label=\"All of Dev Host\"" 8000
 

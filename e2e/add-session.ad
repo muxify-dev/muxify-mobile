@@ -8,13 +8,13 @@ wait 1500
 
 wait "label=\"Topic e2e Add Session\"" 15000
 press "label=\"Topic e2e Add Session\""
-wait "label=\"Folder\"" 15000
+wait "label=\"Search folders\"" 15000
 fill "role=text-field" "/tmp/muxify e2e missing"
-press "label=\"Save\""
+press "label=\"Use /tmp/muxify e2e missing\""
 wait "text" "no directory" 15000
 is "visible" "role=text-field"
 fill "role=text-field" "/tmp/muxify e2e add"
-press "label=\"Save\""
+press "label=\"Use /tmp/muxify e2e add\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "muxifye2eadd/e2e-add-session"
 press "label=\"Options\""
@@ -22,7 +22,7 @@ wait "label=\"Topic\" role=button" 8000
 press "label=\"Topic\" role=button"
 wait "label=\"Add a Session…\" role=button" 8000
 press "label=\"Add a Session…\" role=button"
-wait "label=\"Folder\"" 8000
+wait "label=\"Search folders\"" 8000
 press "label=\"Cancel\""
 wait "id=\"pane-command\"" 8000
 

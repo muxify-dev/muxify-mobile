@@ -272,12 +272,17 @@ _Avoid_: Topic settings, Topic properties
 
 **Add a Session**:
 The sheet that an Empty Topic card or Options > Topic > Add a Session opens.
-It takes one folder on the Host, where a leading `~` is the home folder, and
-makes a Session there in the Topic. There is no Worktree choice. A Host error
-keeps the sheet open. Save opens the returned Session in the Attach, then
-shows the Terminal Screen. If that entry fails, Retry Attach uses the saved
-Session name and sends no second write. Cancel leaves any Session already made
-on the Host. Save and Cancel are disabled while the write runs.
+It reads the Host's folder choices once and groups them as In this Topic,
+Session Paths and Worktrees. Search matches names, paths, branches and Also in
+Topic labels. A tap makes a Session at that folder and opens it in the Attach.
+The final row uses a typed folder, where a leading `~` is the Host's home folder.
+It does not create a Worktree or move an existing Session. An old Host CLI
+instead shows a Folder field and Save. Other read failures show Retry and keep
+typed entry available. A Host write error keeps the sheet open. If entry fails
+after creation, Retry Attach uses the saved Session name and sends no second
+write. Cancel leaves any Session already made on the Host. Folder actions stay
+disabled after creation. Cancel and dismissal are disabled while creation or
+Attach runs.
 _Avoid_: New Session (that sheet makes a Session in no Topic)
 
 **Reopen**:
