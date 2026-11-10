@@ -19,6 +19,7 @@ import {
   font,
   foregroundColor,
   frame,
+  lineLimit,
   padding,
   presentationBackground,
   presentationDetents,
@@ -26,6 +27,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
+import { tabAddress, tabLabel, type BrowserTab } from '@/browser/tabs';
 import type { Appearance, SheetPalette } from '@/constants/app-theme';
 import { countTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
 import { useSettings } from '@/settings/settings-context';
@@ -59,17 +61,22 @@ export interface TitleSheetProps {
   /** Opens the Sessions picker in this sheet's place. */
   onSwitch: () => void;
   onPick: (pick: TitlePick) => void;
+  /** The Browser Tabs of the Window on screen that the phone can open. */
+  tabs: BrowserTab[];
+  onOpenTab: (tab: BrowserTab) => void;
 }
 
 /** The sheet's name, which its close button carries. */
 const TITLE = 'Windows';
 const ROW_HEIGHT = 44;
 const SWITCH_ROW_HEIGHT = 44;
+const TABS_HEADER_HEIGHT = 36;
 
 /**
  * The sheet the header's title opens: the Windows of the attached Session, or
  * each live Session of the Topic with its Windows, and Switch… at the top for
- * every other Session of the Host.
+ * every other Session of the Host. Under them, the Browser Tabs of the Window
+ * on screen, when the Host has some at a Tailscale address.
  *
  * Rows rather than previews. The old Windows picker drew a capture of each
  * Window, and a row of name, program and Agent mark says more in less: which
@@ -89,10 +96,12 @@ export function TitleSheet({
   error,
   onSwitch,
   onPick,
+  tabs,
+  onOpenTab,
 }: TitleSheetProps) {
   const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
   const screen = useWindowDimensions();
-  const height = titleSheetHeight(countTitleRows(rows), screen.height);
+  const height = titleSheetHeight(countTitleRows(rows), tabs.length, screen.height);
 
   return (
     <Host matchContents style={styles.host}>
@@ -136,7 +145,7 @@ export function TitleSheet({
                 <SheetNote palette={palette}>No Windows</SheetNote>
               ) : null}
 
-              {rows.length > 0 ? (
+              {rows.length > 0 || tabs.length > 0 ? (
                 <ScrollView>
                   <VStack spacing={0} alignment="leading">
                     {rows.map((row) =>
@@ -182,6 +191,18 @@ export function TitleSheet({
                         </VStack>
                       ),
                     )}
+                    {tabs.length > 0 ? (
+                      <HStack modifiers={[frame({ maxWidth: Infinity, height: TABS_HEADER_HEIGHT })]}>
+                        <Text
+                          modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.secondary)]}>
+                          Browser tabs
+                        </Text>
+                        <Spacer />
+                      </HStack>
+                    ) : null}
+                    {tabs.map((tab) => (
+                      <TabRow key={tab.id} tab={tab} palette={palette} onPress={() => onOpenTab(tab)} />
+                    ))}
                   </VStack>
                 </ScrollView>
               ) : null}
@@ -246,13 +267,42 @@ function WindowRow({
   );
 }
 
+/** A globe, the page's title and its address; the Tab that the Browser shows in the accent. */
+function TabRow({ tab, palette, onPress }: { tab: BrowserTab; palette: SheetPalette; onPress: () => void }) {
+  const label = tabLabel(tab);
+  return (
+    <Button onPress={onPress} modifiers={[buttonStyle('plain'), accessibilityLabel(`Tab ${label}`)]}>
+      <HStack spacing={10} modifiers={[frame({ maxWidth: Infinity, height: ROW_HEIGHT })]}>
+        <Image systemName="globe" size={17} color={tab.active ? palette.accent : palette.secondary} />
+        <Text
+          modifiers={[
+            font({ size: 17 }),
+            lineLimit(1),
+            foregroundColor(tab.active ? palette.accent : palette.primary),
+          ]}>
+          {label}
+        </Text>
+        <Text modifiers={[font({ size: 13 }), lineLimit(1), foregroundColor(palette.secondary)]}>
+          {tabAddress(tab)}
+        </Text>
+        <Spacer />
+      </HStack>
+    </Button>
+  );
+}
+
 /** Every row when they fit, else whole rows and half of the next. See gridContentHeight. */
-function titleSheetHeight(rowCount: number, windowHeight: number): number {
+function titleSheetHeight(rowCount: number, tabCount: number, windowHeight: number): number {
   const chrome =
-    SHEET_PADDING * 2 + HEADER_HEIGHT + HEADER_TO_CONTENT + SWITCH_ROW_HEIGHT + SAFE_BOTTOM;
+    SHEET_PADDING * 2 +
+    HEADER_HEIGHT +
+    HEADER_TO_CONTENT +
+    SWITCH_ROW_HEIGHT +
+    (tabCount > 0 ? TABS_HEADER_HEIGHT : 0) +
+    SAFE_BOTTOM;
   const budget = Math.max(0, windowHeight * 0.9 - chrome);
   const rows = gridContentHeight(
-    { count: Math.max(1, rowCount), perRow: 1, cardHeight: ROW_HEIGHT, gap: 0 },
+    { count: Math.max(1, rowCount + tabCount), perRow: 1, cardHeight: ROW_HEIGHT, gap: 0 },
     budget,
   );
   return chrome + rows;

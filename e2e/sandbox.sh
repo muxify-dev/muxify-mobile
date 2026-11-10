@@ -20,6 +20,13 @@
 #   with no Fingerprint, no Recent Sessions and no Last Place, because the
 #   sandbox is a Host the app has never seen.
 #
+# The app's `muxify` over SSH is a stub, first on the sshd's PATH. It gives
+# every command to the real CLI except `browser`, which would talk to the
+# Muxify app you work in. `browser tabs` prints $MUXIFY_E2E_ROOT/browser-tabs.json
+# when a suite has written one, and else fails as the CLI does on a tmux server
+# that Muxify does not show. Each `browser` call is a line of
+# $MUXIFY_E2E_ROOT/browser-calls, for a suite to read.
+#
 # MUXIFY_CONFIG, not XDG_CONFIG_HOME: ~/.zshenv sets XDG_CONFIG_HOME, and the
 # app's commands run through `$SHELL -c`, which reads it.
 #
@@ -82,8 +89,25 @@ PidFile $ROOT/sshd.pid
 UsePAM no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
-SetEnv MUXIFY_CONFIG=$ROOT/config.yaml XDG_STATE_HOME=$ROOT/state TMUX_TMPDIR=$ROOT
+SetEnv MUXIFY_CONFIG=$ROOT/config.yaml XDG_STATE_HOME=$ROOT/state TMUX_TMPDIR=$ROOT PATH=$ROOT/bin:/usr/bin:/bin:/usr/sbin:/sbin
 EOF
+
+REAL_MUXIFY=$(command -v muxify) || { echo "muxify is not on the PATH"; exit 1; }
+mkdir -p "$ROOT/bin"
+cat >"$ROOT/bin/muxify" <<EOF
+#!/bin/sh
+if [ "\$1" = browser ]; then
+  echo "\$*" >>"$ROOT/browser-calls"
+  if [ "\$2" = tabs ] && [ -f "$ROOT/browser-tabs.json" ]; then
+    cat "$ROOT/browser-tabs.json"
+    exit 0
+  fi
+  echo "cannot reach Muxify: Muxify does not serve the Browser of this tmux server." >&2
+  exit 1
+fi
+exec "$REAL_MUXIFY" "\$@"
+EOF
+chmod +x "$ROOT/bin/muxify"
 
 /usr/sbin/sshd -f "$ROOT/sshd_config" -E "$ROOT/sshd.log" || { cat "$ROOT/sshd.log"; exit 1; }
 for _ in $(seq 50); do

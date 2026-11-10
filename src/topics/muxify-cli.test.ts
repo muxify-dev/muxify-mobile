@@ -540,3 +540,35 @@ describe('adding a Session to a Topic', () => {
     });
   });
 });
+
+describe('reading the Tabs of a Window', () => {
+  const TABS = [
+    { active: true, id: 'A1', title: 'Dev server', url: 'http://mac.tail1234.ts.net:3000/' },
+    { active: false, id: 'B2', title: '', url: 'http://localhost:3000/' },
+  ];
+
+  it('names the Window by its tmux id, quoted for the shell, and gives every Tab', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['browser tabs', { exitCode: 0, stdout: JSON.stringify(TABS) }]]);
+
+    const read = await createMuxifyCli().browserTabs(host.exec, '@12');
+
+    expect(host.ran[1]).toBe("'/opt/bin/muxify' browser tabs --window '@12' --json");
+    expect(read).toEqual({ kind: 'listed', tabs: TABS });
+  });
+
+  it('fails with what the CLI said, as for a tmux server that Muxify does not show', async () => {
+    const stderr = 'cannot reach Muxify: Muxify does not serve the Browser of this tmux server.\n';
+    const host = fakeHost([['command -v', PATH_FOUND], ['browser tabs', { exitCode: 1, stderr }]]);
+
+    expect(await createMuxifyCli().browserTabs(host.exec, '@12')).toEqual({ kind: 'failed', error: stderr.trim() });
+  });
+
+  it('fails, and says why, on a Host with no muxify', async () => {
+    const host = fakeHost([]);
+
+    expect(await createMuxifyCli().browserTabs(host.exec, '@12')).toEqual({
+      kind: 'failed',
+      error: 'Desktop Muxify is not on this Host.',
+    });
+  });
+});
