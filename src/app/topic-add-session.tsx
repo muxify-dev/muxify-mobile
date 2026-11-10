@@ -43,8 +43,8 @@ type Operation =
 
 export default function TopicAddSessionScreen() {
   const router = useRouter();
-  const { hostId, topicId, seed: seedParam, fromAttach } = useLocalSearchParams<{
-    hostId: string; topicId: string; seed?: string; fromAttach?: string;
+  const { hostId, topicId, seed: seedParam, fromAttach, created } = useLocalSearchParams<{
+    hostId: string; topicId: string; seed?: string; fromAttach?: string; created?: string;
   }>();
   const seed = useMemo(() => { const value = topicSeedFromParam(seedParam); return value?.id === topicId ? value : null; }, [seedParam, topicId]);
   const holder = useAttachHolder();
@@ -65,6 +65,7 @@ export default function TopicAddSessionScreen() {
 
   const folder = useNativeState('');
   const [query, setQuery] = useState('');
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [paths, setPaths] = useState<SessionPathsRead | { kind: 'loading' }>({ kind: 'loading' });
   const [readAttempt, setReadAttempt] = useState(0);
   const [error, setError] = useState<string | undefined>();
@@ -151,21 +152,21 @@ export default function TopicAddSessionScreen() {
           gestureEnabled: !adding,
           headerLeft: () => (
             <ToolbarWord
-              label="Cancel"
+              label={created === '1' && !completion ? 'Add later' : 'Cancel'}
               disabled={adding}
               color={palette.controlAccent}
               bold={false}
               onPress={cancel}
             />
           ),
-          headerRight: () => (paths.kind === 'old' || completion || adding) ? (
+          headerRight: () => (
             <ToolbarWord
-              label={adding ? 'Saving…' : completion ? 'Retry Attach' : 'Save'}
+              label={adding ? 'Creating…' : completion ? 'Retry Attach' : 'Create and open'}
               color={adding ? palette.secondaryLabel : palette.controlAccent}
-              disabled={adding}
-              onPress={completion ? retryAttach : () => addFolder(folder.value.trim())}
+              disabled={adding || (!completion && selectedFolder === null && query.trim() === '')}
+              onPress={completion ? retryAttach : () => addFolder(selectedFolder ?? folder.value.trim())}
             />
-          ) : null,
+          ),
         }}
       />
 
@@ -177,12 +178,19 @@ export default function TopicAddSessionScreen() {
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
+          {created === '1' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Text>{seed ? `${seed.label} was created.` : 'The Topic was created.'}</Text>
+            <Text>Choose a folder to add a Session, or add one later.</Text>
+          </Section>}
+          {selectedFolder !== null && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Text>{`Selected folder: ${selectedFolder}`}</Text>
+          </Section>}
           <Section
             header={<SectionHeader palette={palette}>{paths.kind === 'old' ? 'Folder on the Host' : 'Search or enter a folder'}</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <TextField
               text={folder}
-              onTextChange={setQuery}
+              onTextChange={(value) => { setQuery(value); setSelectedFolder(null); }}
               placeholder={paths.kind === 'old' ? '~/Dev/project' : 'Search folders or type a path'}
               modifiers={[
                 accessibilityLabel(paths.kind === 'old' ? 'Folder' : 'Search folders'),
@@ -205,10 +213,10 @@ export default function TopicAddSessionScreen() {
             modifiers={[listRowBackground(palette.rowSurface)]}>
             {section.choices.map((choice, index) => <Button
               key={`${choice.directory}:${index}`}
-              onPress={() => addFolder(choice.directory)}
-              modifiers={[disabled(operation.kind !== 'ready'), accessibilityLabel(`Add Session at ${choice.directory}`)]}>
+              onPress={() => { if (present.current && currentOperation.current.kind === 'ready') setSelectedFolder(choice.directory); }}
+              modifiers={[disabled(operation.kind !== 'ready'), accessibilityLabel(`Select folder ${choice.directory}`)]}>
               <VStack alignment="leading" spacing={3}>
-                <Text modifiers={[foregroundColor(palette.toolbarTint)]}>{choice.label}</Text>
+                <Text modifiers={[foregroundColor(palette.toolbarTint)]}>{selectedFolder === choice.directory ? `✓ ${choice.label}` : choice.label}</Text>
                 <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel), lineLimit(1)]}>{choice.directory}</Text>
                 {choice.worktree?.branch != null && <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{choice.worktree.branch}</Text>}
                 {choice.alsoIn.length > 0 && <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
@@ -218,7 +226,7 @@ export default function TopicAddSessionScreen() {
             </Button>)}
           </Section>)}
           {paths.kind !== 'old' && query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-            <Button label={`Use ${query.trim()}`} onPress={() => addFolder(query.trim())} modifiers={[disabled(operation.kind !== 'ready')]} />
+            <Button label={`Use ${query.trim()}`} onPress={() => { if (present.current && currentOperation.current.kind === 'ready') setSelectedFolder(query.trim()); }} modifiers={[disabled(operation.kind !== 'ready')]} />
           </Section>}
 
         </Form>

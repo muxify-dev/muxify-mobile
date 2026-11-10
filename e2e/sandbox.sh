@@ -44,13 +44,13 @@ set -uo pipefail
 APP=dev.muxify.app
 
 ROOT=$(mktemp -d /tmp/muxify-e2e.XXXXXX) || exit 1
-DOCUMENTS="$(xcrun simctl get_app_container booted "$APP" data)/Documents" || exit 1
+DOCUMENTS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents" || exit 1
 RECORDS="$DOCUMENTS/muxify-records.json"
 SETTINGS="$DOCUMENTS/muxify-settings.json"
 
 # The app holds its records in memory and writes them back, so it must not run
 # while the files are swapped under it.
-stop_app() { xcrun simctl terminate booted "$APP" >/dev/null 2>&1; }
+stop_app() { xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1; }
 
 # iOS minimizes the software keyboard to a bar with no keys while it believes
 # a hardware keyboard is attached, and the simulator attaches and detaches its
@@ -58,12 +58,15 @@ stop_app() { xcrun simctl terminate booted "$APP" >/dev/null 2>&1; }
 # setting behind that, so with it off every run gets the full keyboard that the
 # suites press keys on, whatever the simulator has attached.
 keyboard_minimization() {
-  xcrun simctl spawn booted defaults "$1" com.apple.keyboard.preferences AutomaticMinimizationEnabled "${@:2}"
+  xcrun simctl spawn "${MUXIFY_E2E_DEVICE:-booted}" defaults "$1" com.apple.keyboard.preferences AutomaticMinimizationEnabled "${@:2}"
 }
 
 cleanup() {
   stop_app
-  TMUX_TMPDIR="$ROOT" env -u TMUX -u TMUX_PANE tmux kill-server >/dev/null 2>&1
+  socket=$(TMUX_TMPDIR="$ROOT" env -u TMUX -u TMUX_PANE tmux display -p '#{socket_path}' 2>/dev/null)
+  case "$socket" in
+    "$ROOT"/*) TMUX_TMPDIR="$ROOT" env -u TMUX -u TMUX_PANE tmux kill-server >/dev/null 2>&1 ;;
+  esac
   [ -f "$ROOT/sshd.pid" ] && kill "$(cat "$ROOT/sshd.pid")" 2>/dev/null
   for file in "$RECORDS" "$SETTINGS"; do
     [ -f "$ROOT/saved/${file##*/}" ] && cp "$ROOT/saved/${file##*/}" "$file"

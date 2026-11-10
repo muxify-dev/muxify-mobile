@@ -94,7 +94,7 @@ export default function TopicFormScreen() {
         return;
       }
 
-      router.replace({ pathname: '/topic-add-session', params: { hostId, topicId: made.topic,
+      router.replace({ pathname: '/topic-add-session', params: { hostId, topicId: made.topic, created: '1',
         seed: topicSeedParam({ id: made.topic, label: wanted, note: null,
           tags: tags.filter((tag) => chosen.has(tag.name)).map((tag) => tag.name), state: 'empty', sessions: [] }) } });
     })();

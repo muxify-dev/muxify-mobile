@@ -17,7 +17,8 @@ press "label=\"Tag #work\""
 press "label=\"Save\""
 wait "text" "Add a Session" 15000
 wait "role=text-field" 15000
-press "label=\"Cancel\""
+wait "text" "e2e New Topic it's was created." 8000
+press "label=\"Add later\""
 wait "label=\"Topic e2e New Topic it's\"" 15000
 press "label=\"Topic e2e New Topic it's\""
 wait "text" "Add a Session" 15000
