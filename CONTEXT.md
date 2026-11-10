@@ -555,16 +555,18 @@ _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
 ### Diagnosing
 
 **Log**:
-Muxify's own record of what it decided, kept in memory for the life of the
-app and carried out by the user: a long press on a Host in Settings, and Copy
-log in the Terminal Screen's Options menu, put it on the clipboard with a head
-saying what is attached and how the Attach stands. Every module that makes a decision
-a screen cannot show says so in one line — which Pane got a Surface and when
-it reported its grid, what the Topology became and why, what went down the
-Control Connection and what tmux answered, what the Terminal Screen put on
-screen. It says what the app *did*, never what the user typed or the Host
-showed: keystrokes go out as a byte count, and Pane content is not in it at
-all, so a Log can be pasted anywhere. Bounded, oldest lines first to go. See
-ADR 0010.
+Muxify's own record of what it decided. The app keeps recent entries in memory
+and saves bounded files for the last five launches. Settings > Logs shows the
+current launch, previous launches, and iOS diagnostic reports when iOS supplies
+them. A saved launch does not prove a crash. A force quit or system stop can
+leave the same record. Copy log carries a selected report to the clipboard.
+The Terminal Screen's Copy log still includes the current Attach state.
+
+The Log records decisions about Surfaces, Topology, sizing and Connections.
+It excludes keystrokes, Pane content and credentials. JavaScript error reports
+include a bounded message, stack and component stack. The original React Native
+error handler still runs. A native crash can leave only the events recorded
+before it. MetricKit supplies separate native diagnostic reports when available.
+Reports stay on the phone until the user copies them. See ADR 0010.
 _Avoid_: console (which nobody holding the phone can see), trace, telemetry
 (nothing is sent anywhere), debug output

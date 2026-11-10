@@ -1,8 +1,9 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
+  Button,
   Form,
   Host,
   HStack,
@@ -15,6 +16,7 @@ import {
   VStack,
 } from '@expo/ui/swift-ui';
 import {
+  accessibilityLabel,
   background,
   clipShape,
   cornerRadius,
@@ -59,6 +61,7 @@ const PREVIEW_LINES: { number: string; text: string }[] = [
  * that is half-entered, so there is nothing to confirm.
  */
 export default function SettingsScreen() {
+  const router = useRouter();
   const { settings: value, update, appearance, palette } = useSettings();
   const usesDefaultSize = value.fontSize === null;
   const shownSize = value.fontSize ?? DEFAULT_EXPLICIT_FONT_SIZE;
@@ -83,6 +86,9 @@ export default function SettingsScreen() {
             environment('editMode', 'active'),
           ]}>
           <HostsSection palette={palette} />
+          <Section header={<SectionHeader palette={palette}>Diagnostics</SectionHeader>} modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Button label="Logs" systemImage="doc.text" onPress={() => router.push('/logs')} modifiers={[accessibilityLabel('Logs')]} />
+          </Section>
 
           <Section
             header={<SectionHeader palette={palette}>Font</SectionHeader>}
