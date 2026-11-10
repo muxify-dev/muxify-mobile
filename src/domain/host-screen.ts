@@ -80,8 +80,7 @@ export interface HostScreenInput {
 }
 
 /**
- * The sections of the Host Screen below its Connection section, one list after
- * another in the order the user set in Settings.
+ * The sections of the Host Screen, in the order the user set in Settings.
  *
  * A Session shows in one list only, because two rows would be two ways to open
  * one Session. Its Topic comes first, once a snapshot says which Topic that is.
