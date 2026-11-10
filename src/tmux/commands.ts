@@ -375,6 +375,29 @@ export function captureScrollbackCommand(
 }
 
 /**
+ * What a Selection needs of a range of a Pane, read in one go: how long the
+ * Scrollback is, the rows as they are painted, and the same lines with the
+ * wrapped rows joined.
+ *
+ * Written together so that tmux answers all three from one screen. The
+ * Scrollback's length turns the range, which counts from the top of the
+ * screen, into lines that keep their number while output arrives. The joined
+ * capture is the only place tmux says which rows it wrapped.
+ */
+export function captureSelectionCommands(
+  paneId: string,
+  startLine: number,
+  endLine: number,
+): TmuxArgv[] {
+  const range = ['-S', String(Math.floor(startLine)), '-E', String(Math.floor(endLine))];
+  return [
+    ['display-message', '-p', '-t', paneId, '#{history_size}'],
+    ['capture-pane', '-t', paneId, '-p', '-e', '-N', ...range],
+    ['capture-pane', '-t', paneId, '-p', '-J', ...range],
+  ];
+}
+
+/**
  * Everything about a Pane that a resync needs and the Layout does not say:
  * where the cursor is and whether the application shows it, whether the Pane is on the alternate screen, how much
  * Scrollback it has (tmux calls that `history_size`), and how big it is.

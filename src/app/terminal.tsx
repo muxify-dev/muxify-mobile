@@ -1,4 +1,5 @@
-import { TerminalView, type TerminalViewRef } from 'expo-libghostty';
+import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
+import { File } from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -14,7 +15,7 @@ import { KeyRow } from '@/components/key-row';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
-import { stageClipboardImage } from '@/composer/staging';
+import { stageClipboardImage, stageFile } from '@/composer/staging';
 import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
@@ -78,12 +79,12 @@ import {
   type Modifiers,
 } from '@/lib/modifier-keys';
 import { toShellInput } from '@/lib/terminal-input';
-import type { AttachPhase, AttachState } from '@/tmux/attach';
+import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
-import type { PaneSurface, PaneView } from '@/tmux/pane-view';
+import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
 import { paneForSwipe } from '@/tmux/pane-swipe';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
@@ -368,11 +369,31 @@ export default function TerminalScreen() {
    */
   const spansWindow =
     (topology?.activeWindow?.zoomed ?? true) || (topology?.panes.length ?? 0) <= 1;
+
+  /**
+   * Whether a Selection holds a Pane frozen.
+   *
+   * The Pane view and the Selection Layer do the work. This is what the
+   * screen changes for it: the mouse layer goes, so the touches reach the
+   * Selection Layer, and the Window stays where it is while the keyboard is
+   * down. See ADR 0014.
+   */
+  const [selecting, setSelecting] = useState(false);
+  /** The frozen Pane's view. The view and not its id: the Pane can go first. */
+  const frozenView = useRef<PaneView | null>(null);
   const cursorRow =
     state?.cursorRow == null
       ? null
       : state.cursorRow + (spansWindow ? 0 : (topology?.activePane?.top ?? 0));
-  const slide = windowSlide(containerSize.height, windowArea.height, cellSize, cursorRow);
+  const liveSlide = windowSlide(containerSize.height, windowArea.height, cellSize, cursorRow);
+  /**
+   * The slide from before the Selection. The Selection Layer takes the
+   * keyboard down, and a Window that slid back then would move the text
+   * from under the finger that pressed it.
+   */
+  const heldSlide = useRef(0);
+  if (!selecting) heldSlide.current = liveSlide;
+  const slide = heldSlide.current;
 
   // Told from here rather than from the layout event, because the Window's
   // area is not the container's: it is what the Panes are laid out in, and it
@@ -529,11 +550,59 @@ export default function TerminalScreen() {
   );
 
   /**
+   * A long press on a Pane: the Pane freezes and the Selection Layer gets
+   * its text. See beginSelection on the Pane view.
+   */
+  const beginSelection = useCallback(
+    (paneId: string, press: SurfacePoint) => {
+      if (!attach || frozenView.current !== null) return;
+      const view = attach.view(paneId);
+      if (!view.beginSelection(press)) return;
+      frozenView.current = view;
+      setSelecting(true);
+    },
+    [attach],
+  );
+
+  /**
+   * Ends the Selection: the Selection Layer closes and the Pane is live
+   * again. Also what the Layer's own ending arrives as, which changes
+   * nothing the second time.
+   */
+  const endSelection = useCallback(() => {
+    const view = frozenView.current;
+    if (view === null) return;
+    frozenView.current = null;
+    view.endSelection();
+    setSelecting(false);
+  }, []);
+
+  // A Selection is of one Pane as it stands. Another Pane, Window or Session,
+  // the loss of the Attach, and leaving the screen all end it.
+  const activeWindowIndex = topology?.activeWindow?.index;
+  const sessionName = state?.sessionName;
+  useEffect(
+    () => endSelection,
+    [endSelection, activePaneId, activeWindowIndex, sessionName, connected],
+  );
+
+  /** A handle held at the top or bottom edge of a Selection: one more line. */
+  const scrollSelection = useCallback(
+    (paneId: string, grid: Grid, direction: 'up' | 'down') => {
+      attach?.view(paneId).scroll(direction === 'up' ? 1 : -1, grid);
+    },
+    [attach],
+  );
+
+  /**
    * A horizontal swipe on a Pane: to the next or the previous Pane of the
    * Window. The Zoom is kept, as it is for a pick in the Panes picker.
    */
   const swipePane = useCallback(
     (direction: SwipeDirection) => {
+      // The Surface refuses the pan itself. This is for the other Panes of a
+      // split, which are not under the Selection Layer.
+      if (frozenView.current !== null) return;
       const pane = paneForSwipe(state?.topology.panes ?? [], direction);
       if (pane) attach?.selectPane(pane.id);
     },
@@ -628,25 +697,33 @@ export default function TerminalScreen() {
    * text too, and the name is not what was copied.
    */
   const pasteClipboard = useCallback(() => {
-    if (!attach) return;
-    void (async () => {
-      try {
-        const image = await stageClipboardImage();
-        if (image) {
-          try {
-            await attach.paste({ kind: 'image', file: image }, confirmRunLines);
-          } finally {
-            image.dispose();
-          }
-          return;
-        }
-        const text = await Clipboard.getStringAsync();
-        if (text !== '') await attach.paste({ kind: 'text', text }, confirmRunLines);
-      } catch (error) {
-        Alert.alert('Could not paste', describeError(error));
-      }
-    })();
+    void pasteInto(attach, async () => {
+      const image = await stageClipboardImage();
+      if (image) return { kind: 'image', file: image };
+      return { kind: 'text', text: await Clipboard.getStringAsync() };
+    });
   }, [attach]);
+
+  /**
+   * Paste from the Surface's edit menu or from command-V on a hardware
+   * keyboard. The Surface read the clipboard inside the system's own paste
+   * action, so iOS asks nothing, and the text goes the same safe way in.
+   */
+  const pasteFromSurface = useCallback(
+    (pasted: TerminalPasteEvent) => {
+      void pasteInto(attach, async () => {
+        const { imageUri } = pasted;
+        if (!imageUri) return { kind: 'text', text: pasted.text ?? '' };
+        const written = new File(imageUri);
+        try {
+          return { kind: 'image', file: await stageFile(imageUri, 'pasted-image.png', true) };
+        } finally {
+          if (written.exists) written.delete();
+        }
+      });
+    },
+    [attach],
+  );
 
   const clearPane = useCallback(() => {
     void attach
@@ -657,13 +734,15 @@ export default function TerminalScreen() {
   /** What typing or a pair key turned into, on its way to a Pane or to the phone. */
   const deliverInput = useCallback(
     (view: PaneView, input: ModifiedInput) => {
+      // A key is for the live Pane, not for the still picture of it.
+      endSelection();
       if (input.kind === 'key') view.press(input.key);
       else if (input.kind === 'shortcut') {
         ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[input.shortcut]();
       }
       if (input.rest.length > 0) view.type(input.rest);
     },
-    [copyPaneText, pasteClipboard, clearPane],
+    [copyPaneText, pasteClipboard, clearPane, endSelection],
   );
 
   /**
@@ -932,10 +1011,11 @@ export default function TerminalScreen() {
    */
   const pressKey = useCallback(
     (key: NamedKey) => {
+      endSelection();
       activeView()?.press(namedKeyName(key, armed));
       setArmed(NO_MODIFIERS);
     },
-    [activeView, armed],
+    [activeView, armed, endSelection],
   );
 
   /** One symbol of a pair key: typed as the system keyboard would type it. */
@@ -1262,6 +1342,7 @@ export default function TerminalScreen() {
 
       <View
         style={[styles.surfaceArea, { backgroundColor: opened.terminal.background }]}
+        testID="surface-area"
         onLayout={({ nativeEvent }) => {
           const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
           say(
@@ -1313,6 +1394,10 @@ export default function TerminalScreen() {
             onScroll={handlePaneScroll}
             onSwipe={swipePane}
             onSelect={(paneId) => attach?.selectPane(paneId)}
+            onSelectionPress={beginSelection}
+            onSelectionEnd={endSelection}
+            onSelectionEdge={scrollSelection}
+            onPaste={pasteFromSurface}
           />
         ))}
 
@@ -1324,12 +1409,15 @@ export default function TerminalScreen() {
             a scroll and not a tap. A press that drifted did nothing at all,
             except scroll further back. Measured: a fourteen-point drag on the
             pill left it exactly where it was. */}
-        {state?.mouseTracking && activeSlot && mouseGrid ? (
+        {/* Gone while a Selection is open: the touches are the Selection
+            Layer's then, which is under this one. */}
+        {state?.mouseTracking && activeSlot && mouseGrid && !selecting ? (
           <MouseLayer
             box={activeSlot.box}
             grid={mouseGrid}
             cell={cellSize}
             onTap={handleTapCell}
+            onLongPress={(press) => beginSelection(activePaneId, press)}
             onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
             onSwipe={swipePane}
           />
@@ -1576,7 +1664,31 @@ function surfaceFor(ref: TerminalViewRef): PaneSurface {
     focus: () => void ref.focus(),
     blur: () => void ref.blur(),
     isFocused: () => ref.isFocused(),
+    showSelection: (rows, press) => void ref.showSelection(rows.rows, rows.top, press),
+    endSelection: () => void ref.endSelection(),
   };
+}
+
+/**
+ * Pastes what `read` gives into the active Pane, and says so when it cannot.
+ * An empty text pastes nothing. A staged image is let go afterwards.
+ */
+async function pasteInto(attach: Attach | null, read: () => Promise<Paste>): Promise<void> {
+  if (!attach) return;
+  try {
+    const content = await read();
+    if (content.kind === 'text') {
+      if (content.text !== '') await attach.paste(content, confirmRunLines);
+      return;
+    }
+    try {
+      await attach.paste(content, confirmRunLines);
+    } finally {
+      content.file.dispose();
+    }
+  } catch (error) {
+    Alert.alert('Could not paste', describeError(error));
+  }
 }
 
 /**
@@ -1605,6 +1717,10 @@ function PaneSurfaceView({
   onScroll,
   onSwipe,
   onSelect,
+  onSelectionPress,
+  onSelectionEnd,
+  onSelectionEdge,
+  onPaste,
 }: {
   slot: PaneSlot;
   font: number;
@@ -1620,6 +1736,13 @@ function PaneSurfaceView({
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
   onSwipe: (direction: SwipeDirection) => void;
   onSelect: (paneId: string) => void;
+  /** A long press on the Surface, which has no text until it is given some. */
+  onSelectionPress: (paneId: string, press: SurfacePoint) => void;
+  /** The Selection Layer closed its selection, or found no text to select. */
+  onSelectionEnd: () => void;
+  /** A handle of the Selection is held at the top or bottom edge. */
+  onSelectionEdge: (paneId: string, grid: Grid, direction: 'up' | 'down') => void;
+  onPaste: (pasted: TerminalPasteEvent) => void;
 }) {
   /**
    * The grid this Surface last reported, or null before it has.
@@ -1693,6 +1816,16 @@ function PaneSurfaceView({
           onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
         }
         onSwipe={({ nativeEvent }) => onSwipe(nativeEvent.direction)}
+        // The Selection Layer, which the local patch adds: iOS text selection
+        // over the Surface, with its text read from tmux. See ADR 0014.
+        onSelectionPress={({ nativeEvent }) =>
+          onSelectionPress(slot.pane.id, { x: nativeEvent.x, y: nativeEvent.y })
+        }
+        onSelectionEnd={onSelectionEnd}
+        onSelectionEdge={({ nativeEvent }) =>
+          onSelectionEdge(slot.pane.id, own.current, nativeEvent.direction)
+        }
+        onPaste={({ nativeEvent }) => onPaste(nativeEvent)}
       />
 
       {/* The seam, and only the seam. A rectangle per Pane drew a rule along
@@ -1740,6 +1873,9 @@ function PaneSurfaceView({
 /** How far a finger may travel and still be a tap rather than a drag, in points. */
 const TAP_SLOP = 10;
 
+/** How long a finger stays still to be a long press, as iOS counts it. */
+const LONG_PRESS_MS = 500;
+
 /** What the Jump to latest pill claims beyond its own edges, to reach 44pt. */
 const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
 
@@ -1770,6 +1906,7 @@ function MouseLayer({
   grid,
   cell,
   onTap,
+  onLongPress,
   onScroll,
   onSwipe,
 }: {
@@ -1778,6 +1915,8 @@ function MouseLayer({
   /** How big a cell is, or null before a Surface has said. See cellOf. */
   cell: Extent | null;
   onTap: (column: number, row: number) => void;
+  /** A finger held still: the start of a Selection, and no click. */
+  onLongPress: (press: SurfacePoint) => void;
   onScroll: (lines: number) => void;
   onSwipe: (direction: SwipeDirection) => void;
 }) {
@@ -1794,6 +1933,14 @@ function MouseLayer({
   const movedAt = useRef(0);
   /** The frame loop a flick is coasting on, so a new touch can stop it. */
   const coasting = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  /** Runs out when the finger has been still long enough to be a long press. */
+  const holding = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Whether this touch became a long press, so its release is not a tap. */
+  const held = useRef(false);
+  const stopHolding = useCallback(() => {
+    if (holding.current !== null) clearTimeout(holding.current);
+    holding.current = null;
+  }, []);
 
   /** Points of travel, banked until they make whole lines. */
   const spend = useCallback(
@@ -1853,6 +2000,7 @@ function MouseLayer({
   );
 
   useEffect(() => stopCoasting, [stopCoasting]);
+  useEffect(() => stopHolding, [stopHolding]);
 
   return (
     <View
@@ -1874,6 +2022,16 @@ function MouseLayer({
         track.current.clear();
         movedAt.current = Date.now();
         track.current.add(nativeEvent.locationY, movedAt.current);
+        // The application takes every touch here, so the long press that
+        // the Surface would see is timed here.
+        const press = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+        held.current = false;
+        stopHolding();
+        holding.current = setTimeout(() => {
+          holding.current = null;
+          held.current = true;
+          onLongPress(press);
+        }, LONG_PRESS_MS);
       }}
       onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
         const travelled = nativeEvent.locationY - previous.current;
@@ -1882,8 +2040,9 @@ function MouseLayer({
           const dx = nativeEvent.locationX - origin.current.x;
           const dy = nativeEvent.locationY - origin.current.y;
           if (Math.hypot(dx, dy) > TAP_SLOP) axis.current = panAxis(dx, dy);
+          if (axis.current !== null) stopHolding();
         }
-        if (axis.current === 'horizontal') return;
+        if (held.current || axis.current === 'horizontal') return;
 
         // The last moment of the drag rather than the whole of it: what a
         // flick is worth is how fast the finger was going when it left, not
@@ -1895,6 +2054,8 @@ function MouseLayer({
       }}
       onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
         const { width, height } = size.current;
+        stopHolding();
+        if (held.current) return;
         if (axis.current === 'horizontal') {
           const swipe = swipeOf(nativeEvent.locationX - origin.current.x);
           if (swipe) onSwipe(swipe);
@@ -1913,7 +2074,10 @@ function MouseLayer({
           cellOf(nativeEvent.locationY, cell?.height, height, grid.rows),
         );
       }}
-      onResponderTerminate={() => stopCoasting()}
+      onResponderTerminate={() => {
+        stopCoasting();
+        stopHolding();
+      }}
     />
   );
 }

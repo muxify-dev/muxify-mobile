@@ -264,6 +264,35 @@ describe('reading a Pane back', () => {
     expect(await client.capturePane('%9')).toEqual([]);
   });
 
+  it('reads a range for a Selection: the rows to paint, their text, and their lines', async () => {
+    const range = ['-S', '-1', '-E', '1'];
+    const { client } = fakeTmux({
+      [renderControlCommand(['display-message', '-p', '-t', '%1', '#{history_size}'])]: ['40'],
+      [renderControlCommand(['capture-pane', '-t', '%1', '-p', '-e', '-N', ...range])]: [
+        '\u001b[31mold\u001b[0m',
+        'a long ',
+        'line   ',
+      ],
+      [renderControlCommand(['capture-pane', '-t', '%1', '-p', '-J', ...range])]: ['old', 'a long line'],
+    });
+
+    const shot = await client.captureSelection('%1', -1, 1);
+
+    // Line 39 is the last of 40 lines of Scrollback: one above the screen.
+    expect(shot.top).toBe(39);
+    expect(shot.lines).toHaveLength(3);
+    expect(shot.rows(80)).toEqual([
+      { line: 39, text: 'old', wraps: false },
+      { line: 40, text: 'a long ', wraps: true },
+      { line: 41, text: 'line', wraps: false },
+    ]);
+  });
+
+  it('refuses a Selection when tmux does not answer for the Pane', async () => {
+    const { client } = fakeTmux({});
+    await expect(client.captureSelection('%9', 0, 23)).rejects.toThrow(/read the Pane text/);
+  });
+
   it('reads where the cursor is and what kind of screen the Pane is showing', async () => {
     const { client } = fakeTmux({
       [renderControlCommand([
