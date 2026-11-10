@@ -295,7 +295,8 @@ the view has a document behind its caret, without which a held delete key
 removes exactly one character; reporting the size of a cell with the grid,
 without which nothing outside the Surface can turn a touch into a cell; giving
 the one-finger drag to Muxify, locked to one axis when it begins, as a scroll
-or as a Pane Swipe; and two promises about its own readiness — nothing written to it is lost, and every
+or as a Pane Swipe; the Selection Layer, with Paste from the system menu and
+from ⌘V on a hardware keyboard; and two promises about its own readiness — nothing written to it is lost, and every
 surface it builds underneath reports its grid — without which a Pane could be
 left blank with no way to notice (see ADR 0009). Each hunk says why in place.
 
@@ -306,6 +307,33 @@ and not by the Pane: the difference is a quarter of a point a row, which is
 nothing at the top and a whole row by the bottom. See `cellOf`.
 _Avoid_: Terminal, emulator, view
 
+**Selection**:
+The iOS text selection on a Pane: a long press selects the word under the
+finger, and the handles, the loupe and the system menu with Copy and Paste are
+the system's own. It is how text leaves a Pane for another app. A Selection
+holds its Pane frozen: the Pane's output is dropped and its picture stays
+still until the Selection ends, and then the Pane is painted as it is now. A
+vertical drag still moves a frozen Pane through its Scrollback, and a handle
+held at the top or bottom edge does the same, so a Selection can be longer
+than the screen. The keyboard goes down for a Selection and comes back after
+it if it was up. A Selection ends on a tap outside it, after Copy or Paste, on a key
+from the Key Row, on a change of Pane, Window or Session, and when the Attach
+is lost. Copy gives the text as it was typed: rows that tmux wrapped are
+joined, and the spaces at the end of a row are dropped. A long press where
+there is no text selects nothing and offers Paste. In a Pane whose program
+listens for the mouse, the long press starts a Selection and sends no click.
+See ADR 0014.
+_Avoid_: copy mode (that is tmux's, and is not used), highlight, mark
+
+**Selection Layer**:
+The read-only text view inside the Surface that iOS draws a Selection for. It
+keeps no text between Selections. A long press asks Muxify for the rows on the
+Surface, Muxify reads them from tmux with the capture that paints them, and
+the Layer maps each row to the cells of the grid. Each row is known by its
+line counted from the first line of the Scrollback, so it keeps that number
+while output arrives. Part of the local patch to `expo-libghostty`.
+_Avoid_: overlay, text view
+
 **Pane Swipe**:
 A horizontal drag of one finger on the Surface. A swipe left goes to the next
 Pane of the Window and a swipe right to the previous one, in index order, and
@@ -315,7 +343,8 @@ slop: horizontal when it sets off more than one and a half times further
 sideways than up or down, and a swipe when the finger lifts 40 points or more
 from where it landed. Every other drag is vertical and moves the Scrollback,
 or is the wheel for a program that listens for the mouse. That program gets
-nothing from a horizontal drag. The system's back swipe is off on the Terminal
+nothing from a horizontal drag. While a Selection is open a horizontal drag
+is for its handles and changes no Pane. The system's back swipe is off on the Terminal
 Screen except at the left edge, because it is the same drag as a swipe right.
 _Avoid_: page, slide (that is the keyboard's), flick
 
@@ -388,8 +417,11 @@ bottom bar, modifiers
 **Shortcut**:
 What ⌘ and a letter do on the phone. ⌘c copies the active Pane's text, as Copy
 Pane text does. ⌘v pastes the clipboard into the active Pane and presses
-nothing after it: text goes in as it is, and an image goes up to the Host as
-the Composer sends an Attachment, with its path pasted. Text goes through a
+nothing after it, as Paste in a Selection's menu does. iOS asks "Allow Paste"
+for ⌘v each time, because the app reads the clipboard by itself there; Paste
+in the menu is the system's own, and iOS asks nothing for it. For both, text
+goes in as it is, and an image goes up to the Host as the Composer sends an
+Attachment, with its path pasted. Text goes through a
 tmux buffer with bracketed paste, so a program that asked for bracketed paste
 gets many lines as one piece and runs none. For text with a line break into a
 program that did not ask, the phone asks first, because that program runs

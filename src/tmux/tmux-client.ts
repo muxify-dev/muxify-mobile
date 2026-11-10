@@ -1,6 +1,7 @@
 import {
   capturePaneCommand,
   capturePaneTextCommand,
+  captureSelectionCommands,
   clearHistoryCommand,
   captureScrollbackCommand,
   capturePanesCommand,
@@ -22,6 +23,7 @@ import {
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
 import { paneNumber, parseWindowLayout, type PaneRect } from './layout';
+import { selectionRows, type SelectionRow } from './selection-rows';
 import { TmuxError } from './tmux-error';
 
 export { TmuxError };
@@ -113,6 +115,16 @@ export interface PaneState {
    * a bash with `enable-bracketed-paste off`. False where tmux cannot say.
    */
   bracketedPaste: boolean;
+}
+
+/** One range of a Pane, captured for a Selection. */
+export interface SelectionCapture {
+  /** The rows as `capture-pane -e -N` gave them, to paint. */
+  lines: Uint8Array[];
+  /** The line of the first row, counted from the first line of the Scrollback. */
+  top: number;
+  /** The same rows as text, cut to a Surface this many columns wide. */
+  rows(cols: number): SelectionRow[];
 }
 
 /** The Surface's cell grid, used to size the Client. */
@@ -363,6 +375,30 @@ export class TmuxClient {
   ): Promise<Uint8Array[]> {
     const reply = await this.runner.run(captureScrollbackCommand(paneId, startLine, endLine));
     return reply.ok ? reply.lines : [];
+  }
+
+  /**
+   * A range of a Pane for a Selection: the rows to paint, and their text.
+   *
+   * A failure is reported: the user pressed on this text to select it.
+   */
+  async captureSelection(
+    paneId: string,
+    startLine: number,
+    endLine: number,
+  ): Promise<SelectionCapture> {
+    const replies = await this.runner.runAll(captureSelectionCommands(paneId, startLine, endLine));
+    const [history, painted, joined] = replies;
+    const refused = replies.find((reply) => !reply.ok);
+    if (!history || !painted || !joined || refused) {
+      throw failure('read the Pane text', refused ?? { ok: false, lines: [], text: [] });
+    }
+    const top = countOf(history.text[0] ?? '') + Math.floor(startLine);
+    return {
+      lines: painted.lines,
+      top,
+      rows: (cols) => selectionRows(painted.text, joined.text, top, cols),
+    };
   }
 
   /**

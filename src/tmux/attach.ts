@@ -490,6 +490,7 @@ export function openAttach(options: AttachOptions): Attach {
         paneState: (id) => reading().paneState(id),
         capturePane: (id) => reading().capturePane(id),
         captureScrollback: (id, start, end) => reading().captureScrollback(id, start, end),
+        captureSelection: (id, start, end) => reading().captureSelection(id, start, end),
         // Input is what says the phone is the one in use, so it is what takes
         // the Window back from a laptop that resized it.
         sendKeys: (id, bytes) => {

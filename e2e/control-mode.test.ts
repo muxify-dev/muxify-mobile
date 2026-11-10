@@ -29,6 +29,7 @@ import { execFileSync, spawn, type ChildProcess } from 'child_process';
 
 import { openAttach, type Attach, type AttachPhase, type HostConnection } from '@/tmux/attach';
 import type { PaneSurface } from '@/tmux/pane-view';
+import type { SelectionRows } from '@/tmux/selection-rows';
 import type { Host, Records } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { ControlChannel, ControlChannelEvents, TmuxTransport } from '@/tmux/transport';
@@ -134,6 +135,7 @@ function localTransport(children: ChildProcess[]): TmuxTransport {
 /** A Surface that records what was painted on it, standing in for the library. */
 function recordingSurface() {
   const written: Uint8Array[] = [];
+  const selections: SelectionRows[] = [];
   let focused = false;
   const surface: PaneSurface = {
     write: (bytes) => written.push(bytes),
@@ -144,10 +146,13 @@ function recordingSurface() {
       focused = false;
     },
     isFocused: () => Promise.resolve(focused),
+    showSelection: (rows) => selections.push(rows),
+    endSelection: () => {},
   };
   return {
     surface,
     written,
+    selections,
     text: () => Buffer.concat(written.map((each) => Buffer.from(each))).toString('utf8'),
   };
 }
@@ -292,6 +297,46 @@ describe('the Attach, against a real tmux', () => {
     await wait(300);
     expect(tmux(['show-options', '-t', SESSION])).toBe(before);
   }, 40000);
+
+  it('gives a Selection the rows on the Surface, and holds the Pane still for it', async () => {
+    const { attach } = attachTo();
+    await reaches(attach, 'connected');
+    const paneId = attach.state().topology.activePane?.id as string;
+    const screen = recordingSurface();
+    attach.surfaceForPane(paneId, screen.surface);
+    attach.paneGridReported(paneId, GRID);
+    await wait(600);
+    const view = attach.view(paneId);
+
+    // Forty columns: AAAA, a space and 35 of B fill the first row, and tmux
+    // wraps the last ten onto the second.
+    view.type(new TextEncoder().encode(`clear; printf 'AAAA %s\\n' ${'B'.repeat(45)}; echo end\r`));
+    await wait(1200);
+
+    expect(view.beginSelection({ x: 1, y: 1 })).toBe(true);
+    await wait(600);
+    const shown = screen.selections.at(-1);
+    expect(shown?.rows.slice(0, 3).map((row) => [row.text, row.wraps])).toEqual([
+      [`AAAA ${'B'.repeat(35)}`, true],
+      ['B'.repeat(10), false],
+      ['end', false],
+    ]);
+    // The first row's line counts from the first line of the Scrollback.
+    const history = Number(tmux(['display-message', '-p', '-t', paneId, '#{history_size}']));
+    expect(shown?.top).toBe(history);
+    expect(shown?.rows[0].line).toBe(history);
+
+    // Frozen: what the Pane prints now is not painted until the Selection ends.
+    screen.written.length = 0;
+    tmux(['send-keys', '-t', paneId, 'echo WHILE_FROZEN', 'Enter']);
+    await wait(700);
+    expect(screen.text()).not.toContain('WHILE_FROZEN');
+    view.endSelection();
+    await wait(700);
+    expect(screen.text()).toContain('WHILE_FROZEN');
+
+    await attach.close();
+  }, 20000);
 
   it('re-sizes the Session it is switched into, and stamps it', async () => {
     const { attach, wrote } = attachTo();

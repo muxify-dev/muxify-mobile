@@ -5,8 +5,10 @@ import {
   OUTPUT_SETTLE_MS,
   type PaneReader,
   type PaneSurface,
+  type SurfacePoint,
   type ScrollPosition,
 } from './pane-view';
+import { selectionRows, type SelectionRows } from './selection-rows';
 import type { Grid, PaneState } from './tmux-client';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -42,6 +44,8 @@ function fakePane(state: PaneState = paneState()) {
   /** While set, every capture waits; `hold()` returns the way to let them go. */
   let holding = false;
   const waiting: (() => void)[] = [];
+  /** While set, a capture for a Selection is refused. */
+  let failing = false;
 
   const reader: PaneReader = {
     async paneState(paneId) {
@@ -56,6 +60,19 @@ function fakePane(state: PaneState = paneState()) {
     async captureScrollback(paneId, start, end) {
       asked.push(`scrollback ${paneId} ${start}..${end}`);
       return scrollback.map(bytes);
+    },
+    async captureSelection(paneId, start, end) {
+      asked.push(`selection ${paneId} ${start}..${end}`);
+      if (failing) throw new Error('tmux refused it');
+      // The Scrollback and then the screen, as one run of lines.
+      const all = [...scrollback, ...screen];
+      const text = all.slice(scrollback.length + start, scrollback.length + end + 1);
+      const top = scrollback.length + start;
+      return {
+        lines: text.map(bytes),
+        top,
+        rows: (cols) => selectionRows(text, text, top, cols),
+      };
     },
     async sendKeys(paneId, data) {
       asked.push(`keys ${paneId}`);
@@ -79,6 +96,9 @@ function fakePane(state: PaneState = paneState()) {
     set scrollback(next: string[]) {
       scrollback = next;
     },
+    set failing(next: boolean) {
+      failing = next;
+    },
     /** Makes captures wait; returns the function that lets them all go. */
     hold(): () => void {
       holding = true;
@@ -101,6 +121,8 @@ function fakePane(state: PaneState = paneState()) {
 function fakeSurface() {
   const written: Uint8Array[] = [];
   const keyboard: string[] = [];
+  /** What the Selection Layer was given, and each time it was closed. */
+  const selections: ({ rows: SelectionRows; press: SurfacePoint | null } | 'ended')[] = [];
   let focused = false;
 
   const surface: PaneSurface = {
@@ -114,11 +136,14 @@ function fakeSurface() {
       keyboard.push('blur');
     },
     isFocused: () => Promise.resolve(focused),
+    showSelection: (rows, press) => selections.push({ rows, press }),
+    endSelection: () => selections.push('ended'),
   };
 
   return {
     surface,
     written,
+    selections,
     keyboard,
     focused: () => focused,
     /** The keyboard moving to some other Surface, as far as this one can tell. */
@@ -1068,5 +1093,138 @@ describe('telling the Screen where the cursor is', () => {
     // apart, and one settled reading at the end. A chatty Pane costs three,
     // not twenty — and the settled one is the only one that saw the end.
     expect(host.asked.filter((each) => each.startsWith('state'))).toHaveLength(3);
+  });
+});
+
+describe('a Selection on a Pane', () => {
+  const PRESS = { x: 40, y: 12 };
+  const SMALL: Grid = { cols: 80, rows: 3 };
+
+  function shellWithHistory() {
+    const host = fakePane(paneState({ scrollbackLines: 4 }));
+    host.scrollback = ['old 1', 'old 2', 'old 3', 'old 4'];
+    host.screen = ['$ make', 'done', '$'];
+    return host;
+  }
+
+  it('does not freeze a Pane that has no Surface', () => {
+    const kit = viewOn(shellWithHistory());
+    expect(kit.view.beginSelection(PRESS)).toBe(false);
+  });
+
+  it('gives the Selection Layer the text of the rows it paints, with the press', async () => {
+    const host = shellWithHistory();
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    kit.written.length = 0;
+
+    expect(kit.view.beginSelection(PRESS)).toBe(true);
+    expect(kit.view.beginSelection(PRESS)).toBe(false);
+    await settle();
+
+    expect(shown(kit.written)).toContain('$ make\r\ndone\r\n$');
+    expect(kit.screen.selections).toEqual([
+      {
+        press: PRESS,
+        rows: {
+          top: 4,
+          rows: [
+            { line: 4, text: '$ make', wraps: false },
+            { line: 5, text: 'done', wraps: false },
+            { line: 6, text: '$', wraps: false },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('drops output while the Selection holds the Pane, and paints live again after it', async () => {
+    const host = shellWithHistory();
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    kit.view.beginSelection(PRESS);
+    await settle();
+    kit.written.length = 0;
+
+    kit.view.receive(bytes('new output'));
+    expect(shown(kit.written)).toBe('');
+
+    host.screen = ['done', '$', 'new output'];
+    kit.view.endSelection();
+    await settle();
+
+    expect(kit.screen.selections.at(-1)).toBe('ended');
+    expect(shown(kit.written)).toContain('new output');
+    kit.view.receive(bytes('more'));
+    expect(shown(kit.written)).toContain('more');
+  });
+
+  it('follows a drag into the Scrollback, and says which line is at the top', async () => {
+    const host = shellWithHistory();
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    kit.view.beginSelection(PRESS);
+    await settle();
+
+    kit.view.scroll(2, SMALL);
+    await settle();
+
+    const last = kit.screen.selections.at(-1);
+    expect(last).toMatchObject({ press: null, rows: { top: 2 } });
+    expect(last !== 'ended' && last?.rows.rows.map((row) => row.text)).toEqual([
+      'old 3',
+      'old 4',
+      '$ make',
+    ]);
+    expect(shown(kit.written)).toContain('old 3\r\nold 4\r\n$ make');
+  });
+
+  it('reads the lines between a far jump and the lines the Layer has', async () => {
+    const host = fakePane(paneState({ scrollbackLines: 9 }));
+    host.scrollback = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    host.screen = ['a', 'b', 'c'];
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    kit.view.beginSelection(PRESS);
+    await settle();
+
+    kit.view.scroll(9, SMALL);
+    await settle();
+
+    expect(host.asked).toContain('selection %0 -9..-1');
+    const last = kit.screen.selections.at(-1);
+    expect(last).toMatchObject({ rows: { top: 0 } });
+    expect(last !== 'ended' && last?.rows.rows).toHaveLength(9);
+    // Only the screenful at the new position is painted.
+    expect(shown(kit.written)).toContain('1\r\n2\r\n3<ESC>[0m');
+  });
+
+  it('sends a full-screen program nothing from a drag', async () => {
+    const host = fakePane(paneState({ alternate: true, wantsMouse: true }));
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    kit.view.beginSelection(PRESS);
+    await settle();
+
+    kit.view.scroll(10, SMALL);
+    await settle();
+
+    expect(host.sent).toEqual([]);
+    expect(kit.view.click(1, 1)).toBe(false);
+  });
+
+  it('ends the Selection and reports it when tmux refuses the text', async () => {
+    const host = shellWithHistory();
+    const kit = viewOn(host);
+    await paints(kit, SMALL);
+    host.failing = true;
+
+    kit.view.beginSelection(PRESS);
+    await settle();
+
+    expect(kit.screen.selections).toEqual(['ended']);
+    expect(kit.errors).toHaveLength(1);
+    kit.view.receive(bytes('live again'));
+    expect(shown(kit.written)).toContain('live again');
   });
 });

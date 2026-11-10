@@ -4,7 +4,8 @@ import { systemClock } from '@/lib/clock';
 import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
 
 import { asciiBytes, clampBack, paintScreen, scrollbackRange } from './pane-screen';
-import type { Grid, PaneState } from './tmux-client';
+import type { SelectionRows } from './selection-rows';
+import type { Grid, PaneState, SelectionCapture } from './tmux-client';
 
 /**
  * The slice of TmuxClient one Pane's view needs.
@@ -16,6 +17,7 @@ export interface PaneReader {
   paneState(paneId: string): Promise<PaneState | undefined>;
   capturePane(paneId: string): Promise<Uint8Array[]>;
   captureScrollback(paneId: string, startLine: number, endLine: number): Promise<Uint8Array[]>;
+  captureSelection(paneId: string, startLine: number, endLine: number): Promise<SelectionCapture>;
   sendKeys(paneId: string, bytes: Uint8Array): Promise<void>;
   sendKey(paneId: string, key: string): Promise<void>;
 }
@@ -44,6 +46,20 @@ export interface PaneSurface {
    * to be waited for.
    */
   isFocused(): Promise<boolean>;
+  /**
+   * Gives the Selection Layer the text of these rows, and says which line the
+   * Surface's first row is. `press` is where a long press landed: the Layer
+   * starts a Selection there, or offers Paste where there is no text.
+   */
+  showSelection(rows: SelectionRows, press: SurfacePoint | null): void;
+  /** Closes the Selection Layer's selection. */
+  endSelection(): void;
+}
+
+/** A place on the Surface, in points from its top left. */
+export interface SurfacePoint {
+  x: number;
+  y: number;
 }
 
 /** How far back through its Scrollback a Pane is being viewed. */
@@ -171,6 +187,22 @@ export interface PaneView {
    * the keyboard.
    */
   scrolledBack(): boolean;
+  /**
+   * A long press on the Surface: the Pane freezes and its text goes to the
+   * Selection Layer.
+   *
+   * Frozen means output is dropped, as it is in the Scrollback, and each paint
+   * comes from the capture that also gives the text. So the rows the Layer
+   * selects are the rows on the Surface. A drag still moves a frozen Pane
+   * through its Scrollback, and each new position gives the Layer its rows.
+   * See ADR 0014.
+   *
+   * Answers whether the Pane froze. False for a Pane with no painted Surface,
+   * and for one that a Selection holds already.
+   */
+  beginSelection(press: SurfacePoint): boolean;
+  /** The Selection is over: the Layer closes, and the Pane is live again. */
+  endSelection(): void;
   /** Nothing more is wanted from this view. Releases the Surface. */
   dispose(): void;
 }
@@ -310,6 +342,18 @@ export function createPaneView(
   /** Whether this Pane draws a cursor. False for a Pane nobody is typing in. */
   let cursorVisible = true;
 
+  /**
+   * The Selection that holds this Pane frozen, or null.
+   *
+   * `press` is the long press that has not reached the Selection Layer yet.
+   * `known` is the run of lines the Layer has the text of, and how long the
+   * Scrollback was when the last of them was read.
+   */
+  let selection: {
+    press: SurfacePoint | null;
+    known: { first: number; last: number; history: number } | null;
+  } | null = null;
+
   function report(error: unknown): void {
     if (!disposed) events.onError?.(error);
   }
@@ -405,10 +449,60 @@ export function createPaneView(
     });
   }
 
+  /**
+   * Paints a frozen Pane and gives the Selection Layer the text of the paint.
+   *
+   * The capture reaches as far as the lines the Layer already has, so a flick
+   * past a whole screen leaves no lines without text between two it can
+   * select.
+   */
+  async function repaintFrozen(held: NonNullable<typeof selection>): Promise<void> {
+    const mine = generation;
+    const view = scrollbackRange(back, rows);
+    const known = held.known;
+    const below = known ? known.last - known.history + 1 : view.start;
+    const above = known ? known.first - known.history - 1 : view.end;
+    const start = Math.min(view.start, below);
+    const end = Math.max(view.end, above);
+    let shot: SelectionCapture;
+    try {
+      shot = await reader.captureSelection(paneId, start, end);
+    } catch (error) {
+      if (selection === held) endSelection();
+      throw error;
+    }
+    if (disposed || mine !== generation || selection !== held) return;
+
+    const skipped = view.start - start;
+    write(
+      paintScreen({
+        lines: shot.lines.slice(skipped, skipped + view.end - view.start + 1),
+        alternate: state?.alternate ?? false,
+      }),
+    );
+    const captured = shot.rows(grid?.cols ?? state?.width ?? 80);
+    const last = shot.top + captured.length - 1;
+    held.known = {
+      first: Math.min(known?.first ?? shot.top, shot.top),
+      last: Math.max(known?.last ?? last, last),
+      history: shot.top - start,
+    };
+    const press = held.press;
+    held.press = null;
+    surface?.showSelection({ top: shot.top + skipped, rows: captured }, press);
+    say(`painted ${captured.length} lines for the Selection, ${back} back`);
+    announce();
+  }
+
   /** Paints whatever the Pane should be showing right now. */
   async function repaint(): Promise<void> {
     const mine = generation;
     if (surface === null) return;
+
+    if (selection) {
+      await repaintFrozen(selection);
+      return;
+    }
 
     if (back > 0) {
       const { start, end } = scrollbackRange(back, rows);
@@ -537,6 +631,14 @@ export function createPaneView(
     });
   }
 
+  function endSelection(): void {
+    if (!selection) return;
+    selection = null;
+    say('Selection ended');
+    surface?.endSelection();
+    schedule();
+  }
+
   function jumpToLatest(): void {
     if (back === 0) return;
     back = 0;
@@ -589,6 +691,8 @@ export function createPaneView(
       // is painted then; a grid that arrived before there was any Surface is
       // for the one about to arrive, and is kept.
       generation += 1;
+      // The Selection was on the Surface that is going.
+      selection = null;
       if (surface !== null) grid = null;
       surface = next;
       held = null;
@@ -682,6 +786,9 @@ export function createPaneView(
         held.push(bytes);
         return;
       }
+      // Dropped while a Selection holds the Pane: the rows on the Surface are
+      // the rows the Selection Layer has the text of, and tmux has the rest.
+      if (selection) return;
       // Output is the only sign that what the Pane is running may have
       // changed — starting `vim` or Claude Code turns mouse tracking on by
       // writing to its own screen, and no notification says so. Throttled to
@@ -697,7 +804,7 @@ export function createPaneView(
     },
 
     click(column: number, row: number): boolean {
-      if (disposed) return false;
+      if (disposed || selection) return false;
       // Only an application that asked for the mouse can do anything with a
       // click; sending one to a shell would paste a `[<0;…M` into the prompt.
       if (!state?.wantsMouse) return false;
@@ -717,6 +824,16 @@ export function createPaneView(
     jumpToLatest,
     scrolledBack: () => back > 0,
 
+    beginSelection(press: SurfacePoint): boolean {
+      if (disposed || selection || surface === null || grid === null) return false;
+      say(`Selection asked for at ${Math.round(press.x)},${Math.round(press.y)}`);
+      selection = { press, known: null };
+      schedule();
+      return true;
+    },
+
+    endSelection,
+
     scroll(lines: number, size: Grid): void {
       if (disposed || lines === 0) return;
 
@@ -726,6 +843,9 @@ export function createPaneView(
       refreshState();
 
       if (state?.alternate) {
+        // A frozen Pane sends its program nothing: the program would move a
+        // screen that the Surface no longer follows.
+        if (selection) return;
         if (state.wantsMouse) {
           // Back into notches, with the remainder carried rather than lost.
           wheelCarry += lines;
@@ -763,6 +883,7 @@ export function createPaneView(
       clock.cancel(settleTimer);
       settleTimer = null;
       surface = null;
+      selection = null;
       outgoing = [];
       held = null;
     },
