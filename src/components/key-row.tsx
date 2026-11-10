@@ -1,6 +1,7 @@
+import { MaskedView } from '@expo/ui/community/masked-view';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Keyboard,
   Pressable,
@@ -9,7 +10,6 @@ import {
   Text,
   View,
   type GestureResponderEvent,
-  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
@@ -24,6 +24,12 @@ import {
   type NamedKey,
   type PairKey,
 } from '@/constants/row-keys';
+import {
+  REPEAT_DELAY,
+  REPEAT_INTERVAL,
+  stickDirection,
+  type ArrowDirection,
+} from '@/lib/arrow-stick';
 import type { Modifier, Modifiers } from '@/lib/modifier-keys';
 
 export interface KeyRowProps {
@@ -31,7 +37,7 @@ export interface KeyRowProps {
   armed: Modifiers;
   /** A modifier tapped: on if it was off, off if it was on. */
   onArm: (modifier: Modifier) => void;
-  /** Escape, tab or an arrow. */
+  /** Escape, tab or an arrow, once for each repeat of a held arrow. */
   onKey: (key: NamedKey) => void;
   /** One symbol of a pair: the top one on a tap, the bottom one on a drag down. */
   onSymbol: (symbol: string) => void;
@@ -48,12 +54,12 @@ export interface KeyRowProps {
 
 /**
  * The glass row pinned to the bottom of the Terminal Screen, riding the
- * keyboard: the keys a phone keyboard lacks, in three capsules.
+ * keyboard: the keys a phone keyboard lacks, in one capsule with three
+ * sections.
  *
- * All of it is React Native over `GlassView`. Each group has a sticky key
- * that must draw as *held*, and the middle scrolls sideways inside a capsule;
- * neither has a SwiftUI equivalent reachable through `@expo/ui`. One kind of
- * view also means the three capsules paint where they report, on one line.
+ * All of it is React Native over `GlassView`. Each fixed section has a sticky
+ * key that must draw as *held*, and the middle scrolls sideways inside the
+ * capsule; neither has a SwiftUI equivalent reachable through `@expo/ui`.
  */
 export function KeyRow(props: KeyRowProps) {
   const { armed, onArm, onKey, onSymbol, keysDisabled, palette } = props;
@@ -84,21 +90,6 @@ export function KeyRow(props: KeyRowProps) {
       </FixedKey>
     );
 
-  const arrow = (each: NamedKey, style: ViewStyle) => (
-    <Pressable
-      disabled={keysDisabled}
-      accessibilityRole="button"
-      accessibilityLabel={each.spoken}
-      onPress={() => onKey(each)}
-      style={[styles.arrow, style]}>
-      <Text
-        allowFontScaling={false}
-        style={[styles.arrowLabel, { color: palette.toolbarTint }, keysDisabled ? styles.dim : null]}>
-        {each.label}
-      </Text>
-    </Pressable>
-  );
-
   return (
     // Moved in one layout step, and deliberately not smoothed. Both ways of
     // smoothing it were tried and measured at 60fps against the painted
@@ -108,17 +99,12 @@ export function KeyRow(props: KeyRowProps) {
     <View
       style={[styles.row, { paddingBottom: clearance }, { marginBottom: lift }]}
       pointerEvents="box-none">
-      <Capsule>{LEFT_KEYS.map(fixedKey)}</Capsule>
-      <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
       <Capsule>
-        <View style={styles.arrows}>
-          {arrow(ARROW_KEYS.up, styles.arrowUp)}
-          <View style={styles.arrowsBottom}>
-            {arrow(ARROW_KEYS.left, styles.arrowBelow)}
-            {arrow(ARROW_KEYS.down, styles.arrowBelow)}
-            {arrow(ARROW_KEYS.right, styles.arrowBelow)}
-          </View>
-        </View>
+        {LEFT_KEYS.map(fixedKey)}
+        <Divider palette={palette} />
+        <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
+        <Divider palette={palette} />
+        <ArrowStick disabled={keysDisabled} palette={palette} onKey={onKey} onBubble={setBubble} />
         <FixedKey
           label="Panes"
           disabled={props.panesDisabled}
@@ -155,23 +141,27 @@ export function KeyRow(props: KeyRowProps) {
   );
 }
 
-/** The symbol a pair key will type on release, and where its key is across the row. */
+/** What a pair key or the arrow key will send, and where its key is across the row. */
 interface Bubble {
   symbol: string;
   center: number;
 }
 
-function Capsule({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+function Capsule({ children }: { children: ReactNode }) {
   // Some iOS 26 betas ship without the underlying effect class and crash on
   // use, so probe the runtime API rather than the design-mode flag. A
   // GlassView on such a runtime renders nothing at all, hence the plain view.
   return isGlassEffectAPIAvailable() ? (
-    <GlassView style={[styles.capsule, style]} glassEffectStyle="regular" isInteractive>
+    <GlassView style={styles.capsule} glassEffectStyle="regular" isInteractive>
       {children}
     </GlassView>
   ) : (
-    <View style={[styles.capsule, styles.plainCapsule, style]}>{children}</View>
+    <View style={[styles.capsule, styles.plainCapsule]}>{children}</View>
   );
+}
+
+function Divider({ palette }: { palette: Appearance }) {
+  return <View style={[styles.divider, { backgroundColor: palette.secondaryLabel }]} />;
 }
 
 function FixedKey({
@@ -217,11 +207,15 @@ function FixedKey({
 }
 
 /**
- * The middle capsule: the pairs, scrolling sideways.
+ * The middle section: the pairs, scrolling sideways.
  *
- * It takes the width the fixed groups leave and sizes the pairs from it, so
+ * It takes the width the fixed sections leave and sizes the pairs from it, so
  * that a whole number of them fit with the same gap at each end. A fixed pair
  * width leaves a remainder, which shows as a sliver of the next key.
+ *
+ * Each end fades out while there are more pairs past it. The fade is a mask
+ * rather than a gradient painted over the pairs, because what is behind them
+ * is glass, and no one colour matches it.
  */
 function PairStrip({
   disabled,
@@ -237,13 +231,37 @@ function PairStrip({
   const [width, setWidth] = useState(0);
   const visible = Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH));
   const pairWidth = width > 0 ? (width - EDGE * 2) / visible : 0;
+  const [more, setMore] = useState<ScrollEdges>({ before: false, after: false });
+  const extent = useRef<ScrollExtent>({ offset: 0, viewport: 0, content: 0 });
+
+  const measure = (change: Partial<ScrollExtent>) => {
+    const { offset, viewport, content } = Object.assign(extent.current, change);
+    const next = { before: offset > 1, after: offset + viewport < content - 1 };
+    setMore((previous) =>
+      previous.before === next.before && previous.after === next.after ? previous : next,
+    );
+  };
 
   return (
-    <Capsule style={styles.strip}>
+    <MaskedView
+      style={styles.strip}
+      maskElement={
+        <View style={styles.fadeMask}>
+          <View style={more.before ? styles.fadeIn : styles.fadeNone} />
+          <View style={styles.opaque} />
+          <View style={more.after ? styles.fadeOut : styles.fadeNone} />
+        </View>
+      }>
       <ScrollView
         horizontal
         style={styles.pairsScroll}
-        onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}
+        onLayout={({ nativeEvent }) => {
+          setWidth(nativeEvent.layout.width);
+          measure({ viewport: nativeEvent.layout.width });
+        }}
+        onContentSizeChange={(content) => measure({ content })}
+        onScroll={({ nativeEvent }) => measure({ offset: nativeEvent.contentOffset.x })}
+        scrollEventThrottle={16}
         showsHorizontalScrollIndicator={false}
         // A key half off the edge is a key nobody can read, and the natural
         // resting place of a sideways scroll is on a boundary between them.
@@ -264,8 +282,21 @@ function PairStrip({
           />
         ))}
       </ScrollView>
-    </Capsule>
+    </MaskedView>
   );
+}
+
+/** Whether there is more of a scroll view past each of its ends. */
+interface ScrollEdges {
+  before: boolean;
+  after: boolean;
+}
+
+/** Where a horizontal scroll view is, in points: what it shows of what it holds. */
+interface ScrollExtent {
+  offset: number;
+  viewport: number;
+  content: number;
 }
 
 /**
@@ -346,6 +377,147 @@ function PairKeyView({
 }
 
 /**
+ * The arrow key: one key for the four arrows, like a joystick.
+ *
+ * A touch sends nothing. A drag past the dead zone sends the arrow it points
+ * at, with the bubble over the key showing which. Held, the arrow repeats
+ * until the finger lifts, and moving the finger to another side changes the
+ * arrow without lifting.
+ */
+function ArrowStick({
+  disabled,
+  palette,
+  onKey,
+  onBubble,
+}: {
+  disabled: boolean;
+  palette: Appearance;
+  onKey: (key: NamedKey) => void;
+  onBubble: (bubble: Bubble | null) => void;
+}) {
+  const stick = useRef<StickState>({ phase: 'idle' });
+  // A repeat must send with the modifiers armed *now*: the first arrow spends
+  // them, and the `onKey` of the render it started in would send them again.
+  const latestOnKey = useRef(onKey);
+  useEffect(() => {
+    latestOnKey.current = onKey;
+  });
+
+  const release = useCallback(() => {
+    const current = stick.current;
+    if (current.phase === 'sending') clearTimeout(current.timer);
+    stick.current = { phase: 'idle' };
+    onBubble(null);
+  }, [onBubble]);
+
+  useEffect(() => {
+    if (disabled) release();
+  }, [disabled, release]);
+  useEffect(
+    () => () => {
+      const current = stick.current;
+      if (current.phase === 'sending') clearTimeout(current.timer);
+    },
+    [],
+  );
+
+  const repeatAfter = (delay: number): ReturnType<typeof setTimeout> =>
+    setTimeout(() => {
+      const current = stick.current;
+      if (current.phase !== 'sending') return;
+      latestOnKey.current(ARROW_KEYS[current.direction]);
+      stick.current = { ...current, timer: repeatAfter(REPEAT_INTERVAL) };
+    }, delay);
+
+  const begin = ({ nativeEvent }: GestureResponderEvent) => {
+    stick.current = {
+      phase: 'armed',
+      touch: {
+        startX: nativeEvent.pageX,
+        startY: nativeEvent.pageY,
+        center: nativeEvent.pageX - nativeEvent.locationX + KEY_WIDTH / 2,
+      },
+    };
+  };
+  const move = ({ nativeEvent }: GestureResponderEvent) => {
+    const current = stick.current;
+    if (current.phase === 'idle') return;
+    const { touch } = current;
+    const direction = stickDirection(
+      nativeEvent.pageX - touch.startX,
+      nativeEvent.pageY - touch.startY,
+    );
+    if (direction === null) return;
+    if (current.phase === 'sending') {
+      if (current.direction === direction) return;
+      clearTimeout(current.timer);
+    }
+    const key = ARROW_KEYS[direction];
+    latestOnKey.current(key);
+    onBubble({ symbol: key.label, center: touch.center });
+    stick.current = { phase: 'sending', touch, direction, timer: repeatAfter(REPEAT_DELAY) };
+  };
+
+  return (
+    <View
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel="arrows"
+      accessibilityState={{ disabled }}
+      // VoiceOver has no drag, so each arrow is an action of its own.
+      accessibilityActions={STICK_ACTIONS}
+      onAccessibilityAction={({ nativeEvent }) => {
+        const action = STICK_ACTIONS.find((each) => each.name === nativeEvent.actionName);
+        if (action && !disabled) onKey(ARROW_KEYS[action.name]);
+      }}
+      onStartShouldSetResponder={() => !disabled}
+      onResponderTerminationRequest={() => false}
+      onResponderGrant={begin}
+      onResponderMove={move}
+      onResponderRelease={release}
+      onResponderTerminate={release}
+      style={[styles.key, disabled ? styles.dim : null]}>
+      {/* Not a touch target, so `locationX` is measured from the key. */}
+      <View pointerEvents="none">
+        <SymbolView
+          name="arrow.up.and.down.and.arrow.left.and.right"
+          size={18}
+          tintColor={palette.toolbarTint}
+        />
+      </View>
+    </View>
+  );
+}
+
+/** Where a touch on the arrow key landed, and the key's centre across the row. */
+interface StickTouch {
+  startX: number;
+  startY: number;
+  center: number;
+}
+
+/**
+ * The arrow key's touch: none, one still inside the dead zone, or one sending
+ * an arrow with the timer for its next repeat.
+ */
+type StickState =
+  | { phase: 'idle' }
+  | { phase: 'armed'; touch: StickTouch }
+  | {
+      phase: 'sending';
+      touch: StickTouch;
+      direction: ArrowDirection;
+      timer: ReturnType<typeof setTimeout>;
+    };
+
+const STICK_ACTIONS = [
+  { name: 'up', label: 'Up' },
+  { name: 'down', label: 'Down' },
+  { name: 'left', label: 'Left' },
+  { name: 'right', label: 'Right' },
+] satisfies { name: ArrowDirection; label: string }[];
+
+/**
  * How far the keyboard has pushed the row up, in points.
  *
  * The keyboard is the only thing that moves it. iOS reports an input
@@ -387,14 +559,14 @@ const KEY_HEIGHT = 44;
 /**
  * How wide a fixed key is.
  *
- * Sized from the middle: the pairs get what the fixed groups leave, and two
- * whole pairs must fit on a 393 pt phone. Eight and a half of these, with the
- * capsules' padding, come to 271 pt.
+ * Sized from the middle: the pairs get what the fixed sections leave. Eight
+ * of these, the dividers and the capsule's padding come to 266 pt, which
+ * leaves three whole pairs on a 393 pt phone.
  */
 const KEY_WIDTH = 30;
 
-/** All four arrows, in the width of one and a half keys. */
-const ARROWS_WIDTH = KEY_WIDTH * 1.5;
+/** How far each end of the pairs fades out while there are more past it. */
+const FADE = 32;
 
 /** The disc behind a held modifier. */
 const DISC = 30;
@@ -402,7 +574,7 @@ const DISC = 30;
 /** The narrowest a pair may be before the strip shows one fewer of them. */
 const PAIR_MIN_WIDTH = 32;
 
-/** The gap at each end of a capsule. */
+/** The gap at each end of the capsule, and of the pairs. */
 const EDGE = 4;
 
 /** How far down a touch on a pair goes before it means the bottom symbol. */
@@ -414,13 +586,13 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 6,
     paddingHorizontal: 8,
     // Clearance above the capsules, so that glass does not sit on the
     // Surface's last row.
     paddingTop: 10,
   },
   capsule: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     height: CAPSULE_HEIGHT,
@@ -431,12 +603,36 @@ const styles = StyleSheet.create({
   plainCapsule: {
     backgroundColor: '#242838',
   },
+  // The scroll view takes the capsule's whole height, so a touch anywhere in
+  // the middle section scrolls it.
   strip: {
     flex: 1,
-    paddingHorizontal: 0,
-    // The scroll view takes the capsule's whole height, so a touch anywhere
-    // in the capsule scrolls it.
-    alignItems: 'stretch',
+    alignSelf: 'stretch',
+  },
+  divider: {
+    width: 1,
+    height: 22,
+    marginHorizontal: 4,
+  },
+  fadeMask: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  opaque: {
+    flex: 1,
+    backgroundColor: 'black',
+  },
+  fadeNone: {
+    width: FADE,
+    backgroundColor: 'black',
+  },
+  fadeIn: {
+    width: FADE,
+    experimental_backgroundImage: 'linear-gradient(to right, transparent, black)',
+  },
+  fadeOut: {
+    width: FADE,
+    experimental_backgroundImage: 'linear-gradient(to right, black, transparent)',
   },
   key: {
     width: KEY_WIDTH,
@@ -454,28 +650,6 @@ const styles = StyleSheet.create({
     height: DISC,
     borderRadius: DISC / 2,
     opacity: 0.25,
-  },
-  arrows: {
-    width: ARROWS_WIDTH,
-    height: KEY_HEIGHT,
-  },
-  arrowsBottom: {
-    flexDirection: 'row',
-  },
-  arrow: {
-    height: KEY_HEIGHT / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Up has the top half to itself, so its target is the cluster's whole width.
-  arrowUp: {
-    width: ARROWS_WIDTH,
-  },
-  arrowBelow: {
-    width: ARROWS_WIDTH / 3,
-  },
-  arrowLabel: {
-    fontSize: 10,
   },
   pairsScroll: {
     flex: 1,

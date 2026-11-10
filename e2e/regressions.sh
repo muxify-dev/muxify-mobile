@@ -119,7 +119,7 @@ type_into_pane() { on_host "tmux send-keys -t '$SESSION:' -l '$1'"; }
 typed_line() { on_host "tmux capture-pane -t '$SESSION' -p" | grep -v '^$' | tail -1; }
 
 # The lowest point in the Pane, which is just above the Key Row. The row's own
-# padding is what stands between the two, so the capsule of the pairs locates it.
+# padding is what stands between the two, so the scrolling pairs locate it.
 pane_bottom() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
