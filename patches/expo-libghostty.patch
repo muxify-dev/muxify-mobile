@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8272557946d4d76d2f0804c9494316b59800c75d 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7e08c0b08 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -34,7 +34,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8272557946d4d76d2f0804c9494316b5
 +    showSelection(rows: TerminalSelectionRow[], top: number, press: TerminalPoint | null): Promise<void>;
 +    /** Close the selection and let its rows go. */
 +    endSelection(): Promise<void>;
-+};
+ };
 +/** One row of terminal text for the Selection Layer. */
 +export type TerminalSelectionRow = {
 +    /** The caller's number for the row. Rows are told apart and ordered by it. */
@@ -47,7 +47,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8272557946d4d76d2f0804c9494316b5
 +    cells?: number[];
 +    /** Whether the row runs on into the next one, so a copy joins the two. */
 +    wraps: boolean;
- };
++};
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +/** What the user chose to paste: text, or an image saved to a file. */
@@ -55,7 +55,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8272557946d4d76d2f0804c9494316b5
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +90,60 @@ export type TerminalViewProps = {
+@@ -52,10 +90,72 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -78,13 +78,25 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8272557946d4d76d2f0804c9494316b5
 +    }) => void;
 +    /**
 +     * A horizontal swipe from the touch gesture, sent once when the finger
-+     * lifts. Only sent when `ownsScrollGesture` is set. The gesture is locked
-+     * to one axis when it begins, so a swipe never scrolls and a scroll is
-+     * never a swipe. `direction` is the way the finger moved.
++     * lifts past a quarter of the view's width, or on a flick. Only sent when
++     * `ownsScrollGesture` is set. The gesture is locked to one axis when it
++     * begins, so a swipe never scrolls and a scroll is never a swipe.
++     * `direction` is the way the finger moved.
 +     */
 +    onSwipe?: (event: {
 +        nativeEvent: { direction: 'left' | 'right' };
 +    }) => void;
++    /**
++     * A horizontal drag in progress: how far the finger is from where the drag
++     * began, in points and signed as the finger moved, and how wide the view
++     * is. The view ticks by itself each time the drag crosses the point where
++     * lifting the finger would be a swipe.
++     */
++    onSwipeProgress?: (event: {
++        nativeEvent: { translation: number; width: number };
++    }) => void;
++    /** A horizontal drag ended and was no swipe. */
++    onSwipeCancel?: (event: { nativeEvent: Record<string, never> }) => void;
 +    /**
 +     * Take the touch scroll gesture for the app instead of letting ghostty
 +     * scroll its own buffer. Set this when the history belongs to something
@@ -132,23 +144,82 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..d47f7712a28552327ea59b1c96ccad1f
          };
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
+diff --git a/build/index.d.ts b/build/index.d.ts
+index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..6192f3dd6437031f0364930898d16ca93bf7d16a 100644
+--- a/build/index.d.ts
++++ b/build/index.d.ts
+@@ -1,3 +1,4 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
+ export * from './ExpoLibghostty.types';
++export { swipeTick } from './swipeTick';
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/build/index.js b/build/index.js
+index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..7da4f92e26bf07f1407b7e3626befbf9e6d99c4e 100644
+--- a/build/index.js
++++ b/build/index.js
+@@ -1,3 +1,4 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
+ export * from './ExpoLibghostty.types';
++export { swipeTick } from './swipeTick';
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/build/swipeTick.d.ts b/build/swipeTick.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0326a71ff927b5c4f3cb99266d68693670933b5
+--- /dev/null
++++ b/build/swipeTick.d.ts
+@@ -0,0 +1,6 @@
++/**
++ * The light tick a swipe gives at the point where lifting the finger would
++ * make it one. The terminal view ticks for its own gesture. This is for a
++ * layer of the app that takes the finger first. iOS only.
++ */
++export declare function swipeTick(): void;
+diff --git a/build/swipeTick.js b/build/swipeTick.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3dc7edbefe
+--- /dev/null
++++ b/build/swipeTick.js
+@@ -0,0 +1,10 @@
++import { requireOptionalNativeModule } from 'expo';
++const native = requireOptionalNativeModule('ExpoLibghostty');
++/**
++ * The light tick a swipe gives at the point where lifting the finger would
++ * make it one. The terminal view ticks for its own gesture. This is for a
++ * layer of the app that takes the finger first. iOS only.
++ */
++export function swipeTick() {
++    void native?.swipeTick?.();
++}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..4f73655bd1022c5909aa1fb975d8afb3f029c697 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54086fec9f 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -5,7 +5,10 @@ public class ExpoLibghosttyModule: Module {
+@@ -1,11 +1,21 @@
+ import ExpoModulesCore
++import GhosttyTerminal
+ 
+ public class ExpoLibghosttyModule: Module {
+   public func definition() -> ModuleDefinition {
      Name("ExpoLibghostty")
  
++    // The tick of a swipe at its commit point, for a layer of the app that
++    // takes the finger before the terminal does.
++    AsyncFunction("swipeTick") {
++      MainActor.assumeIsolated { TerminalSwipeFeedback.tick() }
++    }.runOnQueue(.main)
++
      View(ExpoLibghosttyView.self) {
 -      Events("onInput", "onResize")
 +      Events(
-+        "onInput", "onResize", "onScroll", "onSwipe",
++        "onInput", "onResize", "onScroll", "onSwipe", "onSwipeProgress", "onSwipeCancel",
 +        "onSelectionPress", "onSelectionEnd", "onSelectionEdge", "onPaste"
 +      )
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +39,44 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +46,44 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -193,7 +264,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..4f73655bd1022c5909aa1fb975d8afb3
      }
    }
  }
-@@ -46,6 +87,24 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +94,24 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -219,7 +290,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..4f73655bd1022c5909aa1fb975d8afb3
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b92ea113aa543d27e9b5b246fc8d86b11330e3a5 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09cd4e85c21 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,53 @@ import GhosttyTerminal
@@ -277,19 +348,21 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b92ea113aa543d27e9b5b246fc8d86b1
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -44,6 +87,39 @@ class ExpoLibghosttyView: ExpoView {
+@@ -44,6 +87,50 @@ class ExpoLibghosttyView: ExpoView {
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
 +  let onScroll = EventDispatcher()
 +  let onSwipe = EventDispatcher()
++  let onSwipeProgress = EventDispatcher()
++  let onSwipeCancel = EventDispatcher()
 +  let onSelectionPress = EventDispatcher()
 +  let onSelectionEnd = EventDispatcher()
 +  let onSelectionEdge = EventDispatcher()
 +  let onPaste = EventDispatcher()
 +
 +  /// Take the one-finger pan for this view: a vertical pan as a scroll, in
-+  /// points, and a horizontal pan as one swipe.
++  /// points, and a horizontal pan as a swipe that says how far it has gone.
 +  ///
 +  /// Off by default, so a view that says nothing keeps ghostty's own
 +  /// behaviour. A terminal showing a remote multiplexer wants it on: the
@@ -310,14 +383,23 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b92ea113aa543d27e9b5b246fc8d86b1
 +        : nil
 +      terminalView.onSwipe =
 +        scrollGestureOwnedByJS
-+        ? { [weak self] direction in self?.onSwipe(["direction": direction.rawValue]) }
++        ? { [weak self] event in
++          switch event {
++          case .progress(let translation, let width):
++            self?.onSwipeProgress(["translation": Double(translation), "width": Double(width)])
++          case .swipe(let direction):
++            self?.onSwipe(["direction": direction.rawValue])
++          case .cancel:
++            self?.onSwipeCancel([:])
++          }
++        }
 +        : nil
 +    #endif
 +  }
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +132,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +143,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -339,7 +421,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b92ea113aa543d27e9b5b246fc8d86b1
        }
      )
      self.session = session
-@@ -66,21 +153,239 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +164,239 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -1375,7 +1457,7 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +  func deleteBackward() {}
 +}
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
-index 3f3eeb202351f474526690dc27937df833bdd7e3..b035c5ac57d39a2350d21aa8d13ee56da8895e72 100644
+index 3f3eeb202351f474526690dc27937df833bdd7e3..eb3cce62bcda6e8c6527f991846e949d906445e0 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 @@ -22,11 +22,22 @@
@@ -1505,28 +1587,49 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..b035c5ac57d39a2350d21aa8d13ee56d
  
              case .ended:
                  guard activePointerButton == nil else { return }
-@@ -557,6 +605,30 @@
+@@ -557,6 +605,51 @@
              }
          }
  
 +        /// A pan locked to the horizontal axis: it scrolls nothing and throws
-+        /// nothing, and is one swipe if the finger lifts far enough away.
++        /// nothing. It reports how far the finger is while it moves, ticks
++        /// each time that crosses the commit point, and is one swipe if the
++        /// finger lifts past the point or on a flick the way the pan went.
 +        func handleHorizontalPan(_ gesture: UIPanGestureRecognizer) {
++            let travel = gesture.translation(in: self).x
++            let pastCommit = abs(travel) >= bounds.width * Self.swipeCommitFraction
 +            switch gesture.state {
 +            case .began:
 +                #if !targetEnvironment(macCatalyst)
 +                    touchDidScrollDuringCurrentTouch = true
 +                #endif
 +                stopMomentumScrolling()
++                swipePastCommit = false
++                TerminalSwipeFeedback.prepare()
++
++            case .changed:
++                if pastCommit != swipePastCommit {
++                    swipePastCommit = pastCommit
++                    TerminalSwipeFeedback.tick()
++                }
++                onSwipe?(.progress(translation: travel, width: bounds.width))
 +
 +            case .ended:
-+                let travel = gesture.translation(in: self).x
++                let velocity = gesture.velocity(in: self).x
 +                TerminalDebugLog.log(
 +                    .input,
-+                    "horizontal pan ended travel=\(String(format: "%.2f", travel))"
++                    "horizontal pan ended travel=\(String(format: "%.2f", travel)) velocity=\(String(format: "%.2f", velocity))"
 +                )
-+                guard abs(travel) >= Self.swipeDistance else { return }
-+                onSwipe?(travel < 0 ? .left : .right)
++                let flick =
++                    abs(velocity) > Self.swipeFlickVelocity && (velocity < 0) == (travel < 0)
++                guard travel != 0, pastCommit || flick else {
++                    onSwipe?(.cancel)
++                    return
++                }
++                onSwipe?(.swipe(travel < 0 ? .left : .right))
++
++            case .cancelled, .failed:
++                onSwipe?(.cancel)
 +
 +            default:
 +                break
@@ -1536,7 +1639,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..b035c5ac57d39a2350d21aa8d13ee56d
          func startMomentumScrolling(velocity: CGPoint) {
              guard abs(velocity.x) > 50 || abs(velocity.y) > 50 else { return }
  
-@@ -566,8 +638,10 @@
+@@ -566,8 +659,10 @@
                  "momentum start velocity=\(String(format: "%.2f", velocity.x))x\(String(format: "%.2f", velocity.y))"
              )
  
@@ -1549,7 +1652,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..b035c5ac57d39a2350d21aa8d13ee56d
  
              let link = CADisplayLink(
                  target: self,
-@@ -597,12 +671,16 @@
+@@ -597,12 +692,16 @@
                  "momentum frame velocity=\(String(format: "%.2f", momentumVelocity.x))x\(String(format: "%.2f", momentumVelocity.y)) delta=\(String(format: "%.2f", deltaX))x\(String(format: "%.2f", deltaY))"
              )
  
@@ -1572,7 +1675,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..b035c5ac57d39a2350d21aa8d13ee56d
          }
  
          func stopMomentumScrolling(sendTerminalEndEvent: Bool = true) {
-@@ -631,6 +709,9 @@
+@@ -631,6 +730,9 @@
              if gestureRecognizer is UILongPressGestureRecognizer {
                  return (delegate as? any TerminalSurfaceTextSelectionRequestDelegate) != nil
              }
@@ -1736,17 +1839,50 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d9854c98b76 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..3bc8a423639810872de1d253930ec82796cf2b2f 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-@@ -9,6 +9,18 @@
+@@ -7,8 +7,51 @@
+ 
+ #if canImport(UIKit)
      import GhosttyKit
++    import os
      import UIKit
  
 +    /// Which way the finger moved in a horizontal pan.
 +    public enum TerminalSwipeDirection: String {
 +        case left
 +        case right
++    }
++
++    /// What a horizontal pan says while it lasts and when it ends.
++    public enum TerminalSwipeEvent {
++        /// The finger is `translation` points from where the pan began, on
++        /// a view `width` points wide.
++        case progress(translation: CGFloat, width: CGFloat)
++        /// The finger lifted on a swipe.
++        case swipe(TerminalSwipeDirection)
++        /// The finger lifted short of a swipe, or the system took the pan.
++        case cancel
++    }
++
++    /// The light tick a horizontal pan gives when it crosses the commit
++    /// point, either way.
++    @MainActor
++    public enum TerminalSwipeFeedback {
++        private static let generator = UISelectionFeedbackGenerator()
++        private static let log = Logger(subsystem: "GhosttyTerminal", category: "swipe")
++
++        /// Wakes the Taptic Engine, so that the first tick is not late.
++        public static func prepare() {
++            generator.prepare()
++        }
++
++        public static func tick() {
++            generator.selectionChanged()
++            generator.prepare()
++            log.debug("swipe tick")
++        }
 +    }
 +
 +    /// What a one-finger pan is for, decided once when it begins.
@@ -1758,7 +1894,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d98
      @MainActor
      open class UITerminalView: UIView {
          let core = TerminalSurfaceCoordinator()
-@@ -29,6 +41,63 @@
+@@ -29,6 +72,69 @@
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
          var hardwareKeyHandled = false
          let touchScrollMultiplier: CGFloat = 3.0
@@ -1775,13 +1911,13 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d98
 +        /// gesture, not the wheel event it would become.
 +        open var onScrollDelta: ((CGFloat) -> Void)?
 +
-+        /// Installed by the host app to take a horizontal pan as one swipe.
++        /// Installed by the host app to take a horizontal pan as a swipe.
 +        ///
 +        /// The pan is locked to one axis when it begins. A vertical pan stays
 +        /// the scroll, and a horizontal pan scrolls nothing: it is reported
-+        /// here once, when the finger lifts, if it went far enough. Without
-+        /// this, every pan is a scroll, as before.
-+        open var onSwipe: ((TerminalSwipeDirection) -> Void)?
++        /// here as it moves, and once more when the finger lifts, as a swipe
++        /// or as none. Without this, every pan is a scroll, as before.
++        open var onSwipe: ((TerminalSwipeEvent) -> Void)?
 +
 +        /// The one-finger pan that scrolls, kept so that
 +        /// `gestureRecognizerShouldBegin` can tell it from the other pans.
@@ -1795,11 +1931,17 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d98
 +        /// diagonal drag stays a scroll.
 +        static let horizontalPanRatio: CGFloat = 1.5
 +
-+        /// How far a horizontal pan must travel, in points, to be a swipe.
-+        /// That is 40 points from where the finger landed: the pan counts
-+        /// its translation from the end of UIKit's tap slop, 10 to 11 points
-+        /// later.
-+        static let swipeDistance: CGFloat = 30
++        /// The part of the view's width a horizontal pan must cross to be
++        /// a swipe: the commit point. The host app's layers that take the
++        /// finger first use the same number.
++        static let swipeCommitFraction: CGFloat = 0.25
++
++        /// A finger that lifts faster than this, in points a second, makes
++        /// a swipe however short the pan was.
++        static let swipeFlickVelocity: CGFloat = 600
++
++        /// Whether the horizontal pan in progress is past the commit point.
++        var swipePastCommit = false
 +
 +        /// Set by the host while a text selection is open over this view.
 +        ///
@@ -1822,7 +1964,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d98
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
-@@ -128,6 +197,9 @@
+@@ -128,6 +234,9 @@
              core.onPostRender = { [weak self] in
                  self?.enforceSublayerScale()
              }
@@ -1865,7 +2007,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..53a3806719c1cbd3c10f92573518fc52
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..c33196b2175cf82a75c2cd2192861ccd9ee7ebba 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c933647431dc90f2 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -1925,7 +2067,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..c33196b2175cf82a75c2cd2192861ccd
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -59,6 +100,51 @@ export type TerminalViewProps = {
+@@ -59,6 +100,63 @@ export type TerminalViewProps = {
    theme?: TerminalTheme;
    /** User keyboard/IME input to forward to the PTY. */
    onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;
@@ -1939,13 +2081,25 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..c33196b2175cf82a75c2cd2192861ccd
 +  }) => void;
 +  /**
 +   * A horizontal swipe from the touch gesture, sent once when the finger
-+   * lifts. Only sent when `ownsScrollGesture` is set. The gesture is locked
-+   * to one axis when it begins, so a swipe never scrolls and a scroll is
-+   * never a swipe. `direction` is the way the finger moved.
++   * lifts past a quarter of the view's width, or on a flick. Only sent when
++   * `ownsScrollGesture` is set. The gesture is locked to one axis when it
++   * begins, so a swipe never scrolls and a scroll is never a swipe.
++   * `direction` is the way the finger moved.
 +   */
 +  onSwipe?: (event: {
 +      nativeEvent: { direction: 'left' | 'right' };
 +  }) => void;
++  /**
++   * A horizontal drag in progress: how far the finger is from where the drag
++   * began, in points and signed as the finger moved, and how wide the view
++   * is. The view ticks by itself each time the drag crosses the point where
++   * lifting the finger would be a swipe.
++   */
++  onSwipeProgress?: (event: {
++      nativeEvent: { translation: number; width: number };
++  }) => void;
++  /** A horizontal drag ended and was no swipe. */
++  onSwipeCancel?: (event: { nativeEvent: Record<string, never> }) => void;
 +  /**
 +   * Take the touch scroll gesture for the app instead of letting ghostty
 +   * scroll its own buffer. Set this when the history belongs to something
@@ -2009,3 +2163,29 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..6cefc990c5c116ec9c8f7e4df49d22a7
      };
    }, []);
  
+diff --git a/src/index.ts b/src/index.ts
+index d79c69b25d82e796253a904cd2572d6ce8d4f40d..d52aa96a80810dcd97f3744fcaf19b6103c4c63b 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,2 +1,3 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
+ export * from './ExpoLibghostty.types';
++export { swipeTick } from './swipeTick';
+diff --git a/src/swipeTick.ts b/src/swipeTick.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ec95f3fda278479e693142d8b37ae2d822d20957
+--- /dev/null
++++ b/src/swipeTick.ts
+@@ -0,0 +1,12 @@
++import { requireOptionalNativeModule } from 'expo';
++
++const native = requireOptionalNativeModule<{ swipeTick?: () => Promise<void> }>('ExpoLibghostty');
++
++/**
++ * The light tick a swipe gives at the point where lifting the finger would
++ * make it one. The terminal view ticks for its own gesture. This is for a
++ * layer of the app that takes the finger first. iOS only.
++ */
++export function swipeTick(): void {
++  void native?.swipeTick?.();
++}

@@ -431,7 +431,8 @@ describe('the verbs', () => {
     expect(kit.attach.state().topology.activePane?.id).toBe('%0');
 
     split.refuseCommand('select-pane');
-    kit.attach.selectPane('%2');
+    expect(kit.attach.selectPane('%2')).toBe(true);
+    expect(kit.attach.selectPane('%2')).toBe(false);
 
     // Moved here first, before the Host has answered: the cursor, the keyboard
     // and the Panes sheet all follow the Topology.

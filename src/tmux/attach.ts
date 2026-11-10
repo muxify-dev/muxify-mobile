@@ -150,8 +150,11 @@ export interface Attach {
   // re-applies the Zoom preference and refreshes the Topology itself.
   switchSession(name: string): Promise<void>;
   selectWindow(index: number): Promise<void>;
-  /** Optimistic: moves the Pane here first and puts it back if refused. */
-  selectPane(paneId: string): void;
+  /**
+   * Optimistic: moves the Pane here first and puts it back if refused.
+   * Answers whether it moved.
+   */
+  selectPane(paneId: string): boolean;
   split(direction: 'right' | 'down'): Promise<void>;
   newWindow(): Promise<void>;
   setZoom(on: boolean): void;
@@ -918,7 +921,7 @@ export function openAttach(options: AttachOptions): Attach {
       await settleAfterVerb(mine);
     },
 
-    selectPane(paneId: string): void {
+    selectPane(paneId: string): boolean {
       const mine = generation;
       const current = client;
       const model = topology;
@@ -936,7 +939,7 @@ export function openAttach(options: AttachOptions): Attach {
                   : 'it is already active'
           }`,
         );
-        return;
+        return false;
       }
       say(`selecting Pane ${paneId} (index ${pane.index}) in Window ${windowIndex}`);
       // Moved here first, then asked for. The cursor, the keyboard and the
@@ -962,6 +965,7 @@ export function openAttach(options: AttachOptions): Attach {
           await model.refresh();
         }
       })();
+      return true;
     },
 
     async split(direction: 'right' | 'down'): Promise<void> {

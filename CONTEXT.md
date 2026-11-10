@@ -366,12 +366,20 @@ Pane of the Window and a swipe right to the previous one, in index order, and
 past either end it comes round to the other: tmux's `select-pane -t :.+` and
 `:.-`. The Zoom is kept. A drag is locked to one axis when it leaves the tap
 slop: horizontal when it sets off more than one and a half times further
-sideways than up or down, and a swipe when the finger lifts 40 points or more
-from where it landed. Every other drag is vertical and moves the Scrollback,
-or is the wheel for a program that listens for the mouse. That program gets
-nothing from a horizontal drag. While a Selection is open a horizontal drag
-is for its handles and changes no Pane. The system's back swipe is off on the Terminal
-Screen except at the left edge, because it is the same drag as a swipe right.
+sideways than up or down. It is a swipe when the finger lifts past the commit
+point, a quarter of the Surface's width from where the drag began, or lifts
+faster than 600 points a second the way the drag went. The phone gives one
+light tick each time the drag crosses the commit point, out and back. In a
+zoomed Window the Pane follows the finger: with it up to the commit point,
+more slowly after. On a swipe it goes off the side, and the next Pane comes in
+from the other side when its Surface has reported its grid. On no swipe it
+springs back. Behind the Pane that moves is the terminal background. In a
+Window that is not zoomed no Pane moves. Every other drag is vertical and
+moves the Scrollback, or is the wheel for a program that listens for the
+mouse. That program gets nothing from a horizontal drag. While a Selection is
+open a horizontal drag is for its handles and changes no Pane. The system's
+back swipe is off on the Terminal Screen except at the left edge, because it
+is the same drag as a swipe right.
 _Avoid_: page, slide (that is the keyboard's), flick
 
 **Layout Map**:

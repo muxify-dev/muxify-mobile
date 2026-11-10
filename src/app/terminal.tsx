@@ -5,6 +5,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,6 +40,7 @@ import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-
 import { topicSections } from '@/domain/host-screen';
 import { useCopyLog } from '@/hooks/use-copy-log';
 import { useHostReading } from '@/hooks/use-host-reading';
+import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
@@ -71,7 +73,7 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
-import { panAxis, swipeOf, type PanAxis, type SwipeDirection } from '@/lib/pan-axis';
+import { panAxis, swipeOf, type PanAxis } from '@/lib/pan-axis';
 import {
   applyModifiers,
   armedAfter,
@@ -87,7 +89,6 @@ import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
-import { paneForSwipe } from '@/tmux/pane-swipe';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
 import type { Grid, Pane } from '@/tmux/tmux-client';
@@ -127,6 +128,11 @@ type PaneSlot = {
    * reports the Window's grid — which is what the Client is sized from.
    */
   fillsWindow: boolean;
+  /**
+   * The Pane's part in a Pane Swipe: it moves with the finger, it waits off
+   * the screen for the Pane before it to leave, or it stays where it is.
+   */
+  swipe: 'moves' | 'waits' | 'still';
 };
 
 /** What a picker is picking. One sheet serves both. */
@@ -405,6 +411,22 @@ export default function TerminalScreen() {
   }, [attach, windowArea]);
 
   /**
+   * The Pane follows the finger only where it is the one Pane on screen and
+   * there is another to go to. See usePaneSwipe.
+   */
+  const swipe = usePaneSwipe({
+    attach,
+    panes: topology?.panes ?? [],
+    activePaneId,
+    follows: spansWindow && (topology?.panes.length ?? 0) > 1,
+    width: windowArea.width,
+    // The Surface refuses the pan itself. This is for the other Panes of a
+    // split, which are not under the Selection Layer.
+    frozen: () => frozenView.current !== null,
+  });
+  const leavingPaneId = swipe.leaving;
+
+  /**
    * Which Panes are on screen, and where.
    *
    * Zoomed — or with nothing to split — that is one Surface filling the
@@ -413,6 +435,9 @@ export default function TerminalScreen() {
    * paneBoxes, and ADR 0006 for why this is possible at all. All of them sit
    * `slide` points higher than the area they are laid out in, which is how the
    * keyboard is kept off the row being typed on.
+   *
+   * A Pane Swipe has two for a moment: the Pane it is leaving, until that is
+   * off the screen, and the active one behind it.
    */
   const slots = useMemo((): PaneSlot[] => {
     const panes = topology?.panes ?? [];
@@ -424,14 +449,15 @@ export default function TerminalScreen() {
     // has to follow the Window, or unzooming from the laptop would leave this
     // showing one Pane stretched across a split.
     if (spansWindow) {
-      return [
-        {
-          pane: active,
-          box: { left: 0, top: -slide, width: windowArea.width, height: windowArea.height },
-          rows: visibleGrid?.rows ?? active.height,
-          fillsWindow: true,
-        },
-      ];
+      const filling = (pane: Pane, part: PaneSlot['swipe']): PaneSlot => ({
+        pane,
+        box: { left: 0, top: -slide, width: windowArea.width, height: windowArea.height },
+        rows: visibleGrid?.rows ?? pane.height,
+        fillsWindow: true,
+        swipe: part,
+      });
+      const leaving = panes.find((pane) => pane.id === leavingPaneId && pane.id !== active.id);
+      return leaving ? [filling(active, 'waits'), filling(leaving, 'moves')] : [filling(active, 'moves')];
     }
 
     const boxes = paneBoxes(panes, windowArea);
@@ -439,9 +465,9 @@ export default function TerminalScreen() {
       const box = boxes.get(pane.id);
       if (!box) return [];
       const placed = { ...box, top: box.top - slide };
-      return [{ pane, box: placed, rows: pane.height, fillsWindow: false }];
+      return [{ pane, box: placed, rows: pane.height, fillsWindow: false, swipe: 'still' }];
     });
-  }, [topology, spansWindow, windowArea, slide, visibleGrid]);
+  }, [topology, spansWindow, windowArea, slide, visibleGrid, leavingPaneId]);
 
   /** Whether anything on screen spans the Window, which sizing needs to know. */
   const spanning = slots.length === 0 || slots.some((slot) => slot.fillsWindow);
@@ -596,21 +622,6 @@ export default function TerminalScreen() {
     [attach],
   );
 
-  /**
-   * A horizontal swipe on a Pane: to the next or the previous Pane of the
-   * Window. The Zoom is kept, as it is for a pick in the Panes picker.
-   */
-  const swipePane = useCallback(
-    (direction: SwipeDirection) => {
-      // The Surface refuses the pan itself. This is for the other Panes of a
-      // split, which are not under the Selection Layer.
-      if (frozenView.current !== null) return;
-      const pane = paneForSwipe(state?.topology.panes ?? [], direction);
-      if (pane) attach?.selectPane(pane.id);
-    },
-    [attach, state?.topology.panes],
-  );
-
   /** The Pane the mouse layer belongs to, and only its rectangle. */
   const activeSlot = slots.find((slot) => slot.pane.id === activePaneId);
   const mouseGrid = activeSlot
@@ -635,9 +646,13 @@ export default function TerminalScreen() {
     [attach],
   );
 
+  const { surfaceReported } = swipe;
   const reportPaneGrid = useCallback(
-    (paneId: string, grid: Grid) => attach?.paneGridReported(paneId, grid),
-    [attach],
+    (paneId: string, grid: Grid) => {
+      attach?.paneGridReported(paneId, grid);
+      surfaceReported(paneId);
+    },
+    [attach, surfaceReported],
   );
 
   /**
@@ -1418,7 +1433,7 @@ export default function TerminalScreen() {
             onCell={reportCell}
             onInput={handlePaneInput}
             onScroll={handlePaneScroll}
-            onSwipe={swipePane}
+            swipe={swipe}
             onSelect={(paneId) => attach?.selectPane(paneId)}
             onSelectionPress={beginSelection}
             onSelectionEnd={endSelection}
@@ -1445,7 +1460,7 @@ export default function TerminalScreen() {
             onTap={handleTapCell}
             onLongPress={(press) => beginSelection(activePaneId, press)}
             onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
-            onSwipe={swipePane}
+            swipe={swipe}
           />
         ) : null}
 
@@ -1743,7 +1758,7 @@ function PaneSurfaceView({
   onCell,
   onInput,
   onScroll,
-  onSwipe,
+  swipe,
   onSelect,
   onSelectionPress,
   onSelectionEnd,
@@ -1762,7 +1777,7 @@ function PaneSurfaceView({
   onCell: (cell: Extent) => void;
   onInput: (paneId: string, data: string) => void;
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
-  onSwipe: (direction: SwipeDirection) => void;
+  swipe: PaneSwipe;
   onSelect: (paneId: string) => void;
   /** A long press on the Surface, which has no text until it is given some. */
   onSelectionPress: (paneId: string, press: SurfacePoint) => void;
@@ -1785,6 +1800,8 @@ function PaneSurfaceView({
   const own = useRef<Grid>({ cols: slot.pane.width, rows: slot.rows });
   /** Where a touch on an inactive Pane started, so a drag is not a tap. */
   const from = useRef({ x: 0, y: 0 });
+  /** How fast that touch is going sideways, which can make a short drag a swipe. */
+  const sideways = useRef(createVelocityTracker());
   const paneId = slot.pane.id;
   /**
    * Stable, and that matters more than it looks.
@@ -1806,8 +1823,18 @@ function PaneSurfaceView({
     [onRef, paneId],
   );
 
+  const { offset } = swipe;
+  const part = slot.swipe;
+  const { width } = slot.box;
+  const moved = useAnimatedStyle(
+    () => ({
+      transform: [{ translateX: part === 'moves' ? offset.get() : part === 'waits' ? width : 0 }],
+    }),
+    [part, width, offset],
+  );
+
   return (
-    <View style={[styles.paneBox, slot.box]}>
+    <Animated.View style={[styles.paneBox, slot.box, moved]}>
       <TerminalView
         ref={register}
         style={styles.surface}
@@ -1837,13 +1864,18 @@ function PaneSurfaceView({
         // The Scrollback is tmux's, so the gesture has to be Muxify's:
         // ghostty would otherwise spend it on one of its own that does not
         // exist here. The library locks the drag to one axis when it begins:
-        // a vertical drag is the scroll and a horizontal one is the swipe.
+        // a vertical drag is the scroll and a horizontal one is the swipe,
+        // which says how far it has gone and ticks at its commit point.
         // Needs the local patch.
         ownsScrollGesture
         onScroll={({ nativeEvent }) =>
           onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
         }
-        onSwipe={({ nativeEvent }) => onSwipe(nativeEvent.direction)}
+        onSwipeProgress={({ nativeEvent }) =>
+          swipe.drag(nativeEvent.translation, nativeEvent.width, false)
+        }
+        onSwipe={({ nativeEvent }) => swipe.swipe(nativeEvent.direction)}
+        onSwipeCancel={swipe.cancel}
         // The Selection Layer, which the local patch adds: iOS text selection
         // over the Surface, with its text read from tmux. See ADR 0014.
         onSelectionPress={({ nativeEvent }) =>
@@ -1878,6 +1910,16 @@ function PaneSurfaceView({
           onStartShouldSetResponder={() => true}
           onResponderGrant={({ nativeEvent }: GestureResponderEvent) => {
             from.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+            sideways.current.clear();
+            sideways.current.add(nativeEvent.locationX, Date.now());
+          }}
+          onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
+            const dx = nativeEvent.locationX - from.current.x;
+            const dy = nativeEvent.locationY - from.current.y;
+            sideways.current.add(nativeEvent.locationX, Date.now());
+            if (Math.hypot(dx, dy) > TAP_SLOP && panAxis(dx, dy) === 'horizontal') {
+              swipe.drag(dx, width, true);
+            }
           }}
           // A tap, not a drag. Without the slop a finger that started on the
           // other Pane on its way somewhere moved the keyboard with it. A
@@ -1889,12 +1931,17 @@ function PaneSurfaceView({
               onSelect(slot.pane.id);
               return;
             }
-            const swipe = panAxis(dx, dy) === 'horizontal' ? swipeOf(dx) : null;
-            if (swipe) onSwipe(swipe);
+            const direction =
+              panAxis(dx, dy) === 'horizontal'
+                ? swipeOf(dx, width, sideways.current.velocity(Date.now()))
+                : null;
+            if (direction) swipe.swipe(direction);
+            else swipe.cancel();
           }}
+          onResponderTerminate={swipe.cancel}
         />
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -1936,7 +1983,7 @@ function MouseLayer({
   onTap,
   onLongPress,
   onScroll,
-  onSwipe,
+  swipe,
 }: {
   box: PaneBox;
   grid: Grid;
@@ -1946,13 +1993,20 @@ function MouseLayer({
   /** A finger held still: the start of a Selection, and no click. */
   onLongPress: (press: SurfacePoint) => void;
   onScroll: (lines: number) => void;
-  onSwipe: (direction: SwipeDirection) => void;
+  swipe: PaneSwipe;
 }) {
   const size = useRef({ width: 0, height: 0 });
   const origin = useRef({ x: 0, y: 0 });
   const previous = useRef(0);
   /** What the drag is for, or null while the touch could still be a tap. */
   const axis = useRef<PanAxis | null>(null);
+  /**
+   * Where a horizontal drag began: where the finger left the tap slop, which
+   * is where the Surface's own gesture counts from. The Pane does not jump.
+   */
+  const swipeFrom = useRef(0);
+  /** How fast the finger is going sideways, which can make a short drag a swipe. */
+  const sideways = useRef(createVelocityTracker());
   /** Fractions of a line a slow drag has not yet spent. */
   const carried = useRef(0);
   /** Where the finger has been lately, which is what a flick is worth. */
@@ -2069,8 +2123,17 @@ function MouseLayer({
           const dy = nativeEvent.locationY - origin.current.y;
           if (Math.hypot(dx, dy) > TAP_SLOP) axis.current = panAxis(dx, dy);
           if (axis.current !== null) stopHolding();
+          if (axis.current === 'horizontal') {
+            swipeFrom.current = nativeEvent.locationX;
+            sideways.current.clear();
+          }
         }
-        if (held.current || axis.current === 'horizontal') return;
+        if (held.current) return;
+        if (axis.current === 'horizontal') {
+          sideways.current.add(nativeEvent.locationX, Date.now());
+          swipe.drag(nativeEvent.locationX - swipeFrom.current, size.current.width, true);
+          return;
+        }
 
         // The last moment of the drag rather than the whole of it: what a
         // flick is worth is how fast the finger was going when it left, not
@@ -2085,8 +2148,13 @@ function MouseLayer({
         stopHolding();
         if (held.current) return;
         if (axis.current === 'horizontal') {
-          const swipe = swipeOf(nativeEvent.locationX - origin.current.x);
-          if (swipe) onSwipe(swipe);
+          const direction = swipeOf(
+            nativeEvent.locationX - swipeFrom.current,
+            width,
+            sideways.current.velocity(Date.now()),
+          );
+          if (direction) swipe.swipe(direction);
+          else swipe.cancel();
           return;
         }
         if (axis.current === 'vertical') {
@@ -2105,6 +2173,7 @@ function MouseLayer({
       onResponderTerminate={() => {
         stopCoasting();
         stopHolding();
+        if (axis.current === 'horizontal') swipe.cancel();
       }}
     />
   );
