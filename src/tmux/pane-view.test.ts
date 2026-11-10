@@ -169,7 +169,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
       onScroll: (position) => positions.push(position),
       onError: (error) => errors.push(error),
       onMouseTracking: (wanted) => mouse.push(wanted),
-      onCursor: (row) => cursor.push(row),
+      onRowInSight: (row) => cursor.push(row),
       onPainted: () => paints.push(clock.now()),
     },
     { clock },
@@ -1058,6 +1058,15 @@ describe('telling the Screen where the cursor is', () => {
     kit.tick(OUTPUT_SETTLE_MS);
     await settle();
     expect(kit.cursor).toEqual([7, 37]);
+  });
+
+  it('keeps the last row in sight for a full-screen program', async () => {
+    // Claude Code at 49x40, as tmux reported it: the cursor on the prompt and
+    // three rows of footer under it, which the keyboard covered.
+    const host = fakePane(paneState({ cursorRow: 36, height: 40, alternate: true }));
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.cursor).toEqual([39]);
   });
 
   it('says nothing for a cursor that has not moved', async () => {

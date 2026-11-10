@@ -190,8 +190,8 @@ export function cellOf(
  *
  * The keyboard does not resize the Window — see ADR 0008. The Window keeps the
  * height it has with the keyboard down, the container clips it, and this is
- * how much of its top is pushed out of view so that the row being typed on
- * stays above the keys. Just enough and no more: a Pane with three lines on it
+ * how much of its top is pushed out of view so that the row in sight (the
+ * cursor's, or a full-screen program's last row) stays above the keys. Just enough and no more: a Pane with three lines on it
  * is not slid at all, because sliding it would put those lines behind the
  * status bar and show sixteen blank rows in their place. A Pane with the
  * cursor on its last row is slid by the whole of what the keyboard covers,
@@ -210,12 +210,12 @@ export function windowSlide(
   visibleHeight: number,
   windowHeight: number,
   cell: Extent | null,
-  cursorRow: number | null,
+  rowInSight: number | null,
 ): number {
   const hidden = Math.max(0, windowHeight - visibleHeight);
   if (hidden === 0) return 0;
-  if (!cell || cell.height <= 0 || cursorRow === null || cursorRow < 0) return hidden;
-  const cursorBottom = (cursorRow + 1.5) * cell.height;
+  if (!cell || cell.height <= 0 || rowInSight === null || rowInSight < 0) return hidden;
+  const cursorBottom = (rowInSight + 1.5) * cell.height;
   const slid = Math.min(hidden, Math.max(0, cursorBottom - visibleHeight));
   // Within a row of the end, all the way. The container is not a whole number
   // of rows, so a cursor on the last row would otherwise stop a strip short of

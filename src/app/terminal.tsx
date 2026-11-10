@@ -368,9 +368,9 @@ export default function TerminalScreen() {
   );
 
   /**
-   * How far up the Window is slid so the row being typed on clears the keys.
+   * How far up the Window is slid so the row in sight clears the keys.
    *
-   * The cursor is the active Pane's, and a Pane in a split does not start at
+   * The row is the active Pane's, and a Pane in a split does not start at
    * the Window's top — so its row is offset by where the Layout puts it. A
    * zoomed Pane is drawn at the top whatever the Layout says its place is,
    * because the Layout describes the arrangement zoom is hiding.
@@ -389,11 +389,11 @@ export default function TerminalScreen() {
   const [selecting, setSelecting] = useState(false);
   /** The frozen Pane's view. The view and not its id: the Pane can go first. */
   const frozenView = useRef<PaneView | null>(null);
-  const cursorRow =
-    state?.cursorRow == null
+  const rowInSight =
+    state?.rowInSight == null
       ? null
-      : state.cursorRow + (spansWindow ? 0 : (topology?.activePane?.top ?? 0));
-  const liveSlide = windowSlide(containerSize.height, windowArea.height, cellSize, cursorRow);
+      : state.rowInSight + (spansWindow ? 0 : (topology?.activePane?.top ?? 0));
+  const liveSlide = windowSlide(containerSize.height, windowArea.height, cellSize, rowInSight);
   /**
    * The slide from before the Selection. The Selection Layer takes the
    * keyboard down, and a Window that slid back then would move the text
