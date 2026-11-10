@@ -485,7 +485,13 @@ repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
 and spent on the next key from either the row or the system keyboard. ⌥ is
 tmux's `M-`. ⌘ makes the next letter a Shortcut. While the Composer is open,
-or with no Connection, the keys are disabled.
+or with no Connection, the keys are disabled. The glass and key frames stay
+fixed during touch. A physical keyboard hides the row. iOS supplies its
+initial state, connection changes, and a fresh state on foreground entry.
+Hiding the software keyboard alone does not hide the row. Hiding the row
+clears armed modifiers and stops arrow repeat. Options keeps Panes and
+Keyboard available. Software keyboard clearance belongs to the Terminal
+Screen and remains when the row is hidden.
 _Avoid_: Dock (the old name), Key Bar (the old middle), toolbar, tab bar,
 bottom bar, modifiers
 

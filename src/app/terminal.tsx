@@ -4,7 +4,7 @@ import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
@@ -13,7 +13,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Banner, Presence } from '@/components/banner';
 import { ReconnectScreen } from '@/components/reconnect-screen';
-import { KeyRow } from '@/components/key-row';
+import { KeyRow, KEY_ROW_HEIGHT } from '@/components/key-row';
+import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
+import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
+import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
@@ -289,18 +292,14 @@ export default function TerminalScreen() {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   /** Scroll distance not yet worth a notch of the wheel. */
   const carriedLines = useRef(0);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const physicalKeyboard = usePhysicalKeyboard();
+  const keyboardFrame = useKeyboardFrame();
+  const keyboardVisible = keyboardFrame !== null && keyboardFrame.height > 0;
+  const rootView = useRef<View>(null);
+  const [rootBounds, setRootBounds] = useState<ScreenRect>({ x: 0, y: 0, width: 0, height: 0 });
+  const clearance = terminalClearance(rootBounds, keyboardFrame, insets.bottom, !physicalKeyboard);
   const [composerOpen, setComposerOpen] = useState(false);
   const composerInput = useRef<ComposerInputRef | null>(null);
-  const composerUp = useRef(false);
-  composerUp.current = composerOpen;
-  /**
-   * The same, readable from a layout callback. The container is measured in
-   * one and whether to believe the measurement depends on the other, and a
-   * state value read inside `onLayout` is the one from the render that
-   * attached the callback.
-   */
-  const keyboardUp = useRef(false);
   /**
    * The sticky modifiers the Key Row is holding down.
    *
@@ -311,7 +310,11 @@ export default function TerminalScreen() {
   const [armed, setArmed] = useState<Modifiers>(NO_MODIFIERS);
   /** The same, where the Surface's input callback can read it without rebuilding. */
   const armedRef = useRef<Modifiers>(NO_MODIFIERS);
-  armedRef.current = armed;
+  armedRef.current = physicalKeyboard ? NO_MODIFIERS : armed;
+  useLayoutEffect(() => {
+    if (physicalKeyboard) setArmed(NO_MODIFIERS);
+    say(`physical keyboard ${physicalKeyboard ? 'connected' : 'disconnected'}`);
+  }, [physicalKeyboard]);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   const [titleSheet, setTitleSheet] = useState<TitleSheetState>({ open: false });
   const chooserRevision = useRef(0);
@@ -358,7 +361,7 @@ export default function TerminalScreen() {
   }, []);
 
   /** The full height survives keyboard and Composer layout changes. */
-  const [windowHeight, setWindowHeight] = useState(0);
+  const windowHeight = Math.max(0, rootBounds.height - (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) - clearance.resting);
   const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
   const selecting = selectionArea !== null;
   const windowArea = useMemo(
@@ -1083,6 +1086,8 @@ export default function TerminalScreen() {
         toggleComposer,
         { disabled: !activePaneId },
       ),
+      action('panes', 'Panes', 'square.grid.2x2', openPanes, { disabled: !connected }),
+      action('keyboard', 'Keyboard', 'keyboard', toggleKeyboard),
       ...(state?.topic ? [{
         kind: 'menu' as const, id: 'topic', label: 'Topic', systemImage: 'rectangle.stack' as const,
         items: [
@@ -1154,6 +1159,8 @@ export default function TerminalScreen() {
     router,
     composerOpen,
     toggleComposer,
+    openPanes,
+    toggleKeyboard,
     activePaneId,
     state?.zoomed,
     attach,
@@ -1165,30 +1172,6 @@ export default function TerminalScreen() {
     disconnect,
   ]);
 
-
-  useEffect(() => {
-    // For the Key Row, so it can show which way its keyboard button points,
-    // and for the Window's height, which is only measured while the keyboard
-    // is down. `Will` rather than `Did`: the Key Row lifts on `keyboardWillChangeFrame`
-    // and the container is laid out again in the same pass, so a flag set on
-    // `keyboardDidShow` would arrive after the measurement it is meant to veto.
-    // The action itself goes to the Surface that has focus, which no listener
-    // can see — see toggleKeyboard.
-    const shown = Keyboard.addListener('keyboardWillShow', () => {
-      say('keyboard will show');
-      keyboardUp.current = true;
-      setKeyboardVisible(true);
-    });
-    const hidden = Keyboard.addListener('keyboardWillHide', () => {
-      say('keyboard will hide');
-      keyboardUp.current = false;
-      setKeyboardVisible(false);
-    });
-    return () => {
-      shown.remove();
-      hidden.remove();
-    };
-  }, []);
 
   const status = statusOf(state, missing);
   /**
@@ -1233,6 +1216,10 @@ export default function TerminalScreen() {
     // The ground the Surface sits on follows the Theme, or the safe-area strip
     // above it shows as a band of a different dark.
     <View
+      ref={rootView}
+      onLayout={() => rootView.current?.measureInWindow((x, y, width, height) => {
+        setRootBounds({ x, y, width, height });
+      })}
       style={[
         styles.container,
         { backgroundColor: opened.terminal.background },
@@ -1255,12 +1242,9 @@ export default function TerminalScreen() {
           const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
           say(
             `container ${Math.round(size.width)}x${Math.round(size.height)}` +
-              (keyboardUp.current ? ', keyboard up' : ''),
+              (keyboardVisible ? ', keyboard up' : ''),
           );
           setContainerSize(size);
-          // The Window's height is the container's with the keyboard down, and
-          // only then; see windowHeight.
-          if (!keyboardUp.current && !composerUp.current) setWindowHeight(size.height);
         }}>
         {/* Before there is a Topology there are no Panes to place, and nothing
             but a Surface can measure a cell — so one stands in as the ruler.
@@ -1410,7 +1394,7 @@ export default function TerminalScreen() {
           inputRef={composerInput}
         />
       ) : null}
-      <KeyRow
+      {!physicalKeyboard ? <KeyRow
         armed={armed}
         onArm={armModifier}
         onKey={pressKey}
@@ -1422,7 +1406,8 @@ export default function TerminalScreen() {
         // One Pane is when you reach for Split, so never disabled while connected.
         panesDisabled={!connected}
         palette={chrome}
-      />
+      /> : null}
+      <View style={{ height: clearance.bottom }} pointerEvents="none" />
 
       {/* The native Header ends where this content area begins. */}
       <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
