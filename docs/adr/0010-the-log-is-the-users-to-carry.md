@@ -68,3 +68,41 @@ and it is the reason the Log is not a dump of the byte stream.
 Copy log is a long press on a Host in Settings, under Hosts. It left the
 Host Screen's Session rows when Home became the front door and the Hosts moved
 to Settings. The report and its head are the same.
+
+## Crash diagnostics, November 2026
+
+The user reported crashes from the installed iPhone build. The previous choice
+to keep the Log only in memory removed the evidence at the moment it was needed.
+This replaces the memory-only storage decision and the deferred viewer decision.
+
+The app appends each Log entry to a local file before returning to its caller.
+It keeps five launches, each with the two most recent 256 KiB file segments.
+A new launch uses new files. An incomplete last record is ignored on read.
+Disk errors leave the memory Log available and show a storage notice in Logs.
+No timer is the only path to disk, and each entry appends instead of rewriting
+the growing file.
+
+Settings > Logs shows saved launches and lets the user view and copy a report.
+A saved launch is not called a crash. iOS can stop the app, and the user can
+force quit it. Neither event proves a fault. Old files expire under the fixed
+retention limit. Nothing sends these files to a service.
+
+The bootstrap installs JavaScript error hooks before loading Expo Router.
+React Native 0.86 has native and JavaScript exception pipelines. The app uses
+the native exception listener and the JavaScript exception decorator. The
+decorator returns the original report unchanged. Neither path replaces the
+read-only runtime handler or prevents its response. Console messages and
+nonfatal reports are not collected. Error
+messages and stacks each have a 16 KiB limit. Existing Log callers still omit
+keystrokes, credentials and Pane content.
+
+A local Expo module registers a MetricKit subscriber at native startup. It saves
+up to ten diagnostic payloads, with a 2 MiB limit per payload. Atomic writes
+protect each saved report. iOS decides when reports are supplied, so an empty
+list does not prove that no crash occurred. The Logs screen states this limit.
+The module does not install a custom signal handler or claim it can recover
+the app Log from a build that never saved it.
+
+The JavaScript archive and error forwarding have automated tests. The installed
+app must also prove log survival after termination and restart. MetricKit report
+delivery requires a physical-device check and is not proven by a simulator.

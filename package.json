@@ -1,6 +1,6 @@
 {
   "name": "muxify",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "version": "1.0.0",
   "packageManager": "pnpm@11.22.0",
   "dependencies": {

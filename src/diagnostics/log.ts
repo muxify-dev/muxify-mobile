@@ -65,7 +65,7 @@ export const LOG_LINE_LIMIT = 400;
  * The Log: Muxify's own record of what it did, for when the screen does not say.
  *
  * A bounded list of one-line entries, kept in memory for the life of the app
- * and copied out by the user from the Host Screen. It exists because the
+ * and copied out by the user. The device also saves each entry through onRecord. It exists because the
  * failures worth having are the ones that cannot be reproduced on demand: a
  * Pane that came up blank once on a Tuesday is a Pane whose Surface, Topology
  * and sizing all made a decision in the half-second before, and by the time
@@ -80,7 +80,7 @@ export const LOG_LINE_LIMIT = 400;
  * Nothing here is ever awaited or thrown from. A record that could fail would
  * be one more thing to go wrong at exactly the moment it is meant to describe.
  */
-export function createLog(options: { capacity?: number; clock?: Clock } = {}): LogBook {
+export function createLog(options: { capacity?: number; clock?: Clock; onRecord?: (entry: LogEntry) => void } = {}): LogBook {
   const clock = options.clock ?? systemClock;
   const capacity = Math.max(1, options.capacity ?? LOG_CAPACITY);
   let entries: LogEntry[] = [];
@@ -89,7 +89,9 @@ export function createLog(options: { capacity?: number; clock?: Clock } = {}): L
     record(tag: string, text: string): void {
       const line =
         text.length > LOG_LINE_LIMIT ? `${text.slice(0, LOG_LINE_LIMIT - 1)}…` : text;
-      entries.push({ at: clock.now(), tag, text: line });
+      const entry = { at: clock.now(), tag, text: line };
+      entries.push(entry);
+      try { options.onRecord?.(entry); } catch { /* A failed log write must not stop the app. */ }
       // The oldest go first: what happened long ago is what the next
       // reproduction is for, and what happened just now is why anyone looks.
       if (entries.length > capacity) entries.splice(0, entries.length - capacity);
