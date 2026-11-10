@@ -1,8 +1,8 @@
 import { lastAnswer } from '@/domain/host-listing';
-import { hostScreen, type HostScreenInput, type HostScreenRow } from '@/domain/host-screen';
+import { homeRows, type HostScreenInput, type HostScreenRow } from '@/domain/host-screen';
 import type { Host } from '@/storage/records';
 
-/** How many rows Home shows of one Host before All opens its Host Screen. */
+/** How many rows Home shows of a Host that is not in In Play, before All opens its Host Screen. */
 export const HOME_ROWS = 5;
 
 /**
@@ -21,13 +21,14 @@ export interface HomeSection {
 
 /**
  * A Host's section of Home: the first rows of its Host Screen, in the lists
- * and the order Settings gives.
+ * and the order Settings gives. A Host in In Play shows all its live Topics
+ * instead, as `homeRows` says.
  *
  * A Host that refused has its error and nothing else. Its Host Screen would
  * offer the Sessions it remembered, but a Home that opens with a row per
  * Session of a Host that is down reads as a Host that is up.
  */
-export function homeSection(host: Host, input: Omit<HostScreenInput, 'limit'>): HomeSection {
+export function homeSection(host: Host, input: HostScreenInput): HomeSection {
   const { listing } = input;
   if (listing.phase === 'failed') {
     return { host, connection: 'refused', rows: [{ kind: 'refused', message: listing.message }] };
@@ -35,6 +36,6 @@ export function homeSection(host: Host, input: Omit<HostScreenInput, 'limit'>): 
   return {
     host,
     connection: lastAnswer(listing) === undefined ? 'checking' : 'answered',
-    rows: hostScreen({ ...input, limit: HOME_ROWS }).flatMap((section) => section.rows),
+    rows: homeRows(input, HOME_ROWS),
   };
 }

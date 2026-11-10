@@ -1,5 +1,6 @@
 import { answered, asking, refused, UNASKED, type Listing } from './host-listing';
 import {
+  homeRows,
   hostScreen,
   topicSections,
   type HostScreenRow,
@@ -818,7 +819,7 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
   });
 });
 
-describe('hostScreen with a limit', () => {
+describe('homeRows of a Host that is not in In Play', () => {
   const input = {
     settings: { hostScreenLists: ['recent', 'sessions'] as HostScreenLists },
     recent: [remembered('a'), remembered('b')],
@@ -827,15 +828,10 @@ describe('hostScreen with a limit', () => {
     opened: CLOSED,
     appearance: 'dark' as const,
   };
-  const names = (sections: HostScreenSection[]) =>
-    sections.flatMap((section) => section.rows.map((row) => ('name' in row ? row.name : row.kind)));
+  const rowName = (row: HostScreenRow) => ('name' in row ? row.name : row.kind);
 
-  it('keeps the first rows across the sections, and leaves out a section it emptied', () => {
-    expect(names(hostScreen({ ...input, limit: 3 }))).toEqual(['a', 'b', 'c']);
-    expect(hostScreen({ ...input, limit: 2 }).map((section) => section.id)).toEqual(['recent']);
-  });
-
-  it('shows everything with no limit', () => {
-    expect(names(hostScreen(input))).toEqual(['a', 'b', 'c', 'd']);
+  it('keeps the first rows across the sections', () => {
+    expect(homeRows(input, 3).map(rowName)).toEqual(['a', 'b', 'c']);
+    expect(homeRows(input, 9).map(rowName)).toEqual(['a', 'b', 'c', 'd']);
   });
 });
