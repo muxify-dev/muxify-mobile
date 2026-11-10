@@ -87,7 +87,7 @@ import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
-import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
+import { cellOf, paneBoxes, windowSlide, clippedRowHeight, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
@@ -342,29 +342,18 @@ export default function TerminalScreen() {
     });
   }, []);
 
-  /**
-   * The Window's height in points: the container's, measured with the keyboard
-   * down and kept while it is up.
-   *
-   * The keyboard does not resize the Window — see ADR 0008. It used to: the
-   * Key Row lifts, the container shrinks, the Surface reports a smaller grid and
-   * the Host is told to reflow the Window to it, and back again on the way
-   * down. Every keyboard toggle was a remote resize, and a resize is where a
-   * terminal's text moves — up into the Scrollback on the way down, and back
-   * only as far as the Scrollback reaches on the way up, which after a `clear`
-   * is not at all. So the Window keeps this height whatever the keyboard does,
-   * the container clips it, and what the keyboard covers is slid out of the way
-   * instead; see windowSlide.
-   *
-   * Not recorded while the keyboard is up, because that measurement is of the
-   * strip above the keys and not of the Window. A rotation with the keyboard
-   * up is therefore a frame or two of the wrong height, corrected when it goes
-   * down; it is the one moment that gets nothing better here.
-   */
+  /** The full height survives keyboard and Composer layout changes. */
   const [windowHeight, setWindowHeight] = useState(0);
+  const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
+  const selecting = selectionArea !== null;
   const windowArea = useMemo(
-    (): Extent => ({ width: containerSize.width, height: windowHeight || containerSize.height }),
-    [containerSize, windowHeight],
+    (): Extent => selectionArea ?? {
+      width: containerSize.width,
+      height: keyboardVisible && state?.alternate && !composerOpen
+        ? containerSize.height
+        : windowHeight || containerSize.height,
+    },
+    [containerSize, windowHeight, keyboardVisible, state?.alternate, composerOpen, selectionArea],
   );
 
   /**
@@ -378,15 +367,6 @@ export default function TerminalScreen() {
   const spansWindow =
     (topology?.activeWindow?.zoomed ?? true) || (topology?.panes.length ?? 0) <= 1;
 
-  /**
-   * Whether a Selection holds a Pane frozen.
-   *
-   * The Pane view and the Selection Layer do the work. This is what the
-   * screen changes for it: the mouse layer goes, so the touches reach the
-   * Selection Layer, and the Window stays where it is while the keyboard is
-   * down. See ADR 0014.
-   */
-  const [selecting, setSelecting] = useState(false);
   /** The frozen Pane's view. The view and not its id: the Pane can go first. */
   const frozenView = useRef<PaneView | null>(null);
   const cursorRow =
@@ -402,6 +382,7 @@ export default function TerminalScreen() {
   const heldSlide = useRef(0);
   if (!selecting) heldSlide.current = liveSlide;
   const slide = heldSlide.current;
+  const clippedRow = clippedRowHeight(slide, cellSize);
 
   // Told from here rather than from the layout event, because the Window's
   // area is not the container's: it is what the Panes are laid out in, and it
@@ -587,9 +568,9 @@ export default function TerminalScreen() {
       const view = attach.view(paneId);
       if (!view.beginSelection(press)) return;
       frozenView.current = view;
-      setSelecting(true);
+      setSelectionArea(windowArea);
     },
-    [attach],
+    [attach, windowArea],
   );
 
   /**
@@ -602,7 +583,7 @@ export default function TerminalScreen() {
     if (view === null) return;
     frozenView.current = null;
     view.endSelection();
-    setSelecting(false);
+    setSelectionArea(null);
   }, []);
 
   // A Selection is of one Pane as it stands. Another Pane, Window or Session,
@@ -1478,6 +1459,13 @@ export default function TerminalScreen() {
               onPress={jumpToLatest}
             />
           </>
+        ) : null}
+
+        {clippedRow > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: opened.terminal.background }}
+          />
         ) : null}
 
         {/* Last, so it is over the mouse layer and a tap on it is the map's. */}

@@ -75,10 +75,10 @@ export type AttachPhase =
   | { kind: 'closed' };
 
 /** The parts of the state that belong to the active Pane. See paneFacts. */
-type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'cursorRow'>;
+type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'cursorRow' | 'alternate'>;
 
 /** A Pane no view has said anything about. */
-const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, cursorRow: null };
+const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, cursorRow: null, alternate: false };
 
 /** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
 export interface AttachState {
@@ -122,6 +122,8 @@ export interface AttachState {
    * Scrollback position: one Window, one place being typed into.
    */
   cursorRow: number | null;
+  /** Whether the active Pane uses the alternate screen. */
+  alternate: boolean;
 }
 
 /** What the Key Row's ⌘v delivers: the clipboard's text, or its image as a staged file. */
@@ -383,6 +385,7 @@ export function openAttach(options: AttachOptions): Attach {
     scrolled: null,
     mouseTracking: false,
     cursorRow: null,
+    alternate: false,
   };
 
   const sizing: ClientSizing = createClientSizing(async (grid) => {
@@ -462,7 +465,7 @@ export function openAttach(options: AttachOptions): Attach {
    * What each view last said about its Pane, for every Pane and not only the
    * active one.
    *
-   * The state holds these three for the active Pane. A view says each one when
+   * The state holds these facts for the active Pane. A view says each one when
    * it changes and not again when its Pane becomes the active one, so the
    * state takes them from here when the active Pane changes. Without this, a
    * Pane picked after one that listens for the mouse kept the mouse layer.
@@ -509,6 +512,7 @@ export function openAttach(options: AttachOptions): Attach {
         onScroll: (position) => paneSaid(mine, paneId, { scrolled: position }),
         onMouseTracking: (wanted) => paneSaid(mine, paneId, { mouseTracking: wanted }),
         onCursor: (row) => paneSaid(mine, paneId, { cursorRow: row }),
+        onAlternate: (alternate) => paneSaid(mine, paneId, { alternate }),
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.
         onPainted: () => {

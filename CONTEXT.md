@@ -154,8 +154,9 @@ tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A
 Session can have several Clients and tmux keeps each one's size separately — so
 a Client's size is not the Session's size and not the Surface's. Muxify's is
-the phone's screen with the keyboard down, and the keyboard does not change it
-(ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
+the phone's screen with the keyboard down. While the active Pane uses the
+alternate screen, it fits above the keyboard instead. Returning to the normal
+screen restores the full height even if the keyboard stays up (ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
 latest Client, and a laptop that types becomes it. So Muxify claims the Window
 with every size it asks for, and again on the next key typed on the phone after
 another Client has taken it.
@@ -164,8 +165,11 @@ _Avoid_: viewer, terminal, connection
 **Slide**:
 How far the Window is pushed up under the keyboard, so the row being typed on
 stays above the keys: nothing for a Pane with three lines on it, everything the
-keyboard covers for a Pane full to its last row. The Window is not resized for
-the keyboard; it is slid, and the part slid out of view is clipped.
+keyboard covers for a Pane full to its last row. On the normal screen, the
+Window keeps its full height and the Slide hides the covered part. The top
+clip edge hides a partial row. On the alternate screen, the Window fits above
+the keyboard and needs no Slide. A Selection holds the Window size and Slide
+until it ends.
 _Avoid_: scroll (which is the Scrollback's), offset, keyboard avoidance
 
 ### Topics
@@ -402,7 +406,7 @@ the status bar: Back on the left, the title in the middle, Options on the
 right. Back goes Home and leaves the Session attached (ADR 0007). The title is
 the Session name over the program that runs in the active Pane, as tmux's
 `#{pane_current_command}` names it; for a Session opened from a Topic it is
-the Topic title, the program, and the Session name in the dim tone. The
+the Topic title over one line with the program and the Session name in the dim tone. The
 program follows the Topology, which is read again when the active Window is
 renamed, when the title sheet or the Options menu opens, and after every verb;
 a Window with a fixed name can show the program of the last read. A tap on the

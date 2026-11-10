@@ -93,6 +93,8 @@ export interface PaneViewEvents {
    * Surface's job.
    */
   onCursor?: (row: number) => void;
+  /** Whether the Pane uses the alternate screen, reported when it changes. */
+  onAlternate?: (alternate: boolean) => void;
   /** A repaint landed on the Surface. What clears a line of trouble. */
   onPainted?: () => void;
   /** Something went wrong. Best effort; never fatal to the view. */
@@ -305,6 +307,7 @@ export function createPaneView(
   let reportedMouse = false;
   /** The cursor row last reported, so only a move is announced. */
   let reportedCursor: number | null = null;
+  let reportedAlternate: boolean | undefined;
 
   /** How far above the live bottom the Surface is showing. */
   let back = 0;
@@ -397,6 +400,12 @@ export function createPaneView(
     events.onMouseTracking?.(asked);
   }
 
+  function announceAlternate(): void {
+    if (disposed || !state || state.alternate === reportedAlternate) return;
+    reportedAlternate = state.alternate;
+    events.onAlternate?.(state.alternate);
+  }
+
   function announceCursor(): void {
     if (disposed || !state) return;
     if (state.cursorRow === reportedCursor) return;
@@ -423,6 +432,7 @@ export function createPaneView(
         announce();
         announceMouse();
         announceCursor();
+        announceAlternate();
       })
       .catch(report);
   }
@@ -537,6 +547,7 @@ export function createPaneView(
         stateReadAt = clock.now();
         announceMouse();
         announceCursor();
+        announceAlternate();
       }
       write(
         paintScreen({

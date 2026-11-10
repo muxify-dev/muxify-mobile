@@ -46,6 +46,7 @@ const state = (over: Partial<AttachState> = {}): AttachState => ({
   scrolled: null,
   mouseTracking: false,
   cursorRow: 12,
+  alternate: false,
   ...over,
 });
 

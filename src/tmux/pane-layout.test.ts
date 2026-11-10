@@ -1,5 +1,6 @@
 import {
   cellOf,
+  clippedRowHeight,
   cellSizeOf,
   gridForContainer,
   paneBoxes,
@@ -248,5 +249,24 @@ describe('windowSlide', () => {
     expect(windowSlide(VISIBLE, WINDOW, null, 5)).toBe(HIDDEN);
     expect(windowSlide(VISIBLE, WINDOW, CELL, null)).toBe(HIDDEN);
     expect(windowSlide(VISIBLE, WINDOW, { width: 8, height: 0 }, 5)).toBe(HIDDEN);
+  });
+});
+
+
+describe('the partial row clipped above the Window', () => {
+  const cell = { width: 8, height: 17.667 };
+
+  it('covers only the rest of the row that crosses the top edge', () => {
+    const slide = windowSlide(424, 717, cell, 39);
+    const clipped = clippedRowHeight(slide, cell);
+    expect(clipped).toBeGreaterThan(0);
+    expect(clipped).toBeLessThan(cell.height);
+    expect((slide + clipped) / cell.height).toBeCloseTo(17);
+  });
+
+  it('covers nothing at a row boundary or before the cell is known', () => {
+    expect(clippedRowHeight(0, cell)).toBe(0);
+    expect(clippedRowHeight(cell.height * 4, cell)).toBe(0);
+    expect(clippedRowHeight(10, null)).toBe(0);
   });
 });

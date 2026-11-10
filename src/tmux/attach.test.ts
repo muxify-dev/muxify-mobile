@@ -473,7 +473,7 @@ describe('the verbs', () => {
     expect(kit.attach.state().zoomed).toBe(true);
   });
 
-  it('reads the mouse for the Pane that is active, not for the one before it', async () => {
+  it('reads the mouse and alternate screen for the active Pane', async () => {
     const split = fakeHost();
     const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
     split.answering('list-panes', [
@@ -490,12 +490,15 @@ describe('the verbs', () => {
     kit.attach.surfaceForPane('%2', fakeSurface(), { cols: 49, rows: 20 });
     await settle();
     expect(kit.attach.state().mouseTracking).toBe(true);
+    expect(kit.attach.state().alternate).toBe(true);
 
     kit.attach.selectPane('%2');
     expect(kit.attach.state().mouseTracking).toBe(false);
+    expect(kit.attach.state().alternate).toBe(false);
 
     kit.attach.selectPane('%0');
     expect(kit.attach.state().mouseTracking).toBe(true);
+    expect(kit.attach.state().alternate).toBe(true);
   });
 
   it('turns a command nobody waited on into a quiet line, not a dead screen', async () => {
@@ -762,6 +765,22 @@ describe('reconnecting by hand', () => {
     kit.hosts[1].accept();
     await settle();
     expect(kit.attach.state().phase.kind).toBe('connected');
+  });
+
+  it('reads the normal screen after reconnecting to the same Pane id', async () => {
+    const before = fakeHost();
+    before.answering('display-message', ['0\t0\t1\t0\t49\t41\t0\t1\t1']);
+    const kit = attachOn({ hosts: [before, fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface(), GRID);
+    await settle();
+    expect(kit.attach.state().alternate).toBe(true);
+
+    before.drop();
+    await settle();
+    await connected(kit, 1);
+    expect(kit.attach.state().topology.activePane?.id).toBe('%0');
+    expect(kit.attach.state().alternate).toBe(false);
   });
 
   it('is sized from the last stable grid, with Zoom re-applied', async () => {

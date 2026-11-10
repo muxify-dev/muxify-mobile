@@ -31,6 +31,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     scrolled: null,
     mouseTracking: false,
     cursorRow: null,
+    alternate: false,
   });
 
   return {

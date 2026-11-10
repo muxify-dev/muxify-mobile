@@ -106,31 +106,41 @@ export function TerminalHeader({
   );
 }
 
-/**
- * The Session name over the program; for a Topic, the Topic title over the
- * program over the Session name in the dim tone.
- */
 function TitleLines({ title, terminal }: { title: HeaderTitle; terminal: TerminalPalette }) {
   const name = title.kind === 'topic' ? title.topic : title.session;
   return (
     <>
       <Text
         numberOfLines={1}
+        maxFontSizeMultiplier={1.2}
         style={[styles.name, { color: terminal.foreground }]}
         accessibilityHint="Opens the Windows"
         testID={title.kind === 'topic' ? 'topic-title' : 'attached-session'}>
         {name}
       </Text>
-      {title.program === null ? null : (
-        <Text numberOfLines={1} style={[styles.program, { color: terminal.dim }]} testID="pane-command">
-          {title.program}
-        </Text>
-      )}
-      {title.kind === 'topic' ? (
-        <Text numberOfLines={1} style={[styles.session, { color: terminal.dim }]} testID="attached-session">
-          {title.session}
-        </Text>
-      ) : null}
+      <View style={styles.detail}>
+        {title.program === null ? null : (
+          <Text
+            numberOfLines={1}
+            maxFontSizeMultiplier={1.2}
+            style={[styles.program, { color: terminal.dim }]}
+            testID="pane-command">
+            {title.program}
+          </Text>
+        )}
+        {title.kind === 'topic' ? (
+          <>
+            {title.program === null ? null : <Text maxFontSizeMultiplier={1.2} style={[styles.program, { color: terminal.dim }]}> · </Text>}
+            <Text
+              numberOfLines={1}
+              maxFontSizeMultiplier={1.2}
+              style={[styles.session, { color: terminal.dim }]}
+              testID="attached-session">
+              {title.session}
+            </Text>
+          </>
+        ) : null}
+      </View>
     </>
   );
 }
@@ -197,13 +207,23 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 15,
+    lineHeight: 18,
     fontWeight: '600',
+  },
+  detail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '100%',
   },
   program: {
     fontSize: 12,
+    lineHeight: 14,
+    flexShrink: 1,
     fontWeight: '500',
   },
   session: {
     fontSize: 11,
+    lineHeight: 14,
+    flexShrink: 1,
   },
 });

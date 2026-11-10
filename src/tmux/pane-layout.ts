@@ -222,3 +222,9 @@ export function windowSlide(
   // the bottom and leave that strip of the Window's ground under the keys.
   return hidden - slid < cell.height ? hidden : slid;
 }
+
+/** Covers the partial row at the top without moving the last row below the keys. */
+export function clippedRowHeight(slide: number, cell: Extent | null): number {
+  if (slide <= 0 || !cell || cell.height <= 0) return 0;
+  return Math.ceil(slide / cell.height) * cell.height - slide;
+}
