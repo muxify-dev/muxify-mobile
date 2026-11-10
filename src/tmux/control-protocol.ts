@@ -27,6 +27,7 @@ export type ControlEvent =
   | { kind: 'output'; pane: string; bytes: Uint8Array }
   | { kind: 'layout-change'; window: string; layout: string; visibleLayout: string; flags: string }
   | { kind: 'session-changed'; session: string; name: string }
+  | { kind: 'session-renamed'; session: string; name: string }
   | { kind: 'session-window-changed'; session: string; window: string }
   | { kind: 'sessions-changed' }
   | { kind: 'window-add'; window: string }
@@ -184,6 +185,12 @@ function notification(name: string, rest: string): ControlEvent | null {
       return fields.length < 2
         ? null
         : { kind: 'session-changed', session: fields[0], name: fields.slice(1).join(' ') };
+    case '%session-renamed': {
+      const renamed = fields.slice(1).join(' ');
+      return /^\$[0-9]+$/.test(fields[0] ?? '') && renamed.length > 0
+        ? { kind: 'session-renamed', session: fields[0], name: renamed }
+        : null;
+    }
     case '%session-window-changed':
       return fields.length < 2
         ? null

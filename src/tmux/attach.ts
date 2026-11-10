@@ -289,6 +289,7 @@ export function openAttach(options: AttachOptions): Attach {
   let control: ControlConnection | null = null;
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
+  let currentSessionId: string | null = null;
 
   /**
    * The two ways into a Pane that are not typing, on the Connection in force
@@ -600,7 +601,25 @@ export function openAttach(options: AttachOptions): Attach {
   let arrivalWrites = Promise.resolve();
   let topicRevision = 0;
   let sessionRevision = 0;
-  let pendingSwitch: { destination: SessionDestination; confirmedAt: number | null } | null = null;
+  type PendingSwitch = {
+    destination: SessionDestination;
+    confirmed: { sessionId: string; revision: number } | null;
+  };
+  let pendingSwitch: PendingSwitch | null = null;
+
+  function currentSessionTarget(): string {
+    return currentSessionId ?? state.sessionName;
+  }
+
+  function renameCurrentSession(name: string): void {
+    if (currentSessionId === null) return;
+    if (pendingSwitch?.confirmed?.sessionId === currentSessionId) {
+      pendingSwitch.destination = { ...pendingSwitch.destination, sessionName: name };
+    }
+    change({ sessionName: name });
+    if (state.phase.kind === 'connected') arrived(name, state.topic?.id ?? null);
+    void refreshTopic();
+  }
 
   function arrived(sessionName: string, topicId: string | null): void {
     arrivalWrites = arrivalWrites.then(async () => {
@@ -688,18 +707,28 @@ export function openAttach(options: AttachOptions): Attach {
             say(`output for ${pane}, which is in the Window but has no view (${bytes.length} bytes)`);
           },
           onNotification: (event) => {
-            if (stale(mine)) return;
+            if (stale(mine) || state.phase.kind === 'disconnected') return;
             if (event.kind === 'session-changed') {
-              if (event.name !== state.sessionName) sessionRevision += 1;
-              topology?.attachedTo(event.name);
-              if (pendingSwitch?.destination.sessionName === event.name && pendingSwitch.confirmedAt === null) {
+              const changed = currentSessionId === null
+                ? event.name !== state.sessionName
+                : currentSessionId !== event.session;
+              currentSessionId = event.session;
+              if (changed) sessionRevision += 1;
+              topology?.attachedTo(currentSessionTarget());
+              if (pendingSwitch?.destination.sessionName === event.name && pendingSwitch.confirmed === null) {
                 acceptDestination(pendingSwitch.destination);
-                pendingSwitch.confirmedAt = sessionRevision;
-              } else if (event.name !== state.sessionName) {
+                pendingSwitch.confirmed = { sessionId: event.session, revision: sessionRevision };
+              } else if (changed) {
                 const detail = state.topic ? lastTopic(state.topic.view) : null;
                 acceptDestination({ sessionName: event.name, topic: detail?.sessions.some((session) => session.name === event.name)
                   ? { id: detail.id, seed: detail } : null });
+              } else if (event.name !== state.sessionName) {
+                renameCurrentSession(event.name);
               }
+            }
+            if (event.kind === 'session-renamed') {
+              refreshSessions();
+              if (event.session === currentSessionId) renameCurrentSession(event.name);
             }
             if (event.kind === 'sessions-changed') refreshSessions();
             topology?.apply(event);
@@ -711,14 +740,14 @@ export function openAttach(options: AttachOptions): Attach {
             ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss'),
         },
       );
-      if (stale(mine)) {
+      if (stale(mine) || state.phase.kind === 'disconnected') {
         await opening.close();
         return;
       }
 
       control = opening;
       client = new TmuxClient(opening);
-      topology = createTopologyStore(client, state.sessionName, {
+      topology = createTopologyStore(client, currentSessionTarget(), {
         onTrouble: (error) => {
           if (!stale(mine)) change({ trouble: describeError(error) });
         },
@@ -766,7 +795,7 @@ export function openAttach(options: AttachOptions): Attach {
       sizing.attached();
       // A phone is too narrow for side-by-side Panes, so a split Session
       // arrives with its active Pane filling the Window.
-      await client.setZoom(state.sessionName, state.zoomed);
+      await client.setZoom(currentSessionTarget(), state.zoomed);
       if (stale(mine)) return;
       say(`Zoom preference ${state.zoomed ? 'on' : 'off'} applied; reading the Topology`);
       await topology.refresh();
@@ -820,6 +849,7 @@ export function openAttach(options: AttachOptions): Attach {
     const closingConnection = connection;
     control = null;
     client = null;
+    currentSessionId = null;
     topology?.dispose();
     topology = null;
     releaseViews();
@@ -919,7 +949,7 @@ export function openAttach(options: AttachOptions): Attach {
     // Selecting a Pane drops tmux out of zoom, and moving to another Window
     // lands on one nobody has zoomed, so the preference is re-applied rather
     // than assumed to have survived.
-    await current.setZoom(state.sessionName, state.zoomed);
+    await current.setZoom(currentSessionTarget(), state.zoomed);
     if (stale(mine)) return;
     await topology?.refresh();
   }
@@ -953,26 +983,28 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) throw new Error('The Session is not connected.');
       const observed = sessionRevision;
-      const switching: { destination: SessionDestination; confirmedAt: number | null } = { destination, confirmedAt: null };
+      const switching: PendingSwitch = { destination, confirmed: null };
       pendingSwitch = switching;
       try {
         await current.switchSession(destination.sessionName);
-        if (stale(mine)) throw new Error('The Attach changed before the Session opened.');
-        if (switching.confirmedAt === null) {
+        if (stale(mine) || client !== current) throw new Error('The Attach changed before the Session opened.');
+        if (switching.confirmed === null) {
           if (observed !== sessionRevision) throw new Error('The Host changed Session before the requested Session opened.');
-          acceptDestination(destination);
+          currentSessionId = null;
+          acceptDestination(switching.destination);
         }
-        if (state.sessionName !== destination.sessionName ||
-            (switching.confirmedAt !== null && switching.confirmedAt !== sessionRevision)) {
+        if (state.sessionName !== switching.destination.sessionName ||
+            (switching.confirmed !== null && (switching.confirmed.revision !== sessionRevision ||
+              switching.confirmed.sessionId !== currentSessionId))) {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
         const completedAt = sessionRevision;
-        topology?.attachedTo(state.sessionName);
+        topology?.attachedTo(currentSessionTarget());
         sizing.sessionSwitched();
         void refreshTopic();
         try { await settleAfterVerb(mine); }
         catch (error) { if (!stale(mine)) change({ trouble: describeError(error) }); }
-        if (stale(mine)) throw new Error('The Attach changed before the Session opened.');
+        if (stale(mine) || client !== current) throw new Error('The Attach changed before the Session opened.');
         if (completedAt !== sessionRevision) {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
@@ -986,7 +1018,7 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) return;
       say(`selecting Window ${index}`);
-      await current.selectWindow(state.sessionName, index);
+      await current.selectWindow(currentSessionTarget(), index);
       await settleAfterVerb(mine);
     },
 
@@ -1025,7 +1057,7 @@ export function openAttach(options: AttachOptions): Attach {
       model.activate(paneId);
       void (async () => {
         try {
-          await current.selectPane(state.sessionName, windowIndex, pane.index);
+          await current.selectPane(currentSessionTarget(), windowIndex, pane.index);
         } catch (error) {
           if (stale(mine)) return;
           change({ trouble: describeError(error) });
@@ -1042,7 +1074,7 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) return;
       say(`splitting ${direction}`);
-      await current.splitWindow(state.sessionName, direction);
+      await current.splitWindow(currentSessionTarget(), direction);
       await settleAfterVerb(mine);
     },
 
@@ -1051,7 +1083,7 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) return;
       say('adding a Window');
-      await current.newWindow(state.sessionName);
+      await current.newWindow(currentSessionTarget());
       await settleAfterVerb(mine);
     },
 
@@ -1062,7 +1094,7 @@ export function openAttach(options: AttachOptions): Attach {
       background(mine, async () => {
         const current = client;
         if (!current) return;
-        await current.setZoom(state.sessionName, on);
+        await current.setZoom(currentSessionTarget(), on);
         if (stale(mine)) return;
         await topology?.refresh();
       });
