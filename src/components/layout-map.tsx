@@ -1,3 +1,4 @@
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { SheetPalette } from '@/constants/app-theme';
@@ -19,10 +20,12 @@ const MAP_SLOP = { top: 8, bottom: 4, left: 8, right: 10 };
 export function LayoutMap({
   panes,
   palette,
+  appearance,
   onPress,
 }: {
   panes: Pane[];
   palette: SheetPalette;
+  appearance: 'light' | 'dark';
   onPress: () => void;
 }) {
   const frames = paneTopologyFrames(panes);
@@ -37,10 +40,17 @@ export function LayoutMap({
       }
       style={styles.map}
       testID="layout-map">
-      <View
-        pointerEvents="none"
-        style={[styles.ground, { backgroundColor: palette.sheet, borderColor: palette.stroke }]}
-      />
+      {isGlassEffectAPIAvailable() ? (
+        <GlassView
+          pointerEvents="none"
+          style={styles.ground}
+          glassEffectStyle="regular"
+          colorScheme={appearance}
+          isInteractive
+        />
+      ) : (
+        <View pointerEvents="none" style={[styles.ground, { backgroundColor: palette.sheet }]} />
+      )}
       <View pointerEvents="none" style={styles.board}>
         {panes.map((pane) => {
           const frame = frames.get(pane.index);
@@ -79,12 +89,9 @@ const styles = StyleSheet.create({
     width: 54,
     height: 40,
   },
-  // Not quite opaque, so the output under the map still shows that it is there.
   ground: {
     ...StyleSheet.absoluteFill,
     borderRadius: 7,
-    borderWidth: 1,
-    opacity: 0.82,
   },
   board: {
     position: 'absolute',

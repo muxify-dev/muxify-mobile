@@ -83,5 +83,5 @@ reason to keep the Slide there.
 
 A Selection holds both the Window size and the Slide while its keyboard is
 hidden. The top clip edge covers the remainder of a partial row without
-moving the last row under the keyboard. The Topic Header uses two lines
-within its existing 44-point height.
+moving the last row under the keyboard. The Topic Header uses two lines. The
+native Header owns its height, and the Surface measures the content area below it.

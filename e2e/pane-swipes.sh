@@ -133,10 +133,12 @@ drag 300 400 -160 0 1500
 expect_window "1 1" "a slow 160 point drag"
 drag 100 400 160 0 1500
 expect_window "0 1" "a slow 160 point drag back"
-drag 300 400 -60 0 50
-expect_window "1 1" "a 60 point flick"
-drag 100 400 60 0 50
-expect_window "0 1" "a 60 point flick back"
+# The 50 ms driver gesture can end with zero native travel. This gesture
+# has measured release velocity above 600 pt/s and stays below the distance threshold.
+drag 300 400 -80 0 100
+expect_window "1 1" "an 80 point flick"
+drag 100 400 80 0 100
+expect_window "0 1" "an 80 point flick back"
 drag 300 400 -120 100
 expect_window "0 1" "a diagonal drag"
 agent-device press 'label="Jump to latest"' >/dev/null 2>&1

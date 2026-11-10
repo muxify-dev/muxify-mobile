@@ -118,12 +118,12 @@ function AppStack() {
         />
         {/* The title is the page's own, which the screen sets when it has one. */}
         <Stack.Screen name="web-view" options={{ title: '' }} />
-        {/* No navigation header: the screen draws its own Header, on the
-            terminal background, with Back in it. */}
         <Stack.Screen
           name="terminal"
           options={{
-            headerShown: false,
+            headerShown: true,
+            headerTransparent: false,
+            headerBackVisible: false,
             title: 'Session',
             // A swipe right on the Surface is the previous Pane. From iOS 26
             // the system's back swipe starts anywhere on a screen, and it took

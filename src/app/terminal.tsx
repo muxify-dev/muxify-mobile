@@ -1,5 +1,6 @@
 import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
 import { File } from 'expo-file-system';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,7 +21,6 @@ import { stageClipboardImage, stageFile } from '@/composer/staging';
 import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
-  HEADER_HEIGHT,
   TerminalHeader,
   type HeaderTitle,
   type OptionsItem,
@@ -175,9 +175,6 @@ export default function TerminalScreen() {
     /** Set by a cold start that reopens the Last Place: look first, then attach. */
     reconnect?: string;
   }>();
-  // The screen draws its own chrome: no navigation header, so the terminal
-  // background runs to the top of the display and only the inset keeps the
-  // Header clear of the status bar.
   const insets = useSafeAreaInsets();
   const { settings, update, terminal, ansi, appearance } = useSettings();
 
@@ -1339,7 +1336,7 @@ export default function TerminalScreen() {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: opened.terminal.background },
+        { backgroundColor: opened.terminal.background },
       ]}>
       {/* The Theme decides this, not the phone: white glyphs over Solarized's
           near-white terminal are a status bar nobody can read. */}
@@ -1348,12 +1345,9 @@ export default function TerminalScreen() {
       <TerminalHeader
         title={headerTitle}
         terminal={opened.terminal}
-        appearance={appearance}
         onBack={goHome}
         onTitle={openTitleSheet}
         options={options}
-        // The programs in the Topology are a read old; see refreshBehindSheet.
-        onOptionsTouched={() => attach?.refreshTopology()}
       />
 
       <View
@@ -1449,6 +1443,7 @@ export default function TerminalScreen() {
             <ScrollBackIndicator
               position={state.scrolled}
               palette={opened.terminal}
+              appearance={appearance}
               onPress={jumpToLatest}
             />
           </>
@@ -1465,6 +1460,7 @@ export default function TerminalScreen() {
         {(state?.topology.panes.length ?? 0) > 1 ? (
           <LayoutMap
             panes={state?.topology.panes ?? []}
+            appearance={appearance}
             palette={sheetPaletteFor(settings.theme)}
             onPress={openPanes}
           />
@@ -1553,11 +1549,8 @@ export default function TerminalScreen() {
         palette={chrome}
       />
 
-      {/* Everything the screen has to say sits under the Header, the way iOS
-          delivers a notification: the Banners first, then the trouble line
-          beneath them. Below the bar, not behind it: the container's padding
-          does not push an absolutely positioned child down. */}
-      <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
+      {/* The native Header ends where this content area begins. */}
+      <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
         {reconnectShown ? null : keyBanner}
 
         <Presence shown={!status.quiet}>
@@ -1590,13 +1583,14 @@ export default function TerminalScreen() {
           session={bootstrap.current.session ?? ''}
           progress={reconnecting}
           palette={chrome}
+          appearance={appearance}
           onTryAgain={tryReconnectAgain}
           onGoHome={goHome}
         />
       ) : null}
       {/* The reconnect stops at a changed key, so its warning sits above it. */}
       {reconnectShown ? (
-        <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
+        <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
           {keyBanner}
         </View>
       ) : null}
@@ -2222,10 +2216,12 @@ function ScrollRail({
 function ScrollBackIndicator({
   position,
   palette,
+  appearance,
   onPress,
 }: {
   position: { back: number; scrollbackLines: number };
   palette: TerminalPalette;
+  appearance: 'light' | 'dark';
   onPress: () => void;
 }) {
   const atOldest = position.back >= position.scrollbackLines;
@@ -2240,15 +2236,23 @@ function ScrollBackIndicator({
       // for it is not aiming carefully. The slop costs nothing: there is
       // nothing else down there to press.
       hitSlop={PILL_SLOP}
-      // Inverted against the Theme rather than painted a fixed light: the pill
-      // has to read over whatever the Session is painting behind it, and a
-      // light pill with light text is what a fixed one gave on Solarized.
-      style={[styles.scrollPill, { backgroundColor: palette.foreground }]}
+      style={styles.scrollPill}
       testID="scroll-position">
-      <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>
+      {isGlassEffectAPIAvailable() ? (
+        <GlassView
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { borderRadius: 999 }]}
+          glassEffectStyle="regular"
+          colorScheme={appearance}
+          isInteractive
+        />
+      ) : (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: palette.background, borderRadius: 999 }]} />
+      )}
+      <ThemedText type="code" style={[styles.scrollPillText, { color: palette.foreground }]}>
         {atOldest ? `oldest of ${position.scrollbackLines} lines` : `${position.back} lines back`}
       </ThemedText>
-      <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.background }]}>
+      <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.foreground }]}>
         Jump to latest
       </ThemedText>
     </Pressable>

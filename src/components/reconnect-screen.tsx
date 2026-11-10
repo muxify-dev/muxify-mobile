@@ -1,6 +1,7 @@
+import { Button, GlassEffectContainer, Host, VStack } from '@expo/ui/swift-ui';
+import { accessibilityLabel, buttonStyle, controlSize, environment } from '@expo/ui/swift-ui/modifiers';
 import { SymbolView } from 'expo-symbols';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import type { Appearance } from '@/constants/app-theme';
 import {
@@ -16,6 +17,7 @@ interface ReconnectScreenProps {
   session: string;
   progress: Exclude<ReconnectProgress, { kind: 'attached' }>;
   palette: Appearance;
+  appearance: 'light' | 'dark';
   onTryAgain: () => void;
   onGoHome: () => void;
 }
@@ -35,10 +37,10 @@ export function ReconnectScreen({
   session,
   progress,
   palette,
+  appearance,
   onTryAgain,
   onGoHome,
 }: ReconnectScreenProps) {
-  const insets = useSafeAreaInsets();
   const current = RECONNECT_STEPS.indexOf(progress.step);
 
   return (
@@ -46,7 +48,7 @@ export function ReconnectScreen({
       style={[
         StyleSheet.absoluteFill,
         styles.screen,
-        { backgroundColor: palette.background, paddingTop: insets.top + 48 },
+        { backgroundColor: palette.background, paddingTop: 48 },
       ]}
       testID="reconnect-screen">
       <Text style={[styles.title, { color: palette.toolbarTint }]}>Trying to reconnect</Text>
@@ -66,12 +68,26 @@ export function ReconnectScreen({
       </View>
 
       {progress.kind === 'failed' ? (
-        <>
-          <Failure text={failureText(progress, { hostName, session })} palette={palette} />
-          <ScreenButton label="Try again" palette={palette} onPress={onTryAgain} />
-        </>
+        <Failure text={failureText(progress, { hostName, session })} palette={palette} />
       ) : null}
-      <ScreenButton label="Go Home" palette={palette} onPress={onGoHome} />
+      <Host matchContents={{ vertical: true }} colorScheme={appearance} seedColor={palette.controlAccent} style={styles.buttons}>
+        <GlassEffectContainer spacing={16} modifiers={[environment('colorScheme', appearance)]}>
+          <VStack spacing={16}>
+            {progress.kind === 'failed' ? (
+              <Button
+                label="Try again"
+                onPress={onTryAgain}
+                modifiers={[buttonStyle('glassProminent'), controlSize('large'), accessibilityLabel('Try again')]}
+              />
+            ) : null}
+            <Button
+              label="Go Home"
+              onPress={onGoHome}
+              modifiers={[buttonStyle('glass'), controlSize('large'), accessibilityLabel('Go Home')]}
+            />
+          </VStack>
+        </GlassEffectContainer>
+      </Host>
     </View>
   );
 }
@@ -90,29 +106,6 @@ function Failure({
         <Text style={[styles.failureReason, { color: palette.secondaryLabel }]}>{text.reason}</Text>
       ) : null}
     </View>
-  );
-}
-
-function ScreenButton({
-  label,
-  palette,
-  onPress,
-}: {
-  label: string;
-  palette: Appearance;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        styles.button,
-        { backgroundColor: palette.rowSurface, opacity: pressed ? 0.6 : 1 },
-      ]}>
-      <Text style={[styles.buttonText, { color: palette.controlAccent }]}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -166,12 +159,5 @@ const styles = StyleSheet.create({
   failure: { gap: 6 },
   failureTitle: { fontSize: 17, fontWeight: '600' },
   failureReason: { fontSize: 15 },
-  button: {
-    marginTop: 16,
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  buttonText: { fontSize: 17, fontWeight: '600' },
+  buttons: { marginTop: 16, alignSelf: 'stretch' },
 });

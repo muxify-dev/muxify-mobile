@@ -4,8 +4,6 @@
 #
 # Each check here stands for a bug that actually happened:
 #
-#   1  the navigation header, removed so the Surface reaches the top; the
-#      screen draws its own Header with Back in it
 #   2  the library's own Accessory Bar, hidden by a local patch
 #   3  the Session's options, which Muxify used to borrow and now never touches
 #   4  the resize, which has broken four separate ways — and the keyboard,
@@ -248,12 +246,19 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/10  the Terminal Screen has its own Header, not a navigation header"
-snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
-  && fail "a navigation title is back; the Surface no longer reaches the top"
-snap | grep -qE '^@e[0-9]+ \[button\] "Back"$' \
-  || fail "the Header's Back button is missing"
-echo "     no navigation title, Back in the Header"
+echo "1/10  the native Header leaves the Surface below it"
+agent-device snapshot --json 2>/dev/null | python3 -c '
+import json, sys
+nodes = json.load(sys.stdin)["data"]["nodes"]
+header = next((n for n in nodes if n["type"] == "NavigationBar"), None)
+surface = next((n for n in nodes if n.get("identifier") == "surface-area"), None)
+assert header is not None, "the native Header is missing"
+assert surface is not None, "the Surface area is missing"
+bar, area = header["rect"], surface["rect"]
+assert area["height"] > 0 and area["y"] >= bar["y"] + bar["height"] - 1, (bar, area)
+assert any(n.get("label") == "Back" for n in nodes), "Back is missing"
+print("     the Surface starts below the native Header")
+' || fail "the Header covers the Surface"
 
 echo "2/10  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Row calls its keys control,

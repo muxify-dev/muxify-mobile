@@ -400,20 +400,21 @@ Window with one Pane has no map.
 _Avoid_: minimap, Pane indicator, thumbnail
 
 **Header**:
-The row at the top of the Terminal Screen, on the terminal background under
-the status bar: Back on the left, the title in the middle, Options on the
-right. Back goes Home and leaves the Session attached (ADR 0007). The title is
-the Session name over the program that runs in the active Pane, as tmux's
-`#{pane_current_command}` names it; for a Session opened from a Topic it is
-the Topic title over one line with the program and the Session name in the dim tone. The
-program follows the Topology, which is read again when the active Window is
-renamed, when the title sheet or the Options menu opens, and after every verb;
-a Window with a fixed name can show the program of the last read. A tap on the
-title opens the Title Sheet. The red line under the Header that reports a
-failed Pane command is not a Banner and always shows: the Connection is fine,
-one command was not.
-_Avoid_: navigation bar (that is the system's, and this screen has none),
-title bar, toolbar
+The native bar at the top of the Terminal Screen. It owns the top safe area,
+with Back on the left, the title in the middle and Options on the right.
+Back goes Home and leaves the Attach alive (ADR 0007). The content area starts
+below the Header. The title is the Session name over the program that runs in
+the active Pane, as tmux's `#{pane_current_command}` names it. For a Session
+opened from a Topic, it is the Topic title over one line with the program and
+the Session name in the dim tone.
+The program follows the Topology. The app reads the Topology again when the
+active Window is renamed, when the Title Sheet opens, and after the existing
+tmux verbs that request a read. A Window with a fixed name can show the program
+of the last read. Opening Options does not start a read. A tap on the title
+opens the Title Sheet. The red line under the Header reports a failed Pane
+command. It is not a Banner and always shows. The Connection is fine, but one
+command failed.
+_Avoid_: title bar, toolbar
 
 **Title Sheet**:
 The sheet the Header's title opens. For a Session, one row per Window of the
