@@ -683,9 +683,34 @@ export function openAttach(options: AttachOptions): Attach {
       // are derived from it, so a split made on the laptop, a Window switch or
       // somebody else's `select-pane` all arrive the same way.
       let windowSize: Grid | null = null;
+      /**
+       * The Window's shape when it was last zoomed, or last asked to be.
+       *
+       * tmux drops the zoom by itself whenever the Window changes under it: a
+       * split, a Pane closing or a plain `select-pane`, made on the laptop or
+       * by a program in a Pane. The preference says the phone wants one Pane,
+       * so a Window that lost its zoom that way is zoomed again. A Window in
+       * the shape it was zoomed in was unzoomed on purpose, by someone at the
+       * laptop, and is left as they put it.
+       */
+      let zoomedShape: string | null = null;
+      const keepZoom = (next: Topology) => {
+        const window = next.activeWindow;
+        if (!window || next.panes.length < 2) return;
+        const shape = `${window.id} ${next.activePane?.id} ${next.panes.map((pane) => pane.id).join(',')}`;
+        if (window.zoomed) {
+          zoomedShape = shape;
+          return;
+        }
+        if (!state.zoomed || shape === zoomedShape) return;
+        zoomedShape = shape;
+        say(`Window ${window.id} changed and lost its zoom; applying the Zoom preference again`);
+        background(mine, () => settleAfterVerb(mine));
+      };
       topology.subscribe((next) => {
         if (stale(mine)) return;
         pruneViews(next);
+        keepZoom(next);
         const activeId = next.activePane?.id;
         change({
           topology: next,

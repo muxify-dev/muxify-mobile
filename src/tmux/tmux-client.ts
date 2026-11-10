@@ -157,6 +157,9 @@ export function sameGrid(a: Grid | null | undefined, b: Grid | null | undefined)
  * omission — it is what the migration to control mode was for. See ADR 0006.
  */
 export class TmuxClient {
+  /** The zoom request in flight, which the next one waits for. See setZoom. */
+  private zooming: Promise<void> = Promise.resolve();
+
   constructor(private readonly runner: CommandRunner) {}
 
   /**
@@ -471,8 +474,22 @@ export class TmuxClient {
     await this.mustRun('clear the Scrollback', clearHistoryCommand(paneId));
   }
 
-  /** Toggles zoom on the Session's active Pane. */
-  async setZoom(sessionName: string, zoomed: boolean): Promise<void> {
+  /**
+   * Zooms or unzooms the Session's active Pane, one request at a time.
+   *
+   * tmux has only a toggle, so each request reads the Window and then toggles
+   * it. Two requests in flight at once both read an unzoomed Window and both
+   * toggle, which leaves it unzoomed. A verb's own re-apply and the Attach
+   * noticing that tmux dropped the zoom are two such requests. Waiting for the
+   * one before means each reads the Window after the last toggle landed.
+   */
+  setZoom(sessionName: string, zoomed: boolean): Promise<void> {
+    const turn = this.zooming.then(() => this.zoomNow(sessionName, zoomed));
+    this.zooming = turn.catch(() => undefined);
+    return turn;
+  }
+
+  private async zoomNow(sessionName: string, zoomed: boolean): Promise<void> {
     const windows = await this.listWindows(sessionName);
     const active = windows.find((window) => window.active);
     if (!active || active.zoomed === zoomed) return;
