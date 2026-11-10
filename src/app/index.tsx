@@ -37,6 +37,7 @@ import { readDevHost } from '@/dev/dev-host';
 import { homeSection, type HostConnection } from '@/domain/home';
 import { placeToReconnect } from '@/domain/reconnect';
 import { useHostReading } from '@/hooks/use-host-reading';
+import { useWakeFromMenu } from '@/hooks/use-wake-from-menu';
 import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
@@ -201,6 +202,8 @@ function HostSection({
     appearance,
   });
 
+  const wakeFromMenu = useWakeFromMenu(host.id, read);
+
   const openHostScreen = () =>
     router.push({ pathname: '/hosts/[id]', params: { id: host.id } });
 
@@ -218,6 +221,7 @@ function HostSection({
           seed: topicSeedParam(row.seed),
         },
       }),
+    onWake: (row, wake) => wakeFromMenu(row.id, wake),
     // The Bench and No Topic open in place on the Host Screen, which Home has
     // no room for.
     onToggle: openHostScreen,

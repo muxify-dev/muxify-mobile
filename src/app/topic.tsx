@@ -18,6 +18,8 @@ import {
   accessibilityLabel,
   background,
   buttonStyle,
+  controlSize,
+  disabled,
   environment,
   font,
   foregroundColor,
@@ -27,6 +29,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { ToolbarWord } from '@/components/toolbar-word';
@@ -45,10 +48,11 @@ import {
   type TopicView,
 } from '@/topics/topic-detail';
 import { fieldsParam } from '@/topics/topic-edit';
+import { WAKE_LABEL, wakeTopic, type Wake, type WakeState } from '@/topics/wake-topic';
 
 /** Why a Topic with no live Session has none, in the Mac's words for its state. */
 const NO_LIVE_SESSIONS: Record<Exclude<TopicState, 'live'>, string> = {
-  dormant: 'This Topic is Dormant: it remembers Sessions, but none of them runs on the Host now.',
+  dormant: 'This Topic is Dormant: it remembers Sessions, but none of them runs on the Host now. Reopen makes them again; Start Fresh makes one shell in each folder.',
   empty: 'This Topic is Empty: it has no Sessions.',
 };
 
@@ -87,6 +91,20 @@ export default function TopicScreen() {
       void reread();
     }, [reread]),
   );
+
+  const [waking, setWaking] = useState<WakeState>({ kind: 'idle' });
+
+  const wake = async (how: Wake) => {
+    if (waking.kind === 'working') return;
+    setWaking({ kind: 'working', wake: how });
+    const write = await wakeTopic(hostId, topicId as TopicId, how);
+    if (write.kind === 'failed') {
+      setWaking({ kind: 'failed', message: write.error });
+      return;
+    }
+    await reread();
+    setWaking({ kind: 'idle' });
+  };
 
   const open = (session: string) =>
     router.push({ pathname: '/terminal', params: { hostId, session, topicId } });
@@ -202,6 +220,12 @@ export default function TopicScreen() {
                     <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>
                       {NO_LIVE_SESSIONS[topic.state]}
                     </Text>
+                    {topic.state === 'dormant' ? (
+                      <WakeButtons waking={waking} onWake={(how) => void wake(how)} />
+                    ) : null}
+                    {waking.kind === 'failed' ? (
+                      <FieldError error={waking.message} palette={palette} />
+                    ) : null}
                   </VStack>
                 )}
                 <Button
@@ -223,6 +247,36 @@ export default function TopicScreen() {
         </Form>
       </Host>
     </View>
+  );
+}
+
+/**
+ * Reopen, the main way, and Start Fresh, under a Dormant Topic's text. While
+ * the Host works, the pressed button shows a spinner and both are disabled.
+ */
+function WakeButtons({ waking, onWake }: { waking: WakeState; onWake: (how: Wake) => void }) {
+  const working = waking.kind === 'working';
+  const button = (how: Wake, style: 'borderedProminent' | 'bordered') => (
+    <Button
+      onPress={() => onWake(how)}
+      modifiers={[
+        buttonStyle(style),
+        controlSize('small'),
+        disabled(working),
+        accessibilityLabel(WAKE_LABEL[how]),
+      ]}>
+      <HStack spacing={6}>
+        {working && waking.wake === how ? <ProgressView /> : null}
+        <Text>{WAKE_LABEL[how]}</Text>
+      </HStack>
+    </Button>
+  );
+  return (
+    <HStack spacing={12} modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+      {button('reopen', 'borderedProminent')}
+      {button('start-fresh', 'bordered')}
+      <Spacer />
+    </HStack>
   );
 }
 

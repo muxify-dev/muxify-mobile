@@ -194,7 +194,9 @@ _Avoid_: label, category, folder, group
 
 **Dormant**:
 An open Topic that has no live Session but remembers Sessions, for example after
-a tmux restart. The Host Screen shows it dimmed, with "No live Sessions".
+a tmux restart. The Host Screen shows it dimmed, with "No live Sessions". The
+phone can wake it with Reopen or Start Fresh, from its Topic Screen or from the
+long-press menu of its card on Home and the Host Screen.
 _Avoid_: inactive, sleeping, suspended
 
 **Empty**:
@@ -238,7 +240,11 @@ or on Home.
 It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
 order, each with its Windows and their Agent marks. A tap on a Session attaches
 to it; its Header then shows the Topic, and Back from it goes Home. A Dormant or Empty
-Topic shows "No live Sessions" and says which of the two it is. It shows what
+Topic shows "No live Sessions" and says which of the two it is. A Dormant Topic
+also has two buttons, Reopen and Start Fresh. While the Host works, the pressed
+button shows a spinner and both are disabled; after it, the screen stays and
+reads the Topic again, so the live Sessions show. A Host error shows on the
+screen. It shows what
 the Host Screen last read at once, and reads the Topic again each time it comes
 into view. The Windows come in with that read.
 _Avoid_: Topic detail, Topic page, Topic view
@@ -268,6 +274,20 @@ Worktree choice. An error from the Host, such as a folder that is not there,
 shows in the sheet and the sheet stays open. After Save, the Topic Screen reads
 the Topic again and shows the new Session.
 _Avoid_: New Session (that sheet makes a Session in no Topic)
+
+**Reopen**:
+The Mac's Reopen Topic, which the phone asks of the Host with `muxify topic
+reopen`: it makes the remembered Sessions, Windows, Tabs and Agents of a
+Dormant or Settled Topic again. The Host answers when the Sessions and Windows
+exist, before the Agents are up.
+_Avoid_: Restore, Resume, Wake (the phone's word for Reopen and Start Fresh together)
+
+**Start Fresh**:
+The Mac's Start Topic Fresh, which the phone asks of the Host with `muxify topic
+start-fresh`: it makes one Session with one shell Window in each Session Path
+that a Dormant or Settled Topic remembers, with no remembered Windows, Tabs or
+Agents.
+_Avoid_: Reset, Restart
 
 ### Terminal
 
