@@ -1,19 +1,9 @@
 context platform=ios kind=simulator
 
-# Waking a Dormant Topic from the phone. Run e2e/wake-topic.sh, not this file:
-# it makes the three Dormant Topics in a sandbox, turns the Topics list on, and
-# checks the Sessions on the Mac afterwards.
-#
-# Reopen on the Topic Screen stays on the Topic Screen and shows the Session it
-# made; so does Start Fresh. The Host Screen's card of a Dormant Topic offers
-# Reopen on a long press, and the Topic is live after it.
-
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"All of Dev Host\""
 wait "label=\"Edit Host\"" 15000
-# Home is still under the Host Screen until the push settles, and has the
-# same Topic rows.
 wait 1500
 
 wait "label=\"Topic e2e-wake-reopen\"" 15000
@@ -21,30 +11,27 @@ press "label=\"Topic e2e-wake-reopen\""
 wait "label=\"Reopen\" hittable=true" 15000
 is "visible" "label=\"Start Fresh\""
 press "label=\"Reopen\" hittable=true"
-wait "label=\"Session wakea/e2e-wake-reopen\"" 20000
-is "visible" "label=\"Session wakea/e2e-wake-reopen\""
-# Back from a Topic Screen is the Host Screen, titled with the Host.
-press "role=button label=\"Dev Host\""
-
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "wakea/e2e-wake-reopen"
+press "role=button label=\"Back\""
+wait "label=\"All of Dev Host\"" 8000
+press "label=\"All of Dev Host\""
 wait "label=\"Topic e2e-wake-fresh\"" 15000
+wait 1500
 press "label=\"Topic e2e-wake-fresh\""
 wait "label=\"Start Fresh\" hittable=true" 15000
 press "label=\"Start Fresh\" hittable=true"
-wait "label=\"Session wakeb/e2e-wake-fresh\"" 20000
-press "label=\"Session wakeb/e2e-wake-fresh\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "wakeb/e2e-wake-fresh"
-# Back from a Session is Home.
 press "role=button label=\"Back\""
 wait "label=\"All of Dev Host\"" 8000
 press "label=\"All of Dev Host\""
 wait "label=\"Edit Host\"" 15000
+wait 1500
 wait "label=\"Topic e2e-wake-menu\"" 15000
 longpress "label=\"Topic e2e-wake-menu\""
 wait "label=\"Reopen\" role=button hittable=true" 8000
-is "visible" "label=\"Start Fresh\" role=button hittable=true"
 press "label=\"Reopen\" role=button hittable=true"
-# The Host Screen reads the Host's Topics again, and the card is live.
 wait 3000
 
 close

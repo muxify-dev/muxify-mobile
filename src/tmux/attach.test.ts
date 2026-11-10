@@ -1,3 +1,5 @@
+import { lastTopic, type TopicDetail, type TopicRead } from '@/topics/topic-detail';
+import type { TopicId } from '@/topics/environment';
 import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
@@ -47,7 +49,7 @@ function fakeHost() {
   let attachCommand = '';
   let replies = 0;
   /** What `list-windows`, `list-panes` and the rest answer with. */
-  const answers = new Map<string, string[]>([
+  const answers = new Map<string, string[] | ((command: string) => string[])>([
     [
       'list-windows',
       ['@0\t0\t1\t2\t0\tshell\tzsh'],
@@ -58,6 +60,8 @@ function fakeHost() {
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
+  const held = new Set<string>();
+  const queued: string[] = [];
 
   const transport: TmuxTransport = {
     exec: () => Promise.reject(new Error('the Control Connection does not exec')),
@@ -86,19 +90,27 @@ function fakeHost() {
   }
 
   function answer(line: string): void {
+    if (held.has(verbOf(line)) || queued.length > 0) { queued.push(line); return; }
     replies += 1;
     const verb = verbOf(line);
     if (refusing.has(verb)) {
       say(`%begin 1 ${replies} 1\nthe Host refused ${verb}\n%error 1 ${replies} 1\n`);
       return;
     }
-    const lines = answers.get(verb) ?? [];
+    const answer = answers.get(verb) ?? [];
+    const lines = typeof answer === 'function' ? answer(line) : answer;
     say(`%begin 1 ${replies} 1\n${lines.map((each) => `${each}\n`).join('')}%end 1 ${replies} 1\n`);
   }
 
   return {
     transport,
     commands,
+    hold: (verb: string) => held.add(verb),
+    release: (verb?: string) => {
+      if (verb) held.delete(verb);
+      else held.clear();
+      queued.splice(0).forEach(answer);
+    },
     get attachCommand() {
       return attachCommand;
     },
@@ -123,7 +135,7 @@ function fakeHost() {
     },
     refuseCommand: (verb: string) => refusing.add(verb),
     /** What a command answers with, for a Window shaped differently. */
-    answering: (verb: string, lines: string[]) => answers.set(verb, lines),
+    answering: (verb: string, lines: string[] | ((command: string) => string[])) => answers.set(verb, lines),
     verbs: () => commands.map(verbOf),
   };
 }
@@ -181,6 +193,7 @@ function attachOn(
     failLink?: () => unknown;
     sessionName?: string;
     topicId?: string;
+    readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
     zoomed?: boolean;
     upload?: Upload;
   } = {},
@@ -199,9 +212,9 @@ function attachOn(
   let next = 0;
   const attach = openAttach({
     host: HOST,
-    sessionName: options.sessionName ?? 'work',
-    topicId: options.topicId ?? null,
+    destination: { sessionName: options.sessionName ?? 'work', topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null },
     zoomed: options.zoomed ?? true,
+    readTopic: options.readTopic,
     store,
     clock,
     log,
@@ -407,7 +420,7 @@ describe('the verbs', () => {
     kit.hosts[0].commands.length = 0;
     kit.wrote.length = 0;
 
-    await kit.attach.switchSession('play');
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
     await settle();
 
     expect(kit.attach.state().sessionName).toBe('play');
@@ -475,7 +488,7 @@ describe('the verbs', () => {
     expect(kit.attach.state().zoomed).toBe(true);
   });
 
-  it('reads the mouse for the Pane that is active, not for the one before it', async () => {
+  it('reads the mouse and alternate screen for the active Pane', async () => {
     const split = fakeHost();
     const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
     split.answering('list-panes', [
@@ -492,12 +505,15 @@ describe('the verbs', () => {
     kit.attach.surfaceForPane('%2', fakeSurface(), { cols: 49, rows: 20 });
     await settle();
     expect(kit.attach.state().mouseTracking).toBe(true);
+    expect(kit.attach.state().alternate).toBe(true);
 
     kit.attach.selectPane('%2');
     expect(kit.attach.state().mouseTracking).toBe(false);
+    expect(kit.attach.state().alternate).toBe(false);
 
     kit.attach.selectPane('%0');
     expect(kit.attach.state().mouseTracking).toBe(true);
+    expect(kit.attach.state().alternate).toBe(true);
   });
 
   it('turns a command nobody waited on into a quiet line, not a dead screen', async () => {
@@ -809,6 +825,22 @@ describe('reconnecting by hand', () => {
     kit.hosts[1].accept();
     await settle();
     expect(kit.attach.state().phase.kind).toBe('connected');
+  });
+
+  it('reads the normal screen after reconnecting to the same Pane id', async () => {
+    const before = fakeHost();
+    before.answering('display-message', ['0\t0\t1\t0\t49\t41\t0\t1\t1']);
+    const kit = attachOn({ hosts: [before, fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface(), GRID);
+    await settle();
+    expect(kit.attach.state().alternate).toBe(true);
+
+    before.drop();
+    await settle();
+    await connected(kit, 1);
+    expect(kit.attach.state().topology.activePane?.id).toBe('%0');
+    expect(kit.attach.state().alternate).toBe(false);
   });
 
   it('is sized from the last stable grid, with Zoom re-applied', async () => {
@@ -1162,5 +1194,421 @@ describe('another Client resizing the Window', () => {
     await settle();
 
     expect(kit.hosts[0].verbs().slice(since)).not.toContain('select-window');
+  });
+});
+
+
+describe('the current Topic belongs to the Attach', () => {
+  const topic = (id: string): TopicDetail => ({ id: id as TopicId, label: id, note: null,
+    tags: [], state: 'live', sessions: [] });
+  const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
+
+  it('keeps a sibling switch in Last Place and clears it for a plain same-Session pick', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await connected(kit);
+    await kit.attach.switchSession(destination('play', 'a'));
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote).toContain('last place host-1 play a');
+    kit.hosts[0].commands.length = 0;
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().topic).toBeNull();
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play no Topic');
+    expect(kit.hosts[0].verbs()).not.toContain('switch-client');
+  });
+
+  it('rejects an old Topic read after a switch and a pre-edit read after a fresh read', async () => {
+    const reads: ((value: TopicRead) => void)[] = [];
+    const kit = attachOn({ topicId: 'a', readTopic: () => new Promise((resolve) => reads.push(resolve)) });
+    await connected(kit);
+    await kit.attach.switchSession(destination('work', 'b'));
+    const fresh = kit.attach.refreshTopic();
+    reads.at(-1)!({ kind: 'shown', topic: { ...topic('b'), label: 'Saved title' } });
+    await fresh;
+    reads[0]({ kind: 'shown', topic: topic('a') });
+    reads[1]({ kind: 'shown', topic: { ...topic('b'), label: 'Old title' } });
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Saved title');
+  });
+
+  it('refuses a superseded switch while keeping a later unsolicited Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    await expect(kit.attach.switchSession(destination('other', 'c'))).rejects.toThrow('already in progress');
+    host.notify('%session-changed $2 play');
+    expect(kit.attach.state().topic?.id).toBe('b');
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+    expect(kit.attach.state().topic).toBeNull();
+    expect(kit.wrote.filter((line) => line === 'last place host-1 play b')).toHaveLength(1);
+    expect(kit.wrote.at(-1)).toBe('last place host-1 elsewhere no Topic');
+  });
+
+  it('keeps the latest Session but refuses a switch superseded before returning to that Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    host.notify('%session-changed $2 play');
+    host.notify('%session-changed $3 elsewhere');
+    host.notify('%session-changed $2 play');
+    expect(kit.attach.state().sessionName).toBe('play');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().topic).toBeNull();
+  });
+
+  it('does not overwrite a newer notification when the requested notification is absent', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+  });
+
+  it('refuses a dependent Window action after the Session changes during Topology refresh', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('list-windows');
+    const pickWindow = kit.attach.switchSession(destination('play', 'b')).then(() => kit.attach.selectWindow(7));
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(pickWindow).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+    expect(host.commands.some((command) => command.includes("'select-window'") && command.includes(':7'))).toBe(false);
+  });
+
+  it('refuses a dependent Window action when close ends the Attach during Topology refresh', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('list-windows');
+    const pickWindow = kit.attach.switchSession(destination('play', 'b')).then(() => kit.attach.selectWindow(7));
+    const refused = expect(pickWindow).rejects.toThrow('Attach changed');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    await kit.attach.close();
+    host.release();
+    await refused;
+    expect(kit.attach.state().phase.kind).toBe('closed');
+    expect(kit.attach.state().trouble).toBeNull();
+    expect(host.commands.some((command) => command.includes("'select-window'") && command.includes(':7'))).toBe(false);
+  });
+
+  it('keeps a confirmed destination if the following Topology read fails', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].refuseCommand('list-windows');
+    await kit.attach.switchSession(destination('play', 'b'));
+    expect(kit.attach.state().sessionName).toBe('play');
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(kit.attach.state().trouble).not.toBeNull();
+  });
+
+  it('reconnects and persists the latest destination', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    await kit.attach.switchSession(destination('play', 'b'));
+    kit.hosts[0].drop();
+    await connected(kit, 1);
+    await settle();
+    expect(kit.hosts[1].attachCommand).toContain('play');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play b');
+  });
+
+  it('finishes queued arrival writes before close returns', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    let release!: () => void;
+    kit.store.rememberSession = () => new Promise<void>((resolve) => { release = resolve; });
+    await kit.attach.switchSession(destination('work', 'b'));
+    await settle();
+    let closed = false;
+    const closing = kit.attach.close().then(() => { closed = true; });
+    await settle();
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work b');
+  });
+});
+
+
+describe('the current Session keeps its identity through a rename', () => {
+  const topic = (label: string): TopicDetail => ({ id: 'a' as TopicId, label, note: null,
+    tags: [], state: 'live', sessions: [] });
+  const destination = { sessionName: 'play', topic: { id: 'b' as TopicId, seed: null } };
+
+  async function observed(kit: ReturnType<typeof attachOn>) {
+    await connected(kit);
+    kit.hosts[0].notify('%session-changed $1 work');
+    await settle();
+  }
+
+  it.each(['before', 'after'])('keeps its Topic and Pane when identity arrives %s opening resolves', async (timing) => {
+    const kit = attachOn({ topicId: 'a', readTopic: async () => ({ kind: 'shown', topic: topic('Title') }) });
+    const host = kit.hosts[0];
+    if (timing === 'before') {
+      kit.attach.containerLaidOut(PHONE);
+      kit.attach.windowGridReported(GRID, PHONE);
+      kit.clock.advance(GRID_SETTLE_MS * 2);
+      await settle();
+      host.accept();
+      host.notify('%session-changed $1 work');
+      host.notify('%session-renamed $1 Before');
+      await settle();
+    } else {
+      await observed(kit);
+    }
+    const view = kit.attach.view('%0');
+    host.notify('%session-renamed $1 Short');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('Short');
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Title');
+    expect(kit.attach.state().topology.activePane).toMatchObject({ id: '%0', command: 'zsh' });
+    expect(kit.attach.view('%0')).toBe(view);
+    expect(kit.wrote.at(-1)).toBe('last place host-1 Short a');
+    if (timing === 'before') expect(kit.wrote).not.toContain('last place host-1 work a');
+    host.commands.length = 0;
+    await kit.attach.selectWindow(7);
+    await kit.attach.split('right');
+    await kit.attach.newWindow();
+    kit.attach.setZoom(false);
+    await settle();
+    const sessionCommands = host.commands.filter((line) =>
+      ['list-windows', 'list-panes', 'select-window', 'split-window', 'new-window', 'resize-pane'].includes(verbOf(line)));
+    expect(sessionCommands.length).toBeGreaterThan(4);
+    expect(sessionCommands.every((line) => line.includes('$1'))).toBe(true);
+    await kit.attach.close();
+  });
+
+  it('refreshes the Sessions list without moving on a sibling rename', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await observed(kit);
+    const host = kit.hosts[0];
+    const wrote = [...kit.wrote];
+    host.answering('list-sessions', ['work\t1', 'Other\t1']);
+    host.notify('%session-renamed $2 Other');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('work');
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.attach.state().sessions?.map((session) => session.name)).toEqual(['work', 'Other']);
+    expect(kit.wrote).toEqual(wrote);
+    await kit.attach.close();
+  });
+
+  it('keeps the program and ID target during a held Topology read and rename', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await observed(kit);
+    const host = kit.hosts[0];
+    const view = kit.attach.view('%0');
+    host.commands.length = 0;
+    host.hold('list-windows');
+    kit.attach.refreshTopology();
+    host.notify('%session-renamed $1 Short');
+    host.release();
+    await settle();
+    expect(host.commands.filter((line) => ['list-windows', 'list-panes'].includes(verbOf(line)))
+      .every((line) => line.includes('$1'))).toBe(true);
+    expect(kit.attach.state().topology.activePane?.command).toBe('zsh');
+    expect(kit.attach.view('%0')).toBe(view);
+    await kit.attach.close();
+  });
+
+  it('keeps the active Pane when an initial name read finishes empty after identity and rename arrive', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await connected(kit);
+    const host = kit.hosts[0];
+    const view = kit.attach.view('%0');
+    const since = kit.seen.length;
+    host.hold('list-windows');
+    kit.attach.refreshTopology();
+    host.notify('%session-changed $1 work');
+    host.notify('%session-renamed $1 Short');
+    host.answering('list-windows', (line) => line.includes("'work'") ? [] : ['@0\t0\t1\t2\t0\tshell\tzsh']);
+    host.release();
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('Short');
+    expect(kit.attach.state().topology.activePane?.id).toBe('%0');
+    expect(kit.seen.slice(since).every((state) => state.topology.activePane?.id === '%0')).toBe(true);
+    expect(kit.attach.view('%0')).toBe(view);
+    await kit.attach.close();
+  });
+
+  it('targets Pane selection by the current Session ID after a rename', async () => {
+    const kit = attachOn();
+    await observed(kit);
+    const host = kit.hosts[0];
+    host.answering('list-windows', ['@0\t0\t1\t2\t1\tshell\tzsh']);
+    host.answering('list-panes', [
+      '0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]',
+      '1\t%2\tvim\t0\t/home/user\tb25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]',
+    ]);
+    kit.attach.refreshTopology();
+    await settle();
+    host.notify('%session-renamed $1 Short');
+    expect(kit.attach.selectPane('%2')).toBe(true);
+    await settle();
+    expect(host.commands.find((line) => verbOf(line) === 'select-pane')).toContain('$1:0.1');
+    expect(kit.attach.state().topology.activePane?.command).toBe('vim');
+    await kit.attach.close();
+  });
+
+  it.each(['command reply', 'settlement'])('accepts a confirmed switch renamed during %s', async (when) => {
+    const kit = attachOn({ topicId: 'a' });
+    await observed(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    if (when === 'settlement') host.hold('list-windows');
+    const switching = kit.attach.switchSession(destination).then(() => kit.attach.selectWindow(7));
+    host.notify('%session-changed $2 play');
+    if (when === 'settlement') {
+      host.release('switch-client');
+      await settle();
+    }
+    host.notify('%session-renamed $2 Final');
+    host.release();
+    await expect(switching).resolves.toBeUndefined();
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('Final');
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 Final b');
+    expect(host.commands.some((line) => verbOf(line) === 'select-window' && line.includes('$2:7'))).toBe(true);
+    await kit.attach.close();
+  });
+
+  it('does not confirm or redirect a pending switch from a rename before confirmation', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await observed(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const switching = kit.attach.switchSession(destination);
+    host.notify('%session-renamed $2 Final');
+    expect(kit.attach.state().sessionName).toBe('work');
+    expect(kit.attach.state().topic?.id).toBe('a');
+    host.notify('%session-changed $2 Final');
+    host.release();
+    await expect(switching).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().topic).toBeNull();
+    await kit.attach.close();
+  });
+
+  it('rejects a different Session ID even when its name matches the confirmed destination', async () => {
+    const kit = attachOn();
+    await observed(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const switching = kit.attach.switchSession(destination);
+    host.notify('%session-changed $2 play');
+    host.notify('%session-changed $3 play');
+    host.release();
+    await expect(switching).rejects.toThrow('Host changed Session');
+    await kit.attach.close();
+  });
+
+  it('forgets the previous ID when a switch has no confirmation notification', async () => {
+    const kit = attachOn();
+    await observed(kit);
+    const host = kit.hosts[0];
+    await kit.attach.switchSession(destination);
+    host.notify('%session-renamed $1 Old');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play b');
+    host.commands.length = 0;
+    await kit.attach.selectWindow(7);
+    expect(host.commands.find((line) => verbOf(line) === 'select-window')).toContain('play:7');
+    await kit.attach.close();
+  });
+
+  it('reconnects by the observed name and accepts a fresh ID while ignoring the old Connection', async () => {
+    const kit = attachOn({ topicId: 'a', hosts: [fakeHost(), fakeHost()] });
+    await observed(kit);
+    const [old, fresh] = kit.hosts;
+    old.notify('%session-renamed $1 Short');
+    await settle();
+    kit.attach.lifecycleChanged('background');
+    old.drop();
+    const writes = [...kit.wrote];
+    old.notify('%session-renamed $1 Disconnected');
+    old.notify('%session-changed $9 Stale');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('Short');
+    expect(kit.wrote).toEqual(writes);
+    kit.attach.lifecycleChanged('active');
+    await connected(kit, 1);
+    expect(fresh.attachCommand).toContain('Short');
+    expect(fresh.commands.filter((line) => verbOf(line) === 'list-windows').every((line) => line.includes("'Short'"))).toBe(true);
+    fresh.notify('%session-renamed $1 Reused-by-sibling');
+    expect(kit.attach.state().sessionName).toBe('Short');
+    fresh.notify('%session-changed $7 Short');
+    old.notify('%session-renamed $7 Old-connection');
+    old.notify('%session-changed $8 Wrong');
+    fresh.notify('%session-renamed $7 Final');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('Final');
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 Final a');
+    await kit.attach.close();
+  });
+
+  it('rejects a pending switch on Connection loss before a delayed reply', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await observed(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const switching = kit.attach.switchSession(destination);
+    const refused = expect(switching).rejects.toThrow();
+    host.notify('%session-changed $2 play');
+    kit.attach.lifecycleChanged('background');
+    host.drop();
+    host.notify('%session-renamed $2 Stale');
+    host.release();
+    await refused;
+    expect(kit.attach.state().sessionName).toBe('play');
+    await kit.attach.close();
+  });
+
+  it('keeps rename writes ordered and rejects stale Topic reads', async () => {
+    const reads: ((value: TopicRead) => void)[] = [];
+    const kit = attachOn({ topicId: 'a', readTopic: () => new Promise((resolve) => reads.push(resolve)) });
+    await observed(kit);
+    let release!: () => void;
+    const remember = kit.store.rememberSession;
+    kit.store.rememberSession = jest.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }))
+      .mockImplementation(remember);
+    kit.hosts[0].notify('%session-renamed $1 Short');
+    await settle();
+    kit.hosts[0].notify('%session-renamed $1 Final');
+    await settle();
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work a');
+    reads.at(-1)!({ kind: 'shown', topic: topic('Fresh title') });
+    reads[0]({ kind: 'shown', topic: topic('Old title') });
+    reads[1]({ kind: 'shown', topic: topic('Intermediate title') });
+    await settle();
+    release();
+    await kit.attach.close();
+    expect(kit.wrote.filter((line) => line.startsWith('last place'))).toEqual([
+      'last place host-1 work a', 'last place host-1 Short a', 'last place host-1 Final a',
+    ]);
+    expect(kit.attach.state().sessionName).toBe('Final');
+    expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Fresh title');
   });
 });

@@ -76,7 +76,6 @@ function AppStack() {
           }}
         />
         <Stack.Screen name="hosts/[id]" options={{ title: 'Host' }} />
-        <Stack.Screen name="topic" options={{ title: 'Topic' }} />
         <Stack.Screen
           name="session-form"
           options={{
@@ -102,7 +101,6 @@ function AppStack() {
         <Stack.Screen
           name="topic-edit"
           options={{
-            // Three fields; the Topic Screen stays in view above, where the new values will show.
             presentation: 'formSheet',
             sheetAllowedDetents: [0.6],
             sheetGrabberVisible: true,
@@ -112,21 +110,20 @@ function AppStack() {
         <Stack.Screen
           name="topic-add-session"
           options={{
-            // One field, like New Session; the Topic Screen stays in view, where the new Session will show.
             presentation: 'formSheet',
-            sheetAllowedDetents: [0.4],
+            sheetAllowedDetents: [0.65, 1],
             sheetGrabberVisible: true,
             title: 'Add a Session',
           }}
         />
         {/* The title is the page's own, which the screen sets when it has one. */}
         <Stack.Screen name="web-view" options={{ title: '' }} />
-        {/* No navigation header: the screen draws its own Header, on the
-            terminal background, with Back in it. */}
         <Stack.Screen
           name="terminal"
           options={{
-            headerShown: false,
+            headerShown: true,
+            headerTransparent: false,
+            headerBackVisible: false,
             title: 'Session',
             // A swipe right on the Surface is the previous Pane. From iOS 26
             // the system's back swipe starts anywhere on a screen, and it took

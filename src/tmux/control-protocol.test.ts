@@ -259,3 +259,22 @@ function replyText(event: ControlEvent | undefined): string[] | undefined {
   if (!event || event.kind !== 'reply') return undefined;
   return event.lines.map(bytesToUtf8);
 }
+
+
+describe('Session rename notifications', () => {
+  it('reads current and sibling IDs and retains spaces and UTF-8 across split input', () => {
+    const input = ascii('%session-renamed $1 sibling-renamed\n%session-renamed $0 café  work\n');
+    const expected = [
+      { kind: 'session-renamed', session: '$1', name: 'sibling-renamed' },
+      { kind: 'session-renamed', session: '$0', name: 'café  work' },
+    ];
+    expect(parseAll(input)).toEqual(expected);
+    expect(parseByByte(input)).toEqual(expected);
+  });
+
+  it.each(['', '$0', '$0 ', ' name', 'work name', '$ name'])(
+    'rejects malformed rename fields %p', (fields) => {
+      expect(parseAll(ascii(`%session-renamed ${fields}\n`))).toEqual([]);
+    },
+  );
+});

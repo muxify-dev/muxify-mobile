@@ -106,6 +106,7 @@ export function createTopologyStore(
 ): TopologyStore {
   let topology: Topology = EMPTY_TOPOLOGY;
   let session = sessionName;
+  let targetRevision = 0;
   let disposed = false;
   const listeners = new Set<(topology: Topology) => void>();
   const say = speakingAs(options.log ?? silentLog, 'topology');
@@ -152,15 +153,17 @@ export function createTopologyStore(
   }
 
   async function refreshNow(): Promise<Topology> {
-    const windows = await reader.listWindows(session);
-    if (disposed) return topology;
+    const target = session;
+    const revision = targetRevision;
+    const windows = await reader.listWindows(target);
+    if (disposed || revision !== targetRevision) return topology;
     // tmux always marks one, but a Session read mid-change may not have one
     // yet; the first Window is a better guess than giving up.
     const activeWindow = windows.find((window) => window.active) ?? windows[0];
     if (!activeWindow) return publish({ windows, panes: [] });
 
-    const panes = await reader.listPanes(session, activeWindow.index);
-    if (disposed) return topology;
+    const panes = await reader.listPanes(target, activeWindow.index);
+    if (disposed || revision !== targetRevision) return topology;
     return publish({
       windows,
       activeWindow,
@@ -280,6 +283,8 @@ export function createTopologyStore(
     refresh: refreshNow,
 
     attachedTo(next: string): void {
+      if (next === session) return;
+      targetRevision += 1;
       say(`now the Topology of ${next}`);
       session = next;
     },

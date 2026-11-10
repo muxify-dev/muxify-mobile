@@ -45,6 +45,9 @@ MUXIFY_CONFIG="$WITH_E2EOLD" muxify topic tag add e2eold --topic "$id" --json >/
 muxify topic note "e2e first note" --topic "$id" --json >/dev/null || exit 1
 muxify topic pin --topic "$id" --json >/dev/null || exit 1
 
+mkdir -p "$MUXIFY_E2E_ROOT/edit-topic"
+muxify topic add-session "$MUXIFY_E2E_ROOT/edit-topic" --topic "$id" --json >/dev/null || exit 1
+
 agent-device test ./e2e/edit-topic.ad || exit 1
 mac_has "topic['title'] == \"$RENAMED\" and topic['note'] == 'e2e second note' and sorted(topic['tags']) == ['personal', 'work']" || exit 1
 

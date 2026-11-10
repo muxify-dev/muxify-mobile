@@ -188,11 +188,9 @@ export function cellOf(
 /**
  * How far the Window is slid up under the keyboard, in points.
  *
- * The keyboard does not resize the Window — see ADR 0008. The Window keeps the
- * height it has with the keyboard down, the container clips it, and this is
- * how much of its top is pushed out of view so that the row in sight (the
- * cursor's, or a full-screen program's last row) stays above the keys. Just enough and no more: a Pane with three lines on it
- * is not slid at all, because sliding it would put those lines behind the
+ * The normal screen keeps its full Window height. See ADR 0008. The container
+ * clips it, and this moves the row in sight above the keyboard. A Pane with
+ * three lines on it is not slid at all, because sliding it would put them behind the
  * status bar and show sixteen blank rows in their place. A Pane with the
  * cursor on its last row is slid by the whole of what the keyboard covers,
  * which is the shape a full terminal has always had with the keyboard up.
@@ -221,4 +219,10 @@ export function windowSlide(
   // of rows, so a cursor on the last row would otherwise stop a strip short of
   // the bottom and leave that strip of the Window's ground under the keys.
   return hidden - slid < cell.height ? hidden : slid;
+}
+
+/** Covers the partial row at the top without moving the last row below the keys. */
+export function clippedRowHeight(slide: number, cell: Extent | null): number {
+  if (slide <= 0 || !cell || cell.height <= 0) return 0;
+  return Math.ceil(slide / cell.height) * cell.height - slide;
 }

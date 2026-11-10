@@ -158,6 +158,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
   const errors: unknown[] = [];
   const mouse: boolean[] = [];
   const cursor: number[] = [];
+  const alternate: boolean[] = [];
   const paints: number[] = [];
   const clock = createTestClock();
   const screen = fakeSurface();
@@ -170,6 +171,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
       onError: (error) => errors.push(error),
       onMouseTracking: (wanted) => mouse.push(wanted),
       onRowInSight: (row) => cursor.push(row),
+      onAlternate: (active) => alternate.push(active),
       onPainted: () => paints.push(clock.now()),
     },
     { clock },
@@ -183,6 +185,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
     errors,
     mouse,
     cursor,
+    alternate,
     paints,
     clock,
     tick: (ms: number) => clock.advance(ms),
@@ -1235,5 +1238,33 @@ describe('a Selection on a Pane', () => {
     expect(kit.errors).toHaveLength(1);
     kit.view.receive(bytes('live again'));
     expect(shown(kit.written)).toContain('live again');
+  });
+});
+
+
+describe('telling the Screen which screen the Pane uses', () => {
+  it('reports the first normal screen after the view is created', async () => {
+    const kit = viewOn(fakePane(paneState({ alternate: false })));
+    await paints(kit);
+    expect(kit.alternate).toEqual([false]);
+  });
+
+  it('reports alternate entry and exit even when the cursor row stays the same', async () => {
+    const host = fakePane(paneState({ cursorRow: 7, height: 40, alternate: true }));
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.alternate).toEqual([true]);
+
+    host.state = paneState({ cursorRow: 7, alternate: false });
+    kit.view.receive(bytes('leave alternate screen'));
+    kit.tick(OUTPUT_SETTLE_MS);
+    await settle();
+    expect(kit.alternate).toEqual([true, false]);
+    expect(kit.cursor).toEqual([39, 7]);
+
+    kit.view.receive(bytes('shell output'));
+    kit.tick(OUTPUT_SETTLE_MS);
+    await settle();
+    expect(kit.alternate).toEqual([true, false]);
   });
 });

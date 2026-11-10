@@ -12,12 +12,6 @@ const say = speakingAs(deviceLog(), 'topic');
 /** The two ways to wake a Dormant Topic, in the Mac's words. */
 export type Wake = 'reopen' | 'start-fresh';
 
-/** Where waking a Topic stands on the Topic Screen. */
-export type WakeState =
-  | { kind: 'idle' }
-  | { kind: 'working'; wake: Wake }
-  | { kind: 'failed'; message: string };
-
 export const WAKE_LABEL: Record<Wake, string> = {
   reopen: 'Reopen',
   'start-fresh': 'Start Fresh',

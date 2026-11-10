@@ -3,7 +3,7 @@ import type { TagColor } from './tag-color';
 
 /**
  * The Config's Tags as a route param, from the Host Screen's last read to the
- * Topic Screen and its sheets. They go in the shape `environment show` writes
+ * Topic form sheets. They go in the shape `environment show` writes
  * them, so a screen reads them back with the same parse as the Host Screen did.
  */
 export function tagsParam(tags: Tag[]): string {

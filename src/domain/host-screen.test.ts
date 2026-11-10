@@ -324,6 +324,7 @@ const snapshotSession = (id: string, name: string, topic: string | null) => ({
   activity: 0,
   mark: null,
   topic: topic === null ? null : tid(topic),
+  windows: null,
 });
 
 function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot {
@@ -419,7 +420,7 @@ describe('hostScreen with Topics', () => {
       sections: [section('in-play', 'In Play', OPEN_PLACE_ROW, OPEN_PLACE_ROW)],
     },
     {
-      name: 'with In Play and Topics alone, puts the No Topic row after the Bench row',
+      name: 'with In Play and Topics alone, gives No Topic its own section after the Bench',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', null)],
         unpinned: inPlay({ bench: [topicCard('b1')] }),
@@ -427,12 +428,8 @@ describe('hostScreen with Topics', () => {
       }),
       sections: [
         section('in-play', 'In Play', OPEN_PLACE_ROW),
-        section(
-          'bench',
-          null,
-          { kind: 'bench', opened: false },
-          { kind: 'no-topic', count: 1, opened: false },
-        ),
+        section('bench', null, { kind: 'bench', opened: false }),
+        section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
       ],
     },
     {
@@ -536,7 +533,7 @@ describe('hostScreen with Topics', () => {
       ],
     },
     {
-      name: 'gives a Topic row what the Topic Screen draws at once: the card, and its Sessions by name',
+      name: 'gives a Topic row the card and its Sessions before the Attach reads the Topic',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', 't1'), snapshotSession('$2', 'work', 't1')],
         unpinned: {
@@ -571,7 +568,10 @@ describe('hostScreen with Topics', () => {
         unpinned: { kind: 'list', cards: [topicCard('t1')] },
         no_topic: [sid('$1')],
       }),
-      sections: [topicsSection(topicRow('t1'), { kind: 'no-topic', count: 1, opened: false })],
+      sections: [
+        topicsSection(topicRow('t1')),
+        section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
+      ],
     },
     {
       name: 'opens the No Topic row into plain Session rows, in the order they came',
@@ -582,8 +582,10 @@ describe('hostScreen with Topics', () => {
       }),
       opened: new Set<OpenableRow>(['no-topic']),
       sections: [
-        topicsSection(
-          topicRow('t1'),
+        topicsSection(topicRow('t1')),
+        section(
+          'no-topic',
+          null,
           { kind: 'no-topic', count: 2, opened: true },
           { kind: 'available', name: 'zeta' },
           { kind: 'available', name: 'alpha' },
@@ -597,6 +599,28 @@ describe('hostScreen with Topics', () => {
         unpinned: { kind: 'list', cards: [topicCard('t1')] },
       }),
       sections: [topicsSection(topicRow('t1'))],
+    },
+    {
+      name: 'shows only the No Topic section when the list has no Topic cards',
+      topics: listed({
+        sessions: [snapshotSession('$1', 'cook', null)],
+        no_topic: [sid('$1')],
+      }),
+      sections: [section('no-topic', null, { kind: 'no-topic', count: 1, opened: false })],
+    },
+    {
+      name: 'opens No Topic separately while the Bench stays closed',
+      topics: listed({
+        sessions: [snapshotSession('$1', 'cook', null)],
+        unpinned: inPlay({ bench: [topicCard('b1')] }),
+        no_topic: [sid('$1')],
+      }),
+      opened: new Set<OpenableRow>(['no-topic']),
+      sections: [
+        section('in-play', 'In Play', OPEN_PLACE_ROW),
+        section('bench', null, { kind: 'bench', opened: false }),
+        section('no-topic', null, { kind: 'no-topic', count: 1, opened: true }, availableRow('cook')),
+      ],
     },
     {
       name: 'says so when the Host has no Topics at all',
@@ -641,8 +665,10 @@ describe('hostScreen with Topics', () => {
       opened: new Set<OpenableRow>(['no-topic']),
       sections: [
         recentSection(recentRow('cook', 1)),
-        topicsSection(
-          topicRow('t1'),
+        topicsSection(topicRow('t1')),
+        section(
+          'no-topic',
+          null,
           { kind: 'no-topic', count: 1, opened: true },
           { kind: 'available', name: 'play' },
         ),
@@ -768,7 +794,8 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
     const rowIds = (rows: HostScreenRow[]) =>
       rows.flatMap((row) => (row.kind === 'topic' ? [row.id] : row.kind === 'open-place' ? ['open_place'] : []));
 
-    expect(sections.map((shown) => shown.title)).toEqual(['Pinned', 'In Play', 'Guests', null]);
+    expect(sections.map((shown) => shown.id)).toEqual(['pinned', 'in-play', 'guests', 'bench', 'no-topic']);
+    expect(sections.map((shown) => shown.title)).toEqual(['Pinned', 'In Play', 'Guests', null, null]);
     expect(rowIds(sections[0]?.rows ?? [])).toEqual(ids(mac.pinned));
     expect(rowIds(sections[1]?.rows ?? [])).toEqual(ids(mac.unpinned.places));
     expect(rowIds(sections[2]?.rows ?? [])).toEqual(ids(mac.unpinned.guests));

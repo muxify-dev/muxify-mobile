@@ -23,6 +23,7 @@ export type TopicRow = Extract<HostScreenRow, { kind: 'topic' }>;
 export interface RowActions {
   onOpenSession: (name: string) => void;
   onOpenTopic: (row: TopicRow) => void;
+  busyTopic?: string | null;
   /** Wakes a Dormant Topic from its long-press menu. A screen that does not pass it gives the card no menu. */
   onWake?: (row: TopicRow, wake: Wake) => void;
   onToggle: (row: OpenableRow) => void;
@@ -133,11 +134,11 @@ export function HostScreenRowView({
           <HStack
             spacing={12}
             modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW, opacity(row.dimmed ? 0.5 : 1)]}>
-            <Image
+            {actions.busyTopic === row.id ? <ProgressView /> : <Image
               systemName={row.pinned ? 'pin.fill' : 'rectangle.stack'}
               size={20}
               color={row.pinned ? palette.controlAccent : palette.rowIcon}
-            />
+            />}
             <VStack spacing={2} alignment="leading">
               <Text modifiers={[font({ size: 17 })]}>{row.label}</Text>
               {row.note === null ? null : (

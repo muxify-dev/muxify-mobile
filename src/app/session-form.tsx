@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Form, Host, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
@@ -8,6 +8,7 @@ import {
   autocorrectionDisabled,
   background,
   environment,
+  disabled,
   font,
   foregroundColor,
   listRowBackground,
@@ -24,6 +25,7 @@ import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { appConnections } from '@/tmux/ssh-connection';
+import { useOpenSession } from '@/tmux/attach-context';
 import { TmuxClient } from '@/tmux/tmux-client';
 
 /**
@@ -35,6 +37,10 @@ import { TmuxClient } from '@/tmux/tmux-client';
  */
 export default function SessionFormScreen() {
   const router = useRouter();
+  const openSession = useOpenSession();
+  const [made, setMade] = useState<string | null>(null);
+  const present = useRef(true);
+  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
   const { hostId } = useLocalSearchParams<{ hostId: string }>();
   const { appearance, palette } = useSettings();
 
@@ -44,7 +50,7 @@ export default function SessionFormScreen() {
 
   const create = useCallback(() => {
     if (creating) return;
-    const wanted = name.value.trim();
+    const wanted = made ?? name.value.trim();
     if (wanted === '') {
       setError('Give the Session a name.');
       return;
@@ -63,7 +69,7 @@ export default function SessionFormScreen() {
       }
 
       try {
-        await appConnections().write(host, async (transport) => {
+        if (!made) await appConnections().write(host, async (transport) => {
           const client = new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath));
           // Loud when the name is taken, rather than silently handing back
           // someone else's Session — see createSessionCommand.
@@ -75,30 +81,35 @@ export default function SessionFormScreen() {
         return;
       }
 
-      // Straight into it: making a Session and then having to find it in a
-      // list is a step nobody wants.
-      router.back();
-      router.push({ pathname: '/terminal', params: { hostId, session: wanted } });
+      if (!present.current) return;
+      setMade(wanted);
+      try {
+        await openSession({ hostId, destination: { sessionName: made ?? wanted, topic: null } });
+        if (present.current) router.dismissTo('/terminal');
+      } catch (caught) { setError(describeCreateFailure(caught)); setCreating(false); }
     })();
-  }, [creating, name, hostId, router]);
+  }, [creating, name, hostId, router, made, openSession]);
 
   return (
     <View style={styles.fill}>
       <Stack.Screen
         options={{
           title: 'New Session',
+          gestureEnabled: !creating,
           headerLeft: () => (
             <ToolbarWord
               label="Cancel"
+              disabled={creating}
               color={palette.controlAccent}
               bold={false}
-              onPress={() => router.back()}
+              onPress={() => { if (!creating) router.back(); }}
             />
           ),
           headerRight: () => (
             <ToolbarWord
-              label={creating ? 'Creating…' : 'Create'}
+              label={creating ? 'Creating…' : made ? 'Retry Attach' : 'Create'}
               color={creating ? palette.secondaryLabel : palette.controlAccent}
+              disabled={creating}
               onPress={create}
             />
           ),
@@ -130,6 +141,7 @@ export default function SessionFormScreen() {
                 textInputAutocapitalization('never'),
                 autocorrectionDisabled(),
                 accessibilityLabel('Session name'),
+                disabled(creating || made !== null),
               ]}
             />
             <FieldError error={error} palette={palette} />

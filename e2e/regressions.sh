@@ -4,8 +4,6 @@
 #
 # Each check here stands for a bug that actually happened:
 #
-#   1  the navigation header, removed so the Surface reaches the top; the
-#      screen draws its own Header with Back in it
 #   2  the library's own Accessory Bar, hidden by a local patch
 #   3  the Session's options, which Muxify used to borrow and now never touches
 #   4  the resize, which has broken four separate ways — and the keyboard,
@@ -258,12 +256,19 @@ BEFORE=$(options)
 BEFORE_HOOKS=$(hooks)
 attach
 
-echo "1/10  the Terminal Screen has its own Header, not a navigation header"
-snap | grep -qE '^@e[0-9]+ \[text\] "Terminal"$' \
-  && fail "a navigation title is back; the Surface no longer reaches the top"
-snap | grep -qE '^@e[0-9]+ \[button\] "Back"$' \
-  || fail "the Header's Back button is missing"
-echo "     no navigation title, Back in the Header"
+echo "1/10  the native Header leaves the Surface below it"
+agent-device snapshot --json 2>/dev/null | python3 -c '
+import json, sys
+nodes = json.load(sys.stdin)["data"]["nodes"]
+header = next((n for n in nodes if n["type"] == "NavigationBar"), None)
+surface = next((n for n in nodes if n.get("identifier") == "surface-area"), None)
+assert header is not None, "the native Header is missing"
+assert surface is not None, "the Surface area is missing"
+bar, area = header["rect"], surface["rect"]
+assert area["height"] > 0 and area["y"] >= bar["y"] + bar["height"] - 1, (bar, area)
+assert any(n.get("label") == "Back" for n in nodes), "Back is missing"
+print("     the Surface starts below the native Header")
+' || fail "the Header covers the Surface"
 
 echo "2/10  the library's Accessory Bar stays hidden"
 # Capitalised, every one of them. Muxify's own Key Row calls its keys control,
@@ -437,22 +442,48 @@ import json, sys
 print(round(next(n['rect']['y'] for n in json.load(sys.stdin)['data']['nodes'] if n['type'] == 'TextView')))")
 echo "     short Pane: cursor row ends at $BOTTOM, Surface top at $TOP"
 
-# A full-screen program keeps its last row in sight, not its cursor's: Claude
-# Code types four rows from the bottom and draws its footer under the cursor,
-# and vim's status line is under the text being edited. Drawn here by hand on
-# the alternate screen, with the cursor parked on row 3 and FOOTER on the last.
-on_host "tmux send-keys -t '$SESSION:' \"printf '\\\\033[?1049h\\\\033[2J\\\\033[$FULL;1HFOOTER\\\\033[3;1H'; sleep 600\" Enter"
+# The stand-in redraws its footer after the Client resizes the alternate screen.
+FOOTER_PROGRAM="$MUXIFY_E2E_ROOT/footer.py"
+cat > "$FOOTER_PROGRAM" <<'PYTHON'
+import os
+import signal
+import sys
+
+
+def draw(*_):
+    rows = os.get_terminal_size().lines
+    sys.stdout.write(f"\033[2J\033[{rows};1HFOOTER\033[3;1H")
+    sys.stdout.flush()
+
+
+signal.signal(signal.SIGWINCH, draw)
+try:
+    sys.stdout.write("\033[?1049h")
+    draw()
+    while True:
+        signal.pause()
+except KeyboardInterrupt:
+    pass
+finally:
+    sys.stdout.write("\033[?1049l")
+    sys.stdout.flush()
+PYTHON
+on_host "tmux send-keys -t '$SESSION:' \"python3 '$FOOTER_PROGRAM'\" Enter"
 sleep 3
+ALTERNATE_ROWS=$(on_host "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
+[ "$ALTERNATE_ROWS" -lt "$FULL" ] \
+  || fail "the alternate screen did not fit above the keyboard"
 on_host "tmux capture-pane -t '$SESSION:' -p" | tail -1 | grep -q FOOTER \
   || fail "the full-screen stand-in did not draw its footer on the last row"
-# Read from the Log's report rather than from the Surface's frame, which the
-# accessibility tree clips to the strip that shows, slid or not.
+# The Log reports the row independently of the clipped accessibility frame.
 IN_SIGHT=$(row_in_sight)
-[ "$IN_SIGHT" = $((FULL - 1)) ] \
-  || fail "on the alternate screen the row kept in sight is ${IN_SIGHT:-unread}, not the last row $((FULL - 1))"
+[ "$IN_SIGHT" = $((ALTERNATE_ROWS - 1)) ] \
+  || fail "on the alternate screen the row kept in sight is ${IN_SIGHT:-unread}, not the last row $((ALTERNATE_ROWS - 1))"
 echo "     full-screen program: row $IN_SIGHT, the last, is kept above the keys"
-on_host "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
-sleep 1
+on_host "tmux send-keys -t '$SESSION:' C-c"
+sleep 2
+[ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
+  || fail "leaving the alternate screen did not restore the full Window height"
 ensure_keyboard away
 [ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard changed the Window on the way down"

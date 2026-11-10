@@ -7,6 +7,7 @@ import { renderReport } from './report';
 const state = (over: Partial<AttachState> = {}): AttachState => ({
   phase: { kind: 'connected' },
   sessionName: 'work',
+  topic: null,
   fingerprint: 'SHA256:abc',
   keyChanged: false,
   topology: {
@@ -46,6 +47,7 @@ const state = (over: Partial<AttachState> = {}): AttachState => ({
   scrolled: null,
   mouseTracking: false,
   rowInSight: 12,
+  alternate: false,
   ...over,
 });
 

@@ -103,7 +103,9 @@ refused. See ADR 0005.
 
 It is what the *app* holds, not what a screen does: one Attach owns the
 Connection, the Control Connection, the Client and its size, the Topology, the
-Session name and a view per Pane, and it outlives every screen that draws it.
+Session name, current Topic and its last read, and a view per Pane. It outlives
+every screen that draws it. A Session switch sets its Session and Topic together.
+A plain Session pick clears its Topic, even when that Session is already attached.
 The Terminal Screen subscribes to whichever one is current; the Host Screen
 shows its phase and offers to end it. See ADR 0007.
 
@@ -118,7 +120,7 @@ _Avoid_: workspace, saved session, history
 
 **Last Place**:
 Where the user was when Muxify last closed: the Host, the Session and the Topic
-it was opened from, if any. The app writes it each time an Attach reaches its
+the Attach currently holds, if any. The app writes it each time an Attach reaches its
 attached phase or switches Session, and clears it on Disconnect. With Reconnect
 on start on, a cold start opens it again behind a "Trying to reconnect" screen.
 A Disconnect means "do not take me back", so the next cold start opens Home.
@@ -130,7 +132,8 @@ section's header is the Host's name, a dot for its Connection (green when its
 Listing has come back, orange while the first read is in flight, red when the
 Host refused) and **All**, which opens that Host's Host Screen. Under it are
 the first 5 rows the Host Screen would show, in the lists and the order the
-user set in Settings, so one tap attaches to a Session or opens a Topic Screen.
+user set in Settings. A tap on a live Topic opens the Session last opened on
+this phone, or the Mac's first Session when none is Recent.
 For a Host whose Topics are in In Play, Home instead shows every Pinned card,
 every In Play Topic and every Guest, and no Open Place or Bench: the Host's live
 work never falls off Home. There are no section headers.
@@ -154,8 +157,9 @@ tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A
 Session can have several Clients and tmux keeps each one's size separately — so
 a Client's size is not the Session's size and not the Surface's. Muxify's is
-the phone's screen with the keyboard down, and the keyboard does not change it
-(ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
+the phone's screen with the keyboard down. While the active Pane uses the
+alternate screen, it fits above the keyboard instead. Returning to the normal
+screen restores the full height even if the keyboard stays up (ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
 latest Client, and a laptop that types becomes it. So Muxify claims the Window
 with every size it asks for, and again on the next key typed on the phone after
 another Client has taken it.
@@ -164,8 +168,11 @@ _Avoid_: viewer, terminal, connection
 **Slide**:
 How far the Window is pushed up under the keyboard, so the row being typed on
 stays above the keys: nothing for a Pane with three lines on it, everything the
-keyboard covers for a Pane full to its last row. The Window is not resized for
-the keyboard; it is slid, and the part slid out of view is clipped.
+keyboard covers for a Pane full to its last row. On the normal screen, the
+Window keeps its full height and the Slide hides the covered part. The top
+clip edge hides a partial row. On the alternate screen, the Window fits above
+the keyboard and needs no Slide. A Selection holds the Window size and Slide
+until it ends.
 _Avoid_: scroll (which is the Scrollback's), offset, keyboard avoidance
 
 ### Topics
@@ -195,14 +202,17 @@ _Avoid_: label, category, folder, group
 **Dormant**:
 An open Topic that has no live Session but remembers Sessions, for example after
 a tmux restart. The Host Screen shows it dimmed, with "No live Sessions". The
-phone can wake it with Reopen or Start Fresh, from its Topic Screen or from the
-long-press menu of its card on Home and the Host Screen.
+phone offers Reopen, Start Fresh and Cancel when its card is tapped. After a
+successful wake it reads the Topic once and opens a Session. A failed read can
+be retried without another wake. The long-press menu wakes it in place and
+refreshes the Listing.
 _Avoid_: inactive, sleeping, suspended
 
 **Empty**:
 An open Topic that has no live Session and remembers no Session: the user
 stopped, removed or moved away its last Session. The Host Screen shows it dimmed,
-with "No live Sessions", the same as a Dormant Topic.
+with "No live Sessions", the same as a Dormant Topic. A tap opens Add a Session.
+Cancel leaves the Empty Topic on the Host.
 _Avoid_: Dormant (when it remembers no Session), blank, cleared
 
 **In Play**:
@@ -228,51 +238,51 @@ Host Screen shows them as one Bench row, with no count and no marks, that opens
 to show their cards.
 _Avoid_: backlog, hidden Topics, overflow
 
+**No Topic**:
+The Sessions on a Host that belong to no Topic. With Topics on and the Sessions
+list off, the Host Screen shows them in a separate group after the Topics and
+the Bench. Its No Topic row shows the count and opens to list the Sessions.
+Recent Sessions are left out when that list is on. An empty group is not shown.
+_Avoid_: ungrouped Sessions, other Topics, Bench
+
 **Tag Mark**:
 A small square in the colour of one Tag, at the end of a Topic card. The colour
 is the Tag's light or dark value for the app's appearance. A Tag the Config no
 longer defines, or a colour the phone cannot read, shows as a dashed square.
 _Avoid_: tag chip, tag dot
 
-**Topic Screen**:
-The phone screen for one Topic, opened by a tap on its card on the Host Screen
-or on Home.
-It shows the title, the Topic Note, the Tags and the live Sessions in the Mac's
-order, each with its Windows and their Agent marks. A tap on a Session attaches
-to it; its Header then shows the Topic, and Back from it goes Home. A Dormant or Empty
-Topic shows "No live Sessions" and says which of the two it is. A Dormant Topic
-also has two buttons, Reopen and Start Fresh. While the Host works, the pressed
-button shows a spinner and both are disabled; after it, the screen stays and
-reads the Topic again, so the live Sessions show. A Host error shows on the
-screen. It shows what
-the Host Screen last read at once, and reads the Topic again each time it comes
-into view. The Windows come in with that read.
-_Avoid_: Topic detail, Topic page, Topic view
-
 **New Topic**:
 The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
 has a title and one button for each Tag of the Host's last Topics read, in
-Config order and in the Tag colour. Save opens the new Topic's Topic Screen. An
+Config order and in the Tag colour. Save opens Add a Session for the new Topic. An
 error from the Host shows in the sheet, and the sheet stays open. With the
 Topics list on, + on the Host Screen offers New Session and New Topic.
 _Avoid_: Create Topic, Add Topic
 
 **Edit Topic**:
-The sheet that Edit on the Topic Screen opens. It changes the title, the Topic
+The sheet that Options > Topic > Edit Topic opens. It changes the title, the Topic
 Note and the Tags. Save sends only the fields that differ from what the Host
 last had, so a phone edit does not undo a different edit made on the Mac. A
 field the Host refuses shows its error under it, the sheet stays open, and the
 next Save sends only what still differs. A Tag that the Config no longer
-defines shows dashed and can only be removed.
+defines shows dashed and can only be removed. The sheet reads the Config Tags
+even when the Topics list is off. A failed read offers Retry before editing.
+The Attach refreshes the Topic after Save and when the sheet closes.
 _Avoid_: Topic settings, Topic properties
 
 **Add a Session**:
-The sheet that Add a Session on the Topic Screen opens, and the main way out of
-an Empty Topic on the phone. It takes one folder on the Host, where a leading
-`~` is the home folder, and makes a Session there in the Topic. There is no
-Worktree choice. An error from the Host, such as a folder that is not there,
-shows in the sheet and the sheet stays open. After Save, the Topic Screen reads
-the Topic again and shows the new Session.
+The sheet that an Empty Topic card or Options > Topic > Add a Session opens.
+It reads the Host's folder choices once and groups them as In this Topic,
+Session Paths and Worktrees. Search matches names, paths, branches and Also in
+Topic labels. A tap makes a Session at that folder and opens it in the Attach.
+The final row uses a typed folder, where a leading `~` is the Host's home folder.
+It does not create a Worktree or move an existing Session. An old Host CLI
+instead shows a Folder field and Save. Other read failures show Retry and keep
+typed entry available. A Host write error keeps the sheet open. If entry fails
+after creation, Retry Attach uses the saved Session name and sends no second
+write. Cancel leaves any Session already made on the Host. Folder actions stay
+disabled after creation. Cancel and dismissal are disabled while creation or
+Attach runs.
 _Avoid_: New Session (that sheet makes a Session in no Topic)
 
 **Reopen**:
@@ -390,32 +400,36 @@ Window with one Pane has no map.
 _Avoid_: minimap, Pane indicator, thumbnail
 
 **Header**:
-The row at the top of the Terminal Screen, on the terminal background under
-the status bar: Back on the left, the title in the middle, Options on the
-right. Back goes Home and leaves the Session attached (ADR 0007). The title is
-the Session name over the program that runs in the active Pane, as tmux's
-`#{pane_current_command}` names it; for a Session opened from a Topic it is
-the Topic title, the program, and the Session name in the dim tone. The
-program follows the Topology, which is read again when the active Window is
-renamed, when the title sheet or the Options menu opens, and after every verb;
-a Window with a fixed name can show the program of the last read. A tap on the
-title opens the Title Sheet. The red line under the Header that reports a
-failed Pane command is not a Banner and always shows: the Connection is fine,
-one command was not.
-_Avoid_: navigation bar (that is the system's, and this screen has none),
-title bar, toolbar
+The native bar at the top of the Terminal Screen. It owns the top safe area,
+with Back on the left, the title in the middle and Options on the right.
+Back goes Home and leaves the Attach alive (ADR 0007). The content area starts
+below the Header. The title is the Session name over the program that runs in
+the active Pane, as tmux's `#{pane_current_command}` names it. For a Session
+opened from a Topic, it is the Topic title over one line with the program and
+the Session name in the dim tone.
+The program follows the Topology. The app reads the Topology again when the
+active Window is renamed, when the Title Sheet opens, and after the existing
+tmux verbs that request a read. A Window with a fixed name can show the program
+of the last read. Opening Options does not start a read. A tap on the title
+opens the Title Sheet. The red line under the Header reports a failed Pane
+command. It is not a Banner and always shows. The Connection is fine, but one
+command failed.
+_Avoid_: title bar, toolbar
 
 **Title Sheet**:
 The sheet the Header's title opens. For a Session, one row per Window of the
 Topology: index, name, program, the one on screen marked. For a Session opened
-from a Topic, one section per live Session of the Topic with its Windows and
-their Agent marks, read from the Mac through `muxify` each time the sheet
-opens. A tap on a Window goes to it, switching Session first when it belongs
+from a Topic, the full title, Topic Note and Tags, then one section per live
+Session with its Windows and Agent marks. The card seeds these rows, and the
+Attach reads the Topic again each time the sheet opens or returns from a form.
+The current Session uses its live Topology for its Window set. A failed read
+keeps the last answer and offers Retry. A tap on a Window goes to it, switching Session first when it belongs
 to another one. **Switch…** at the top closes the sheet and opens the Sessions
 picker. The sheet draws no previews; the Sessions picker keeps its own. With
 the Topics list on in Settings, the Sessions picker lists the Host's Topics
 under its Sessions, as the rows of the Host Screen, with the Bench open. A tap
-on a Topic opens its Topic Screen over the Attach, which stays up. Under the
+on a live Topic switches the current Attach to its chosen Session. A Dormant
+Topic offers the wake choice, and an Empty Topic opens Add a Session. Under the
 rows, **Browser tabs** lists the Browser Tabs of the Window on screen that are
 at a Tailscale address, read from the Host each time the sheet opens. A Window
 with none has no such section.
@@ -441,7 +455,8 @@ the reason and **Try again**. Back goes to the Session, which stayed attached.
 _Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:
-The Header's ⋯ menu, in this order: Compose, Zoom Pane, New Window, Split
+The Header's ⋯ menu starts with Compose. For an Attach with a Topic, Topic
+follows with Edit Topic and Add a Session. Then come Zoom Pane, New Window, Split
 Pane (Split → and Split ↓), Font size − and +, Copy Pane text, then Copy log
 and Disconnect. Font size changes the setting live, and the Surfaces reflow to
 it. Copy Pane text puts the active Pane's text on the clipboard, plain and

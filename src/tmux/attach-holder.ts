@@ -2,14 +2,25 @@ import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
-import type { Attach, LifecyclePhase } from './attach';
+import type { Attach, LifecyclePhase, SessionDestination } from './attach';
+
+export interface AttachOrigin {
+  attach: Attach | null;
+  sessionName: string | null;
+  topicId: string | null;
+}
+
+export function captureAttachOrigin(attach: Attach | null): AttachOrigin {
+  const state = attach?.state();
+  return { attach, sessionName: state?.sessionName ?? null, topicId: state?.topic?.id ?? null };
+}
 
 /** What opening a Session needs. Everything else the Attach works out itself. */
 export interface AttachRequest {
   host: Host;
-  sessionName: string;
-  /** The Topic it was opened from, or null when it was not opened from one. */
-  topicId: string | null;
+  destination: SessionDestination;
+  origin?: AttachOrigin;
+  isCurrent?: () => boolean;
   /** The Zoom preference at the moment it is opened. */
   zoomed: boolean;
 }
@@ -17,13 +28,7 @@ export interface AttachRequest {
 export interface AttachHolder {
   /** The attached Session, or null when nothing is. */
   current(): Attach | null;
-  /**
-   * Opens a Session, closing whatever was attached first.
-   *
-   * Asking for the Session that is already attached changes nothing and
-   * returns it: tapping its row on the Host Screen is navigation, not a
-   * reason to remake a Connection that is working.
-   */
+  /** Reuses a connected Attach on the same Host, or closes it before opening another. */
   open(request: AttachRequest): Promise<Attach>;
   /**
    * Ends it on purpose. It does not come back on its own, and the Last Place
@@ -54,12 +59,15 @@ export interface AttachHolder {
  * which Attach to tell.
  */
 export function createAttachHolder(
-  open: (request: AttachRequest) => Attach,
+  open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed'>) => Attach,
   lastPlace: Pick<HostStore, 'forgetLastPlace'>,
   log: Log = silentLog,
 ): AttachHolder {
   let current: Attach | null = null;
-  let session = '';
+  let opening = false;
+  let revision = 0;
+  let pendingClose: Promise<void> | null = null;
+  let disconnecting: Promise<void> | null = null;
   const listeners = new Set<(attach: Attach | null) => void>();
   const say = speakingAs(log, 'holder');
 
@@ -71,46 +79,65 @@ export function createAttachHolder(
     current: () => current,
 
     async open(request: AttachRequest): Promise<Attach> {
-      const attached = current;
-      if (
-        attached &&
-        attached.hostId === request.host.id &&
-        session === request.sessionName &&
-        attached.state().phase.kind !== 'closed'
-      ) {
-        say(`open ${request.host.displayName}:${request.sessionName}: already attached`);
-        return attached;
-      }
+      if (opening || disconnecting) throw new Error('A Session is already being opened or disconnected.');
+      opening = true;
+      const mine = revision;
+      try {
+        if (request.isCurrent && !request.isCurrent()) throw new Error('This Session request is no longer current.');
+        const origin = request.origin;
+        const state = current?.state();
+        if (origin && (current !== origin.attach || (state?.sessionName ?? null) !== origin.sessionName ||
+            (state?.topic?.id ?? null) !== origin.topicId)) {
+          throw new Error('The attached Session or Topic changed. Open the Session from Home.');
+        }
+        const attached = current;
+        if (attached && attached.hostId === request.host.id && attached.state().phase.kind !== 'closed' &&
+            (attached.state().phase.kind === 'connected' || attached.state().sessionName === request.destination.sessionName)) {
+          await attached.switchSession(request.destination);
+          return attached;
+        }
 
-      // Closed *first*, and awaited: two Connections to account for is exactly
-      // what holding one at a time is meant to avoid, and a Host that sees the
-      // new one before the old one has gone is a Host with two Clients sizing
-      // the same Session.
-      if (attached) {
-        say(`open ${request.host.displayName}:${request.sessionName}: closing ${attached.hostName}:${session} first`);
-        current = null;
+        // Closed *first*, and awaited: two Connections to account for is exactly
+        // what holding one at a time is meant to avoid, and a Host that sees the
+        // new one before the old one has gone is a Host with two Clients sizing
+        // the same Session.
+        if (attached) {
+          say(`open ${request.host.displayName}:${request.destination.sessionName}: closing ${attached.hostName}:${attached.state().sessionName} first`);
+          current = null;
+          publish();
+          pendingClose = attached.close();
+          try { await pendingClose; } finally { pendingClose = null; }
+        } else {
+          say(`open ${request.host.displayName}:${request.destination.sessionName}`);
+        }
+
+        if (mine !== revision) throw new Error('The Attach was disconnected before the Session opened.');
+        if (request.isCurrent && !request.isCurrent()) throw new Error('This Session request is no longer current.');
+        const next = open({ host: request.host, destination: request.destination, zoomed: request.zoomed });
+        current = next;
         publish();
-        await attached.close();
-      } else {
-        say(`open ${request.host.displayName}:${request.sessionName}`);
-      }
-
-      const next = open({ ...request });
-      current = next;
-      session = request.sessionName;
-      publish();
-      return next;
+        return next;
+      } finally { opening = false; }
     },
 
     async disconnect(): Promise<void> {
+      if (disconnecting) return disconnecting;
+      revision += 1;
       const attached = current;
-      if (!attached) return;
-      say(`disconnect ${attached.hostName}:${session}`);
+      const closing = pendingClose;
+      if (!attached && !closing) return;
       current = null;
-      session = '';
+      disconnecting = Promise.resolve().then(async () => {
+        if (attached) {
+          say(`disconnect ${attached.hostName}:${attached.state().sessionName}`);
+          await attached.close();
+        } else {
+          await closing;
+        }
+        await lastPlace.forgetLastPlace();
+      });
       publish();
-      await attached.close();
-      await lastPlace.forgetLastPlace();
+      try { await disconnecting; } finally { disconnecting = null; }
     },
 
     subscribe(listener: (attach: Attach | null) => void): () => void {

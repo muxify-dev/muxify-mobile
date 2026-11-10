@@ -2,7 +2,7 @@
 #
 # Runs e2e/wake-topic.ad against three Dormant Topics in a sandboxed Muxify on
 # this Mac, the dev Host (see e2e/sandbox.sh), then checks on the sandbox's
-# tmux server that each one woke: Reopen and Start Fresh on the Topic Screen,
+# tmux server that each one woke: Reopen and Start Fresh from a card,
 # and Reopen from the long-press menu of a Topic card on the Host Screen.
 #
 # Reopen makes real Sessions, so this runs only through the sandbox, on its own

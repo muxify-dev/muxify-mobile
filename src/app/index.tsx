@@ -42,9 +42,7 @@ import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import { lastSnapshot } from '@/topics/host-topics';
-import { tagsParam } from '@/topics/tags-param';
-import { topicSeedParam } from '@/topics/topic-detail';
+import { useHostEntry } from '@/hooks/use-host-entry';
 
 /**
  * Whether this run of the app has looked for a Last Place yet. Module state
@@ -207,20 +205,12 @@ function HostSection({
   const openHostScreen = () =>
     router.push({ pathname: '/hosts/[id]', params: { id: host.id } });
 
+  const entered = useCallback(() => router.push('/terminal'), [router]);
+  const hostEntry = useHostEntry(host.id, entered);
   const actions: RowActions = {
-    onOpenSession: (session) =>
-      router.push({ pathname: '/terminal', params: { hostId: host.id, session } }),
-    onOpenTopic: (row) =>
-      router.push({
-        pathname: '/topic',
-        params: {
-          hostId: host.id,
-          topicId: row.id,
-          label: row.label,
-          tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
-          seed: topicSeedParam(row.seed),
-        },
-      }),
+    onOpenSession: hostEntry.openSession,
+    onOpenTopic: (row) => hostEntry.openTopic(row.seed),
+    busyTopic: hostEntry.busyTopic,
     onWake: (row, wake) => wakeFromMenu(row.id, wake),
     // The Bench and No Topic open in place on the Host Screen, which Home has
     // no room for.

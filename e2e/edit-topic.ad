@@ -1,46 +1,32 @@
 context platform=ios kind=simulator
 
-# The Edit sheet, against the Topic that e2e/edit-topic.sh makes. Run that
-# script, not this file: it makes the Topic in a sandbox and checks it on the
-# Mac.
-#
-# #e2eold is a Tag that the Config does not define: the sheet shows it and a
-# tap removes it. A Note that starts with - is one the Host refuses, so its
-# error shows under the Note, the sheet stays open, and the rename has already
-# gone through. The second Save sends the Note, and the Topic Screen shows the
-# new values.
-
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"All of Dev Host\""
 wait "label=\"Edit Host\"" 15000
-# Home is still under the Host Screen until the push settles, and has the
-# same Session and Topic rows.
 wait 1500
 
 wait "label=\"Topic e2e Edit Topic\"" 15000
 press "label=\"Topic e2e Edit Topic\""
-wait "label=\"Note e2e first note\"" 15000
-# The Topic shows during the push, before the new navigation bar and its
-# Edit: wait for the button itself.
-wait "label=\"Edit\"" 8000
-press "label=\"Edit\""
-
-wait "label=\"Tag #e2eold\"" 8000
+wait "id=\"pane-command\"" 20000
+press "label=\"Options\""
+wait "label=\"Topic\" role=button" 8000
+press "label=\"Topic\" role=button"
+wait "label=\"Edit Topic…\" role=button" 8000
+press "label=\"Edit Topic…\" role=button"
+wait "label=\"Tag #e2eold\"" 15000
 fill "label=\"Topic title\"" "e2e Edited it's"
 fill "label=\"Topic Note\" editable=true" "-x e2e"
 press "label=\"Tag #e2eold\""
 press "label=\"Tag #personal\""
 press "label=\"Save\""
-
 wait "text" "starts with -" 15000
-is "visible" "label=\"Topic Note\" editable=true"
-
 fill "label=\"Topic Note\" editable=true" "e2e second note"
 press "label=\"Save\""
-
+wait "id=\"pane-command\"" 15000
+press "id=\"header-title\""
 wait "label=\"Note e2e second note\"" 15000
-wait "text" "e2e Edited it's" 5000
 is "visible" "text=\"#personal  #work\""
+press "label=\"Close Windows\""
 
 close

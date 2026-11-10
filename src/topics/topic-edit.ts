@@ -88,7 +88,7 @@ function sameTags(a: readonly string[], b: readonly string[]): boolean {
   return left.size === new Set(b).size && b.every((tag) => left.has(tag));
 }
 
-/** The Topic's fields as a route param, from the Topic Screen to the Edit sheet. */
+/** The Topic's fields as a route param, from the Attach to the Edit sheet. */
 export function fieldsParam(fields: TopicFields): string {
   return JSON.stringify(fields);
 }

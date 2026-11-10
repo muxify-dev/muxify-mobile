@@ -35,8 +35,8 @@ const topic: TopicDetail = {
       id: 's1' as SessionId,
       name: 'gs-backend',
       windows: [
-        { id: 'w0', index: 0, name: 'shell', mark: null },
-        { id: 'w1', index: 1, name: 'editor', mark: 'working' },
+        { id: '@0', index: 0, name: 'shell', mark: null },
+        { id: '@1', index: 1, name: 'editor', mark: 'working' },
       ],
     },
     {
@@ -89,4 +89,19 @@ describe('topicTitleRows', () => {
     expect(countTitleRows(rows)).toBe(6);
     expect(countTitleRows(sessionTitleRows(topology))).toBe(2);
   });
+});
+
+
+it('uses the current Topology Window set and keeps marks by id after reindexing', () => {
+  const rows = topicTitleRows(topic, { session: 'gs-backend', topology: {
+    windows: [window({ id: '@1', index: 4, name: 'renamed' }), window({ id: '@new', index: 5, name: 'new' })], panes: [],
+  } });
+  expect(rows[0].kind === 'session' && rows[0].windows.map((row) => [row.index, row.name, row.mark])).toEqual([
+    [4, 'renamed', 'working'], [5, 'new', null],
+  ]);
+});
+
+it('shows a newly added Session before the Topic read contains it', () => {
+  const rows = topicTitleRows(topic, { session: 'just-added', topology });
+  expect(rows.at(-1)).toEqual({ kind: 'session', name: 'just-added', current: true, windows: sessionTitleRows(topology) });
 });

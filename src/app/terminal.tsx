@@ -1,6 +1,7 @@
 import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
 import { File } from 'expo-file-system';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Keyboard, Pressable, StyleSheet, View } from 'react-native';
@@ -20,7 +21,6 @@ import { stageClipboardImage, stageFile } from '@/composer/staging';
 import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
-  HEADER_HEIGHT,
   TerminalHeader,
   type HeaderTitle,
   type OptionsItem,
@@ -44,17 +44,12 @@ import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
-import { lastSnapshot } from '@/topics/host-topics';
-import { readTopic } from '@/topics/read-topic';
+import { useHostEntry } from '@/hooks/use-host-entry';
+import { fieldsParam } from '@/topics/topic-edit';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
-import { tagsParam } from '@/topics/tags-param';
 import {
   lastTopic,
-  loadingTopic,
-  settledTopic,
-  TOPIC_UNASKED,
-  type TopicView,
   topicSeedParam,
 } from '@/topics/topic-detail';
 import {
@@ -82,12 +77,12 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
-import { toShellInput } from '@/lib/terminal-input';
+import { toShellInput, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
-import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
+import { cellOf, paneBoxes, windowSlide, clippedRowHeight, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
@@ -150,7 +145,7 @@ type PickerState =
     };
 
 /** The Title Sheet: closed, or open on the Session's Windows or the Topic's Sessions. */
-type TitleSheetState = { open: false } | { open: true; kind: 'windows' | 'topic'; error?: string };
+type TitleSheetState = { open: false } | { open: true; error?: string };
 
 /**
  * One Session, on screen.
@@ -168,27 +163,27 @@ type TitleSheetState = { open: false } | { open: true; kind: 'windows' | 'topic'
 export default function TerminalScreen() {
   const router = useRouter();
   const {
-    hostId,
+    hostId: routeHostId,
     session: sessionParam,
-    topicId,
+    topicId: routeTopicId,
     reconnect,
   } = useLocalSearchParams<{
     hostId?: string;
     session?: string;
-    /** The Topic Screen the Session was opened from, for the Last Place. */
+    /** The Topic from an external link or Last Place. */
     topicId?: string;
     /** Set by a cold start that reopens the Last Place: look first, then attach. */
     reconnect?: string;
   }>();
-  // The screen draws its own chrome: no navigation header, so the terminal
-  // background runs to the top of the display and only the inset keeps the
-  // Header clear of the status bar.
   const insets = useSafeAreaInsets();
   const { settings, update, terminal, ansi, appearance } = useSettings();
 
+  const bootstrap = useRef({ hostId: routeHostId, session: sessionParam, topicId: routeTopicId, reconnect });
+  const bootstrapAttempt = useRef(-1);
   const holder = useAttachHolder();
   const attach = useCurrentAttach();
   const state = useAttachState(attach);
+  const hostId = attach?.hostId ?? routeHostId;
   /** Why the screen could not even ask for an Attach: a Host that has gone. */
   const [missing, setMissing] = useState<string | null>(null);
   /** The visit that finds the Session before a cold-start reconnect attaches. */
@@ -223,16 +218,20 @@ export default function TerminalScreen() {
    */
   useEffect(() => {
     say(`opened for ${hostId ?? '?'}:${sessionParam ?? '?'}`);
-    if (!hostId || !sessionParam) {
-      say('no Host or Session in the route');
-      setMissing('No Host was chosen.');
+    const requested = routeHostId && sessionParam
+      ? { hostId: routeHostId, session: sessionParam, topicId: routeTopicId, reconnect }
+      : reconnectAttempt > 0 && reconnectAttempt > bootstrapAttempt.current ? bootstrap.current : null;
+    if (!requested?.hostId || !requested.session) {
+      setMissing(holder.current() ? null : 'No Host was chosen.');
       return;
     }
+    bootstrap.current = requested;
+    bootstrapAttempt.current = reconnectAttempt;
     let left = false;
     void (async () => {
       const store = deviceHostStore();
       const records = await store.load();
-      const host = records.hosts.find((candidate) => candidate.id === hostId);
+      const host = records.hosts.find((candidate) => candidate.id === requested.hostId);
       if (left) return;
       if (!host) {
         say('the Host in the route is no longer saved');
@@ -242,17 +241,18 @@ export default function TerminalScreen() {
       setMissing(null);
       const request = {
         host,
-        sessionName: sessionParam,
-        topicId: topicId ?? null,
+        destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null },
         zoomed: settings.zoomMultipaneWindows,
       };
-      if (!reconnect) {
+      if (!requested.reconnect) {
         await holder.open(request);
+        if (!left) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
         return;
       }
       setReconnectHost(host.displayName);
+      let accepted = false;
       await reconnectToSession({
-        session: sessionParam,
+        session: requested.session!,
         visit: sessionVisit(host),
         attach: async () => {
           if (left) return;
@@ -260,12 +260,14 @@ export default function TerminalScreen() {
           // Try again after a failed Attach: the holder hands back the same
           // Attach, still disconnected, so it is asked for another go.
           if (opened.state().phase.kind === 'disconnected') opened.reconnect();
+          accepted = true;
         },
         progress: (next) => {
           if (!left) setLookup(next);
         },
       });
-    })();
+      if (!left && accepted) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
+    })().catch((error) => { if (!left) setMissing(describeError(error)); });
     return () => {
       left = true;
       say('left');
@@ -273,7 +275,7 @@ export default function TerminalScreen() {
     // The Zoom preference is what the Session is *opened* with; changing it in
     // Settings must not reopen a Session that is already up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holder, hostId, sessionParam, reconnectAttempt]);
+  }, [holder, routeHostId, sessionParam, reconnectAttempt]);
 
   /** The Surface area's size in points, which every Pane is placed inside. */
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -342,29 +344,18 @@ export default function TerminalScreen() {
     });
   }, []);
 
-  /**
-   * The Window's height in points: the container's, measured with the keyboard
-   * down and kept while it is up.
-   *
-   * The keyboard does not resize the Window — see ADR 0008. It used to: the
-   * Key Row lifts, the container shrinks, the Surface reports a smaller grid and
-   * the Host is told to reflow the Window to it, and back again on the way
-   * down. Every keyboard toggle was a remote resize, and a resize is where a
-   * terminal's text moves — up into the Scrollback on the way down, and back
-   * only as far as the Scrollback reaches on the way up, which after a `clear`
-   * is not at all. So the Window keeps this height whatever the keyboard does,
-   * the container clips it, and what the keyboard covers is slid out of the way
-   * instead; see windowSlide.
-   *
-   * Not recorded while the keyboard is up, because that measurement is of the
-   * strip above the keys and not of the Window. A rotation with the keyboard
-   * up is therefore a frame or two of the wrong height, corrected when it goes
-   * down; it is the one moment that gets nothing better here.
-   */
+  /** The full height survives keyboard and Composer layout changes. */
   const [windowHeight, setWindowHeight] = useState(0);
+  const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
+  const selecting = selectionArea !== null;
   const windowArea = useMemo(
-    (): Extent => ({ width: containerSize.width, height: windowHeight || containerSize.height }),
-    [containerSize, windowHeight],
+    (): Extent => selectionArea ?? {
+      width: containerSize.width,
+      height: keyboardVisible && state?.alternate && !composerOpen
+        ? containerSize.height
+        : windowHeight || containerSize.height,
+    },
+    [containerSize, windowHeight, keyboardVisible, state?.alternate, composerOpen, selectionArea],
   );
 
   /**
@@ -378,15 +369,6 @@ export default function TerminalScreen() {
   const spansWindow =
     (topology?.activeWindow?.zoomed ?? true) || (topology?.panes.length ?? 0) <= 1;
 
-  /**
-   * Whether a Selection holds a Pane frozen.
-   *
-   * The Pane view and the Selection Layer do the work. This is what the
-   * screen changes for it: the mouse layer goes, so the touches reach the
-   * Selection Layer, and the Window stays where it is while the keyboard is
-   * down. See ADR 0014.
-   */
-  const [selecting, setSelecting] = useState(false);
   /** The frozen Pane's view. The view and not its id: the Pane can go first. */
   const frozenView = useRef<PaneView | null>(null);
   const rowInSight =
@@ -402,6 +384,7 @@ export default function TerminalScreen() {
   const heldSlide = useRef(0);
   if (!selecting) heldSlide.current = liveSlide;
   const slide = heldSlide.current;
+  const clippedRow = clippedRowHeight(slide, cellSize);
 
   // Told from here rather than from the layout event, because the Window's
   // area is not the container's: it is what the Panes are laid out in, and it
@@ -587,9 +570,9 @@ export default function TerminalScreen() {
       const view = attach.view(paneId);
       if (!view.beginSelection(press)) return;
       frozenView.current = view;
-      setSelecting(true);
+      setSelectionArea(windowArea);
     },
-    [attach],
+    [attach, windowArea],
   );
 
   /**
@@ -602,7 +585,7 @@ export default function TerminalScreen() {
     if (view === null) return;
     frozenView.current = null;
     view.endSelection();
-    setSelecting(false);
+    setSelectionArea(null);
   }, []);
 
   // A Selection is of one Pane as it stands. Another Pane, Window or Session,
@@ -777,7 +760,8 @@ export default function TerminalScreen() {
       //
       // What comes out of the Surface is not quite what a shell expects — every
       // keystroke arrives wrapped as a bracketed paste. See toShellInput.
-      const typed = toShellInput(base64ToBytes(data));
+      const typed = toShellInput(withoutTerminalReplies(base64ToBytes(data)));
+      if (typed.length === 0) return;
 
       // Whatever the Key Row is holding down applies to the first key of this
       // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
@@ -833,25 +817,12 @@ export default function TerminalScreen() {
     [topicsOn, hostTopics, appearance],
   );
 
-  /** A Topic picked in the Sessions picker: its Topic Screen, as Home opens it. */
-  const openTopic = useCallback(
-    (row: TopicRow) => {
-      say(`picked Topic ${row.id}`);
-      if (!hostId) return;
-      setPicker({ open: false });
-      router.push({
-        pathname: '/topic',
-        params: {
-          hostId,
-          topicId: row.id,
-          label: row.label,
-          tags: tagsParam(lastSnapshot(hostTopics)?.tags ?? []),
-          seed: topicSeedParam(row.seed),
-        },
-      });
-    },
-    [hostId, hostTopics, router],
-  );
+  const topicEntered = useCallback(() => setPicker({ open: false }), []);
+  const hostEntry = useHostEntry(hostId ?? '', topicEntered, true);
+  const openTopic = useCallback((row: TopicRow) => {
+    setPicker({ open: false });
+    handover.current = setTimeout(() => hostEntry.openTopic(row.seed), SHEET_HANDOVER_MS);
+  }, [hostEntry]);
 
   /**
    * What a picker would show, from the model that is already right.
@@ -977,11 +948,7 @@ export default function TerminalScreen() {
       void (async () => {
         try {
           if (kind === 'sessions') {
-            if (id === state.sessionName) {
-              setPicker({ open: false });
-              return;
-            }
-            await attach.switchSession(id);
+            await attach.switchSession({ sessionName: id, topic: null });
           } else {
             const pane = state.topology.panes.find((each) => each.index === Number(id));
             if (!pane) return;
@@ -1050,24 +1017,10 @@ export default function TerminalScreen() {
     setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
   }, []);
 
-  /**
-   * The Topic this Session was opened from, read from the Host: the header's
-   * first line and the Title Sheet's Sessions. Read when the screen opens and
-   * again each time the sheet opens, because the Mac can change it meanwhile.
-   * The last answer stays while a read is in flight, as on the Topic Screen.
-   */
-  const [topicView, setTopicView] = useState<TopicView>(TOPIC_UNASKED);
-  const rereadTopic = useCallback(() => {
-    if (!hostId || !topicId) return;
-    setTopicView(loadingTopic);
-    void readTopic(hostId, topicId as TopicId).then((read) => {
-      setTopicView((previous) => settledTopic(previous, read));
-    });
-  }, [hostId, topicId]);
-  useEffect(() => {
-    rereadTopic();
-  }, [rereadTopic]);
-  const topic = topicId ? lastTopic(topicView) : null;
+  const topicView = state?.topic?.view;
+  const topic = topicView ? lastTopic(topicView) : null;
+  const rereadTopic = useCallback(() => { void attach?.refreshTopic(); }, [attach]);
+  useFocusEffect(useCallback(() => { rereadTopic(); }, [rereadTopic]));
 
   /** The header's lines. Until a Topic read lands, a Topic's Session reads as a Session. */
   const headerTitle = useMemo((): HeaderTitle | null => {
@@ -1098,9 +1051,9 @@ export default function TerminalScreen() {
 
   const openTitleSheet = useCallback(() => {
     if (!attach) return;
-    const kind = topicId ? 'topic' : 'windows';
+    const kind = state?.topic ? 'topic' : 'windows';
     say(`title sheet opened (${kind})`);
-    setTitleSheet({ open: true, kind });
+    setTitleSheet({ open: true });
     // The programs in the rows are a Topology read old; see refreshBehindSheet.
     attach.refreshTopology();
     if (kind === 'topic') rereadTopic();
@@ -1109,7 +1062,7 @@ export default function TerminalScreen() {
         setWindowTabs({ window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
       });
     }
-  }, [attach, topicId, rereadTopic, hostId, activeWindowId]);
+  }, [attach, state?.topic, rereadTopic, hostId, activeWindowId]);
 
   /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
   const openTab = useCallback(
@@ -1142,10 +1095,10 @@ export default function TerminalScreen() {
 
   const titleRows = useMemo((): TitleRow[] => {
     if (!state) return [];
-    if (titleSheet.open && titleSheet.kind === 'topic') {
+    if (state.topic) {
       return topic
         ? topicTitleRows(topic, { session: state.sessionName, topology: state.topology })
-        : [];
+        : [{ kind: 'session', name: state.sessionName, current: true, windows: sessionTitleRows(state.topology) }];
     }
     return sessionTitleRows(state.topology);
   }, [state, titleSheet, topic]);
@@ -1162,7 +1115,7 @@ export default function TerminalScreen() {
       if (!attach || !state) return;
       void (async () => {
         try {
-          if (session !== null && session !== state.sessionName) await attach.switchSession(session);
+          if (session !== null) await attach.switchSession({ sessionName: session, topic: state.topic ? { id: state.topic.id, seed: topic } : null });
           if (window !== null) await attach.selectWindow(window);
           setTitleSheet({ open: false });
         } catch (error) {
@@ -1172,7 +1125,7 @@ export default function TerminalScreen() {
         }
       })();
     },
-    [attach, state],
+    [attach, state, topic],
   );
 
   /**
@@ -1230,6 +1183,21 @@ export default function TerminalScreen() {
         toggleComposer,
         { disabled: !activePaneId },
       ),
+      ...(state?.topic ? [{
+        kind: 'menu' as const, id: 'topic', label: 'Topic', systemImage: 'rectangle.stack' as const,
+        items: [
+          action('edit-topic', 'Edit Topic…', 'square.and.pencil', () => {
+            if (!topic || !hostId) return;
+            router.push({ pathname: '/topic-edit', params: { hostId, topicId: topic.id,
+              topic: fieldsParam({ title: topic.label, note: topic.note, tags: topic.tags }) } });
+          }, { disabled: !topic }),
+          action('add-session', 'Add a Session…', 'plus', () => {
+            if (!hostId || !state.topic) return;
+            router.push({ pathname: '/topic-add-session', params: { hostId, topicId: state.topic.id,
+              fromAttach: '1', ...(topic ? { seed: topicSeedParam(topic) } : {}) } });
+          }),
+        ],
+      }] : []),
       {
         kind: 'toggle',
         id: 'zoom',
@@ -1280,6 +1248,10 @@ export default function TerminalScreen() {
       action('disconnect', 'Disconnect', 'xmark.circle', disconnect, { destructive: true }),
     ];
   }, [
+    topic,
+    state?.topic,
+    hostId,
+    router,
     composerOpen,
     toggleComposer,
     activePaneId,
@@ -1364,7 +1336,7 @@ export default function TerminalScreen() {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: opened.terminal.background },
+        { backgroundColor: opened.terminal.background },
       ]}>
       {/* The Theme decides this, not the phone: white glyphs over Solarized's
           near-white terminal are a status bar nobody can read. */}
@@ -1373,12 +1345,9 @@ export default function TerminalScreen() {
       <TerminalHeader
         title={headerTitle}
         terminal={opened.terminal}
-        appearance={appearance}
         onBack={goHome}
         onTitle={openTitleSheet}
         options={options}
-        // The programs in the Topology are a read old; see refreshBehindSheet.
-        onOptionsTouched={() => attach?.refreshTopology()}
       />
 
       <View
@@ -1474,15 +1443,24 @@ export default function TerminalScreen() {
             <ScrollBackIndicator
               position={state.scrolled}
               palette={opened.terminal}
+              appearance={appearance}
               onPress={jumpToLatest}
             />
           </>
+        ) : null}
+
+        {clippedRow > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: opened.terminal.background }}
+          />
         ) : null}
 
         {/* Last, so it is over the mouse layer and a tap on it is the map's. */}
         {(state?.topology.panes.length ?? 0) > 1 ? (
           <LayoutMap
             panes={state?.topology.panes ?? []}
+            appearance={appearance}
             palette={sheetPaletteFor(settings.theme)}
             onPress={openPanes}
           />
@@ -1531,11 +1509,13 @@ export default function TerminalScreen() {
         isPresented={titleSheet.open}
         onDismiss={titleSheetDismissed}
         rows={titleRows}
-        loading={titleSheet.open && titleSheet.kind === 'topic' && topicView.kind === 'loading'}
+        topic={topic}
+        onRetry={rereadTopic}
+        loading={titleSheet.open && topicView?.kind === 'loading'}
         error={
           titleSheet.open
             ? (titleSheet.error ??
-              (titleSheet.kind === 'topic' && topicView.kind === 'failed' ? topicView.error : undefined))
+              (topicView?.kind === 'failed' ? topicView.error : undefined))
             : undefined
         }
         onSwitch={switchFromTitleSheet}
@@ -1569,11 +1549,8 @@ export default function TerminalScreen() {
         palette={chrome}
       />
 
-      {/* Everything the screen has to say sits under the Header, the way iOS
-          delivers a notification: the Banners first, then the trouble line
-          beneath them. Below the bar, not behind it: the container's padding
-          does not push an absolutely positioned child down. */}
-      <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
+      {/* The native Header ends where this content area begins. */}
+      <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
         {reconnectShown ? null : keyBanner}
 
         <Presence shown={!status.quiet}>
@@ -1603,16 +1580,17 @@ export default function TerminalScreen() {
       {reconnectShown ? (
         <ReconnectScreen
           hostName={reconnectHost}
-          session={sessionParam ?? ''}
+          session={bootstrap.current.session ?? ''}
           progress={reconnecting}
           palette={chrome}
+          appearance={appearance}
           onTryAgain={tryReconnectAgain}
           onGoHome={goHome}
         />
       ) : null}
       {/* The reconnect stops at a changed key, so its warning sits above it. */}
       {reconnectShown ? (
-        <View style={[styles.top, { top: insets.top + HEADER_HEIGHT }]} pointerEvents="box-none">
+        <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
           {keyBanner}
         </View>
       ) : null}
@@ -2238,10 +2216,12 @@ function ScrollRail({
 function ScrollBackIndicator({
   position,
   palette,
+  appearance,
   onPress,
 }: {
   position: { back: number; scrollbackLines: number };
   palette: TerminalPalette;
+  appearance: 'light' | 'dark';
   onPress: () => void;
 }) {
   const atOldest = position.back >= position.scrollbackLines;
@@ -2256,15 +2236,23 @@ function ScrollBackIndicator({
       // for it is not aiming carefully. The slop costs nothing: there is
       // nothing else down there to press.
       hitSlop={PILL_SLOP}
-      // Inverted against the Theme rather than painted a fixed light: the pill
-      // has to read over whatever the Session is painting behind it, and a
-      // light pill with light text is what a fixed one gave on Solarized.
-      style={[styles.scrollPill, { backgroundColor: palette.foreground }]}
+      style={styles.scrollPill}
       testID="scroll-position">
-      <ThemedText type="code" style={[styles.scrollPillText, { color: palette.background }]}>
+      {isGlassEffectAPIAvailable() ? (
+        <GlassView
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { borderRadius: 999 }]}
+          glassEffectStyle="regular"
+          colorScheme={appearance}
+          isInteractive
+        />
+      ) : (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: palette.background, borderRadius: 999 }]} />
+      )}
+      <ThemedText type="code" style={[styles.scrollPillText, { color: palette.foreground }]}>
         {atOldest ? `oldest of ${position.scrollbackLines} lines` : `${position.back} lines back`}
       </ThemedText>
-      <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.background }]}>
+      <ThemedText type="code" style={[styles.scrollPillAction, { color: palette.foreground }]}>
         Jump to latest
       </ThemedText>
     </Pressable>

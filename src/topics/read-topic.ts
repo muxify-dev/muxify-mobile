@@ -12,7 +12,7 @@ const say = speakingAs(deviceLog(), 'topic');
 /**
  * One read of a Topic from its Host, on the Host's Connection.
  *
- * The Topic Screen and the Terminal Screen's Title Sheet both ask this. It
+ * The Attach and the Topic entry path ask this. It
  * never throws: a Host that is no longer saved, a Host that refuses and a
  * Topic the Host cannot show are each a failed read that carries its reason.
  */

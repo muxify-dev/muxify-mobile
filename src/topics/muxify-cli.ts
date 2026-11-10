@@ -9,6 +9,7 @@ import type { TopicsRead } from './host-topics';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
 import type { TopicChange, TopicWrite } from './topic-edit';
+import { parseSessionPaths, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
 
@@ -85,6 +86,8 @@ export interface MuxifyCli {
    * Host's reason, and the Host makes nothing.
    */
   addSession(exec: Exec, topic: TopicId, folder: string): Promise<AddSessionRead>;
+
+  sessionPaths(exec: Exec, topic: TopicId): Promise<SessionPathsRead>;
 
   /**
    * Makes the remembered Sessions, Windows, Tabs and Agents of a Dormant or
@@ -203,6 +206,16 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     reopenTopic: (exec, topic) => writeTopic(exec, 'topic reopen', topic),
 
     startTopicFresh: (exec, topic) => writeTopic(exec, 'topic start-fresh', topic),
+
+    async sessionPaths(exec, topic) {
+      const path = await locate(exec);
+      if (path === null) return { kind: 'failed', error: NO_MUXIFY };
+      const result = await exec(`${shellQuote(path)} topic session-paths --topic ${shellQuote(topic)} --json`);
+      if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
+      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+      const parsed = parseAnswer(result.stdout, (json) => parseSessionPaths(json, topic));
+      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', choices: parsed.value };
+    },
 
     async addSession(exec, topic, folder) {
       const parsed = await answerTo(

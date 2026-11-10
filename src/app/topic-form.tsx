@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
@@ -31,16 +31,9 @@ import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { NewTopicRead } from '@/topics/new-topic';
 import { tagsFromParam } from '@/topics/tags-param';
+import { topicSeedParam } from '@/topics/topic-detail';
 
 
-/**
- * Makes an Empty Topic on a Host, as New Topic on the Mac does, and then opens
- * its Topic Screen, which is where a Session gets added to it.
- *
- * The Tags to choose from are the ones the Host Screen's last read had, passed
- * in by the Host Screen, so the sheet opens without a read of its own. An error
- * from the Host keeps the sheet open with the title and Tags as they were.
- */
 export default function TopicFormScreen() {
   const router = useRouter();
   const { hostId, tags: tagsJson } = useLocalSearchParams<{
@@ -54,6 +47,8 @@ export default function TopicFormScreen() {
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
+  const present = useRef(true);
+  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
 
   const toggle = useCallback((name: string) => {
     setChosen((previous) => toggled(previous, name));
@@ -92,17 +87,16 @@ export default function TopicFormScreen() {
       } catch (caught) {
         made = { kind: 'failed', error: describeConnectionFailure(caught) };
       }
+      if (!present.current) return;
       if (made.kind === 'failed') {
         setError(made.error);
         setCreating(false);
         return;
       }
 
-      router.back();
-      router.push({
-        pathname: '/topic',
-        params: { hostId, topicId: made.topic, label: wanted, tags: tagsJson },
-      });
+      router.replace({ pathname: '/topic-add-session', params: { hostId, topicId: made.topic,
+        seed: topicSeedParam({ id: made.topic, label: wanted, note: null,
+          tags: tags.filter((tag) => chosen.has(tag.name)).map((tag) => tag.name), state: 'empty', sessions: [] }) } });
     })();
   }, [creating, title, hostId, tags, chosen, router]);
 
@@ -111,18 +105,21 @@ export default function TopicFormScreen() {
       <Stack.Screen
         options={{
           title: 'New Topic',
+          gestureEnabled: !creating,
           headerLeft: () => (
             <ToolbarWord
               label="Cancel"
+              disabled={creating}
               color={palette.controlAccent}
               bold={false}
-              onPress={() => router.back()}
+              onPress={() => { if (!creating) router.back(); }}
             />
           ),
           headerRight: () => (
             <ToolbarWord
               label={creating ? 'Saving…' : 'Save'}
               color={creating ? palette.secondaryLabel : palette.controlAccent}
+              disabled={creating}
               onPress={save}
             />
           ),

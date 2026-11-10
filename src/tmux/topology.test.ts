@@ -382,3 +382,63 @@ describe('a store that has been let go', () => {
     expect(seen).toEqual([]);
   });
 });
+
+
+describe('Topology reads across Session retargets', () => {
+  it.each([false, true])('ignores an obsolete Windows result, empty=%p', async (empty) => {
+    let release!: (windows: Window[]) => void;
+    const panes = jest.fn(async () => [pane()]);
+    const reader: TopologyReader = {
+      listWindows: jest.fn().mockResolvedValueOnce([window()])
+        .mockImplementationOnce(() => new Promise<Window[]>((resolve) => { release = resolve; }))
+        .mockResolvedValue([window({ id: '@2', index: 2 })]),
+      listPanes: panes,
+    };
+    const store = createTopologyStore(reader, 'work');
+    await store.refresh();
+    const seen: Topology[] = [];
+    store.subscribe((value) => seen.push(value));
+    const old = store.refresh();
+    store.attachedTo('$2');
+    await store.refresh();
+    release(empty ? [] : [window()]);
+    await old;
+    expect(store.current().activeWindow?.id).toBe('@2');
+    expect(seen).toHaveLength(1);
+    expect(panes.mock.calls).toHaveLength(2);
+  });
+
+  it('does not publish Panes from a previous target after another Session has arrived', async () => {
+    let release!: (panes: Pane[]) => void;
+    const reader: TopologyReader = {
+      listWindows: async (target) => [window({ id: target === '$1' ? '@1' : '@2' })],
+      listPanes: jest.fn().mockImplementationOnce(() => new Promise<Pane[]>((resolve) => { release = resolve; }))
+        .mockResolvedValue([pane({ id: '%2' })]),
+    };
+    const store = createTopologyStore(reader, '$1');
+    const old = store.refresh();
+    await settle();
+    store.attachedTo('$2');
+    await store.refresh();
+    release([pane({ id: '%1' })]);
+    await old;
+    expect(store.current().activePane?.id).toBe('%2');
+    expect(reader.listPanes).toHaveBeenNthCalledWith(1, '$1', 0);
+    expect(reader.listPanes).toHaveBeenNthCalledWith(2, '$2', 0);
+  });
+
+  it('keeps an in-flight read when the observed Session target has not changed', async () => {
+    let release!: (windows: Window[]) => void;
+    const reader: TopologyReader = {
+      listWindows: () => new Promise<Window[]>((resolve) => { release = resolve; }),
+      listPanes: jest.fn(async () => [pane()]),
+    };
+    const store = createTopologyStore(reader, '$1');
+    const read = store.refresh();
+    store.attachedTo('$1');
+    release([window()]);
+    await read;
+    expect(reader.listPanes).toHaveBeenCalledWith('$1', 0);
+    expect(store.current().activePane?.id).toBe('%0');
+  });
+});

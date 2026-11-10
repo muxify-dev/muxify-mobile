@@ -33,7 +33,9 @@ mkdir -p "$DIR"
 id=$(muxify topic new "$TITLE" --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])') || exit 1
 muxify topic pin --topic "$id" --json >/dev/null || exit 1
 
-agent-device test ./e2e/add-session.ad || exit 1
+driver=./e2e/add-session.ad
+if [ "${1:-}" = "old-cli" ]; then driver=./e2e/add-session-old-cli.ad; fi
+agent-device test "$driver" || exit 1
 
 muxify topic show --topic "$id" --json | python3 -c '
 import json, sys

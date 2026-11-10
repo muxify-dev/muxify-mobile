@@ -19,15 +19,10 @@ is "visible" "label=\"Session e2e-reconnect\""
 press "label=\"Session e2e-reconnect\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "e2e-reconnect"
-press "role=button label=\"Back\""
+press "label=\"Options\""
+wait "role=button label=\"Disconnect\"" 8000
+press "role=button label=\"Disconnect\""
 wait "label=\"Settings\"" 8000
-press "label=\"All of Dev Host\""
-wait "label=\"New Session\"" 8000
-
-# The attached row is the first Recent Session; a swipe left shows Disconnect.
-swipe 340 361 60 361
-wait "label=\"Disconnect e2e-reconnect\"" 3000
-press "label=\"Disconnect e2e-reconnect\""
 wait 2000
 
 open "dev.muxify.app" --relaunch

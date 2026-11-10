@@ -13,7 +13,6 @@ import {
   Spacer,
   SwipeActions,
   Text,
-  VStack,
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
@@ -36,7 +35,6 @@ import {
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
-import { lastAnswer, type Listing } from '@/domain/host-listing';
 import {
   hostScreen,
   type HostScreenRow,
@@ -52,7 +50,7 @@ import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { lastSnapshot } from '@/topics/host-topics';
 import { tagsParam } from '@/topics/tags-param';
-import { topicSeedParam } from '@/topics/topic-detail';
+import { useHostEntry } from '@/hooks/use-host-entry';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -60,8 +58,7 @@ const COLLAPSED = 3;
 /**
  * A Host and its Sessions.
  *
- * Below the Connection section, it draws only what hostScreen returns: the
- * lists the user turned on in Settings, in their order.
+ * It draws the lists that hostScreen returns, in the order set in Settings.
  *
  * What is remembered is on screen before the Host is even dialled, and the
  * Host's own answer arrives underneath a moment later. A Host you cannot reach
@@ -112,15 +109,8 @@ export default function HostScreen() {
     }, [readRecords, readHost]),
   );
 
-  const open = useCallback(
-    (name: string) => {
-      // Always navigation. Whether anything is opened, and whether the Session
-      // that is already attached is left alone, is the holder's decision — see
-      // createAttachHolder.
-      router.push({ pathname: '/terminal', params: { hostId: id, session: name } });
-    },
-    [router, id],
-  );
+  const entered = useCallback(() => router.push('/terminal'), [router]);
+  const hostEntry = useHostEntry(id, entered);
 
   const disconnect = useCallback(() => {
     void holder.disconnect();
@@ -160,18 +150,9 @@ export default function HostScreen() {
   const wakeFromMenu = useWakeFromMenu(id, readHost);
 
   const actions: RowActions = {
-    onOpenSession: open,
-    onOpenTopic: (row) =>
-      router.push({
-        pathname: '/topic',
-        params: {
-          hostId: id,
-          topicId: row.id,
-          label: row.label,
-          tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
-          seed: topicSeedParam(row.seed),
-        },
-      }),
+    onOpenSession: hostEntry.openSession,
+    onOpenTopic: (row) => hostEntry.openTopic(row.seed),
+    busyTopic: hostEntry.busyTopic,
     onWake: (row, wake) => wakeFromMenu(row.id, wake),
     onToggle: toggleOpened,
     onRetry: () => void readHost(),
@@ -255,32 +236,6 @@ export default function HostScreen() {
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
-          <Section
-            header={<SectionHeader palette={palette}>Connection</SectionHeader>}
-            modifiers={[listRowBackground(palette.rowSurface)]}>
-            <VStack
-              spacing={4}
-              alignment="leading"
-              modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
-              <Text modifiers={[font({ size: 17 })]}>Address</Text>
-              <Text
-                modifiers={[
-                  font({ size: 13, design: 'monospaced' }),
-                  foregroundColor(palette.secondaryLabel),
-                ]}>
-                {host ? `${host.address}:${host.port}` : ''}
-              </Text>
-            </VStack>
-
-            <HStack modifiers={[frame({ maxWidth: 3000 })]}>
-              <Text modifiers={[font({ size: 17 })]}>Sessions</Text>
-              <Spacer />
-              <Text modifiers={[font({ size: 17 }), foregroundColor(palette.secondaryLabel)]}>
-                {sessionSummary(listing)}
-              </Text>
-            </HStack>
-          </Section>
-
           {sections.map((section) => (
             <Section
               key={section.id}
@@ -374,25 +329,6 @@ function ToolbarActions({
       </Pressable>
     </View>
   );
-}
-
-/**
- * How the Connection section describes the Host in one line.
- *
- * Silent until the Host has actually answered: a count assembled from memory
- * alone would say "2 sessions" about a machine that has nine. The answer it
- * gave last stands while it is being asked again, so the count does not blink
- * to a dash and back every time a sheet closes over this screen.
- *
- * It no longer says how many are attached. That was a warning, not a status —
- * joining a Session somebody was watching used to shrink their Window, because
- * Muxify borrowed `window-size smallest` to do it. A control client borrows
- * nothing, so there is nothing left to warn about. See ADR 0006.
- */
-function sessionSummary(listing: Listing): string {
-  const listed = lastAnswer(listing);
-  if (listed === undefined) return '—';
-  return `${listed.length} ${listed.length === 1 ? 'session' : 'sessions'}`;
 }
 
 /** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */

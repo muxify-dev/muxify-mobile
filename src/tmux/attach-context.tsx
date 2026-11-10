@@ -1,11 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { deviceLog } from '@/diagnostics/device-log';
 import { deviceHostStore } from '@/storage/device-store';
+import { useSettings } from '@/settings/settings-context';
+import { readTopic } from '@/topics/read-topic';
 
-import { openAttach, type Attach, type AttachState, type LifecyclePhase } from './attach';
-import { createAttachHolder, type AttachHolder } from './attach-holder';
+import { openAttach, type Attach, type AttachState, type LifecyclePhase, type SessionDestination } from './attach';
+import { createAttachHolder, type AttachHolder, type AttachOrigin } from './attach-holder';
 import { appConnections } from './ssh-connection';
 
 const AttachContext = createContext<AttachHolder | null>(null);
@@ -31,6 +33,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
           openAttach({
             ...request,
             store: deviceHostStore(),
+            readTopic,
             openConnection: appConnections().openConnection,
             log: deviceLog(),
           }),
@@ -105,4 +108,21 @@ function lifecycleOf(status: AppStateStatus): LifecyclePhase {
   if (status === 'active') return 'active';
   if (status === 'background') return 'background';
   return 'inactive';
+}
+
+export function useOpenSession() {
+  const holder = useAttachHolder();
+  const { settings } = useSettings();
+  return useCallback(async (request: {
+    hostId: string;
+    destination: SessionDestination;
+    origin?: AttachOrigin;
+    isCurrent?: () => boolean;
+  }): Promise<Attach> => {
+    const records = await deviceHostStore().load();
+    const host = records.hosts.find((candidate) => candidate.id === request.hostId);
+    if (!host) throw new Error('This Host is no longer saved.');
+    return holder.open({ host, destination: request.destination, origin: request.origin, isCurrent: request.isCurrent,
+      zoomed: settings.zoomMultipaneWindows });
+  }, [holder, settings.zoomMultipaneWindows]);
 }
