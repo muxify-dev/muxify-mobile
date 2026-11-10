@@ -2,7 +2,7 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
 wait 1500
 
@@ -13,9 +13,8 @@ is "visible" "label=\"Start Fresh\""
 press "label=\"Reopen\" hittable=true"
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "wakea/e2e-wake-reopen"
-press "role=button label=\"Back\""
-wait "label=\"All of Dev Host\"" 8000
-press "label=\"All of Dev Host\""
+back
+wait "label=\"Edit Host\"" 8000
 wait "label=\"Topic e2e-wake-fresh\"" 15000
 wait 1500
 press "label=\"Topic e2e-wake-fresh\""
@@ -23,9 +22,8 @@ wait "label=\"Start Fresh\" hittable=true" 15000
 press "label=\"Start Fresh\" hittable=true"
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "wakeb/e2e-wake-fresh"
-press "role=button label=\"Back\""
-wait "label=\"All of Dev Host\"" 8000
-press "label=\"All of Dev Host\""
+back
+wait "label=\"Edit Host\"" 8000
 wait "label=\"Edit Host\"" 15000
 wait 1500
 wait "label=\"Topic e2e-wake-menu\"" 15000

@@ -5,7 +5,7 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
 # Home is still under the Host Screen until the push settles, and has the
 # same Session and Topic rows.

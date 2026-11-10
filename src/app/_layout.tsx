@@ -5,6 +5,8 @@ import { useMemo } from 'react';
 import { SettingsProvider, useSettings } from '@/settings/settings-context';
 import { AttachProvider } from '@/tmux/attach-context';
 
+export const unstable_settings = { initialRouteName: 'index' };
+
 export default function RootLayout() {
   return (
     <SettingsProvider>
@@ -61,7 +63,7 @@ function AppStack() {
           headerBackButtonDisplayMode: 'minimal',
           contentStyle: { backgroundColor: palette.background },
         }}>
-        <Stack.Screen name="index" options={{ title: 'Muxify' }} />
+        <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         <Stack.Screen
           name="host-form"
@@ -123,7 +125,7 @@ function AppStack() {
           options={{
             headerShown: true,
             headerTransparent: false,
-            headerBackVisible: false,
+            headerBackVisible: true,
             title: 'Session',
             // A swipe right on the Surface is the previous Pane. From iOS 26
             // the system's back swipe starts anywhere on a screen, and it took

@@ -19,7 +19,7 @@ interface ReconnectScreenProps {
   palette: Appearance;
   appearance: 'light' | 'dark';
   onTryAgain: () => void;
-  onGoHome: () => void;
+  onGoHost: () => void;
 }
 
 /**
@@ -28,7 +28,7 @@ interface ReconnectScreenProps {
  *
  * Drawn over the Terminal Screen rather than pushed as its own, because the
  * Attach reaches its attached phase only once the Surface below has reported
- * its grid. Go Home is there at every step, the Header's Back under another name.
+ * its grid. Go to Host is there at every step, the Header's Back under another name.
  * A failed step stays, with its reason and Try again: a reconnect never tries
  * again by itself.
  */
@@ -39,7 +39,7 @@ export function ReconnectScreen({
   palette,
   appearance,
   onTryAgain,
-  onGoHome,
+  onGoHost,
 }: ReconnectScreenProps) {
   const current = RECONNECT_STEPS.indexOf(progress.step);
 
@@ -81,9 +81,9 @@ export function ReconnectScreen({
               />
             ) : null}
             <Button
-              label="Go Home"
-              onPress={onGoHome}
-              modifiers={[buttonStyle('glass'), controlSize('large'), accessibilityLabel('Go Home')]}
+              label="Go to Host"
+              onPress={onGoHost}
+              modifiers={[buttonStyle('glass'), controlSize('large'), accessibilityLabel('Go to Host')]}
             />
           </VStack>
         </GlassEffectContainer>

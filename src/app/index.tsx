@@ -1,4 +1,4 @@
-import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -29,20 +29,16 @@ import {
   scrollContentBackground,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
-import { HostScreenRowView, rowKey, type RowActions } from '@/components/host-screen-row-view';
+import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
-import { homeSection, type HostConnection } from '@/domain/home';
 import { placeToReconnect } from '@/domain/reconnect';
-import { useHostReading } from '@/hooks/use-host-reading';
-import { useWakeFromMenu } from '@/hooks/use-wake-from-menu';
 import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host as HostRecord, RecentSession } from '@/storage/records';
+import type { Host as HostRecord } from '@/storage/records';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import { useHostEntry } from '@/hooks/use-host-entry';
 
 /**
  * Whether this run of the app has looked for a Last Place yet. Module state
@@ -51,42 +47,23 @@ import { useHostEntry } from '@/hooks/use-host-entry';
  */
 let coldStartChecked = false;
 
-/**
- * The dot beside a Host's name. System green and orange rather than palette
- * colours: the palette has no "ready" or "waiting", and these two are the ones
- * the phone already uses for it.
- */
-const CONNECTION_DOT: Record<HostConnection, { color: string; label: string }> = {
-  answered: { color: '#34c759', label: 'Connected' },
-  checking: { color: '#ff9f0a', label: 'Checking' },
-  refused: { color: '#ff453a', label: 'Unreachable' },
-};
-
-/**
- * Home: the app's front door. One section per Host, in the order Settings
- * gives, each with the first rows of that Host's Host Screen, so one tap
- * attaches or opens a Topic.
- *
- * Re-reads the Hosts on focus rather than holding them, because the form
- * writes through the store and this screen would otherwise show a Host that
- * was just renamed under its old name. Each section reads its own Host on
- * focus too; see ADR 0013.
- */
 export default function HomeScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const { appearance, palette } = useSettings();
   const [hosts, setHosts] = useState<HostRecord[] | null>(null);
 
   useEffect(() => {
     if (coldStartChecked) return;
     coldStartChecked = true;
+    if (!navigation.isFocused()) return;
     void (async () => {
       const [settings, records] = await Promise.all([
         deviceSettingsStore().load(),
         deviceHostStore().load(),
       ]);
       const place = placeToReconnect(settings, records);
-      if (!place) return;
+      if (!place || !navigation.isFocused()) return;
       // Pushed in the order Back walks them, so the Terminal Screen has the
       // Host Screen and then Home under it, as if tapped to.
       router.push({ pathname: '/hosts/[id]', params: { id: place.hostId } });
@@ -100,7 +77,7 @@ export default function HomeScreen() {
         },
       });
     })();
-  }, [router]);
+  }, [router, navigation]);
 
   const reload = useCallback(async () => {
     const records = await deviceHostStore().load();
@@ -117,7 +94,7 @@ export default function HomeScreen() {
     <View style={styles.fill}>
       <Stack.Screen
         options={{
-          title: 'Muxify',
+          title: 'Hosts',
           headerLeft: () => (
             <ToolbarGlyphButton
               systemImage="gearshape"
@@ -157,116 +134,34 @@ export default function HomeScreen() {
   );
 }
 
-/**
- * One Host's section. It reads its own Host, so a Host that cannot be reached
- * waits in its own section and the others draw what they have.
- */
-function HostSection({
-  host,
-  appearance,
-  palette,
-}: {
+function HostSection({ host, palette }: {
   host: HostRecord;
   appearance: 'light' | 'dark';
   palette: Appearance;
 }) {
   const router = useRouter();
-  const { settings } = useSettings();
-  const topicsOn = settings.hostScreenLists.includes('topics');
-  const { listing, topics, read } = useHostReading(host.id, topicsOn);
-  const [recent, setRecent] = useState<RecentSession[]>([]);
-  // Frozen per visit, as the Host Screen does: "2 hr ago" must not renumber
-  // itself under the user's thumb.
-  const [openedAt] = useState(() => new Date());
   const attach = useCurrentAttach();
-  const attachState = useAttachState(attach);
-  const attachedHere = attach?.hostId === host.id && attachState ? attachState : null;
-
-  useFocusEffect(
-    useCallback(() => {
-      void (async () => {
-        setRecent(await deviceHostStore().recentSessionsFor(host.id));
-        await read();
-      })();
-    }, [host.id, read]),
-  );
-
-  const section = homeSection(host, {
-    settings,
-    recent,
-    listing,
-    topics,
-    opened: NOTHING_OPENED,
-    appearance,
-  });
-
-  const wakeFromMenu = useWakeFromMenu(host.id, read);
-
-  const openHostScreen = () =>
-    router.push({ pathname: '/hosts/[id]', params: { id: host.id } });
-
-  const entered = useCallback(() => router.push('/terminal'), [router]);
-  const hostEntry = useHostEntry(host.id, entered);
-  const actions: RowActions = {
-    onOpenSession: hostEntry.openSession,
-    onOpenTopic: (row) => hostEntry.openTopic(row.seed),
-    busyTopic: hostEntry.busyTopic,
-    onWake: (row, wake) => wakeFromMenu(row.id, wake),
-    // The Bench and No Topic open in place on the Host Screen, which Home has
-    // no room for.
-    onToggle: openHostScreen,
-    onRetry: () => void read(),
-  };
-
-  const dot = CONNECTION_DOT[section.connection];
-
+  const state = useAttachState(attach);
+  const attached = attach?.hostId === host.id ? state : null;
   return (
-    <Section
-      header={
-        <HStack spacing={8} modifiers={[frame({ maxWidth: 3000 })]}>
-          <Image
-            systemName="circle.fill"
-            size={9}
-            color={dot.color}
-            modifiers={[accessibilityLabel(dot.label)]}
-          />
-          <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.sectionHeader)]}>
-            {host.displayName}
-          </Text>
+    <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+      <Button
+        onPress={() => router.push({ pathname: '/hosts/[id]', params: { id: host.id } })}
+        modifiers={[buttonStyle('plain'), accessibilityLabel(`Host ${host.displayName}`)]}>
+        <HStack spacing={12} modifiers={[padding({ vertical: 12 }), frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
+          <Image systemName="server.rack" size={22} color={palette.controlAccent} />
+          <VStack alignment="leading" spacing={4}>
+            <Text modifiers={[font({ size: 17, weight: 'semibold' }), foregroundColor(palette.toolbarTint)]}>{host.displayName}</Text>
+            <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{host.address}</Text>
+            {attached && <Text modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>{attached.sessionName}</Text>}
+          </VStack>
           <Spacer />
-          <Button
-            label="All ›"
-            onPress={openHostScreen}
-            modifiers={[
-              buttonStyle('plain'),
-              font({ size: 15 }),
-              accessibilityLabel(`All of ${host.displayName}`),
-            ]}
-          />
+          <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
         </HStack>
-      }
-      modifiers={[listRowBackground(palette.rowSurface)]}>
-      {section.rows.map((row, index) => (
-        <HostScreenRowView
-          // Flattened from several lists, which may each have a note or a
-          // checking row of their own.
-          key={`${index}:${rowKey(row, index)}`}
-          row={row}
-          palette={palette}
-          openedAt={openedAt}
-          attached={
-            row.kind === 'recent' && attachedHere?.sessionName === row.name
-              ? attachedHere.phase
-              : undefined
-          }
-          actions={actions}
-        />
-      ))}
+      </Button>
     </Section>
   );
 }
-
-const NOTHING_OPENED: ReadonlySet<never> = new Set();
 
 /** Nothing saved yet: what this app is for, and the one thing to do about it. */
 function EmptyState({

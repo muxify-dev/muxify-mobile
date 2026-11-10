@@ -27,6 +27,8 @@
 set -uo pipefail
 
 APP=dev.muxify.app
+device=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
 SESSION=0
 
 # Runs a command on the dev Host, which is this Mac, in the sandbox.
@@ -36,10 +38,10 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 attach() {
   agent-device close >/dev/null 2>&1
-  agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
+  agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
   # The real flow: a saved Host, its Sessions, then one of them.
-  agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+  agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
   agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
@@ -146,7 +148,10 @@ open_sheet() {
 open_title_sheet() {
   for _ in 1 2 3; do
     agent-device press 'id="header-title"' >/dev/null 2>&1
-    sheet Windows && return 0
+    if sheet Choose; then
+      agent-device press 'label="Windows"' >/dev/null 2>&1
+      return 0
+    fi
   done
   fail "the Title Sheet never opened"
 }
@@ -161,7 +166,7 @@ attach
 expect_enabled Panes yes
 open_title_sheet
 [ "$(named 'bash')" -eq 1 ] || fail "the one Window is missing from the Title Sheet"
-agent-device press 'label="Close Windows"' >/dev/null 2>&1
+agent-device press 'label="Close Choose"' >/dev/null 2>&1
 sleep 1
 open_sheet Panes
 [ "$(named 'Split →')" -eq 1 ] || fail "a Window with one Pane must still offer Split →"
@@ -190,7 +195,7 @@ attach
 open_title_sheet
 [ "$(named 'logs')" -eq 1 ] || fail "the logs Window is missing from the Title Sheet"
 [ "$(named 'notes')" -eq 1 ] || fail "the notes Window is missing from the Title Sheet"
-agent-device press 'label="Close Windows"' >/dev/null 2>&1
+agent-device press 'label="Close Choose"' >/dev/null 2>&1
 sleep 1
 offers_new_window
 echo "     logs and notes listed, and ⋯ offers New Window"

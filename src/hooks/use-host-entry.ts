@@ -12,6 +12,11 @@ import { readTopic } from '@/topics/read-topic';
 import { topicSeedParam, type TopicDetail } from '@/topics/topic-detail';
 import { WAKE_LABEL, wakeTopic, type Wake } from '@/topics/wake-topic';
 
+interface EntryFeedback {
+  isCurrent: () => boolean;
+  onError: (error: unknown) => void;
+}
+
 interface Delivery {
   origin: AttachOrigin;
   isCurrent: () => boolean;
@@ -51,16 +56,18 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
     await attachTopic(result.topic, delivery);
   }, [hostId, attachTopic]);
 
-  const run = useCallback((id: TopicId | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void) => {
+  const run = useCallback((id: TopicId | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback) => {
     if (running.current || !focused.current) return;
     const operation = Symbol();
     const revision = focusRevision.current;
     running.current = operation;
-    const isCurrent = () => focused.current && focusRevision.current === revision && running.current === operation;
+    const isCurrent = () => focused.current && focusRevision.current === revision && running.current === operation && (feedback?.isCurrent() ?? true);
     const delivery = { origin: captureAttachOrigin(holder.current()), isCurrent };
     setBusyTopic(id);
     void work(delivery).catch((error) => {
-      if (isCurrent()) Alert.alert(id === null ? 'Could not open Session' : 'Could not open Topic', describeError(error), [
+      if (!isCurrent()) return;
+      if (feedback) { feedback.onError(error); return; }
+      Alert.alert(id === null ? 'Could not open Session' : 'Could not open Topic', describeError(error), [
         ...(retry ? [{ text: 'Retry Read', onPress: retry }] : []), { text: 'OK' },
       ]);
     }).finally(() => {
@@ -70,7 +77,7 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
     });
   }, [holder]);
 
-  const openTopic = useCallback((topic: TopicDetail) => {
+  const openTopic = useCallback((topic: TopicDetail, feedback?: EntryFeedback) => {
     if (running.current || !focused.current) return;
     if (topic.state === 'empty') {
       router.push({ pathname: '/topic-add-session', params: { hostId, topicId: topic.id,
@@ -100,7 +107,7 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
       });
       return;
     }
-    run(topic.id, (delivery) => topic.sessions.length ? attachTopic(topic, delivery) : readAndAttach(topic.id, delivery));
+    run(topic.id, (delivery) => topic.sessions.length ? attachTopic(topic, delivery) : readAndAttach(topic.id, delivery), undefined, feedback);
   }, [hostId, router, run, attachTopic, readAndAttach, fromAttach]);
 
   const openSession = useCallback((sessionName: string) => {

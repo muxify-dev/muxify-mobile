@@ -1,9 +1,9 @@
 import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
 import { File } from 'expo-file-system';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
@@ -42,7 +42,7 @@ import { useCopyLog } from '@/hooks/use-copy-log';
 import { useHostReading } from '@/hooks/use-host-reading';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
-import { useSettings } from '@/settings/settings-context';
+import { useHostLists, useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { fieldsParam } from '@/topics/topic-edit';
@@ -130,22 +130,8 @@ type PaneSlot = {
   swipe: 'moves' | 'waits' | 'still';
 };
 
-/** What a picker is picking. One sheet serves both. */
-type PickerKind = 'sessions' | 'panes';
-
-/** The sheet: closed, or open and showing whatever it has so far. */
-type PickerState =
-  | { open: false }
-  | {
-      open: true;
-      kind: PickerKind;
-      loading: boolean;
-      cards: PreviewCard[];
-      error?: string;
-    };
-
-/** The Title Sheet: closed, or open on the Session's Windows or the Topic's Sessions. */
-type TitleSheetState = { open: false } | { open: true; error?: string };
+type PickerState = { open: false } | { open: true; error?: string };
+type TitleSheetState = { open: false } | { open: true; revision: number; error?: string };
 
 /**
  * One Session, on screen.
@@ -162,6 +148,7 @@ type TitleSheetState = { open: false } | { open: true; error?: string };
  */
 export default function TerminalScreen() {
   const router = useRouter();
+  const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   const {
     hostId: routeHostId,
     session: sessionParam,
@@ -205,9 +192,30 @@ export default function TerminalScreen() {
     if (reconnecting.kind === 'attached') setShowReconnect(false);
   }, [reconnecting.kind]);
 
-  // Back goes Home, where every Host's Sessions are a tap away. The Session
-  // stays attached — this is navigation and nothing else (ADR 0007).
-  const goHome = useCallback(() => router.dismissTo('/'), [router]);
+  const goHost = useCallback(() => {
+    if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
+    else router.dismissTo('/');
+  }, [hostId, router]);
+
+  useLayoutEffect(() => {
+    if (!hostId) return;
+    const ensureParents = () => {
+      if (!navigation.isFocused()) return;
+      const stack = navigation.getState();
+      if (!stack || stack.routes[stack.index]?.name !== 'terminal') return;
+      const parent = stack.routes[stack.index - 1];
+      if (stack.index === 2 && stack.routes[0]?.name === 'index' && parent?.name === 'hosts/[id]' && (parent.params as { id?: string })?.id === hostId) return;
+      const home = stack.routes.find((route) => route.name === 'index') ?? { name: 'index' };
+      const host = stack.routes.find((route) => route.name === 'hosts/[id]' && (route.params as { id?: string })?.id === hostId)
+        ?? { name: 'hosts/[id]', params: { id: hostId } };
+      const routes: { key?: string; name: string; params?: object }[] = [home, host, stack.routes[stack.index]];
+      say('restoring Host parents for Terminal');
+      navigation.reset({ index: 2, routes });
+    };
+    const stop = navigation.addListener('state', ensureParents);
+    ensureParents();
+    return stop;
+  }, [hostId, navigation]);
 
   /**
    * Asks the root for the Session this route names, if it is not already up.
@@ -306,6 +314,11 @@ export default function TerminalScreen() {
   armedRef.current = armed;
   const [picker, setPicker] = useState<PickerState>({ open: false });
   const [titleSheet, setTitleSheet] = useState<TitleSheetState>({ open: false });
+  const chooserRevision = useRef(0);
+  const closeChooser = useCallback(() => {
+    chooserRevision.current += 1;
+    setTitleSheet({ open: false });
+  }, []);
 
   /**
    * The Theme this Session was opened with.
@@ -806,162 +819,75 @@ export default function TerminalScreen() {
     activeView()?.jumpToLatest();
   }, [activeView]);
 
-  /**
-   * The Host's Topics, for the Sessions picker: read when the picker opens,
-   * through the reading that Home and the Host Screen use.
-   */
-  const topicsOn = settings.hostScreenLists.includes('topics');
+  const hostLists = useHostLists(hostId ?? '');
+  const topicsOn = hostLists.includes('topics');
   const { topics: hostTopics, read: readHost } = useHostReading(hostId ?? '', topicsOn);
   const pickerTopics = useMemo(
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
     [topicsOn, hostTopics, appearance],
   );
-
-  const topicEntered = useCallback(() => setPicker({ open: false }), []);
-  const hostEntry = useHostEntry(hostId ?? '', topicEntered, true);
-  const openTopic = useCallback((row: TopicRow) => {
+  const hostEntry = useHostEntry(hostId ?? '', closeChooser, true);
+  const handover = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useFocusEffect(useCallback(() => () => {
+    if (handover.current) clearTimeout(handover.current);
+    closeChooser();
     setPicker({ open: false });
-    handover.current = setTimeout(() => hostEntry.openTopic(row.seed), SHEET_HANDOVER_MS);
-  }, [hostEntry]);
-
-  /**
-   * What a picker would show, from the model that is already right.
-   *
-   * No round trip for the rows: tmux has been pushing changes all along, so a
-   * Panes sheet opens on a Topology that is current, and a Sessions sheet on
-   * a list kept by `%sessions-changed`. Previews are the exception —
-   * a picture of a Pane is only worth anything if it is of now — and they fill
-   * in behind an already-open sheet.
-   */
-  const cardsFor = useCallback(
-    (kind: PickerKind): PreviewCard[] => {
-      if (!state) return [];
-      if (kind === 'sessions') {
-        return (state.sessions ?? []).map((session) => ({
-          id: session.name,
-          title: session.name,
-          // The name, even though `title` already holds it. A preview card
-          // draws its badge and its detail and nothing else — `title` is what
-          // the card is announced as, not what it is labelled with — so a
-          // Session, which has no badge, would be identified by nothing at all
-          // without this.
-          detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
-          current: session.name === state.sessionName,
-          preview: previewOf(state.previews, `${session.name}:`),
-        }));
-      }
-
-      // No capture here: the Panes are all on screen behind this sheet already,
-      // so the question is which one you mean, not what is in it. Where it
-      // sits, what directory it is in and what it is running are what tell two
-      // Panes apart; a tile of six-point terminal text does not.
-      const frames = paneTopologyFrames(state.topology.panes);
-      return state.topology.panes.map((pane) => ({
-        id: String(pane.index),
-        title: directoryName(pane.path) || `Pane ${pane.index}`,
-        detail: pane.command,
-        current: pane.active,
-        frame: frames.get(pane.index),
-        preview: [],
-      }));
-    },
-    [state],
-  );
-
-  /**
-   * Corrects an already-open sheet behind itself.
-   *
-   * Two things a notification cannot carry. **Previews** are screen content,
-   * and a picture of a Pane is worth nothing unless it is of now. And **what a
-   * Pane is running** — `#{pane_current_command}`, `#{pane_current_path}` —
-   * changes with no notification of its own: nothing is pushed when a shell
-   * starts `vim`, so the Panes sheet's title would otherwise freeze at the
-   * last time the Topology changed shape.
-   *
-   * It is why the rows are drawn from the model *first*. The sheet is never
-   * waiting on this — it opens filled and corrects itself a round trip later.
-   */
-  const refreshBehindSheet = useCallback(
-    (kind: PickerKind) => {
-      if (!attach || !state) return;
-      if (kind === 'panes') {
-        attach.refreshTopology();
-        return;
-      }
-      attach.capturePreviews((state.sessions ?? []).map((session) => `${session.name}:`));
-      if (topicsOn) void readHost();
-    },
-    [attach, state, topicsOn, readHost],
-  );
-
-  /**
-   * Opens a picker on a model that is already right.
-   *
-   * There is nothing to wait for and nothing to warm: the rows come from the
-   * Topology tmux has been pushing, so the sheet is drawn filled. What the Host
-   * is asked for — previews, and what each Pane is running — lands behind it
-   * and corrects the sheet in place. See refreshBehindSheet.
-   */
-  const openPicker = useCallback(
-    (kind: PickerKind) => {
-      say(`${kind} sheet opened`);
-      setPicker({
-        open: true,
-        kind,
-        // Only a Session list that has never been read has nothing to draw.
-        loading: kind === 'sessions' && (state?.sessions ?? null) === null,
-        cards: cardsFor(kind),
+  }, [closeChooser]));
+  const openTopic = useCallback((row: TopicRow) => {
+    if (row.seed.state === 'live') {
+      const revision = chooserRevision.current;
+      hostEntry.openTopic(row.seed, {
+        isCurrent: () => chooserRevision.current === revision && holder.current() === attach,
+        onError: (error) => setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous),
       });
-      refreshBehindSheet(kind);
-    },
-    [cardsFor, refreshBehindSheet, state],
-  );
+      return;
+    }
+    closeChooser();
+    if (handover.current) clearTimeout(handover.current);
+    const session = state?.sessionName;
+    handover.current = setTimeout(() => {
+      if (holder.current() === attach && attach?.state().sessionName === session && navigation.isFocused()) {
+        hostEntry.openTopic(row.seed);
+      }
+    }, SHEET_HANDOVER_MS);
+  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName]);
 
-  // The sheet follows the model while it is open, so a Window split from the
-  // laptop appears in it without it being closed and opened again.
-  const openKind = picker.open ? picker.kind : null;
-  useEffect(() => {
-    if (openKind === null) return;
-    const cards = cardsFor(openKind);
-    setPicker((previous) => (previous.open ? { ...previous, loading: false, cards } : previous));
-  }, [cardsFor, openKind]);
-
-  /**
-   * Leaves the sheet up, saying why. Closing it on a failure would leave the
-   * user looking at the Session they tried to leave with no idea what happened.
-   */
+  const sessionCards = useMemo((): PreviewCard[] => {
+    if (!state) return [];
+    return (state.sessions ?? []).map((session) => ({
+      id: session.name,
+      title: session.name,
+      detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
+      current: session.name === state?.sessionName,
+      preview: previewOf(state.previews, `${session.name}:`),
+    }));
+  }, [state]);
+  const paneCards = useMemo((): PreviewCard[] => {
+    if (!state) return [];
+    const frames = paneTopologyFrames(state.topology.panes);
+    return state.topology.panes.map((pane) => ({
+      id: String(pane.index),
+      title: directoryName(pane.path) || `Pane ${pane.index}`,
+      detail: pane.command,
+      current: pane.active,
+      frame: frames.get(pane.index),
+      preview: [],
+    }));
+  }, [state]);
+  const openPanes = useCallback(() => {
+    closeChooser();
+    setPicker({ open: true });
+    attach?.refreshTopology();
+  }, [attach, closeChooser]);
   const showPickerError = useCallback((error: unknown) => {
     setPicker((previous) => (previous.open ? { ...previous, error: describeError(error) } : previous));
   }, []);
-
-  /**
-   * Acts on a picked row.
-   *
-   * The sheet closes on success and stays up on failure; see showPickerError.
-   * What each verb *does* afterwards — re-apply Zoom, re-read the Topology,
-   * re-size, stamp the Recent Session — is the Attach's, so none of it is here.
-   */
-  const select = useCallback(
-    (kind: PickerKind, id: string) => {
-      say(`picked ${kind} ${id}`);
-      if (!attach || !state) return;
-      void (async () => {
-        try {
-          if (kind === 'sessions') {
-            await attach.switchSession({ sessionName: id, topic: null });
-          } else {
-            const pane = state.topology.panes.find((each) => each.index === Number(id));
-            if (!pane) return;
-            attach.selectPane(pane.id);
-          }
-          setPicker({ open: false });
-        } catch (error) {
-          showPickerError(error);
-        }
-      })();
-    },
-    [attach, state, showPickerError],
-  );
+  const selectPane = useCallback((id: string) => {
+    const pane = state?.topology.panes.find((each) => each.index === Number(id));
+    if (!attach || !pane) return;
+    attach.selectPane(pane.id);
+    setPicker({ open: false });
+  }, [attach, state]);
 
   /** The Splits: the Panes sheet's bottom bar. */
   const runSheetAction = useCallback(
@@ -1031,67 +957,42 @@ export default function TerminalScreen() {
       : { kind: 'session', session: state.sessionName, program };
   }, [state, topology, topic]);
 
-  /** The Sessions picker on its way, once the Title Sheet has left. See switchFromTitleSheet. */
-  const handover = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (handover.current) clearTimeout(handover.current);
-    },
-    [],
-  );
-
-  /**
-   * The Browser Tabs the Host last listed, and the Window they belong to. Read
-   * each time the Title Sheet opens. The Window's id is kept with them, so the
-   * Tabs of one Window never show under another.
-   */
-  const [windowTabs, setWindowTabs] = useState<{ window: string; tabs: BrowserTab[] } | null>(null);
+  const [windowTabs, setWindowTabs] = useState<{ revision: number; session: string | undefined; window: string; tabs: BrowserTab[] } | null>(null);
   const activeWindowId = state?.topology.activeWindow?.id;
-  const browserTabs = windowTabs && windowTabs.window === activeWindowId ? windowTabs.tabs : NO_TABS;
+  const titleRevision = titleSheet.open ? titleSheet.revision : null;
+  useEffect(() => {
+    setWindowTabs(null);
+    if (titleRevision === null || !hostId || !activeWindowId) return;
+    let current = true;
+    void readBrowserTabs(hostId, activeWindowId).then((read) => {
+      if (current && chooserRevision.current === titleRevision && holder.current() === attach &&
+          attach?.state().sessionName === sessionName && attach?.state().topology.activeWindow?.id === activeWindowId) {
+        setWindowTabs({ revision: titleRevision, session: sessionName, window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
+      }
+    });
+    return () => { current = false; };
+  }, [titleRevision, hostId, activeWindowId, sessionName, attach, holder]);
 
   const openTitleSheet = useCallback(() => {
     if (!attach) return;
-    const kind = state?.topic ? 'topic' : 'windows';
-    say(`title sheet opened (${kind})`);
-    setTitleSheet({ open: true });
-    // The programs in the rows are a Topology read old; see refreshBehindSheet.
+    if (handover.current) clearTimeout(handover.current);
+    setPicker({ open: false });
+    setTitleSheet({ open: true, revision: ++chooserRevision.current });
     attach.refreshTopology();
-    if (kind === 'topic') rereadTopic();
-    if (hostId && activeWindowId) {
-      void readBrowserTabs(hostId, activeWindowId).then((read) => {
-        setWindowTabs({ window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
-      });
-    }
-  }, [attach, state?.topic, rereadTopic, hostId, activeWindowId]);
+    attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
+    if (state?.topic) rereadTopic();
+    if (topicsOn) void readHost();
+  }, [attach, state, rereadTopic, topicsOn, readHost]);
 
   /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
   const openTab = useCallback(
     (tab: BrowserTab) => {
       say(`picked Tab ${tab.id}`);
-      setTitleSheet({ open: false });
+      closeChooser();
       router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
     },
-    [router],
+    [router, closeChooser],
   );
-
-  const titleSheetDismissed = useCallback(() => {
-    say('title sheet dismissed');
-    setTitleSheet({ open: false });
-  }, []);
-
-  /**
-   * Switch… closes this sheet and opens the Sessions picker in its place.
-   *
-   * After a pause, not at once: two sheets cannot be presented together, and
-   * the sheet reports a dismissal only when the user makes one (measured: a
-   * close from here fires no `onIsPresentedChange`), so there is no callback
-   * to open the picker from. The pause is the sheet's leave animation.
-   */
-  const switchFromTitleSheet = useCallback(() => {
-    say('Switch… from the title sheet');
-    setTitleSheet({ open: false });
-    handover.current = setTimeout(() => openPicker('sessions'), SHEET_HANDOVER_MS);
-  }, [openPicker]);
 
   const titleRows = useMemo((): TitleRow[] => {
     if (!state) return [];
@@ -1101,32 +1002,32 @@ export default function TerminalScreen() {
         : [{ kind: 'session', name: state.sessionName, current: true, windows: sessionTitleRows(state.topology) }];
     }
     return sessionTitleRows(state.topology);
-  }, [state, titleSheet, topic]);
+  }, [state, topic]);
 
-  /**
-   * A row of the Title Sheet tapped. The sheet closes on success and stays
-   * up with the reason on failure, as the pickers do.
-   */
-  const pickTitleRow = useCallback(
-    ({ session, window }: TitlePick) => {
-      say(
-        `title sheet picked ${session ?? 'this Session'}${window === null ? '' : `, Window ${window}`}`,
-      );
-      if (!attach || !state) return;
-      void (async () => {
-        try {
-          if (session !== null) await attach.switchSession({ sessionName: session, topic: state.topic ? { id: state.topic.id, seed: topic } : null });
-          if (window !== null) await attach.selectWindow(window);
-          setTitleSheet({ open: false });
-        } catch (error) {
-          setTitleSheet((previous) =>
-            previous.open ? { ...previous, error: describeError(error) } : previous,
-          );
+  const chooserBusy = useRef(false);
+  const choose = useCallback((pick: TitlePick, explicitTopic: boolean) => {
+    if (!attach || !state || chooserBusy.current) return;
+    const revision = chooserRevision.current;
+    const current = () => chooserRevision.current === revision && holder.current() === attach;
+    chooserBusy.current = true;
+    void (async () => {
+      try {
+        if (pick.session !== null) {
+          await attach.switchSession({ sessionName: pick.session,
+            topic: explicitTopic && state.topic ? { id: state.topic.id, seed: topic } : null });
         }
-      })();
-    },
-    [attach, state, topic],
-  );
+        if (!current() || attach.state().sessionName !== (pick.session ?? state.sessionName)) return;
+        if (pick.window !== null) await attach.selectWindow(pick.window);
+        if (current()) closeChooser();
+      } catch (error) {
+        if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
+      } finally {
+        chooserBusy.current = false;
+      }
+    })();
+  }, [attach, state, topic, holder, closeChooser]);
+  const selectSession = useCallback((session: string) => choose({ session, window: null }, false), [choose]);
+  const pickTitleRow = useCallback((pick: TitlePick) => choose(pick, true), [choose]);
 
   /**
    * One step of font size, from the size in force. The Surfaces follow the
@@ -1144,9 +1045,8 @@ export default function TerminalScreen() {
   const copyLog = useCopyLog('the Options menu');
 
   const disconnect = useCallback(() => {
-    void holder.disconnect();
-    router.dismissTo('/');
-  }, [holder, router]);
+    void holder.disconnect().then(goHost).catch((error) => Alert.alert('Could not disconnect', describeError(error)));
+  }, [holder, goHost]);
 
   /** A tmux verb from the menu. No sheet to show a failure in, so an Alert does. */
   const runVerb = useCallback((label: string, verb: () => Promise<void>) => {
@@ -1265,7 +1165,6 @@ export default function TerminalScreen() {
     disconnect,
   ]);
 
-  const openPanes = useCallback(() => openPicker('panes'), [openPicker]);
 
   useEffect(() => {
     // For the Key Row, so it can show which way its keyboard button points,
@@ -1345,7 +1244,6 @@ export default function TerminalScreen() {
       <TerminalHeader
         title={headerTitle}
         terminal={opened.terminal}
-        onBack={goHome}
         onTitle={openTitleSheet}
         options={options}
       />
@@ -1468,49 +1366,25 @@ export default function TerminalScreen() {
       </View>
 
       <PickerSheet
-        title={picker.open ? PICKER_TITLES[picker.kind] : ''}
+        title="Panes"
         isPresented={picker.open}
-        onDismiss={() => {
-          say('sheet dismissed');
-          setPicker({ open: false });
-        }}
-        loading={picker.open && picker.loading}
+        onDismiss={() => setPicker({ open: false })}
+        loading={false}
         error={picker.open ? picker.error : undefined}
-        emptyMessage={picker.open ? PICKER_EMPTY[picker.kind] : ''}
-        cards={picker.open ? picker.cards : []}
-        layout={picker.open ? PICKER_LAYOUTS[picker.kind] : 'list'}
-        onSelect={(id) => {
-          if (picker.open) select(picker.kind, id);
-        }}
-        actions={picker.open ? PICKER_ACTIONS[picker.kind] : undefined}
+        emptyMessage="No Panes in this Window"
+        cards={paneCards}
+        onSelect={selectPane}
+        actions={PANE_ACTIONS}
         onAction={runSheetAction}
-        zoom={
-          // Offered whatever the Pane count. With one Pane there is nothing to
-          // zoom out of yet, but the switch is the setting rather than the act
-          // — it says what the next split should do, and a switch that appears
-          // only once you have split is one you have to find twice.
-          picker.open && picker.kind === 'panes' && state
-            ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) }
-            : undefined
-        }
-        topics={
-          picker.open && picker.kind === 'sessions' && topicsOn
-            ? {
-                sections: pickerTopics,
-                palette: chrome,
-                onOpenTopic: openTopic,
-                onRetry: () => void readHost(),
-              }
-            : undefined
-        }
+        zoom={state ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) } : undefined}
       />
 
       <TitleSheet
         isPresented={titleSheet.open}
-        onDismiss={titleSheetDismissed}
+        onDismiss={closeChooser}
         rows={titleRows}
         topic={topic}
-        onRetry={rereadTopic}
+        onRetry={titleSheet.open && titleSheet.error !== undefined ? undefined : rereadTopic}
         loading={titleSheet.open && topicView?.kind === 'loading'}
         error={
           titleSheet.open
@@ -1518,9 +1392,10 @@ export default function TerminalScreen() {
               (topicView?.kind === 'failed' ? topicView.error : undefined))
             : undefined
         }
-        onSwitch={switchFromTitleSheet}
+        sessions={{ cards: sessionCards, loading: state?.sessions == null, onSelect: selectSession }}
+        topics={topicsOn ? { sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost() } : undefined}
         onPick={pickTitleRow}
-        tabs={browserTabs}
+        tabs={windowTabs?.revision === titleRevision && windowTabs.session === sessionName && windowTabs.window === activeWindowId ? windowTabs.tabs : NO_TABS}
         onOpenTab={openTab}
       />
 
@@ -1585,7 +1460,7 @@ export default function TerminalScreen() {
           palette={chrome}
           appearance={appearance}
           onTryAgain={tryReconnectAgain}
-          onGoHome={goHome}
+          onGoHost={goHost}
         />
       ) : null}
       {/* The reconnect stops at a changed key, so its warning sits above it. */}
@@ -2295,28 +2170,10 @@ function StatusBanner({
   );
 }
 
-const PICKER_TITLES: Record<PickerKind, string> = {
-  sessions: 'Sessions',
-  panes: 'Panes',
-};
-
-const PICKER_EMPTY: Record<PickerKind, string> = {
-  sessions: 'No Sessions on this Host',
-  panes: 'No Panes in this Window',
-};
-
-const PICKER_LAYOUTS: Record<PickerKind, 'panes' | 'list'> = {
-  sessions: 'list',
-  panes: 'panes',
-};
-
-const PICKER_ACTIONS: Record<PickerKind, SheetAction[]> = {
-  sessions: [],
-  panes: [
-    { id: 'split-right', label: 'Split →' },
-    { id: 'split-down', label: 'Split ↓' },
-  ],
-};
+const PANE_ACTIONS: SheetAction[] = [
+  { id: 'split-right', label: 'Split →' },
+  { id: 'split-down', label: 'Split ↓' },
+];
 
 /** How long a sheet takes to leave, so the next one can be presented. */
 const SHEET_HANDOVER_MS = 450;

@@ -12,6 +12,6 @@ wait "id=\"reconnect-failure\"" 15000
 is "visible" "label=\"e2e-reconnect-later is no longer on Dev Host\""
 is "visible" "label=\"Looking for the Session, failed\""
 is "visible" "label=\"Try again\""
-is "visible" "label=\"Go Home\""
+is "visible" "label=\"Go to Host\""
 wait 3000
 is "visible" "id=\"reconnect-failure\""

@@ -22,11 +22,14 @@ export interface Settings {
    */
   zoomMultipaneWindows: boolean;
   /**
-   * Which lists the Host Screen shows, top to bottom. One array holds both
-   * the order and which lists are on: a list that is off has no place in it.
-   * Sessions or Topics is always on, so every Session of a Host can be reached.
+   * Legacy list choice, retained until migration copies it to existing Hosts.
+   * Domain list builders also accept this shape for one resolved Host.
    */
   hostScreenLists: HostScreenLists;
+  hostListPreferences?: {
+    version: 1;
+    byHost: Readonly<Record<string, HostScreenLists>>;
+  };
   /**
    * Whether a cold start opens the Last Place again, if there is one. Off by
    * default: an app that connects to a machine on launch is a surprise
@@ -195,7 +198,15 @@ export function parseSettings(raw: unknown): Settings {
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
 
+  const preferences = record.hostListPreferences;
+  const byHost = typeof preferences === 'object' && preferences !== null &&
+    'version' in preferences && preferences.version === 1 && 'byHost' in preferences &&
+    typeof preferences.byHost === 'object' && preferences.byHost !== null && !Array.isArray(preferences.byHost)
+    ? Object.fromEntries(Object.entries(preferences.byHost).map(([id, lists]) => [id, parseHostScreenLists(lists, undefined)]))
+    : null;
+
   return {
+    ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
     theme: parseTheme(theme),
     zoomMultipaneWindows:
@@ -203,5 +214,24 @@ export function parseSettings(raw: unknown): Settings {
     hostScreenLists: parseHostScreenLists(record.hostScreenLists, record.recentSessionsFirst),
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
+  };
+}
+
+export function hostListsFor(settings: Settings, hostId: string): HostScreenLists {
+  const preferences = settings.hostListPreferences;
+  if (!preferences) return settings.hostScreenLists;
+  return Object.hasOwn(preferences.byHost, hostId)
+    ? preferences.byHost[hostId]
+    : DEFAULT_SETTINGS.hostScreenLists;
+}
+
+export function migrateHostLists(settings: Settings, existingHostIds: readonly string[]): Settings {
+  if (settings.hostListPreferences) return settings;
+  return {
+    ...settings,
+    hostListPreferences: {
+      version: 1,
+      byHost: Object.fromEntries(existingHostIds.map((id) => [id, settings.hostScreenLists])),
+    },
   };
 }

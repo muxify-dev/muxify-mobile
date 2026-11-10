@@ -2,7 +2,7 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
 wait 1500
 

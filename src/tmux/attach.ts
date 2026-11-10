@@ -11,7 +11,11 @@ import type { TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
-export interface SessionDestination { sessionName: string; topic: TopicOrigin | null }
+export interface SessionDestination {
+  sessionName: string;
+  /** Null is a plain Session pick. An origin explicitly selects that Topic. */
+  topic: TopicOrigin | null;
+}
 export interface AttachedTopic { id: TopicId; view: TopicView }
 
 import { createClientSizing, type ClientSizing } from './client-sizing';
@@ -1000,6 +1004,17 @@ export function openAttach(options: AttachOptions): Attach {
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
+      if (destination.topic === null) {
+        if (destination.sessionName === state.sessionName) return;
+        const topic = state.topic && lastTopic(state.topic.view);
+        if (state.topic && !topic) {
+          void refreshTopic();
+          throw new Error('The current Topic has not loaded. Retry after it loads.');
+        }
+        if (topic?.sessions.some((session) => session.name === destination.sessionName)) {
+          destination = { ...destination, topic: { id: topic.id, seed: topic } };
+        }
+      }
       if (destination.sessionName === state.sessionName) {
         acceptDestination(destination);
         void refreshTopic();

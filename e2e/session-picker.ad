@@ -2,8 +2,7 @@ context platform=ios kind=simulator
 
 # Session picker (ticket 08).
 #
-# Covers everything automation can reach: the header's title, the Title Sheet,
-# Switch… in it, and the Sessions picker it opens.
+# The header opens the chooser on Sessions.
 #
 # What this deliberately stops short of: selecting a row. Nothing inside a
 # presented sheet responds to agent-device — not a row at its own measured
@@ -25,7 +24,7 @@ open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 
 # Through the real flow now: a saved Host, its Sessions, then one of them.
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
 # Home is still under the Host Screen until the push settles, and has the
 # same Session and Topic rows.
@@ -40,12 +39,9 @@ wait "id=\"pane-command\"" 20000
 
 # The title opens the Title Sheet, waited for by its own close button.
 press "id=\"header-title\""
-wait "label=\"Close Windows\"" 15000
-is "exists" "label=\"Switch…\""
-
-# Switch… closes it and opens the Sessions picker in its place.
-press "label=\"Switch…\""
-wait "label=\"Close Sessions\"" 15000
+wait "label=\"Close Choose\"" 15000
+is "exists" "label=\"Sessions\""
+is "exists" "label=\"Windows\""
 
 # The sheet is up with its own chrome. The Sessions themselves are asserted in
 # e2e/pickers.sh, which can set up the Host's Topology first — this Host's
@@ -58,6 +54,6 @@ wait "label=\"Close Sessions\"" 15000
 #
 # `exists` rather than `visible`: SwiftUI content inside a presented sheet
 # reports itself unhittable to agent-device even where a finger can press it.
-is "exists" "label=\"Close Sessions\""
+is "exists" "label=\"Close Choose\""
 
 close

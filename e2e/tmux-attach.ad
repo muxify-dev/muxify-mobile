@@ -18,10 +18,8 @@ open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 
 # Through the real flow now: a saved Host, its Sessions, then one of them.
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
-# Home is still under the Host Screen until the push settles, and has the
-# same Session and Topic rows.
 wait 1500
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
@@ -43,9 +41,8 @@ is "visible" "label=\"q\""
 press "label=\"Keyboard\""
 wait 2500
 
-# Back leaves the Terminal Screen for Home. The Session stays attached (ADR
-# 0007); e2e/back-to-home.ad proves that half.
-press "role=button label=\"Back\""
-wait "label=\"All of Dev Host\"" 8000
+# Back returns to the Host Screen and keeps the Attach.
+back
+wait "label=\"Edit Host\"" 8000
 
 close

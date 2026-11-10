@@ -20,6 +20,7 @@ lists() {
 import json, sys
 path, lists = sys.argv[1], sys.argv[2].split(",")
 settings = json.load(open(path))
+settings.pop("hostListPreferences", None)
 settings["hostScreenLists"] = lists
 json.dump(settings, open(path, "w"))
 PY

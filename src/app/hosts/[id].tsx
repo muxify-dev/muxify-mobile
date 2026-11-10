@@ -44,7 +44,7 @@ import {
 import { useHostReading } from '@/hooks/use-host-reading';
 import { useWakeFromMenu } from '@/hooks/use-wake-from-menu';
 import { toggled } from '@/lib/toggled';
-import { useSettings } from '@/settings/settings-context';
+import { useHostLists, useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
@@ -58,7 +58,7 @@ const COLLAPSED = 3;
 /**
  * A Host and its Sessions.
  *
- * It draws the lists that hostScreen returns, in the order set in Settings.
+ * It draws the lists that hostScreen returns, in the order chosen for this Host.
  *
  * What is remembered is on screen before the Host is even dialled, and the
  * Host's own answer arrives underneath a moment later. A Host you cannot reach
@@ -72,7 +72,8 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const topicsOn = settings.hostScreenLists.includes('topics');
+  const lists = useHostLists(id);
+  const topicsOn = lists.includes('topics');
   const { listing, topics, read: readHost } = useHostReading(id, topicsOn);
   const [expanded, setExpanded] = useState<ReadonlySet<HostScreenSection['id']>>(new Set());
   // Frozen per visit: "2 hr ago" must not renumber itself under the user's
@@ -140,7 +141,7 @@ export default function HostScreen() {
     );
   };
 
-  const sections = hostScreen({ settings, recent, listing, topics, opened, appearance });
+  const sections = hostScreen({ settings: { ...settings, hostScreenLists: lists }, recent, listing, topics, opened, appearance });
 
   const toggleExpanded = (section: HostScreenSection['id']) =>
     setExpanded((shown) => toggled(shown, section));
@@ -219,6 +220,7 @@ export default function HostScreen() {
           headerRight: () => (
             <ToolbarActions
               palette={palette}
+              onLists={() => router.push({ pathname: '/host-lists', params: { hostId: id } })}
               onEdit={() => router.push({ pathname: '/host-form', params: { id } })}
               newLabel={topicsOn ? 'New Session or Topic' : 'New Session'}
               onNew={onNew}
@@ -312,15 +314,20 @@ function ToolbarActions({
   palette,
   newLabel,
   onEdit,
+  onLists,
   onNew,
 }: {
   palette: Appearance;
   newLabel: string;
   onEdit: () => void;
+  onLists: () => void;
   onNew: () => void;
 }) {
   return (
     <View style={styles.toolbarGroup}>
+      <Pressable onPress={onLists} accessibilityRole="button" accessibilityLabel="Host Screen lists" style={styles.toolbarIcon}>
+        <SymbolView name="list.bullet" size={21} tintColor={palette.toolbarTint} />
+      </Pressable>
       <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit Host">
         <RNText style={[styles.toolbarWord, { color: palette.toolbarTint }]}>Edit</RNText>
       </Pressable>
@@ -347,14 +354,14 @@ const styles = StyleSheet.create({
   toolbarGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    // The glass capsule is drawn around this view's frame, so its insets are
-    // this view's padding, plus a little under six points UIKit adds of its
-    // own. Eight and thirty-one put the capsule within a point of the one a
-    // real ToolbarItemGroup draws: 108pt wide, 13 in from the word, 35 across
-    // to the plus. The trailing side measures wider than the leading one in
-    // both, because the plus has more empty box around its ink than the E has.
     paddingHorizontal: 8,
-    gap: 31,
+    gap: 8,
+  },
+  toolbarIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toolbarWord: {
     fontSize: 17,

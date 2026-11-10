@@ -20,3 +20,9 @@ rename fix in both runs. This is not a regression from the native Header.
 The native delegate permits an edge gesture, so a later investigation must
 observe gesture recognition and Surface arbitration on the device. No native
 patch or gesture policy change is part of this UX task.
+
+10 November 2026 navigation check. Native Back now returns to the Host Screen
+and preserves the Attach. The isolated home.ad and back-to-home.ad checks pass.
+The left-edge pan still does not leave Terminal on the iPhone 17 simulator.
+Evidence is .agent-device/test-artifacts/c25ae0ebe0defecb/muxify-edge.ad.
+This issue remains open. Native Back restoration alone does not fix it.
