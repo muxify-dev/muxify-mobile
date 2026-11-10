@@ -324,6 +324,7 @@ const snapshotSession = (id: string, name: string, topic: string | null) => ({
   activity: 0,
   mark: null,
   topic: topic === null ? null : tid(topic),
+  windows: null,
 });
 
 function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot {
@@ -532,7 +533,7 @@ describe('hostScreen with Topics', () => {
       ],
     },
     {
-      name: 'gives a Topic row what the Topic Screen draws at once: the card, and its Sessions by name',
+      name: 'gives a Topic row the card and its Sessions before the Attach reads the Topic',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', 't1'), snapshotSession('$2', 'work', 't1')],
         unpinned: {

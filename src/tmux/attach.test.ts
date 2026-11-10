@@ -1,3 +1,5 @@
+import { lastTopic, type TopicDetail, type TopicRead } from '@/topics/topic-detail';
+import type { TopicId } from '@/topics/environment';
 import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
@@ -58,6 +60,8 @@ function fakeHost() {
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
+  const held = new Set<string>();
+  const queued: string[] = [];
 
   const transport: TmuxTransport = {
     exec: () => Promise.reject(new Error('the Control Connection does not exec')),
@@ -86,6 +90,7 @@ function fakeHost() {
   }
 
   function answer(line: string): void {
+    if (held.has(verbOf(line))) { queued.push(line); return; }
     replies += 1;
     const verb = verbOf(line);
     if (refusing.has(verb)) {
@@ -99,6 +104,8 @@ function fakeHost() {
   return {
     transport,
     commands,
+    hold: (verb: string) => held.add(verb),
+    release: () => { held.clear(); queued.splice(0).forEach(answer); },
     get attachCommand() {
       return attachCommand;
     },
@@ -181,6 +188,7 @@ function attachOn(
     failLink?: () => unknown;
     sessionName?: string;
     topicId?: string;
+    readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
     zoomed?: boolean;
     upload?: Upload;
   } = {},
@@ -199,9 +207,9 @@ function attachOn(
   let next = 0;
   const attach = openAttach({
     host: HOST,
-    sessionName: options.sessionName ?? 'work',
-    topicId: options.topicId ?? null,
+    destination: { sessionName: options.sessionName ?? 'work', topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null },
     zoomed: options.zoomed ?? true,
+    readTopic: options.readTopic,
     store,
     clock,
     log,
@@ -407,7 +415,7 @@ describe('the verbs', () => {
     kit.hosts[0].commands.length = 0;
     kit.wrote.length = 0;
 
-    await kit.attach.switchSession('play');
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
     await settle();
 
     expect(kit.attach.state().sessionName).toBe('play');
@@ -1134,5 +1142,157 @@ describe('another Client resizing the Window', () => {
     await settle();
 
     expect(kit.hosts[0].verbs().slice(since)).not.toContain('select-window');
+  });
+});
+
+
+describe('the current Topic belongs to the Attach', () => {
+  const topic = (id: string): TopicDetail => ({ id: id as TopicId, label: id, note: null,
+    tags: [], state: 'live', sessions: [] });
+  const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
+
+  it('keeps a sibling switch in Last Place and clears it for a plain same-Session pick', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await connected(kit);
+    await kit.attach.switchSession(destination('play', 'a'));
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote).toContain('last place host-1 play a');
+    kit.hosts[0].commands.length = 0;
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().topic).toBeNull();
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play no Topic');
+    expect(kit.hosts[0].verbs()).not.toContain('switch-client');
+  });
+
+  it('rejects an old Topic read after a switch and a pre-edit read after a fresh read', async () => {
+    const reads: ((value: TopicRead) => void)[] = [];
+    const kit = attachOn({ topicId: 'a', readTopic: () => new Promise((resolve) => reads.push(resolve)) });
+    await connected(kit);
+    await kit.attach.switchSession(destination('work', 'b'));
+    const fresh = kit.attach.refreshTopic();
+    reads.at(-1)!({ kind: 'shown', topic: { ...topic('b'), label: 'Saved title' } });
+    await fresh;
+    reads[0]({ kind: 'shown', topic: topic('a') });
+    reads[1]({ kind: 'shown', topic: { ...topic('b'), label: 'Old title' } });
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(lastTopic(kit.attach.state().topic!.view)?.label).toBe('Saved title');
+  });
+
+  it('refuses a superseded switch while keeping a later unsolicited Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    await expect(kit.attach.switchSession(destination('other', 'c'))).rejects.toThrow('already in progress');
+    host.notify('%session-changed $2 play');
+    expect(kit.attach.state().topic?.id).toBe('b');
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+    expect(kit.attach.state().topic).toBeNull();
+    expect(kit.wrote.filter((line) => line === 'last place host-1 play b')).toHaveLength(1);
+    expect(kit.wrote.at(-1)).toBe('last place host-1 elsewhere no Topic');
+  });
+
+  it('keeps the latest Session but refuses a switch superseded before returning to that Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    host.notify('%session-changed $2 play');
+    host.notify('%session-changed $3 elsewhere');
+    host.notify('%session-changed $2 play');
+    expect(kit.attach.state().sessionName).toBe('play');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().topic).toBeNull();
+  });
+
+  it('does not overwrite a newer notification when the requested notification is absent', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('switch-client');
+    const change = kit.attach.switchSession(destination('play', 'b'));
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(change).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+  });
+
+  it('refuses a dependent Window action after the Session changes during Topology refresh', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('list-windows');
+    const pickWindow = kit.attach.switchSession(destination('play', 'b')).then(() => kit.attach.selectWindow(7));
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    host.notify('%session-changed $3 elsewhere');
+    host.release();
+    await expect(pickWindow).rejects.toThrow('Host changed Session');
+    expect(kit.attach.state().sessionName).toBe('elsewhere');
+    expect(host.commands.some((command) => command.includes("'select-window'") && command.includes(':7'))).toBe(false);
+  });
+
+  it('refuses a dependent Window action when close ends the Attach during Topology refresh', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.hold('list-windows');
+    const pickWindow = kit.attach.switchSession(destination('play', 'b')).then(() => kit.attach.selectWindow(7));
+    const refused = expect(pickWindow).rejects.toThrow('Attach changed');
+    await settle();
+    expect(kit.attach.state().sessionName).toBe('play');
+    await kit.attach.close();
+    host.release();
+    await refused;
+    expect(kit.attach.state().phase.kind).toBe('closed');
+    expect(kit.attach.state().trouble).toBeNull();
+    expect(host.commands.some((command) => command.includes("'select-window'") && command.includes(':7'))).toBe(false);
+  });
+
+  it('keeps a confirmed destination if the following Topology read fails', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].refuseCommand('list-windows');
+    await kit.attach.switchSession(destination('play', 'b'));
+    expect(kit.attach.state().sessionName).toBe('play');
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(kit.attach.state().trouble).not.toBeNull();
+  });
+
+  it('reconnects and persists the latest destination', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    await kit.attach.switchSession(destination('play', 'b'));
+    kit.hosts[0].drop();
+    await connected(kit, 1);
+    await settle();
+    expect(kit.hosts[1].attachCommand).toContain('play');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play b');
+  });
+
+  it('finishes queued arrival writes before close returns', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    let release!: () => void;
+    kit.store.rememberSession = () => new Promise<void>((resolve) => { release = resolve; });
+    await kit.attach.switchSession(destination('work', 'b'));
+    await settle();
+    let closed = false;
+    const closing = kit.attach.close().then(() => { closed = true; });
+    await settle();
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work b');
   });
 });

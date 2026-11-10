@@ -165,8 +165,7 @@ function attachTo(options: { sessionName?: string; record?: Host } = {}) {
 
   const attach = openAttach({
     host: record,
-    sessionName: options.sessionName ?? SESSION,
-    topicId: null,
+    destination: { sessionName: options.sessionName ?? SESSION, topic: null },
     zoomed: true,
     store,
     openConnection: (): Promise<HostConnection> =>
@@ -342,7 +341,7 @@ describe('the Attach, against a real tmux', () => {
     const { attach, wrote } = attachTo();
     await reaches(attach, 'connected');
 
-    await attach.switchSession(OTHER);
+    await attach.switchSession({ sessionName: OTHER, topic: null });
     await wait(500);
 
     expect(attach.state().sessionName).toBe(OTHER);

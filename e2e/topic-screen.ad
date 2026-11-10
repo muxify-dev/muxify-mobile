@@ -1,47 +1,27 @@
 context platform=ios kind=simulator
 
-# The Topic Screen, against the Topics that e2e/topic-screen.sh makes on the
-# dev Host. Run that script, not this file: it makes the Topics in a sandbox
-# and turns the Topics list on.
-#
-# A tap on a live Topic shows its Note, its Tag and its Session. A tap on the
-# Session attaches; the header then names the Topic over the program over the
-# Session, and Back from there is Home. An Empty Topic says it has no live
-# Sessions, and why.
-#
-# The Host Screen also has each Session row and the "No live Sessions" line of
-# an Empty Topic's card. So each wait after a tap on a Topic is for text that
-# only the Topic Screen has, and that shows only when its read is back.
-
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"All of Dev Host\""
 wait "label=\"Edit Host\"" 15000
-# Home is still under the Host Screen until the push settles, and has the
-# same Session and Topic rows.
 wait 1500
 
 wait "label=\"Topic e2e Topic Screen live\"" 15000
 press "label=\"Topic e2e Topic Screen live\""
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "muxify-e2e-topic-screen/e2e-topic-screen-live"
+wait "id=\"topic-title\"" 15000
+is "text" "id=\"topic-title\"" "e2e Topic Screen live"
+press "id=\"header-title\""
 wait "label=\"Note Seeded by e2e\"" 15000
 is "visible" "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
 is "visible" "role=text text=\"#work\""
-
-press "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
-wait "id=\"pane-command\"" 20000
-is "text" "id=\"attached-session\"" "muxify-e2e-topic-screen/e2e-topic-screen-live"
-# The Topic read lands a moment after the Attach; until then the first line
-# is the Session name.
-wait "id=\"topic-title\"" 15000
-is "text" "id=\"topic-title\"" "e2e Topic Screen live"
-
-# Back is Home, which has every Host's rows: the Topic cards among them.
+press "label=\"Close Windows\""
 press "role=button label=\"Back\""
 wait "label=\"All of Dev Host\"" 8000
-is "visible" "label=\"Topic e2e Topic Screen live\""
-
 press "label=\"Topic e2e Topic Screen empty\""
-wait "text=\"This Topic is Empty: it has no Sessions.\"" 15000
-is "visible" "text=\"This Topic is Empty: it has no Sessions.\""
+wait "label=\"Folder\"" 15000
+press "label=\"Cancel\""
+wait "label=\"All of Dev Host\"" 8000
 
 close

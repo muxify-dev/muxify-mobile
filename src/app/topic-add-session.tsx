@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Form, Host, Section, TextField, useNativeState } from '@expo/ui/swift-ui';
@@ -25,21 +25,28 @@ import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { AddSessionRead } from '@/topics/add-session';
 import type { TopicId } from '@/topics/environment';
+import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
+import { captureAttachOrigin } from '@/tmux/attach-holder';
+import { topicSeedFromParam } from '@/topics/topic-detail';
+import { describeError } from '@/lib/describe-error';
 
 const say = speakingAs(deviceLog(), 'add-session');
 
-/**
- * Makes a Session in a Topic at a folder on the Host, as Add Session on the Mac
- * does from a plain folder. There is no Worktree choice on the phone.
- *
- * Save closes the sheet, and the Topic Screen under it reads the Topic again
- * as it comes back into view, so the new Session shows there. An error from
- * the Host, such as a folder that is not there, keeps the sheet open with the
- * folder as it was.
- */
 export default function TopicAddSessionScreen() {
   const router = useRouter();
-  const { hostId, topicId } = useLocalSearchParams<{ hostId: string; topicId: string }>();
+  const { hostId, topicId, seed: seedParam, fromAttach } = useLocalSearchParams<{
+    hostId: string; topicId: string; seed?: string; fromAttach?: string;
+  }>();
+  const seed = useMemo(() => { const value = topicSeedFromParam(seedParam); return value?.id === topicId ? value : null; }, [seedParam, topicId]);
+  const holder = useAttachHolder();
+  const openSession = useOpenSession();
+  const [origin] = useState(() => {
+    const attach = holder.current();
+    return fromAttach ? captureAttachOrigin(attach) : undefined;
+  });
+  const [completion, setCompletion] = useState<string | null>(null);
+  const present = useRef(true);
+  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
   const { appearance, palette } = useSettings();
 
   const folder = useNativeState('');
@@ -49,7 +56,7 @@ export default function TopicAddSessionScreen() {
   const save = useCallback(() => {
     if (adding) return;
     const wanted = folder.value.trim();
-    if (wanted === '') {
+    if (!completion && wanted === '') {
       setError('Give a folder on the Host.');
       return;
     }
@@ -66,9 +73,9 @@ export default function TopicAddSessionScreen() {
         return;
       }
 
-      let added: AddSessionRead;
+      let added: AddSessionRead = completion ? { kind: 'added', session: completion } : { kind: 'failed', error: '' };
       try {
-        added = await appConnections().write(host, (transport, muxify) =>
+        if (!completion) added = await appConnections().write(host, (transport, muxify) =>
           muxify.addSession(
             (command) => transport.exec(command),
             topicId as TopicId,
@@ -78,6 +85,7 @@ export default function TopicAddSessionScreen() {
       } catch (caught) {
         added = { kind: 'failed', error: describeConnectionFailure(caught) };
       }
+      if (!present.current) return;
       if (added.kind === 'failed') {
         say(`${host.displayName} made no Session: ${added.error}`);
         setError(added.error);
@@ -86,27 +94,37 @@ export default function TopicAddSessionScreen() {
       }
 
       say(`${host.displayName} made ${added.session}`);
-      router.back();
+      setCompletion(added.session);
+      try {
+        if (origin && !origin.attach) throw new Error('The Attach has ended. Open the Session from Home.');
+        await openSession({ hostId, destination: { sessionName: added.session, topic: { id: topicId as TopicId, seed } }, origin });
+        if (present.current) router.dismissTo('/terminal');
+      } catch (caught) {
+        if (present.current) { setError(describeError(caught)); setAdding(false); }
+      }
     })();
-  }, [adding, folder, hostId, topicId, router]);
+  }, [adding, folder, hostId, topicId, router, completion, openSession, origin, seed]);
 
   return (
     <View style={styles.fill}>
       <Stack.Screen
         options={{
           title: 'Add a Session',
+          gestureEnabled: !adding,
           headerLeft: () => (
             <ToolbarWord
               label="Cancel"
+              disabled={adding}
               color={palette.controlAccent}
               bold={false}
-              onPress={() => router.back()}
+              onPress={() => { if (!adding) router.back(); }}
             />
           ),
           headerRight: () => (
             <ToolbarWord
-              label={adding ? 'Saving…' : 'Save'}
+              label={adding ? 'Saving…' : completion ? 'Retry Attach' : 'Save'}
               color={adding ? palette.secondaryLabel : palette.controlAccent}
+              disabled={adding}
               onPress={save}
             />
           ),

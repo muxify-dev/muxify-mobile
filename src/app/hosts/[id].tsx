@@ -50,7 +50,7 @@ import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { lastSnapshot } from '@/topics/host-topics';
 import { tagsParam } from '@/topics/tags-param';
-import { topicSeedParam } from '@/topics/topic-detail';
+import { useHostEntry } from '@/hooks/use-host-entry';
 
 /** How many rows a section shows before it offers to show the rest. */
 const COLLAPSED = 3;
@@ -109,15 +109,8 @@ export default function HostScreen() {
     }, [readRecords, readHost]),
   );
 
-  const open = useCallback(
-    (name: string) => {
-      // Always navigation. Whether anything is opened, and whether the Session
-      // that is already attached is left alone, is the holder's decision — see
-      // createAttachHolder.
-      router.push({ pathname: '/terminal', params: { hostId: id, session: name } });
-    },
-    [router, id],
-  );
+  const entered = useCallback(() => router.push('/terminal'), [router]);
+  const hostEntry = useHostEntry(id, entered);
 
   const disconnect = useCallback(() => {
     void holder.disconnect();
@@ -157,18 +150,9 @@ export default function HostScreen() {
   const wakeFromMenu = useWakeFromMenu(id, readHost);
 
   const actions: RowActions = {
-    onOpenSession: open,
-    onOpenTopic: (row) =>
-      router.push({
-        pathname: '/topic',
-        params: {
-          hostId: id,
-          topicId: row.id,
-          label: row.label,
-          tags: tagsParam(lastSnapshot(topics)?.tags ?? []),
-          seed: topicSeedParam(row.seed),
-        },
-      }),
+    onOpenSession: hostEntry.openSession,
+    onOpenTopic: (row) => hostEntry.openTopic(row.seed),
+    busyTopic: hostEntry.busyTopic,
     onWake: (row, wake) => wakeFromMenu(row.id, wake),
     onToggle: toggleOpened,
     onRetry: () => void readHost(),

@@ -44,12 +44,21 @@ export interface Tag {
   color: { light: TagColor | null; dark: TagColor | null };
 }
 
+export interface SnapshotWindow {
+  id: string;
+  index: number;
+  name: string;
+  active: boolean;
+  mark: Mark | null;
+}
+
 export interface SnapshotSession {
   id: SessionId;
   name: string;
   activity: number;
   mark: Mark | null;
   topic: TopicId | null;
+  windows: SnapshotWindow[] | null;
 }
 
 export interface EnvironmentSnapshot {
@@ -83,6 +92,13 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
         id: sessionId(entry.id, `${at}.id`),
         name: string(entry.name, `${at}.name`),
         activity: number(entry.activity, `${at}.activity`),
+        windows: entry.windows === undefined ? null : array(entry.windows, `${at}.windows`).map((value, i) => {
+          const where = `${at}.windows[${i}]`;
+          const window = object(value, where);
+          if (typeof window.active !== 'boolean') throw new Error(`${where}.active: expected a boolean`);
+          return { id: string(window.id, `${where}.id`), index: number(window.index, `${where}.index`),
+            name: string(window.name, `${where}.name`), active: window.active, mark: parseMark(window.mark) };
+        }),
         mark: parseMark(entry.mark),
         topic: entry.topic === null ? null : topicId(entry.topic, `${at}.topic`),
       };
@@ -163,7 +179,7 @@ function parseCard(value: unknown, at: string): Card {
 
 const MARKS: readonly string[] = ['blocked', 'failed', 'unread', 'done', 'working'];
 
-function parseMark(value: unknown): Mark | null {
+export function parseMark(value: unknown): Mark | null {
   return typeof value === 'string' && MARKS.includes(value) ? (value as Mark) : null;
 }
 

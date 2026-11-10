@@ -7,6 +7,12 @@ import { systemClock } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
+import type { TopicId } from '@/topics/environment';
+import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
+
+export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
+export interface SessionDestination { sessionName: string; topic: TopicOrigin | null }
+export interface AttachedTopic { id: TopicId; view: TopicView }
 
 import { createClientSizing, type ClientSizing } from './client-sizing';
 import { shellQuote } from './commands';
@@ -85,6 +91,7 @@ export interface AttachState {
   phase: AttachPhase;
   /** Which Session is attached, held once and published from here. */
   sessionName: string;
+  topic: AttachedTopic | null;
   fingerprint: string;
   /**
    * Whether the Host's key is not the one last seen. Never blocks.
@@ -150,7 +157,8 @@ export interface Attach {
 
   // The verbs the Options menu, the Key Row and the sheets need. Each
   // re-applies the Zoom preference and refreshes the Topology itself.
-  switchSession(name: string): Promise<void>;
+  switchSession(destination: SessionDestination): Promise<void>;
+  refreshTopic(): Promise<void>;
   selectWindow(index: number): Promise<void>;
   /**
    * Optimistic: moves the Pane here first and puts it back if refused.
@@ -214,9 +222,8 @@ export interface Attach {
 
 export interface AttachOptions {
   host: Host;
-  sessionName: string;
-  /** The Topic the Session was opened from, kept in the Last Place. */
-  topicId: string | null;
+  destination: SessionDestination;
+  readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
   openConnection: OpenConnection;
@@ -373,7 +380,8 @@ export function openAttach(options: AttachOptions): Attach {
   const listeners = new Set<(state: AttachState) => void>();
   let state: AttachState = {
     phase: { kind: 'connecting' },
-    sessionName: options.sessionName,
+    sessionName: options.destination.sessionName,
+    topic: options.destination.topic ? { id: options.destination.topic.id, view: topicStartingFrom(options.destination.topic.seed) } : null,
     fingerprint: '',
     keyChanged: false,
     topology: EMPTY_TOPOLOGY,
@@ -589,11 +597,37 @@ export function openAttach(options: AttachOptions): Attach {
    * a cold start goes back to. One after the other, because each rewrites the
    * whole records file and two at once would lose one of them.
    */
+  let arrivalWrites = Promise.resolve();
+  let topicRevision = 0;
+  let sessionRevision = 0;
+  let pendingSwitch: { destination: SessionDestination; confirmedAt: number | null } | null = null;
+
   function arrived(sessionName: string, topicId: string | null): void {
-    void store
-      .rememberSession(host.id, sessionName)
-      .then(() => store.rememberLastPlace({ hostId: host.id, session: sessionName, topicId }))
-      .catch(() => {});
+    arrivalWrites = arrivalWrites.then(async () => {
+      await store.rememberSession(host.id, sessionName);
+      await store.rememberLastPlace({ hostId: host.id, session: sessionName, topicId });
+    }).catch(() => {});
+  }
+
+  function acceptDestination(destination: SessionDestination): void {
+    topicRevision += 1;
+    const topic = destination.topic;
+    change({ sessionName: destination.sessionName, topic: topic
+      ? { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) }
+      : null });
+    if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
+  }
+
+  async function refreshTopic(): Promise<void> {
+    const topic = state.topic;
+    if (!topic || !options.readTopic || closed) return;
+    const revision = ++topicRevision;
+    change({ topic: { ...topic, view: loadingTopic(topic.view) } });
+    let read: TopicRead;
+    try { read = await options.readTopic(host.id, topic.id); }
+    catch (error) { read = { kind: 'failed', error: describeError(error) }; }
+    if (closed || revision !== topicRevision || state.topic?.id !== topic.id) return;
+    change({ topic: { id: topic.id, view: settledTopic(state.topic.view, read) } });
   }
 
   // ------------------------------------------------------------------- Attach
@@ -656,8 +690,16 @@ export function openAttach(options: AttachOptions): Attach {
           onNotification: (event) => {
             if (stale(mine)) return;
             if (event.kind === 'session-changed') {
+              if (event.name !== state.sessionName) sessionRevision += 1;
               topology?.attachedTo(event.name);
-              change({ sessionName: event.name });
+              if (pendingSwitch?.destination.sessionName === event.name && pendingSwitch.confirmedAt === null) {
+                acceptDestination(pendingSwitch.destination);
+                pendingSwitch.confirmedAt = sessionRevision;
+              } else if (event.name !== state.sessionName) {
+                const detail = state.topic ? lastTopic(state.topic.view) : null;
+                acceptDestination({ sessionName: event.name, topic: detail?.sessions.some((session) => session.name === event.name)
+                  ? { id: detail.id, seed: detail } : null });
+              }
             }
             if (event.kind === 'sessions-changed') refreshSessions();
             topology?.apply(event);
@@ -716,7 +758,8 @@ export function openAttach(options: AttachOptions): Attach {
       // Stamped on a Session that actually opened, not on one that was only
       // tapped: the Host Screen's order is a record of where you have been,
       // and a Session that refused to attach is not somewhere you have been.
-      arrived(state.sessionName, options.topicId);
+      arrived(state.sessionName, state.topic?.id ?? null);
+      void refreshTopic();
 
       // Size first, so the capture that follows is of a Pane the size of the
       // Surface rather than of whatever the last Client left it.
@@ -896,24 +939,46 @@ export function openAttach(options: AttachOptions): Attach {
       };
     },
 
-    async switchSession(name: string): Promise<void> {
+    refreshTopic,
+
+    async switchSession(destination: SessionDestination): Promise<void> {
+      if (closed) throw new Error('This Attach has ended.');
+      if (pendingSwitch) throw new Error('A Session switch is already in progress.');
+      if (destination.sessionName === state.sessionName) {
+        acceptDestination(destination);
+        void refreshTopic();
+        return;
+      }
       const mine = generation;
       const current = client;
-      if (!current || name === state.sessionName) return;
-      say(`switching to Session ${name}`);
-      await current.switchSession(name);
-      if (stale(mine)) return;
-      topology?.attachedTo(name);
-      change({ sessionName: name });
-      // Switching lands in a Session just as arriving does, so it counts the
-      // same on the Host Screen. Without this the order would only remember
-      // how a visit started, not where it went. The Topic it was opened from
-      // need not hold the Session switched to, so the Last Place drops it.
-      arrived(name, null);
-      // The Session switched into has its own Window, sized for whoever
-      // attached to it last.
-      sizing.sessionSwitched();
-      await settleAfterVerb(mine);
+      if (!current) throw new Error('The Session is not connected.');
+      const observed = sessionRevision;
+      const switching: { destination: SessionDestination; confirmedAt: number | null } = { destination, confirmedAt: null };
+      pendingSwitch = switching;
+      try {
+        await current.switchSession(destination.sessionName);
+        if (stale(mine)) throw new Error('The Attach changed before the Session opened.');
+        if (switching.confirmedAt === null) {
+          if (observed !== sessionRevision) throw new Error('The Host changed Session before the requested Session opened.');
+          acceptDestination(destination);
+        }
+        if (state.sessionName !== destination.sessionName ||
+            (switching.confirmedAt !== null && switching.confirmedAt !== sessionRevision)) {
+          throw new Error('The Host changed Session before the requested Session opened.');
+        }
+        const completedAt = sessionRevision;
+        topology?.attachedTo(state.sessionName);
+        sizing.sessionSwitched();
+        void refreshTopic();
+        try { await settleAfterVerb(mine); }
+        catch (error) { if (!stale(mine)) change({ trouble: describeError(error) }); }
+        if (stale(mine)) throw new Error('The Attach changed before the Session opened.');
+        if (completedAt !== sessionRevision) {
+          throw new Error('The Host changed Session before the requested Session opened.');
+        }
+      } finally {
+        if (pendingSwitch === switching) pendingSwitch = null;
+      }
     },
 
     async selectWindow(index: number): Promise<void> {
@@ -1180,6 +1245,7 @@ export function openAttach(options: AttachOptions): Attach {
       // Awaited, so that "this Session is gone" is true by the time this
       // resolves. The holder opens the next one on the strength of it.
       await teardown();
+      await arrivalWrites;
     },
   };
 

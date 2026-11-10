@@ -1,4 +1,5 @@
-import type { AgentMark, TopicDetail } from '@/topics/topic-detail';
+import type { TopicDetail } from '@/topics/topic-detail';
+import type { Mark } from '@/topics/environment';
 import type { Topology } from '@/tmux/topology';
 
 /** One Window in the Title Sheet. */
@@ -9,7 +10,7 @@ export interface TitleWindowRow {
   /** What its active Pane runs, from the Topology; null for a Window of another Session. */
   program: string | null;
   /** The Agent mark the Mac gave it; null for a Window the Mac did not describe. */
-  mark: AgentMark | null;
+  mark: Mark | null;
   /** Whether it is the Window on screen. */
   current: boolean;
 }
@@ -46,25 +47,27 @@ export function topicTitleRows(
   topic: TopicDetail,
   attached: { session: string; topology: Topology },
 ): TitleRow[] {
-  return topic.sessions.map((session) => {
+  const sessions: Extract<TitleRow, { kind: 'session' }>[] = topic.sessions.map((session) => {
     const current = session.name === attached.session;
-    const live = new Map(
-      current ? attached.topology.windows.map((window) => [window.index, window]) : [],
-    );
+    const marks = new Map((session.windows ?? []).map((window) => [window.id, window.mark]));
     return {
-      kind: 'session',
+      kind: 'session' as const,
       name: session.name,
       current,
-      windows: (session.windows ?? []).map((window) => ({
-        kind: 'window',
-        index: window.index,
-        name: window.name,
-        program: live.get(window.index)?.command ?? null,
-        mark: window.mark,
-        current: live.get(window.index)?.active ?? false,
+      windows: current ? attached.topology.windows.map((window) => ({
+        kind: 'window' as const, index: window.index, name: window.name, program: window.command,
+        mark: marks.get(window.id) ?? null, current: window.active,
+      })) : (session.windows ?? []).map((window) => ({
+        kind: 'window' as const, index: window.index, name: window.name, program: null,
+        mark: window.mark, current: false,
       })),
     };
   });
+  if (!sessions.some((session) => session.current)) {
+    sessions.push({ kind: 'session', name: attached.session, current: true,
+      windows: sessionTitleRows(attached.topology) });
+  }
+  return sessions;
 }
 
 /** How many rows a list of them draws, Sessions and their Windows alike. */

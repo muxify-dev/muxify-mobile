@@ -184,3 +184,21 @@ describe('a shape it cannot use', () => {
     expect(() => parseEnvironment(json)).toThrow(message);
   });
 });
+
+it('keeps optional Window seeds and tolerates new marks', () => {
+  const original = parseEnvironment(list);
+  expect(original.sessions[0].windows).toBeNull();
+  const input = JSON.parse(JSON.stringify(list));
+  input.sessions[0].windows = [
+    { id: '@8', index: 2, name: 'editor', active: true, mark: 'working' },
+    { id: '@9', index: 4, name: 'logs', active: false, mark: 'future-mark' },
+  ];
+  expect(parseEnvironment(input).sessions[0].windows).toEqual([
+    { id: '@8', index: 2, name: 'editor', active: true, mark: 'working' },
+    { id: '@9', index: 4, name: 'logs', active: false, mark: null },
+  ]);
+  input.sessions[0].windows = [];
+  expect(parseEnvironment(input).sessions[0].windows).toEqual([]);
+  input.sessions[0].windows = [{ id: '@8', index: 2, name: 'editor', active: 'yes', mark: null }];
+  expect(() => parseEnvironment(input)).toThrow('sessions[0].windows[0].active');
+});

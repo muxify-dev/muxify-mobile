@@ -76,7 +76,6 @@ function AppStack() {
           }}
         />
         <Stack.Screen name="hosts/[id]" options={{ title: 'Host' }} />
-        <Stack.Screen name="topic" options={{ title: 'Topic' }} />
         <Stack.Screen
           name="session-form"
           options={{
@@ -102,7 +101,6 @@ function AppStack() {
         <Stack.Screen
           name="topic-edit"
           options={{
-            // Three fields; the Topic Screen stays in view above, where the new values will show.
             presentation: 'formSheet',
             sheetAllowedDetents: [0.6],
             sheetGrabberVisible: true,
@@ -112,7 +110,6 @@ function AppStack() {
         <Stack.Screen
           name="topic-add-session"
           options={{
-            // One field, like New Session; the Topic Screen stays in view, where the new Session will show.
             presentation: 'formSheet',
             sheetAllowedDetents: [0.4],
             sheetGrabberVisible: true,

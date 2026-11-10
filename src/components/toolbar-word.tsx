@@ -13,15 +13,19 @@ export function ToolbarWord({
   color,
   onPress,
   bold = true,
+  disabled = false,
 }: {
   label: string;
   color: string;
   onPress: () => void;
   bold?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={styles.tap}>

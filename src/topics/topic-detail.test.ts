@@ -99,7 +99,7 @@ describe('parsing what `topic show --json` said on the Mac', () => {
   });
 });
 
-describe('what the Topic Screen holds', () => {
+describe('what the Attach holds', () => {
   const shown = { kind: 'shown', topic: parseTopicDetail(live) } as const;
 
   it('keeps the last answer while it reads again', () => {
@@ -136,8 +136,8 @@ describe('the seed: what the Host Screen already read about a Topic', () => {
     },
   };
   const names = new Map([
-    [sid('$1'), 'gs/fix-login'],
-    [sid('$2'), 'gs/web'],
+    [sid('$1'), { name: 'gs/fix-login', windows: null }],
+    [sid('$2'), { name: 'gs/web', windows: null }],
   ]);
 
   it('has the card’s title, Note, Tags, state and Sessions in card order, with no Windows read yet', () => {
@@ -185,4 +185,19 @@ describe('the seed: what the Host Screen already read about a Topic', () => {
       last: seed,
     });
   });
+});
+
+it('prefers direct Window marks and uses Pane Agents only when mark is absent', () => {
+  const input = JSON.parse(JSON.stringify(live));
+  const window = input.topic.sessions[0].windows[0];
+  expect(parseTopicDetail(input).sessions[0].windows?.[0].mark).toBe('done');
+  for (const [mark, expected] of [['working', 'working'], ['future-mark', null], [null, null]]) {
+    window.mark = mark;
+    expect(parseTopicDetail(input).sessions[0].windows?.[0].mark).toBe(expected);
+  }
+});
+
+it('keeps Window seeds through the form route', () => {
+  const seed = parseTopicDetail(live);
+  expect(topicSeedFromParam(topicSeedParam(seed))).toEqual(seed);
 });

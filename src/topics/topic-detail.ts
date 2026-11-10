@@ -1,11 +1,13 @@
 /**
  * What `muxify topic show --json --topic <id>` says about one Topic, as the
- * Topic Screen holds it. Sessions and Windows keep the order they came in,
+ * Attach holds it. Sessions and Windows keep the order they came in,
  * which is the Mac's order.
  */
 
 import {
   parseTopicState,
+  parseMark,
+  type SnapshotSession,
   sessionId,
   topicId,
   type Card,
@@ -26,13 +28,13 @@ export interface TopicWindow {
   index: number;
   name: string;
   /** The strongest Agent mark of the Window's Panes. */
-  mark: AgentMark | null;
+  mark: Mark | null;
 }
 
 export interface TopicSession {
   id: SessionId;
   name: string;
-  /** Null until `topic show` is read: the Host Screen's snapshot has no Windows. */
+  /** Null when an old CLI did not include Windows in its Listing. */
   windows: TopicWindow[] | null;
 }
 
@@ -80,7 +82,7 @@ function parseWindow(value: unknown, at: string): TopicWindow {
     id: string(window.id, `${at}.id`),
     index: number(window.index, `${at}.index`),
     name: string(window.name, `${at}.name`),
-    mark: strongest(
+    mark: 'mark' in window ? parseMark(window.mark) : strongest(
       array(window.panes, `${at}.panes`).map((pane, p) =>
         agentMark(object(pane, `${at}.panes[${p}]`).agent),
       ),
@@ -123,7 +125,7 @@ function strongest(marks: (AgentMark | null)[]): AgentMark | null {
 export type TopicRead = { kind: 'shown'; topic: TopicDetail } | { kind: 'failed'; error: string };
 
 /**
- * What the Topic Screen holds. A read in flight and a failed read both keep
+ * The Topic read held by the Attach. A read in flight and a failed read both keep
  * the last answer, so a return to the screen does not blank it and a Host
  * that drops the Connection still shows what it last said.
  */
@@ -141,29 +143,25 @@ export function topicStartingFrom(seed: TopicDetail | null): TopicView {
 
 /**
  * A Topic as the Host Screen's `environment show` already knows it: its card,
- * with the names of its live Sessions in card order. No Windows: the snapshot
- * has none, and `topic show` fills them in. A Session id the snapshot has no
- * name for is left out.
+ * with its live Sessions and Windows in card order. A Session id the snapshot
+ * does not contain is left out.
  */
 export function seededTopic(
   card: Extract<Card, { kind: 'topic' }>,
-  names: ReadonlyMap<SessionId, string>,
+  sessions: ReadonlyMap<SessionId, Pick<SnapshotSession, 'name' | 'windows'>>,
 ): TopicDetail {
   return {
     ...card.topic,
     sessions: card.sessions.flatMap((id) => {
-      const name = names.get(id);
-      return name === undefined ? [] : [{ id, name, windows: null }];
+      const session = sessions.get(id);
+      return session === undefined ? [] : [{ id, name: session.name, windows: session.windows }];
     }),
   };
 }
 
-/** The seed as a route param, from the Host Screen to the Topic Screen. */
+/** The seed passed to Add a Session. */
 export function topicSeedParam(seed: TopicDetail): string {
-  return JSON.stringify({
-    ...seed,
-    sessions: seed.sessions.map(({ id, name }) => ({ id, name })),
-  });
+  return JSON.stringify(seed);
 }
 
 /** A route param is open to any deep link, so a bad one gives no seed and the screen reads as before. */
@@ -182,7 +180,12 @@ export function topicSeedFromParam(param: string | undefined): TopicDetail | nul
         return {
           id: sessionId(session.id, `seed.sessions[${i}].id`),
           name: string(session.name, `seed.sessions[${i}].name`),
-          windows: null,
+          windows: session.windows == null ? null : array(session.windows, `seed.sessions[${i}].windows`).map((value, w) => {
+            const at = `seed.sessions[${i}].windows[${w}]`;
+            const window = object(value, at);
+            return { id: string(window.id, `${at}.id`), index: number(window.index, `${at}.index`),
+              name: string(window.name, `${at}.name`), mark: parseMark(window.mark) };
+          }),
         };
       }),
     };

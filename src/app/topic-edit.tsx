@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 
 import {
   Form,
@@ -34,7 +34,7 @@ import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
-import { tagsFromParam } from '@/topics/tags-param';
+import { useAttachHolder } from '@/tmux/attach-context';
 import {
   changes,
   fieldsFromParam,
@@ -53,18 +53,30 @@ const say = speakingAs(deviceLog(), 'edit-topic');
  *
  * Save sends only the fields that differ from what the Host last had. A field
  * the Host refuses shows its reason under it and the sheet stays open, and the
- * next Save sends only what still differs. The Topic Screen reads the Topic
- * again when the sheet closes.
+ * next Save sends only what still differs. The Attach reads the Topic again after each Save and on return.
  */
 export default function TopicEditScreen() {
-  const { hostId, topicId, topic, tags } = useLocalSearchParams<{
+  const { hostId, topicId, topic } = useLocalSearchParams<{
     hostId: string;
     topicId: string;
     topic?: string;
-    tags?: string;
   }>();
   const opened = useMemo(() => fieldsFromParam(topic), [topic]);
-  const configTags = useMemo(() => tagsFromParam(tags), [tags]);
+  const [configTags, setConfigTags] = useState<Tag[] | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let left = false;
+    setTagError(null);
+    void (async () => {
+      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
+      if (!host) throw new Error('This Host is no longer saved.');
+      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
+      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to edit Tags.');
+      if (!left) setConfigTags(result.snapshot.tags);
+    })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
+    return () => { left = true; };
+  }, [hostId, attempt]);
   const { palette } = useSettings();
 
   if (opened === null) {
@@ -75,6 +87,11 @@ export default function TopicEditScreen() {
       </View>
     );
   }
+  if (configTags === null) return <View style={[styles.fill, styles.center]}>
+    <Stack.Screen options={{ title: 'Edit Topic' }} />
+    <RNText style={{ color: palette.secondaryLabel }}>{tagError ?? 'Reading Tags…'}</RNText>
+    {tagError ? <Pressable accessibilityLabel="Retry" onPress={() => setAttempt((value) => value + 1)}><RNText style={{ color: palette.controlAccent }}>Retry</RNText></Pressable> : null}
+  </View>;
   return (
     <EditForm
       hostId={hostId}
@@ -100,6 +117,9 @@ function EditForm({
   palette: Appearance;
 }) {
   const router = useRouter();
+  const holder = useAttachHolder();
+  const present = useRef(true);
+  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
   const { appearance } = useSettings();
 
   const title = useNativeState(opened.title);
@@ -166,6 +186,9 @@ function EditForm({
         }
       }
 
+      const attached = holder.current();
+      if (attached?.hostId === hostId && attached.state().topic?.id === topicId) void attached.refreshTopic();
+      if (!present.current) return;
       const refused = Object.keys(outcome.errors);
       say(
         refused.length === 0
@@ -177,25 +200,28 @@ function EditForm({
       if (refused.length === 0) router.back();
       else setErrors(outcome.errors);
     })();
-  }, [saving, title, note, configTags, retired, chosen, saved, hostId, topicId, router]);
+  }, [saving, title, note, configTags, retired, chosen, saved, hostId, topicId, router, holder]);
 
   return (
     <View style={styles.fill}>
       <Stack.Screen
         options={{
           title: 'Edit Topic',
+          gestureEnabled: !saving,
           headerLeft: () => (
             <ToolbarWord
               label="Cancel"
+              disabled={saving}
               color={palette.controlAccent}
               bold={false}
-              onPress={() => router.back()}
+              onPress={() => { if (!saving) router.back(); }}
             />
           ),
           headerRight: () => (
             <ToolbarWord
               label={saving ? 'Saving…' : 'Save'}
               color={saving ? palette.secondaryLabel : palette.controlAccent}
+              disabled={saving}
               onPress={save}
             />
           ),

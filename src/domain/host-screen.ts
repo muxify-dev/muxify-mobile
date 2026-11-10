@@ -42,7 +42,7 @@ export type HostScreenRow =
       mark: Mark | null;
       pinned: boolean;
       dimmed: boolean;
-      /** What the Topic Screen draws at once, before it reads the Topic. */
+      /** What the Attach can show before its first Topic read. */
       seed: TopicDetail;
     }
   /** A Locked Session shown as its own card. */
@@ -258,8 +258,9 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
       return [tag.name, color ? tagColorHex(color, context.appearance) : null];
     }),
   );
+  const sessions = new Map(snapshot.sessions.map((session) => [session.id, session]));
   const rows = (cards: Card[], pinned = false) =>
-    cards.map((card) => cardRow(card, { pinned, names, colors }));
+    cards.map((card) => cardRow(card, { pinned, names, colors, sessions }));
   const pinned = rows(snapshot.pinned, true);
   const noTopic = noTopicRows(snapshot, names, context);
   const { unpinned } = snapshot;
@@ -321,13 +322,14 @@ function tagMarks(tags: string[], colors: ReadonlyMap<string, string | null>): T
 }
 
 interface CardRowContext {
+  sessions: ReadonlyMap<SessionId, EnvironmentSnapshot['sessions'][number]>;
   pinned: boolean;
   names: ReadonlyMap<SessionId, string>;
   /** Each Tag the Config defines, in Config order, with its colour in this appearance. */
   colors: ReadonlyMap<string, string | null>;
 }
 
-function cardRow(card: Card, { pinned, names, colors }: CardRowContext): HostScreenRow {
+function cardRow(card: Card, { pinned, names, colors, sessions }: CardRowContext): HostScreenRow {
   switch (card.kind) {
     case 'topic':
       return {
@@ -339,7 +341,7 @@ function cardRow(card: Card, { pinned, names, colors }: CardRowContext): HostScr
         mark: card.mark,
         pinned,
         dimmed: card.topic.state !== 'live',
-        seed: seededTopic(card, names),
+        seed: seededTopic(card, sessions),
       };
     case 'session': {
       const name = names.get(card.sessions[0]);

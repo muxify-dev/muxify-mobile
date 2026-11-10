@@ -30,6 +30,7 @@ import { StyleSheet, useWindowDimensions } from 'react-native';
 import { tabAddress, tabLabel, type BrowserTab } from '@/browser/tabs';
 import type { Appearance, SheetPalette } from '@/constants/app-theme';
 import { countTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
+import type { TopicDetail } from '@/topics/topic-detail';
 import { useSettings } from '@/settings/settings-context';
 
 import { SheetHeader, SheetNote } from './sheet-chrome';
@@ -55,6 +56,8 @@ export interface TitleSheetProps {
   isPresented: boolean;
   onDismiss: () => void;
   rows: TitleRow[];
+  topic?: TopicDetail | null;
+  onRetry?: () => void;
   /** A Topic read in flight with nothing read before it. */
   loading: boolean;
   error?: string;
@@ -92,6 +95,8 @@ export function TitleSheet({
   isPresented,
   onDismiss,
   rows,
+  topic,
+  onRetry,
   loading,
   error,
   onSwitch,
@@ -101,7 +106,7 @@ export function TitleSheet({
 }: TitleSheetProps) {
   const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
   const screen = useWindowDimensions();
-  const height = titleSheetHeight(countTitleRows(rows), tabs.length, screen.height);
+  const height = topic ? screen.height * 0.65 : titleSheetHeight(countTitleRows(rows), tabs.length, screen.height);
 
   return (
     <Host matchContents style={styles.host}>
@@ -138,6 +143,7 @@ export function TitleSheet({
                   {error}
                 </Text>
               ) : null}
+              {error !== undefined && onRetry ? <Button label="Retry" onPress={onRetry} modifiers={[accessibilityLabel('Retry')]} /> : null}
               {loading && rows.length === 0 ? (
                 <SheetNote palette={palette}>Reading…</SheetNote>
               ) : null}
@@ -145,9 +151,14 @@ export function TitleSheet({
                 <SheetNote palette={palette}>No Windows</SheetNote>
               ) : null}
 
-              {rows.length > 0 || tabs.length > 0 ? (
+              {topic || rows.length > 0 || tabs.length > 0 ? (
                 <ScrollView>
                   <VStack spacing={0} alignment="leading">
+                    {topic ? <VStack spacing={6} alignment="leading" modifiers={[padding({ vertical: 12 })]}>
+                      <Text modifiers={[font({ size: 20, weight: 'semibold' }), foregroundColor(palette.primary)]}>{topic.label}</Text>
+                      {topic.note ? <Text modifiers={[foregroundColor(palette.secondary), accessibilityLabel(`Note ${topic.note}`)]}>{topic.note}</Text> : null}
+                      {topic.tags.length ? <Text modifiers={[foregroundColor(palette.secondary)]}>{topic.tags.map((tag) => `#${tag}`).join('  ')}</Text> : null}
+                    </VStack> : null}
                     {rows.map((row) =>
                       row.kind === 'window' ? (
                         <WindowRow
