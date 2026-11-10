@@ -450,6 +450,8 @@ describe('the verbs', () => {
   it('picks a Pane in one command, and asks tmux to carry the Zoom across', async () => {
     const split = fakeHost();
     const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+    // Zoomed, as tmux has the Window once the Attach has applied the preference.
+    split.answering('list-windows', ['@0\t0\t1\t2\t1\tshell\tzsh']);
     split.answering('list-panes', [
       `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
       `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
@@ -509,6 +511,51 @@ describe('the verbs', () => {
     expect(kit.attach.state().zoomed).toBe(false);
     expect(kit.attach.state().trouble).not.toBeNull();
     expect(kit.attach.state().phase.kind).toBe('connected');
+  });
+});
+
+describe('a Window changed on the tmux side', () => {
+  const TWO = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+  const THREE = 'b25d,49x41,0,0[49x13,0,0,0,49x13,0,14,2,49x13,0,28,3]';
+
+  /** A zoomed Window of two Panes, as the Attach leaves it. */
+  async function zoomedSplit() {
+    const split = fakeHost();
+    split.answering('list-windows', ['@0\t0\t1\t2\t1\tshell\tzsh']);
+    split.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${TWO}`,
+      `1\t%2\tzsh\t0\t/home/user\t${TWO}`,
+    ]);
+    const kit = attachOn({ hosts: [split] });
+    await connected(kit);
+    expect(kit.attach.state().topology.activeWindow?.zoomed).toBe(true);
+    split.commands.length = 0;
+    return { kit, split };
+  }
+
+  it('zooms again when a split made there dropped the zoom', async () => {
+    const { split } = await zoomedSplit();
+    split.answering('list-windows', ['@0\t0\t1\t3\t0\tshell\tzsh']);
+    split.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${THREE}`,
+      `1\t%2\tzsh\t0\t/home/user\t${THREE}`,
+      `2\t%3\tzsh\t0\t/home/user\t${THREE}`,
+    ]);
+
+    split.notify(`%layout-change @0 ${THREE} ${THREE} *`);
+    await settle();
+
+    expect(split.verbs()).toContain('resize-pane');
+  });
+
+  it('leaves alone a Window that was only unzoomed, as somebody at the laptop meant', async () => {
+    const { split } = await zoomedSplit();
+    split.answering('list-windows', ['@0\t0\t1\t2\t0\tshell\tzsh']);
+
+    split.notify(`%layout-change @0 ${TWO} ${TWO} *`);
+    await settle();
+
+    expect(split.verbs()).not.toContain('resize-pane');
   });
 });
 

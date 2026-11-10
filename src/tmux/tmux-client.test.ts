@@ -200,6 +200,17 @@ describe('zoom', () => {
     expect(asked).not.toContain("'resize-pane' '-Z' '-t' 'work:'");
   });
 
+  it('reads the Window for a second request only after the first one toggled it', async () => {
+    const { client, asked } = fakeTmux(zoomed('0', '2'));
+    await Promise.all([client.setZoom('work', true), client.setZoom('work', true)]);
+    expect(asked.map((each) => each.split(' ')[0])).toEqual([
+      "'list-windows'",
+      "'resize-pane'",
+      "'list-windows'",
+      "'resize-pane'",
+    ]);
+  });
+
   it('does not spend a round trip zooming a Window with one Pane', async () => {
     const { client, asked } = fakeTmux(zoomed('0', '1'));
     await client.setZoom('work', true);
