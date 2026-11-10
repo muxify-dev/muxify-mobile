@@ -1,25 +1,11 @@
 context platform=ios kind=simulator
 
-# Home, with the one Host the sandbox has (see e2e/sandbox.sh): its section
-# has its name and a green Connection dot, its Sessions are rows under it, and
-# a tap on a row attaches. All opens that Host's Host Screen. Run it with:
-#
-#   bash e2e/sandbox.sh agent-device test ./e2e/home.ad
-#
-# Several Hosts, an unreachable one and the order are e2e/hosts.sh's.
-
 open "dev.muxify.app" --relaunch
-wait "text" "Dev Host" 15000
-wait "label=\"Connected\"" 15000
-is "visible" "label=\"Session 0\""
-
-press "label=\"All of Dev Host\""
-wait "label=\"New Session\"" 8000
-press "role=button label=\"Muxify\""
+wait "label=\"Host Dev Host\"" 15000
+is "absent" "label=\"Session 0\""
+press "label=\"Host Dev Host\""
+wait "label=\"Edit Host\"" 8000
+back
 wait "label=\"Settings\"" 8000
-
-press "label=\"Session 0\""
-wait "id=\"pane-command\"" 20000
-is "text" "id=\"attached-session\"" "0"
-
+is "visible" "label=\"Host Dev Host\""
 close

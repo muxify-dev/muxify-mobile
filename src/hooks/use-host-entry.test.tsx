@@ -123,3 +123,27 @@ it('does not replace a newer Attach after a plain Session Host lookup', async ()
   expect(mockOpenAttach).toHaveBeenCalledTimes(1);
   expect(mockEntered).not.toHaveBeenCalled();
 });
+
+it('reports a live Topic failure to the open chooser', async () => {
+  mockReadTopic.mockResolvedValue({ kind: 'failed', error: 'Read failed' });
+  const onError = jest.fn();
+  await mount(true);
+  await act(async () => { actions.openTopic({ ...topic, sessions: [] }, { isCurrent: () => true, onError }); });
+  expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Read failed' }));
+  expect(Alert.alert).not.toHaveBeenCalled();
+  expect(mockEntered).not.toHaveBeenCalled();
+});
+
+it('does not deliver a live Topic after its chooser closes', async () => {
+  let answer!: (value: TopicRead) => void;
+  let current = true;
+  mockReadTopic.mockImplementation(() => new Promise<TopicRead>((resolve) => { answer = resolve; }));
+  const onError = jest.fn();
+  await mount(true);
+  await act(async () => { actions.openTopic({ ...topic, sessions: [] }, { isCurrent: () => current, onError }); });
+  current = false;
+  await act(async () => { answer({ kind: 'shown', topic }); });
+  expect(mockLoad).not.toHaveBeenCalled();
+  expect(mockEntered).not.toHaveBeenCalled();
+  expect(onError).not.toHaveBeenCalled();
+});

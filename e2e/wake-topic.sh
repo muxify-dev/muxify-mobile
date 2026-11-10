@@ -31,6 +31,7 @@ python3 - "$SETTINGS" <<'PY'
 import json, sys
 path = sys.argv[1]
 settings = json.load(open(path))
+settings.pop("hostListPreferences", None)
 settings["hostScreenLists"] = ["topics", "sessions"]
 json.dump(settings, open(path, "w"))
 PY

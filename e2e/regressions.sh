@@ -58,6 +58,8 @@
 set -uo pipefail
 
 APP=dev.muxify.app
+device=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
 SESSION=0
 MARKER=MUXIFY_ENTER_RUNS
 # Twenty characters for the held-delete check. Plain letters: what is asserted
@@ -144,7 +146,7 @@ surface() {
       agent-device wait 'label="OK"' 8000 >/dev/null 2>&1
       agent-device press 'label="OK"' >/dev/null 2>&1
       sleep 1
-      line=$(xcrun simctl pbpaste booted | grep -oE 'Surface for %[0-9]+ reported [0-9]+x[0-9]+' | tail -1)
+      line=$(xcrun simctl pbpaste "${MUXIFY_E2E_DEVICE:-booted}" | grep -oE 'Surface for %[0-9]+ reported [0-9]+x[0-9]+' | tail -1)
       echo "$line" | grep -oE '[0-9]+x[0-9]+'
       return 0
     fi
@@ -159,7 +161,7 @@ row_in_sight() {
   agent-device wait 'label="OK"' 8000 >/dev/null 2>&1
   agent-device press 'label="OK"' >/dev/null 2>&1
   sleep 1
-  xcrun simctl pbpaste booted | grep -oE 'row in sight [0-9]+' | tail -1 | grep -oE '[0-9]+$'
+  xcrun simctl pbpaste "${MUXIFY_E2E_DEVICE:-booted}" | grep -oE 'row in sight [0-9]+' | tail -1 | grep -oE '[0-9]+$'
 }
 window()  { on_host "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
@@ -220,10 +222,10 @@ ensure_keyboard() {
 
 attach() {
   agent-device close >/dev/null 2>&1
-  agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
+  agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
   # The real flow: a saved Host, its Sessions, then one of them.
-  agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+  agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
   agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
@@ -237,7 +239,7 @@ attach() {
 # Font size 10, the size the app offers once the default is turned off. At the
 # default size an iPhone 17 Pane is 30 rows, under what check 7 needs; at 10 it
 # is 40. The sandbox puts the settings file back afterwards.
-SETTINGS="$(xcrun simctl get_app_container booted "$APP" data)/Documents/muxify-settings.json"
+SETTINGS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-settings.json"
 python3 - "$SETTINGS" <<'PY' || fail "could not set the font size"
 import json, sys
 path = sys.argv[1]
@@ -266,7 +268,7 @@ assert header is not None, "the native Header is missing"
 assert surface is not None, "the Surface area is missing"
 bar, area = header["rect"], surface["rect"]
 assert area["height"] > 0 and area["y"] >= bar["y"] + bar["height"] - 1, (bar, area)
-assert any(n.get("label") == "Back" for n in nodes), "Back is missing"
+assert any(n.get("type") == "Button" and n.get("label") == "Dev Host" for n in nodes), "native Back to Dev Host is missing"
 print("     the Surface starts below the native Header")
 ' || fail "the Header covers the Surface"
 
@@ -501,10 +503,8 @@ SECOND=muxify-regressions-second
 on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$SECOND'" \
   || fail "could not make a second Session on the dev Host"
 ensure_keyboard away
-# Back lands on Home, and All opens the Host Screen with the new Session.
-agent-device press 'role=button label="Back"' >/dev/null 2>&1
-agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
-agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+# Back returns to the Host Screen with the new Session.
+agent-device back >/dev/null 2>&1
 agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
@@ -522,9 +522,7 @@ toggle_keyboard
 ensure_keyboard away
 echo "     second Session connected at $(surface), keyboard rose and fell"
 # Back to the first, the same way round, so what follows leaves it as found.
-agent-device press 'role=button label="Back"' >/dev/null 2>&1
-agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
-agent-device press 'label="All of Dev Host"' >/dev/null 2>&1
+agent-device back >/dev/null 2>&1
 agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
@@ -537,8 +535,8 @@ sleep 2
 echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
 # The keyboard is already away: check 8 put it there, and toggling it again
 # here would only raise it on the way out.
-agent-device press 'role=button label="Back"' >/dev/null 2>&1
-agent-device wait 'label="All of Dev Host"' 8000 >/dev/null 2>&1
+agent-device back >/dev/null 2>&1
+agent-device wait 'label="Edit Host"' 8000 >/dev/null 2>&1
 sleep 2
 [ "$(options)" = "$BEFORE" ] || {
   diff <(echo "$BEFORE") <(options)

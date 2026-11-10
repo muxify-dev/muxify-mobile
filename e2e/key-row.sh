@@ -35,6 +35,8 @@ set -uo pipefail
 APP=dev.muxify.app
 SESSION=0
 PANE="$SESSION:0.0"
+device=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
 
 # Runs a command on the dev Host, which is this Mac, in the sandbox.
 on_host() { sh -c "$*" 2>/dev/null; }
@@ -89,8 +91,9 @@ keyboard_up() { [ -n "$(frame_of return)" ]; }
 
 attach() {
   agent-device close >/dev/null 2>&1
-  agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
+  agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+  agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
   agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
@@ -189,7 +192,7 @@ chord command c
 agent-device wait 'label="OK"' 8000 >/dev/null 2>&1 || fail "⌘c showed no alert"
 agent-device press 'label="OK"' >/dev/null 2>&1
 sleep 1
-xcrun simctl pbpaste booted | grep -q '^key-row-copy$' || fail "the clipboard does not hold the Pane's text"
+xcrun simctl pbpaste "${MUXIFY_E2E_DEVICE:-booted}" | grep -q '^key-row-copy$' || fail "the clipboard does not hold the Pane's text"
 echo "     the Pane's text is on the clipboard"
 
 echo "7/8  ⌘ then v pastes the clipboard and runs nothing"

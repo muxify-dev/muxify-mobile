@@ -1,3 +1,4 @@
+import { SymbolView } from 'expo-symbols';
 import { Stack } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -33,7 +34,6 @@ export interface TerminalHeaderProps {
   title: HeaderTitle | null;
   /** The Theme's terminal colours: the header sits on the terminal background. */
   terminal: TerminalPalette;
-  onBack: () => void;
   onTitle: () => void;
   options: OptionsItem[];
 }
@@ -42,7 +42,6 @@ export interface TerminalHeaderProps {
 export function TerminalHeader({
   title,
   terminal,
-  onBack,
   onTitle,
   options,
 }: TerminalHeaderProps) {
@@ -53,19 +52,15 @@ export function TerminalHeader({
       <Stack.Screen options={{
         headerShown: true,
         headerTransparent: false,
-        headerBackVisible: false,
+        headerBackVisible: true,
         headerStyle: { backgroundColor: terminal.background },
         headerTintColor: terminal.foreground,
       }} />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button icon="chevron.backward" accessibilityLabel="Back" onPress={onBack}>
-          Back
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
       <Stack.Title asChild>
         <Pressable
           onPress={onTitle}
-          accessible={false}
+          accessibilityRole="button"
+          accessibilityLabel="Open Terminal chooser"
           testID="header-title"
           disabled={title === null}
           style={[styles.title, { maxWidth: windowWidth / 2 }]}>
@@ -86,14 +81,17 @@ function TitleLines({ title, terminal }: { title: HeaderTitle; terminal: Termina
   const name = title.kind === 'topic' ? title.topic : title.session;
   return (
     <>
+      <View style={styles.nameRow}>
       <Text
         numberOfLines={1}
         maxFontSizeMultiplier={1.2}
         style={[styles.name, { color: terminal.foreground }]}
-        accessibilityHint="Opens the Title Sheet"
+        accessibilityHint="Opens the Terminal chooser"
         testID={title.kind === 'topic' ? 'topic-title' : 'attached-session'}>
         {name}
       </Text>
+      <SymbolView name="chevron.down" tintColor={terminal.foreground} size={11} style={styles.chevron} />
+      </View>
       <View style={styles.detail}>
         {title.program === null ? null : (
           <Text
@@ -172,11 +170,15 @@ function renderOptions(items: OptionsItem[]): ReactNode[] {
 
 const styles = StyleSheet.create({
   title: {
+    minHeight: 44,
     flexShrink: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '100%' },
+  chevron: { width: 11, height: 11 },
   name: {
+    flexShrink: 1,
     fontSize: 15,
     lineHeight: 18,
     fontWeight: '600',

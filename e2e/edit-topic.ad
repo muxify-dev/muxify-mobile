@@ -2,7 +2,7 @@ context platform=ios kind=simulator
 
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
-press "label=\"All of Dev Host\""
+press "label=\"Host Dev Host\""
 wait "label=\"Edit Host\"" 15000
 wait 1500
 
@@ -25,8 +25,10 @@ fill "label=\"Topic Note\" editable=true" "e2e second note"
 press "label=\"Save\""
 wait "id=\"pane-command\"" 15000
 press "id=\"header-title\""
+wait "label=\"Close Choose\"" 8000
+press "label=\"Windows\""
 wait "label=\"Note e2e second note\"" 15000
 is "visible" "text=\"#personal  #work\""
-press "label=\"Close Windows\""
+press "label=\"Close Choose\""
 
 close

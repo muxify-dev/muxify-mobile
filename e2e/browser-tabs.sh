@@ -35,6 +35,8 @@
 set -uo pipefail
 
 APP=dev.muxify.app
+device=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
 SESSION=0
 ROOT=$MUXIFY_E2E_ROOT
 MARKER=browser-tabs-e2e-marker
@@ -65,8 +67,9 @@ serve() {
 
 attach() {
   agent-device close >/dev/null 2>&1
-  agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
+  agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+  agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
   agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
@@ -75,7 +78,8 @@ attach() {
 
 open_title_sheet() {
   agent-device press 'id="header-title"' >/dev/null 2>&1
-  agent-device wait 'label="Close Windows"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
+  agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
+  agent-device press 'label="Windows"' >/dev/null 2>&1
 }
 
 # Back from the Web View to the Session under it.
@@ -185,8 +189,8 @@ done
 sleep 2
 agent-device is exists 'text="Browser tabs"' >/dev/null 2>&1 && fail "the Title Sheet still shows Browser tabs"
 agent-device is exists 'label="Tab By address"' >/dev/null 2>&1 && fail "the Title Sheet still lists a Tab"
-agent-device is exists 'label="Switch…"' >/dev/null 2>&1 || fail "the Title Sheet lost its other rows"
-agent-device press 'label="Close Windows"' >/dev/null 2>&1
+agent-device is exists 'label="Windows"' >/dev/null 2>&1 || fail "the Title Sheet lost its other rows"
+agent-device press 'label="Close Choose"' >/dev/null 2>&1
 
 agent-device close >/dev/null 2>&1
 echo

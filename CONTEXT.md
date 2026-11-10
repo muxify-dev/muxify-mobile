@@ -105,7 +105,9 @@ It is what the *app* holds, not what a screen does: one Attach owns the
 Connection, the Control Connection, the Client and its size, the Topology, the
 Session name, current Topic and its last read, and a view per Pane. It outlives
 every screen that draws it. A Session switch sets its Session and Topic together.
-A plain Session pick clears its Topic, even when that Session is already attached.
+A plain pick of the current Session changes nothing. A different Session keeps
+the Topic when the last Topic read includes it. An unrelated Session clears the
+Topic. An explicit Topic pick sets that Topic. Last Place stores the result.
 The Terminal Screen subscribes to whichever one is current; the Host Screen
 shows its phase and offers to end it. See ADR 0007.
 
@@ -126,26 +128,22 @@ on start on, a cold start opens it again behind a "Trying to reconnect" screen.
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
+The Host Screen has its own list choices, reached from Host Screen lists in
+its Header. Each Host stores its enabled lists and their order independently.
+On upgrade, existing Hosts receive the previous global choices once. A new
+Host uses the default Recent Sessions and Sessions lists.
+
 **Home**:
-The screen the app opens on: one section for each Host, in the Host order. The
-section's header is the Host's name, a dot for its Connection (green when its
-Listing has come back, orange while the first read is in flight, red when the
-Host refused) and **All**, which opens that Host's Host Screen. Under it are
-the first 5 rows the Host Screen would show, in the lists and the order the
-user set in Settings. A tap on a live Topic opens the Session last opened on
-this phone, or the Mac's first Session when none is Recent.
-For a Host whose Topics are in In Play, Home instead shows every Pinned card,
-every In Play Topic and every Guest, and no Open Place or Bench: the Host's live
-work never falls off Home. There are no section headers.
-Hosts are never mixed in one section. A Host that refused shows its reason and
-Retry in its own section, and the other sections read on. Home reads every
-Host's Listing each time it comes into focus, on that Host's one Connection.
-Adding, editing, deleting and ordering Hosts is in Settings. See ADR 0013.
-_Avoid_: Hosts list, front door, dashboard
+The list of saved Hosts, in the order set in Settings. Each row shows the Host
+name and address, and the current Session if this phone has an Attach there.
+A tap opens the Host Screen. Home does not read remote Listings.
+The fixed navigation order is Home, Host Screen, then Terminal Screen.
+Native Back has a chevron only and moves up one level without ending the Attach.
+Cold reconnect and direct Terminal entry construct the same parent screens.
+Adding, editing, deleting, and ordering Hosts is in Settings.
 
 **Listing**:
-What a Host last said its Sessions were. The Host Screen and each Host section
-of Home ask again every time they come back into focus — a sheet closing over it, a return from the Terminal
+What a Host last said its Sessions were. The Host Screen asks again every time they come back into focus — a sheet closing over it, a return from the Terminal
 Screen — and the asking is invisible: the answer it is holding stays on screen
 until a better one arrives. Only the first question has nothing to show and a
 spinner to stand in for it. A refusal is the exception and drops the list,
@@ -404,7 +402,7 @@ _Avoid_: minimap, Pane indicator, thumbnail
 **Header**:
 The native bar at the top of the Terminal Screen. It owns the top safe area,
 with Back on the left, the title in the middle and Options on the right.
-Back goes Home and leaves the Attach alive (ADR 0007). The content area starts
+Back goes to the Host Screen and leaves the Attach alive (ADR 0007). The content area starts
 below the Header. The title is the Session name over the program that runs in
 the active Pane, as tmux's `#{pane_current_command}` names it. For a Session
 opened from a Topic, it is the Topic title over one line with the program and
@@ -419,23 +417,23 @@ command failed.
 _Avoid_: title bar, toolbar
 
 **Title Sheet**:
-The sheet the Header's title opens. For a Session, one row per Window of the
-Topology: index, name, program, the one on screen marked. For a Session opened
-from a Topic, the full title, Topic Note and Tags, then one section per live
-Session with its Windows and Agent marks. The card seeds these rows, and the
-Attach reads the Topic again each time the sheet opens or returns from a form.
-The current Session uses its live Topology for its Window set. A failed read
-keeps the last answer and offers Retry. A tap on a Window goes to it, switching Session first when it belongs
-to another one. **Switch…** at the top closes the sheet and opens the Sessions
-picker. The sheet draws no previews; the Sessions picker keeps its own. With
-the Topics list on in Settings, the Sessions picker lists the Host's Topics
-under its Sessions, as the rows of the Host Screen, with the Bench open. A tap
-on a live Topic switches the current Attach to its chosen Session. A Dormant
-Topic offers the wake choice, and an Empty Topic opens Add a Session. Under the
-rows, **Browser tabs** lists the Browser Tabs of the Window on screen that are
-at a Tailscale address, read from the Host each time the sheet opens. A Window
-with none has no such section.
-_Avoid_: Windows picker, Windows sheet (the old grid of previews), Topic sheet
+The chooser opened by the Header title or its down chevron. It starts on
+Sessions, with previews and the current Session marked. Windows and Topics
+are tabs in the same sheet. Topics is available when this Host enables it.
+A Session pick uses the Attach's Topic membership rules.
+
+Windows shows the current Session's Windows. With a Topic, it shows the full
+title, Topic Note and Tags, then each live Session's Windows and Agent marks.
+The current Session uses its live Topology. The Attach reads the Topic when
+the chooser opens or returns from a form. A failed read keeps the last answer
+and offers Retry. A Window pick switches Session when needed and selects that
+Window. Browser Tabs for the current Window appear below these rows.
+
+Topics shows the Host's Topics with the Bench open. A live Topic opens its
+chosen Session in the current Attach. A Dormant Topic offers the wake choice.
+An Empty Topic opens Add a Session. Closing and reopening the chooser returns
+to Sessions.
+_Avoid_: Windows picker, Windows sheet, Topic sheet
 
 **Browser Tab**:
 One page that is open in a Window's Browser on the Host. The Browser and its
@@ -462,7 +460,7 @@ follows with Edit Topic and Add a Session. Then come Zoom Pane, New Window, Spli
 Pane (Split → and Split ↓), Font size − and +, Copy Pane text, then Copy log
 and Disconnect. Font size changes the setting live, and the Surfaces reflow to
 it. Copy Pane text puts the active Pane's text on the clipboard, plain and
-with its wrapped lines joined. Disconnect ends the Attach and goes Home.
+with its wrapped lines joined. Disconnect ends the Attach, clears Last Place, and returns to the Host Screen.
 _Avoid_: menu (on its own), actions, overflow
 
 **Accessory Bar**:

@@ -7,7 +7,6 @@ import {
   Group,
   Host,
   HStack,
-  ScrollView,
   Spacer,
   Text,
   Toggle,
@@ -41,9 +40,7 @@ import {
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
-import { HostScreenRowView, rowKey, type TopicRow } from '@/components/host-screen-row-view';
-import type { Appearance, SheetPalette } from '@/constants/app-theme';
-import type { HostScreenSection } from '@/domain/host-screen';
+import type { SheetPalette } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import type { Frame } from '@/tmux/pane-topology';
 import { SheetHeader, SheetNote } from './sheet-chrome';
@@ -80,22 +77,11 @@ export interface SheetAction {
   systemImage?: SFSymbol;
 }
 
-/** The Host's Topics under the Sessions: the rows of the Host Screen's Topics list. */
-export interface SheetTopics {
-  sections: HostScreenSection[];
-  /** The chrome colours the Host Screen draws the same rows in. */
-  palette: Appearance;
-  onOpenTopic: (row: TopicRow) => void;
-  onRetry: () => void;
-}
-
 export interface PickerSheetProps {
   title: string;
   isPresented: boolean;
   onDismiss: () => void;
   cards: PreviewCard[];
-  /** Panes are a diagram of the Window; Sessions are a list of previews. */
-  layout: 'panes' | 'list';
   loading: boolean;
   error?: string;
   emptyMessage: string;
@@ -105,19 +91,6 @@ export interface PickerSheetProps {
   onAction?: (id: string) => void;
   /** The Zoom switch, shown only for Panes, and only when there are two. */
   zoom?: { on: boolean; onChange: (on: boolean) => void };
-  /** Sessions only: the Host's Topics, under the cards. */
-  topics?: SheetTopics;
-}
-
-/** One Topic row and one section header, as the sheet's height counts them. */
-const TOPIC_ROW_HEIGHT = 56;
-const TOPIC_HEADER_HEIGHT = 32;
-
-function topicsHeight(sections: HostScreenSection[]): number {
-  return sections.reduce(
-    (height, section) => height + TOPIC_HEADER_HEIGHT + section.rows.length * TOPIC_ROW_HEIGHT,
-    0,
-  );
 }
 
 /** The Pane diagram: a 4:3 well with the tiles inset inside it. */
@@ -128,34 +101,12 @@ const TILE_GAP = 4;
 const BOARD_RADIUS = 12;
 const CARD_RADIUS = 12;
 
-/**
- * The glass sheet behind the Sessions and Panes pickers.
- *
- * Two shapes, because two questions. Sessions are a *list of previews*: a
- * Session called "0" among others is not a choice on a phone, and what it is
- * showing is the only thing that tells them apart. Panes are a *diagram*: they
- * are all in front of you already, so the question is which part of the screen
- * you mean, and pointing at where it sits beats reading an index.
- *
- * The diagram deliberately does not show Pane contents. Four tiles of
- * six-point terminal text is a picture of a wall; the directory and the command
- * are what distinguish one Pane from the next, and they fit.
- *
- * Rows are Buttons rather than List selection: a tap is a one-shot command to
- * the Host, not state the sheet owns. It is also the only form that carries a
- * pressable label through the SwiftUI hosting boundary into the accessibility
- * tree, which is what makes the picker testable at all.
- *
- * The Host is zero-sized and absolutely positioned, because the sheet presents
- * itself over everything and its anchor must not take part in layout — a
- * laid-out anchor would eat a row of the Surface.
- */
+/** The Panes picker draws the Window Layout and its split controls. */
 export function PickerSheet({
   title,
   isPresented,
   onDismiss,
   cards,
-  layout,
   loading,
   error,
   emptyMessage,
@@ -163,7 +114,6 @@ export function PickerSheet({
   actions,
   onAction,
   zoom,
-  topics,
 }: PickerSheetProps) {
   // The live setting, not the one the Session was opened with: the Theme
   // decides whether the app is light or dark, and CONTEXT.md is explicit that
@@ -175,10 +125,7 @@ export function PickerSheet({
   const screen = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
   const metrics = sheetMetrics(measuredWidth ?? screen.width, screen.height);
-  const sections = topics?.sections ?? [];
-  const height = sheetHeight(metrics, layout, cards.length, topicsHeight(sections));
-  // Only a Recent Session row shows a time, and no such row is drawn here.
-  const [openedAt] = useState(() => new Date());
+  const height = sheetHeight(metrics, 'panes', cards.length);
 
   return (
     <Host matchContents style={styles.host}>
@@ -190,11 +137,7 @@ export function PickerSheet({
         <Group
           modifiers={[
             presentationDetents(
-              layout === 'panes'
-                ? [{ height }]
-                : // A list that had to be cut can be dragged open; one that fits
-                  // has nothing to drag to.
-                  [{ height }, 'large'],
+              [{ height }],
               // The height changes once the sheet has measured itself, and the
               // detent it opened at goes with it. Without a selection that
               // follows, SwiftUI is left holding a detent it no longer offers,
@@ -233,7 +176,7 @@ export function PickerSheet({
                 <SheetNote palette={palette}>{emptyMessage}</SheetNote>
               ) : null}
 
-              {cards.length > 0 && layout === 'panes' ? (
+              {cards.length > 0 ? (
                 <PaneBoard
                   cards={cards}
                   board={metrics.board}
@@ -242,56 +185,6 @@ export function PickerSheet({
                 />
               ) : null}
 
-              {cards.length > 0 && layout === 'list' ? (
-                <ScrollView>
-                  <VStack spacing={GRID_GAP}>
-                    {cards.map((card) => (
-                      <PreviewButton
-                        key={card.id}
-                        card={card}
-                        palette={palette}
-                        size={metrics.listCard}
-                        onSelect={onSelect}
-                      />
-                    ))}
-                    {topics
-                      ? sections.map((section) => (
-                          <VStack key={section.id} spacing={0} alignment="leading">
-                            <HStack modifiers={[frame({ height: TOPIC_HEADER_HEIGHT })]}>
-                              <Text
-                                modifiers={[
-                                  font({ size: 13, weight: 'semibold' }),
-                                  foregroundColor(palette.secondary),
-                                ]}>
-                                {section.title ?? ''}
-                              </Text>
-                              <Spacer />
-                            </HStack>
-                            {section.rows.map((row, index) => (
-                              <HStack
-                                key={rowKey(row, index)}
-                                modifiers={[frame({ minHeight: TOPIC_ROW_HEIGHT })]}>
-                                <HostScreenRowView
-                                  row={row}
-                                  palette={topics.palette}
-                                  openedAt={openedAt}
-                                  actions={{
-                                    onOpenTopic: topics.onOpenTopic,
-                                    onRetry: topics.onRetry,
-                                    // No Session row and no row that opens in
-                                    // place is among these: see topicSections.
-                                    onOpenSession: () => {},
-                                    onToggle: () => {},
-                                  }}
-                                />
-                              </HStack>
-                            ))}
-                          </VStack>
-                        ))
-                      : null}
-                  </VStack>
-                </ScrollView>
-              ) : null}
             </VStack>
 
             <Spacer />
@@ -429,6 +322,23 @@ function PaneTile({
       <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundColor(palette.secondary)]}>
         {card.detail}
       </Text>
+    </VStack>
+  );
+}
+
+export function SessionPreviews({ cards, width, onSelect }: {
+  cards: PreviewCard[];
+  width: number;
+  onSelect: (id: string) => void;
+}) {
+  const { sheetPalette: palette } = useSettings();
+  const screen = useWindowDimensions();
+  const metrics = sheetMetrics(width, screen.height);
+  return (
+    <VStack spacing={GRID_GAP}>
+      {cards.map((card) => (
+        <PreviewButton key={card.id} card={card} palette={palette} size={metrics.listCard} onSelect={onSelect} />
+      ))}
     </VStack>
   );
 }

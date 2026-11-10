@@ -4,11 +4,7 @@
 # Muxify on this Mac (see e2e/sandbox.sh). Besides the dev Host, it saves a
 # Second Host that reaches the same sandbox, and a Down Host on a closed port.
 #
-# Proves, on the simulator: Home has a section for each Host in the order of
-# the records; the Down Host shows its reason and Retry while the other
-# sections still read; a drag in Settings → Hosts changes the order in the
-# records and on Home; a long press on a Host offers Copy log; ＋ Add opens the
-# Host form.
+# Checks saved Host order on Home and changes in Settings.
 #
 #   bash e2e/hosts.sh
 
@@ -26,12 +22,10 @@ saved_order() {
   python3 -c 'import json, sys; print(" ".join(h["displayName"] for h in json.load(open(sys.argv[1]))["hosts"]))' "$RECORDS"
 }
 
-# The Host names in the order Home draws them, top to bottom, by where each
-# one's All button is. A snapshot leaves the first section's name out, so the
-# buttons are asked for one by one.
+# Read the vertical position of each Host row.
 home_order() {
   for name in "Dev Host" "Second Host" "Down Host"; do
-    y=$(agent-device get attrs "label=\"All of $name\"" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin)["rect"]["y"])')
+    y=$(agent-device get attrs "label=\"Host $name\"" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin)["rect"]["y"])')
     echo "$y $name"
   done | sort -n | cut -d' ' -f2- | paste -sd, - | sed 's/,/, /g'
 }
@@ -58,13 +52,10 @@ PY
 agent-device close >/dev/null 2>&1
 agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
 agent-device wait text "Down Host" 25000 >/dev/null 2>&1
-agent-device wait 'label="Retry"' 25000 >/dev/null 2>&1
 
 [ "$(home_order)" = "Dev Host, Second Host, Down Host" ] || fail "Home order is '$(home_order)'"
-agent-device is visible 'label="Retry"' >/dev/null 2>&1 || fail "the Down Host has no Retry"
-agent-device snapshot -i | grep -q '"Unreachable"' || fail "the Down Host has no red dot"
-agent-device wait 'label="Session 0"' 15000 >/dev/null 2>&1 || fail "the other Hosts did not read"
-echo "ok: Home shows the Hosts in order, the Down Host refused, the others read"
+agent-device is absent 'label="Session 0"' >/dev/null 2>&1 || fail "Home shows a Session"
+echo "ok: Home shows the saved Hosts in order"
 
 open_settings
 
@@ -90,7 +81,6 @@ agent-device close >/dev/null 2>&1
 
 agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
 agent-device wait text "Down Host" 25000 >/dev/null 2>&1
-agent-device wait 'label="Retry"' 25000 >/dev/null 2>&1
 [ "$(home_order)" = "Second Host, Down Host, Dev Host" ] || fail "Home order after the drag is '$(home_order)'"
 echo "ok: Home follows the new order"
 

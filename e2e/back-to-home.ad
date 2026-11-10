@@ -1,38 +1,22 @@
 context platform=ios kind=simulator
 
-# Back goes Home and leaves the Session attached (ADR 0007).
-#
-# From a Session, Back shows Home, and opening the Session again from Home
-# finds it still attached: a new Attach would show Connecting first and read
-# the Topology a few round trips later, so a program line within three
-# seconds is the proof there was none.
-#
-# Run with:  bash e2e/sandbox.sh agent-device test ./e2e/back-to-home.ad
-
 open "dev.muxify.app" --relaunch
-wait "text" "Dev Host" 15000
-
-press "label=\"All of Dev Host\""
-wait "label=\"Edit Host\"" 15000
-# Home is still under the Host Screen until the push settles, and has the
-# same Session and Topic rows.
-wait 1500
+wait "label=\"Host Dev Host\"" 15000
+is "absent" "label=\"Session 0\""
+press "label=\"Host Dev Host\""
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "0"
-
-# Home, not the Host Screen: Home has All and Settings, the Host Screen has
-# Edit Host.
-press "role=button label=\"Back\""
-wait "label=\"All of Dev Host\"" 8000
-is "visible" "label=\"Settings\""
-is "absent" "label=\"Edit Host\""
-is "visible" "label=\"Session 0\""
-
-# Still attached: the Session opens with its program already known.
+back
+wait "label=\"Edit Host\"" 8000
+is "absent" "label=\"Settings\""
 press "label=\"Session 0\""
 wait "id=\"pane-command\"" 3000
 is "text" "id=\"attached-session\"" "0"
-
+back
+wait "label=\"Edit Host\"" 8000
+back
+wait "label=\"Host Dev Host\"" 8000
+is "visible" "label=\"Settings\""
 close

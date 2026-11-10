@@ -1203,7 +1203,7 @@ describe('the current Topic belongs to the Attach', () => {
     tags: [], state: 'live', sessions: [] });
   const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
 
-  it('keeps a sibling switch in Last Place and clears it for a plain same-Session pick', async () => {
+  it('keeps the current Session and Topic unchanged after a plain same-Session pick', async () => {
     const kit = attachOn({ topicId: 'a' });
     await connected(kit);
     await kit.attach.switchSession(destination('play', 'a'));
@@ -1211,11 +1211,55 @@ describe('the current Topic belongs to the Attach', () => {
     expect(kit.attach.state().topic?.id).toBe('a');
     expect(kit.wrote).toContain('last place host-1 play a');
     kit.hosts[0].commands.length = 0;
+    const before = kit.attach.state();
+    const writes = kit.wrote.length;
     await kit.attach.switchSession({ sessionName: 'play', topic: null });
     await settle();
+    expect(kit.attach.state()).toBe(before);
+    expect(kit.wrote).toHaveLength(writes);
+    expect(kit.hosts[0].commands).toHaveLength(0);
+  });
+
+  it('keeps the Topic for a plain sibling pick and clears it for an unrelated Session', async () => {
+    const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
+    const kit = attachOn({ topicId: 'a', readTopic: async () => ({ kind: 'shown', topic: detail }) });
+    await connected(kit);
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play a');
+    await kit.attach.switchSession({ sessionName: 'unrelated', topic: null });
+    await settle();
     expect(kit.attach.state().topic).toBeNull();
-    expect(kit.wrote.at(-1)).toBe('last place host-1 play no Topic');
-    expect(kit.hosts[0].verbs()).not.toContain('switch-client');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 unrelated no Topic');
+  });
+
+  it('sets an explicit Topic on the current Session', async () => {
+    const kit = attachOn({ topicId: 'a' });
+    await connected(kit);
+    await kit.attach.switchSession(destination('work', 'b'));
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('b');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work b');
+  });
+
+  it('keeps the Session and Topic when membership has not loaded, then permits a retry', async () => {
+    const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
+    let readable = false;
+    const kit = attachOn({ topicId: 'a', readTopic: async () => readable
+      ? { kind: 'shown', topic: detail }
+      : { kind: 'failed', error: 'Host is unavailable' } });
+    await connected(kit);
+    const writes = kit.wrote.length;
+    await expect(kit.attach.switchSession({ sessionName: 'play', topic: null })).rejects.toThrow('Topic has not loaded');
+    expect(kit.attach.state().sessionName).toBe('work');
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote).toHaveLength(writes);
+    readable = true;
+    await kit.attach.refreshTopic();
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    expect(kit.attach.state().topic?.id).toBe('a');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 play a');
   });
 
   it('rejects an old Topic read after a switch and a pre-edit read after a fresh read', async () => {

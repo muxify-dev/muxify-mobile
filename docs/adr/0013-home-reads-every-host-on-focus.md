@@ -1,5 +1,12 @@
 # Home reads every Host when it comes into focus
 
+Superseded by the approved Hosts navigation on 10 November 2026. Home now
+shows saved Hosts and reads no remote Listing. The Host Screen reads its own
+Listing on focus. Terminal Back returns to that Host Screen and keeps the
+Attach. Cold and direct entry build the same parent screens.
+
+The original decision follows.
+
 Home shows a section for each Host, and each section has real rows: Topics,
 Recent Sessions or Sessions, the first 5 of what the Host Screen would show.
 Those rows come from a Listing, so Home asks every saved Host for its Listing
