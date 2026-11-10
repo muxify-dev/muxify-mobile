@@ -541,6 +541,57 @@ describe('adding a Session to a Topic', () => {
   });
 });
 
+describe('waking a Dormant Topic', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const WOKEN = JSON.stringify({ changed: { topic_id: ID } });
+
+  it.each([
+    ['reopenTopic', 'reopen'],
+    ['startTopicFresh', 'start-fresh'],
+  ] as const)('%s asks the Host for topic %s on the Topic by id', async (call, verb) => {
+    const host = scriptedHost(WOKEN);
+
+    const write = await createMuxifyCli()[call](host.exec, ID);
+
+    expect(host.argv()).toEqual(['topic', verb, '--topic', ID, '--json']);
+    expect(write).toEqual({ kind: 'changed' });
+  });
+
+  it.each(['reopenTopic', 'startTopicFresh'] as const)(
+    '%s fails with the message the CLI gave, as for a Topic that is not Dormant',
+    async (call) => {
+      const message = 'The Topic has live Sessions.';
+      const host = scriptedHost(
+        JSON.stringify({ failed: { kind: 'x', message, phase: 'nothing_changed' } }),
+        1,
+      );
+
+      expect(await createMuxifyCli()[call](host.exec, ID)).toEqual({ kind: 'failed', error: message });
+    },
+  );
+
+  it.each(['reopenTopic', 'startTopicFresh'] as const)(
+    '%s tells an old muxify, which has no such command, from a refusal',
+    async (call) => {
+      const host = fakeHost([
+        ['command -v', PATH_FOUND],
+        ['topic', { exitCode: 2, stderr: 'usage: muxify topic open …' }],
+      ]);
+
+      const write = await createMuxifyCli()[call](host.exec, ID);
+
+      expect(write.kind === 'failed' && write.error).toContain('old muxify');
+    },
+  );
+
+  it.each(['reopenTopic', 'startTopicFresh'] as const)('%s fails, and says why, on a Host with no muxify', async (call) => {
+    expect(await createMuxifyCli()[call](fakeHost([]).exec, ID)).toEqual({
+      kind: 'failed',
+      error: 'Desktop Muxify is not on this Host.',
+    });
+  });
+});
+
 describe('reading the Tabs of a Window', () => {
   const TABS = [
     { active: true, id: 'A1', title: 'Dev server', url: 'http://mac.tail1234.ts.net:3000/' },

@@ -44,6 +44,7 @@ import {
   type OpenableRow,
 } from '@/domain/host-screen';
 import { useHostReading } from '@/hooks/use-host-reading';
+import { useWakeFromMenu } from '@/hooks/use-wake-from-menu';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
@@ -156,6 +157,8 @@ export default function HostScreen() {
 
   const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
+  const wakeFromMenu = useWakeFromMenu(id, readHost);
+
   const actions: RowActions = {
     onOpenSession: open,
     onOpenTopic: (row) =>
@@ -169,6 +172,7 @@ export default function HostScreen() {
           seed: topicSeedParam(row.seed),
         },
       }),
+    onWake: (row, wake) => wakeFromMenu(row.id, wake),
     onToggle: toggleOpened,
     onRetry: () => void readHost(),
   };

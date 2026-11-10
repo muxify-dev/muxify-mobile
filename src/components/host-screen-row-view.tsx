@@ -1,4 +1,4 @@
-import { Button, HStack, Image, ProgressView, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import { Button, ContextMenu, HStack, Image, ProgressView, Spacer, Text, VStack } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
   buttonStyle,
@@ -15,6 +15,7 @@ import type { HostScreenRow, OpenableRow, RecentRow } from '@/domain/host-screen
 import { timeAgoFrom } from '@/lib/relative-time';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
+import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
 export type TopicRow = Extract<HostScreenRow, { kind: 'topic' }>;
 
@@ -22,6 +23,8 @@ export type TopicRow = Extract<HostScreenRow, { kind: 'topic' }>;
 export interface RowActions {
   onOpenSession: (name: string) => void;
   onOpenTopic: (row: TopicRow) => void;
+  /** Wakes a Dormant Topic from its long-press menu. A screen that does not pass it gives the card no menu. */
+  onWake?: (row: TopicRow, wake: Wake) => void;
   onToggle: (row: OpenableRow) => void;
   onRetry: () => void;
 }
@@ -122,8 +125,8 @@ export function HostScreenRowView({
           {row.text}
         </Text>
       );
-    case 'topic':
-      return (
+    case 'topic': {
+      const card = (
         <Button
           onPress={() => actions.onOpenTopic(row)}
           modifiers={[buttonStyle('plain'), accessibilityLabel(`Topic ${row.label}`)]}>
@@ -154,7 +157,29 @@ export function HostScreenRowView({
             <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
           </HStack>
         </Button>
+)
+      const { onWake } = actions;
+      if (row.seed.state !== 'dormant' || onWake === undefined) return card;
+      return (
+        <ContextMenu>
+          <ContextMenu.Items>
+            <Button
+              label={WAKE_LABEL.reopen}
+              systemImage="arrow.counterclockwise"
+              onPress={() => onWake(row, 'reopen')}
+              modifiers={[accessibilityLabel(WAKE_LABEL.reopen)]}
+            />
+            <Button
+              label={WAKE_LABEL['start-fresh']}
+              systemImage="sparkles"
+              onPress={() => onWake(row, 'start-fresh')}
+              modifiers={[accessibilityLabel(WAKE_LABEL['start-fresh'])]}
+            />
+          </ContextMenu.Items>
+          <ContextMenu.Trigger>{card}</ContextMenu.Trigger>
+        </ContextMenu>
       );
+    }
     case 'locked-session':
       return (
         <Button

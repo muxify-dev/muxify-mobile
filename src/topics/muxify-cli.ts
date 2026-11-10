@@ -87,6 +87,23 @@ export interface MuxifyCli {
   addSession(exec: Exec, topic: TopicId, folder: string): Promise<AddSessionRead>;
 
   /**
+   * Makes the remembered Sessions, Windows, Tabs and Agents of a Dormant or
+   * Settled Topic again: `topic reopen`, as Reopen Topic does on the Mac. It
+   * returns once the Sessions and Windows exist, before the Agents are up. It
+   * names the Topic by id and finds `muxify` as `read` does. A refusal fails
+   * with the Host's reason, and an old `muxify` without the command fails
+   * with the usual old-muxify reason.
+   */
+  reopenTopic(exec: Exec, topic: TopicId): Promise<TopicWrite>;
+
+  /**
+   * Makes one Session with one shell Window in each Session Path that a
+   * Dormant or Settled Topic remembers: `topic start-fresh`, as Start Topic
+   * Fresh does. It answers as `reopenTopic` does.
+   */
+  startTopicFresh(exec: Exec, topic: TopicId): Promise<TopicWrite>;
+
+  /**
    * The Tabs of one Window's Browser: `browser tabs --json`. It names the
    * Window by tmux's id, such as `@12`, because an SSH exec is in no Pane for
    * `muxify` to take the Window from. It finds `muxify` as `read` does. A
@@ -146,6 +163,18 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     return parseAnswer(result.stdout, parse);
   }
 
+  /** One write on a Topic: `<command> --topic <id> --json`. A refusal fails with the Host's reason. */
+  async function writeTopic(exec: Exec, command: string, topic: TopicId): Promise<TopicWrite> {
+    const path = await locate(exec);
+    if (path === null) return { kind: 'failed', error: NO_MUXIFY };
+
+    const result = await exec(`${shellQuote(path)} ${command} --topic ${shellQuote(topic)} --json`);
+    if (result.exitCode === USAGE_ERROR) return { kind: 'failed', error: CHANGE_USAGE_ERROR };
+    return result.exitCode === 0
+      ? { kind: 'changed' }
+      : { kind: 'failed', error: failureText(result) };
+  }
+
   return {
     async read(exec) {
       const path = await locate(exec);
@@ -169,18 +198,11 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'created', topic: parsed.value };
     },
 
-    async change(exec, topic, change) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'failed', error: NO_MUXIFY };
+    change: (exec, topic, change) => writeTopic(exec, changeCommand(change), topic),
 
-      const result = await exec(
-        `${shellQuote(path)} ${changeCommand(change)} --topic ${shellQuote(topic)} --json`,
-      );
-      if (result.exitCode === USAGE_ERROR) return { kind: 'failed', error: CHANGE_USAGE_ERROR };
-      return result.exitCode === 0
-        ? { kind: 'changed' }
-        : { kind: 'failed', error: failureText(result) };
-    },
+    reopenTopic: (exec, topic) => writeTopic(exec, 'topic reopen', topic),
+
+    startTopicFresh: (exec, topic) => writeTopic(exec, 'topic start-fresh', topic),
 
     async addSession(exec, topic, folder) {
       const parsed = await answerTo(
