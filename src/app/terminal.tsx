@@ -44,6 +44,8 @@ import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
 import { lastSnapshot } from '@/topics/host-topics';
 import { readTopic } from '@/topics/read-topic';
+import { readBrowserTabs } from '@/browser/read-browser-tabs';
+import type { BrowserTab } from '@/browser/tabs';
 import { tagsParam } from '@/topics/tags-param';
 import {
   lastTopic,
@@ -1070,6 +1072,15 @@ export default function TerminalScreen() {
     [],
   );
 
+  /**
+   * The Browser Tabs the Host last listed, and the Window they belong to. Read
+   * each time the Title Sheet opens. The Window's id is kept with them, so the
+   * Tabs of one Window never show under another.
+   */
+  const [windowTabs, setWindowTabs] = useState<{ window: string; tabs: BrowserTab[] } | null>(null);
+  const activeWindowId = state?.topology.activeWindow?.id;
+  const browserTabs = windowTabs && windowTabs.window === activeWindowId ? windowTabs.tabs : NO_TABS;
+
   const openTitleSheet = useCallback(() => {
     if (!attach) return;
     const kind = topicId ? 'topic' : 'windows';
@@ -1078,7 +1089,22 @@ export default function TerminalScreen() {
     // The programs in the rows are a Topology read old; see refreshBehindSheet.
     attach.refreshTopology();
     if (kind === 'topic') rereadTopic();
-  }, [attach, topicId, rereadTopic]);
+    if (hostId && activeWindowId) {
+      void readBrowserTabs(hostId, activeWindowId).then((read) => {
+        setWindowTabs({ window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
+      });
+    }
+  }, [attach, topicId, rereadTopic, hostId, activeWindowId]);
+
+  /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
+  const openTab = useCallback(
+    (tab: BrowserTab) => {
+      say(`picked Tab ${tab.id}`);
+      setTitleSheet({ open: false });
+      router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
+    },
+    [router],
+  );
 
   const titleSheetDismissed = useCallback(() => {
     say('title sheet dismissed');
@@ -1499,6 +1525,8 @@ export default function TerminalScreen() {
         }
         onSwitch={switchFromTitleSheet}
         onPick={pickTitleRow}
+        tabs={browserTabs}
+        onOpenTab={openTab}
       />
 
       {composerOpen && attach && activePaneId ? (
@@ -2235,6 +2263,8 @@ const PICKER_ACTIONS: Record<PickerKind, SheetAction[]> = {
 
 /** How long a sheet takes to leave, so the next one can be presented. */
 const SHEET_HANDOVER_MS = 450;
+
+const NO_TABS: BrowserTab[] = [];
 
 /** How many captured lines a preview box can show before it is just noise. */
 const PREVIEW_LINES = 14;

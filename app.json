@@ -11,7 +11,14 @@
       "icon": "./assets/images/AppIcon.icon",
       "bundleIdentifier": "dev.muxify.app",
       "supportsTablet": true,
-      "appleTeamId": "R9G7S83AGV"
+      "appleTeamId": "R9G7S83AGV",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSAllowsArbitraryLoadsInWebContent": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {

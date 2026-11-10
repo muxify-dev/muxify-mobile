@@ -119,6 +119,8 @@ function AppStack() {
             title: 'Add a Session',
           }}
         />
+        {/* The title is the page's own, which the screen sets when it has one. */}
+        <Stack.Screen name="web-view" options={{ title: '' }} />
         {/* No navigation header: the screen draws its own Header, on the
             terminal background, with Back in it. */}
         <Stack.Screen

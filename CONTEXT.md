@@ -296,7 +296,10 @@ removes exactly one character; reporting the size of a cell with the grid,
 without which nothing outside the Surface can turn a touch into a cell; giving
 the one-finger drag to Muxify, locked to one axis when it begins, as a scroll
 or as a Pane Swipe; the Selection Layer, with Paste from the system menu and
-from ⌘V on a hardware keyboard; and two promises about its own readiness — nothing written to it is lost, and every
+from ⌘V on a hardware keyboard; removing the layer of a surface it frees, which
+ghostty leaves in the view with a pointer to the freed renderer, a crash on
+the way back from a screen pushed over the Terminal Screen; and two promises
+about its own readiness — nothing written to it is lost, and every
 surface it builds underneath reports its grid — without which a Pane could be
 left blank with no way to notice (see ADR 0009). Each hunk says why in place.
 
@@ -381,8 +384,30 @@ to another one. **Switch…** at the top closes the sheet and opens the Sessions
 picker. The sheet draws no previews; the Sessions picker keeps its own. With
 the Topics list on in Settings, the Sessions picker lists the Host's Topics
 under its Sessions, as the rows of the Host Screen, with the Bench open. A tap
-on a Topic opens its Topic Screen over the Attach, which stays up.
+on a Topic opens its Topic Screen over the Attach, which stays up. Under the
+rows, **Browser tabs** lists the Browser Tabs of the Window on screen that are
+at a Tailscale address, read from the Host each time the sheet opens. A Window
+with none has no such section.
 _Avoid_: Windows picker, Windows sheet (the old grid of previews), Topic sheet
+
+**Browser Tab**:
+One page that is open in a Window's Browser on the Host. The Browser and its
+Tabs are desktop Muxify's, and the phone reads them through `muxify browser
+tabs` for one Window, named by tmux's id. Each Tab has a URL, a title and
+whether it is the Tab that the Browser shows. The phone lists a Tab only when
+its URL is http or https at a Tailscale address: a `*.ts.net` name, or an IPv4
+address in 100.64.0.0/10. Other Tabs, such as `localhost` and public sites,
+are not shown. A Host with no desktop Muxify, or whose Muxify does not show
+the tmux server, lists no Tabs. See ADR 0015.
+_Avoid_: page, link, bookmark, browser tab (in lower case, for the term)
+
+**Web View**:
+The screen that a tap on a Browser Tab opens, over the Terminal Screen. It
+loads the Tab's URL on the phone, so it shows what the address serves and not
+the state of the Tab on the Host. Its title is the page's title. Reload, and a
+pull down on the page, load the page again. A page that does not load shows
+the reason and **Try again**. Back goes to the Session, which stayed attached.
+_Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:
 The Header's ⋯ menu, in this order: Compose, Zoom Pane, New Window, Split
