@@ -10,7 +10,8 @@
 #      scrolls the pairs and types nothing
 #   3  ⌃ and then c on the system keyboard interrupts the program
 #   4  ⌥ and then b reaches the Pane as Meta-b
-#   5  ▲ recalls the last command
+#   5  the arrow key: a drag up is Up once and recalls the last command, an
+#      armed ⌃ goes with the first arrow only, and a hold repeats the arrow
 #   6  ⌘ and then c puts the Pane's text on the clipboard
 #   7  ⌘ and then v pastes the clipboard and runs nothing, two lines too. For
 #      a program that runs each line of a paste, the phone asks first
@@ -74,6 +75,14 @@ chord() {
   agent-device press "label=\"$1\"" >/dev/null 2>&1
   sleep 0.5
   press_at "$2"
+}
+
+# Drags from the middle of the arrow key: `stick <dx> <dy> <milliseconds>`.
+stick() {
+  local x y w h
+  read -r x y w h <<<"$(frame_of arrows)"
+  [ -n "${x:-}" ] || fail "no arrow key on screen"
+  agent-device gesture pan "$((x + w / 2))" "$((y + h / 2))" "$1" "$2" "$3" >/dev/null 2>&1
 }
 
 keyboard_up() { [ -n "$(frame_of return)" ]; }
@@ -140,16 +149,37 @@ sleep 2
 typed_line | grep -qi '^\^\[b$' || fail "⌥b reached cat as: $(typed_line)"
 echo "     cat -v read $(typed_line)"
 
-echo "5/8  ▲ recalls the last command"
+echo "5/8  the arrow key sends the arrow it is dragged towards"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'true key-row-recall' Enter; tmux send-keys -t '$PANE' 'clear' Enter"
 sleep 1
-agent-device press 'label="up"' >/dev/null 2>&1
-sleep 0.5
-agent-device press 'label="up"' >/dev/null 2>&1
+# Lifted before the arrow repeats, so each drag is one Up.
+stick 0 -30 250
 sleep 1
-[ "$(typed_line)" = '$ true key-row-recall' ] || fail "▲ ▲ put this on the prompt: $(typed_line)"
-echo "     the command before clear is on the prompt"
+stick 0 -30 250
+sleep 1
+[ "$(typed_line)" = '$ true key-row-recall' ] || fail "two drags up put this on the prompt: $(typed_line)"
+echo "     two drags up recalled the command before clear"
+fresh_prompt
+on_host "tmux send-keys -t '$PANE' 'cat -v' Enter"
+sleep 1
+agent-device press 'label="control"' >/dev/null 2>&1
+sleep 0.5
+stick 0 -30 250
+sleep 1
+stick 0 -30 250
+sleep 1
+[ "$(typed_line)" = '^[[1;5A^[[A' ] || fail "⌃ and two drags up reached cat as: $(typed_line)"
+echo "     ⌃ went with the first Up only: cat -v read $(typed_line)"
+fresh_prompt
+on_host "tmux send-keys -t '$PANE' 'cat -v' Enter"
+sleep 1
+stick -30 0 1500
+sleep 1
+LEFTS=$(typed_line | grep -o '\^\[\[D' | wc -l | tr -d ' ')
+[ "$LEFTS" -ge 3 ] || fail "a held drag left sent $LEFTS arrows: $(typed_line)"
+[ "$(typed_line | tr -d '^[D')" = '' ] || fail "a held drag left sent more than Left: $(typed_line)"
+echo "     a held drag left repeated Left $LEFTS times"
 
 echo "6/8  ⌘ then c copies the Pane's text"
 fresh_prompt
@@ -214,5 +244,6 @@ fresh_prompt
 echo
 echo "PASS: a pair types its top symbol on a tap and its bottom one on a drag"
 echo "      down, the pairs scroll sideways, ⌃ and ⌥ apply to the next key of"
-echo "      the system keyboard, ▲ is the Up key, and ⌘ c, v and k copy, paste"
+echo "      the system keyboard, the arrow key sends the arrow it is dragged"
+echo "      towards and repeats it while held, and ⌘ c, v and k copy, paste"
 echo "      without running, one line or two, and clear."

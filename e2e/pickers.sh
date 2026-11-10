@@ -80,7 +80,7 @@ named() { agent-device snapshot -i 2>/dev/null | grep -cE "^@e[0-9]+ \[button\] 
 key_row_order() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
-FIXED = ('escape', 'control', 'option', 'tab', 'up', 'left', 'down', 'right', 'Panes', 'command', 'Keyboard')
+FIXED = ('escape', 'control', 'option', 'tab', 'arrows', 'Panes', 'command', 'Keyboard')
 across = []
 for n in json.load(sys.stdin)['data']['nodes']:
     if n['type'] == 'Button' and n.get('label') in FIXED:
@@ -174,11 +174,11 @@ agent-device is exists 'label="Zoom"' >/dev/null 2>&1 \
 agent-device press 'label="Close Panes"' >/dev/null 2>&1
 sleep 1
 
-# Left to right: the fixed modifiers, the pairs, then the arrows, Panes, ⌘ and
-# the keyboard.
-[ "$(key_row_order)" = "escape control option tab pairs up left down right Panes command Keyboard" ] \
+# Left to right: the fixed modifiers, the pairs, then the arrow key, Panes, ⌘
+# and the keyboard.
+[ "$(key_row_order)" = "escape control option tab pairs arrows Panes command Keyboard" ] \
   || fail "the Key Row is out of order: $(key_row_order)"
-echo "     and the Key Row reads modifiers, pairs, arrows, Panes, ⌘, Keyboard"
+echo "     and the Key Row reads modifiers, pairs, arrow key, Panes, ⌘, Keyboard"
 offers_new_window
 echo "     and ⋯ offers New Window with one Window"
 

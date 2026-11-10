@@ -1,3 +1,4 @@
+import type { ArrowDirection } from '@/lib/arrow-stick';
 import { modifierPrefix, type Modifier, type Modifiers } from '@/lib/modifier-keys';
 
 /**
@@ -54,7 +55,7 @@ export function namedKeyName(key: NamedKey, armed: Modifiers): string {
   return `${modifierPrefix({ ...armed, ctrl: armed.ctrl && key.takesCtrl !== false })}${key.key}`;
 }
 
-/** The fixed group at the left. */
+/** The fixed section at the left. */
 export const LEFT_KEYS: (ModifierKey | NamedKey)[] = [
   { kind: 'named', key: 'Escape', label: '⎋', spoken: 'escape', takesCtrl: false },
   { kind: 'modifier', modifier: 'ctrl', label: '⌃', spoken: 'control' },
@@ -78,15 +79,15 @@ export const PAIR_KEYS: PairKey[] = [
   { kind: 'pair', top: '$', bottom: '#', spoken: 'dollar hash' },
 ];
 
-/** The four arrows of the fixed group at the right, by where each sits. */
+/** The four arrows the arrow key at the right sends, by the way it is dragged. */
 export const ARROW_KEYS = {
   up: { kind: 'named', key: 'Up', label: '▲', spoken: 'up' },
   left: { kind: 'named', key: 'Left', label: '◀', spoken: 'left' },
   down: { kind: 'named', key: 'Down', label: '▼', spoken: 'down' },
   right: { kind: 'named', key: 'Right', label: '▶', spoken: 'right' },
-} satisfies Record<string, NamedKey>;
+} satisfies Record<ArrowDirection, NamedKey>;
 
-/** Command, in the fixed group at the right between Panes and Keyboard. */
+/** Command, in the fixed section at the right between Panes and Keyboard. */
 export const COMMAND_KEY: ModifierKey = {
   kind: 'modifier',
   modifier: 'cmd',

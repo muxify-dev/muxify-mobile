@@ -109,3 +109,24 @@ Three facts are new:
   bracketed paste off for a program that asked for it, and a multi-line paste
   after it runs line by line. Clear sends `C-l`, waits 250 ms, and then runs
   `clear-history`. Without the wait, the lines came back into the Scrollback.
+
+## Three groups in one capsule, and one arrow key
+
+The three groups are now three sections of one glass capsule, split by thin
+dividers. Three capsules read as three toolbars, and the gaps between them
+cost the pairs width. Only the pairs scroll. Each end of the pairs fades
+while there are more pairs past it, so the row shows that it scrolls. The
+fade is a mask on the pairs and not a gradient painted over them, because the
+glass behind them has no one colour to paint.
+
+The four arrows are now one key that works like a joystick. Four arrows in
+the width of one and a half keys were too small to hit, and ▲ did not sit
+over ▼. One key frees half a key for the pairs, which now fit three across on
+a 393 pt phone. A touch sends nothing. A drag of 12 pt sends the arrow on the
+axis the finger moved further along, and a hold repeats it after 400 ms,
+about 12 a second. The cost is that the key does not show it is four keys,
+and VoiceOver needs an action for each arrow.
+
+The decision above does not change. Each arrow is still a tmux key name from
+`ARROW_KEYS`, and an armed ctrl or opt goes with the first arrow of a drag and
+not with its repeats.
