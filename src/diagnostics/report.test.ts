@@ -46,7 +46,7 @@ const state = (over: Partial<AttachState> = {}): AttachState => ({
   grid: { cols: 49, rows: 41 },
   scrolled: null,
   mouseTracking: false,
-  cursorRow: 12,
+  rowInSight: 12,
   alternate: false,
   ...over,
 });
@@ -76,7 +76,7 @@ describe('a report', () => {
       '  Topology: 1 window, active @0 #0 zoomed; 2 panes: %1* 0,0 49x20 | %2 0,21 49x20',
     );
     expect(lines[5]).toBe(
-      '  Client grid: 49x41; Zoom preference on; cursor row 12; mouse tracking off; scrolled live',
+      '  Client grid: 49x41; Zoom preference on; row in sight 12; mouse tracking off; scrolled live',
     );
     expect(lines[6]).toBe('Entries: 2, oldest first');
     expect(lines[7]).toBe('');

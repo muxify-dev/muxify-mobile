@@ -151,6 +151,16 @@ surface() {
   done
   echo ""
 }
+# The row the screen keeps above the keyboard, from the Log's report.
+row_in_sight() {
+  agent-device press 'label="Options"' >/dev/null 2>&1
+  agent-device wait 'label="Copy log"' 3000 >/dev/null 2>&1 || return 0
+  agent-device press 'role=button label="Copy log"' >/dev/null 2>&1
+  agent-device wait 'label="OK"' 8000 >/dev/null 2>&1
+  agent-device press 'label="OK"' >/dev/null 2>&1
+  sleep 1
+  xcrun simctl pbpaste booted | grep -oE 'row in sight [0-9]+' | tail -1 | grep -oE '[0-9]+$'
+}
 window()  { on_host "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
 # compared. `-w` is not optional: window-size lives there and nowhere else.
@@ -431,6 +441,49 @@ TOP=$(agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 print(round(next(n['rect']['y'] for n in json.load(sys.stdin)['data']['nodes'] if n['type'] == 'TextView')))")
 echo "     short Pane: cursor row ends at $BOTTOM, Surface top at $TOP"
+
+# The stand-in redraws its footer after the Client resizes the alternate screen.
+FOOTER_PROGRAM="$MUXIFY_E2E_ROOT/footer.py"
+cat > "$FOOTER_PROGRAM" <<'PYTHON'
+import os
+import signal
+import sys
+
+
+def draw(*_):
+    rows = os.get_terminal_size().lines
+    sys.stdout.write(f"\033[2J\033[{rows};1HFOOTER\033[3;1H")
+    sys.stdout.flush()
+
+
+signal.signal(signal.SIGWINCH, draw)
+try:
+    sys.stdout.write("\033[?1049h")
+    draw()
+    while True:
+        signal.pause()
+except KeyboardInterrupt:
+    pass
+finally:
+    sys.stdout.write("\033[?1049l")
+    sys.stdout.flush()
+PYTHON
+on_host "tmux send-keys -t '$SESSION:' \"python3 '$FOOTER_PROGRAM'\" Enter"
+sleep 3
+ALTERNATE_ROWS=$(on_host "tmux display-message -p -t '$SESSION:' '#{pane_height}'")
+[ "$ALTERNATE_ROWS" -lt "$FULL" ] \
+  || fail "the alternate screen did not fit above the keyboard"
+on_host "tmux capture-pane -t '$SESSION:' -p" | tail -1 | grep -q FOOTER \
+  || fail "the full-screen stand-in did not draw its footer on the last row"
+# The Log reports the row independently of the clipped accessibility frame.
+IN_SIGHT=$(row_in_sight)
+[ "$IN_SIGHT" = $((ALTERNATE_ROWS - 1)) ] \
+  || fail "on the alternate screen the row kept in sight is ${IN_SIGHT:-unread}, not the last row $((ALTERNATE_ROWS - 1))"
+echo "     full-screen program: row $IN_SIGHT, the last, is kept above the keys"
+on_host "tmux send-keys -t '$SESSION:' C-c"
+sleep 2
+[ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
+  || fail "leaving the alternate screen did not restore the full Window height"
 ensure_keyboard away
 [ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard changed the Window on the way down"

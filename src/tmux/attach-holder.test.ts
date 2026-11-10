@@ -32,7 +32,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     grid: null,
     scrolled: null,
     mouseTracking: false,
-    cursorRow: null,
+    rowInSight: null,
     alternate: false,
   });
 

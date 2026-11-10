@@ -84,15 +84,15 @@ export interface PaneViewEvents {
    */
   onMouseTracking?: (wanted: boolean) => void;
   /**
-   * The row the Pane's cursor is on, when it changes.
+   * The row of the Pane the keyboard must not cover, when it changes.
    *
    * What the Terminal Screen slides the Window by when the keyboard covers
    * part of it — see windowSlide. Read with the rest of the Pane's state,
    * because that is where tmux keeps it; nothing in the byte stream says where
    * the cursor ended up without parsing the stream, and parsing it is the
-   * Surface's job.
+   * Surface's job. See rowInSight.
    */
-  onCursor?: (row: number) => void;
+  onRowInSight?: (row: number) => void;
   /** Whether the Pane uses the alternate screen, reported when it changes. */
   onAlternate?: (alternate: boolean) => void;
   /** A repaint landed on the Surface. What clears a line of trouble. */
@@ -305,8 +305,8 @@ export function createPaneView(
    * starts in and is not news.
    */
   let reportedMouse = false;
-  /** The cursor row last reported, so only a move is announced. */
-  let reportedCursor: number | null = null;
+  /** The row in sight last reported, so only a move is announced. */
+  let reportedRow: number | null = null;
   let reportedAlternate: boolean | undefined;
 
   /** How far above the live bottom the Surface is showing. */
@@ -406,11 +406,12 @@ export function createPaneView(
     events.onAlternate?.(state.alternate);
   }
 
-  function announceCursor(): void {
+  function announceRowInSight(): void {
     if (disposed || !state) return;
-    if (state.cursorRow === reportedCursor) return;
-    reportedCursor = state.cursorRow;
-    events.onCursor?.(state.cursorRow);
+    const row = rowInSight(state);
+    if (row === reportedRow) return;
+    reportedRow = row;
+    events.onRowInSight?.(row);
   }
 
   /**
@@ -431,7 +432,7 @@ export function createPaneView(
         state = next;
         announce();
         announceMouse();
-        announceCursor();
+        announceRowInSight();
         announceAlternate();
       })
       .catch(report);
@@ -546,7 +547,7 @@ export function createPaneView(
         state = next;
         stateReadAt = clock.now();
         announceMouse();
-        announceCursor();
+        announceRowInSight();
         announceAlternate();
       }
       write(
@@ -899,4 +900,19 @@ export function createPaneView(
       held = null;
     },
   };
+}
+
+/**
+ * The row the keyboard must not cover: the cursor's, except on the alternate
+ * screen.
+ *
+ * A shell after a `clear` has its text at the top and the row being typed on
+ * under it, so following the cursor keeps that text in sight. A full-screen
+ * program puts its status line at the bottom, under its cursor: Claude Code
+ * types on a row with three rows of footer below it, and vim's status line is
+ * under the text being edited. So on the alternate screen the last row is the
+ * one kept in sight, as ADR 0008 says.
+ */
+function rowInSight(state: PaneState): number {
+  return state.alternate ? state.height - 1 : state.cursorRow;
 }

@@ -81,10 +81,10 @@ export type AttachPhase =
   | { kind: 'closed' };
 
 /** The parts of the state that belong to the active Pane. See paneFacts. */
-type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'cursorRow' | 'alternate'>;
+type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'rowInSight' | 'alternate'>;
 
 /** A Pane no view has said anything about. */
-const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, cursorRow: null, alternate: false };
+const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, rowInSight: null, alternate: false };
 
 /** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
 export interface AttachState {
@@ -122,13 +122,14 @@ export interface AttachState {
   /** Whether the application in the active Pane is listening for the mouse. */
   mouseTracking: boolean;
   /**
-   * The row the active Pane's cursor is on, or null before it has been read.
+   * The row of the active Pane the keyboard must not cover, or null before it
+   * has been read. The cursor's, or the last row of a full-screen program.
    *
    * What the screen slides the Window by when the keyboard covers part of it;
    * see windowSlide. The active Pane's only, for the same reason as the
    * Scrollback position: one Window, one place being typed into.
    */
-  cursorRow: number | null;
+  rowInSight: number | null;
   /** Whether the active Pane uses the alternate screen. */
   alternate: boolean;
 }
@@ -393,7 +394,7 @@ export function openAttach(options: AttachOptions): Attach {
     grid: null,
     scrolled: null,
     mouseTracking: false,
-    cursorRow: null,
+    rowInSight: null,
     alternate: false,
   };
 
@@ -419,7 +420,7 @@ export function openAttach(options: AttachOptions): Attach {
   /**
    * The facts a subscriber would notice, written down as they change.
    *
-   * Not every field: the cursor row and the Scrollback position move with
+   * Not every field: the row in sight and the Scrollback position move with
    * every burst of output, and a Log full of them is a Log with nothing else
    * left in it.
    */
@@ -520,7 +521,7 @@ export function openAttach(options: AttachOptions): Attach {
       {
         onScroll: (position) => paneSaid(mine, paneId, { scrolled: position }),
         onMouseTracking: (wanted) => paneSaid(mine, paneId, { mouseTracking: wanted }),
-        onCursor: (row) => paneSaid(mine, paneId, { cursorRow: row }),
+        onRowInSight: (row) => paneSaid(mine, paneId, { rowInSight: row }),
         onAlternate: (alternate) => paneSaid(mine, paneId, { alternate }),
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.
@@ -757,9 +758,34 @@ export function openAttach(options: AttachOptions): Attach {
       // are derived from it, so a split made on the laptop, a Window switch or
       // somebody else's `select-pane` all arrive the same way.
       let windowSize: Grid | null = null;
+      /**
+       * The Window's shape when it was last zoomed, or last asked to be.
+       *
+       * tmux drops the zoom by itself whenever the Window changes under it: a
+       * split, a Pane closing or a plain `select-pane`, made on the laptop or
+       * by a program in a Pane. The preference says the phone wants one Pane,
+       * so a Window that lost its zoom that way is zoomed again. A Window in
+       * the shape it was zoomed in was unzoomed on purpose, by someone at the
+       * laptop, and is left as they put it.
+       */
+      let zoomedShape: string | null = null;
+      const keepZoom = (next: Topology) => {
+        const window = next.activeWindow;
+        if (!window || next.panes.length < 2) return;
+        const shape = `${window.id} ${next.activePane?.id} ${next.panes.map((pane) => pane.id).join(',')}`;
+        if (window.zoomed) {
+          zoomedShape = shape;
+          return;
+        }
+        if (!state.zoomed || shape === zoomedShape) return;
+        zoomedShape = shape;
+        say(`Window ${window.id} changed and lost its zoom; applying the Zoom preference again`);
+        background(mine, () => settleAfterVerb(mine));
+      };
       topology.subscribe((next) => {
         if (stale(mine)) return;
         pruneViews(next);
+        keepZoom(next);
         const activeId = next.activePane?.id;
         change({
           topology: next,

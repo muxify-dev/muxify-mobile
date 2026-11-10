@@ -170,7 +170,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
       onScroll: (position) => positions.push(position),
       onError: (error) => errors.push(error),
       onMouseTracking: (wanted) => mouse.push(wanted),
-      onCursor: (row) => cursor.push(row),
+      onRowInSight: (row) => cursor.push(row),
       onAlternate: (active) => alternate.push(active),
       onPainted: () => paints.push(clock.now()),
     },
@@ -1063,6 +1063,15 @@ describe('telling the Screen where the cursor is', () => {
     expect(kit.cursor).toEqual([7, 37]);
   });
 
+  it('keeps the last row in sight for a full-screen program', async () => {
+    // Claude Code at 49x40, as tmux reported it: the cursor on the prompt and
+    // three rows of footer under it, which the keyboard covered.
+    const host = fakePane(paneState({ cursorRow: 36, height: 40, alternate: true }));
+    const kit = viewOn(host);
+    await paints(kit);
+    expect(kit.cursor).toEqual([39]);
+  });
+
   it('says nothing for a cursor that has not moved', async () => {
     const host = fakePane(paneState({ cursorRow: 7 }));
     const kit = viewOn(host);
@@ -1241,7 +1250,7 @@ describe('telling the Screen which screen the Pane uses', () => {
   });
 
   it('reports alternate entry and exit even when the cursor row stays the same', async () => {
-    const host = fakePane(paneState({ cursorRow: 7, alternate: true }));
+    const host = fakePane(paneState({ cursorRow: 7, height: 40, alternate: true }));
     const kit = viewOn(host);
     await paints(kit);
     expect(kit.alternate).toEqual([true]);
@@ -1251,7 +1260,7 @@ describe('telling the Screen which screen the Pane uses', () => {
     kit.tick(OUTPUT_SETTLE_MS);
     await settle();
     expect(kit.alternate).toEqual([true, false]);
-    expect(kit.cursor).toEqual([7]);
+    expect(kit.cursor).toEqual([39, 7]);
 
     kit.view.receive(bytes('shell output'));
     kit.tick(OUTPUT_SETTLE_MS);

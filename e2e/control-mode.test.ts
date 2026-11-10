@@ -368,6 +368,60 @@ describe('the Attach, against a real tmux', () => {
     await attach.close();
   }, 30000);
 
+  it.each([
+    ['a split', [['split-window', '-t', `${SESSION}:`]]],
+    ['a plain select-pane', [['select-pane', '-t', `${SESSION}:.+`]]],
+    ['a Pane closing', [['split-window', '-t', `${SESSION}:`], ['kill-pane', '-t', `${SESSION}:.+`]]],
+  ])('keeps the Window zoomed through %s made on the tmux side', async (_, commands) => {
+    // Two Panes, zoomed by the Attach, before tmux does anything to them.
+    tmux(['kill-pane', '-a', '-t', `${SESSION}:`]);
+    tmux(['split-window', '-t', `${SESSION}:`]);
+    const { attach } = attachTo();
+    await reaches(attach, 'connected');
+    await wait(500);
+    expect(tmux(['display', '-p', '-t', `${SESSION}:`, '#{window_zoomed_flag}']).trim()).toBe('1');
+
+    for (const command of commands) tmux(command);
+    await wait(1500);
+
+    expect(tmux(['display', '-p', '-t', `${SESSION}:`, '#{window_zoomed_flag}']).trim()).toBe('1');
+    expect(attach.state().topology.activeWindow?.zoomed).toBe(true);
+
+    await attach.close();
+  }, 30000);
+
+  it('keeps the Window zoomed through a split made from the phone', async () => {
+    // The verb re-applies the preference, and the Attach sees tmux drop the
+    // zoom at the same moment: two toggles in flight, which must not cancel.
+    tmux(['kill-pane', '-a', '-t', `${SESSION}:`]);
+    tmux(['split-window', '-t', `${SESSION}:`]);
+    const { attach } = attachTo();
+    await reaches(attach, 'connected');
+    await wait(500);
+
+    await attach.split('right');
+    await wait(1500);
+
+    expect(tmux(['display', '-p', '-t', `${SESSION}:`, '#{window_zoomed_flag}']).trim()).toBe('1');
+
+    await attach.close();
+  }, 30000);
+
+  it('leaves a Window unzoomed on the tmux side as it was put', async () => {
+    tmux(['kill-pane', '-a', '-t', `${SESSION}:`]);
+    tmux(['split-window', '-t', `${SESSION}:`]);
+    const { attach } = attachTo();
+    await reaches(attach, 'connected');
+    await wait(500);
+
+    tmux(['resize-pane', '-Z', '-t', `${SESSION}:`]);
+    await wait(1500);
+
+    expect(tmux(['display', '-p', '-t', `${SESSION}:`, '#{window_zoomed_flag}']).trim()).toBe('0');
+
+    await attach.close();
+  }, 30000);
+
   it('ends in tmux’s own words when there is no such Session', async () => {
     const { attach } = attachTo({ sessionName: 'no-such-session-here' });
     await reaches(attach, 'disconnected');
