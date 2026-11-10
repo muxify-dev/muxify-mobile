@@ -1623,6 +1623,29 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..a3b0bb0b5ebf6d6ea08a7f3ec63f88a4
              for press in presses {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
+index e56733f4c5cbc9d9871e3933c511c64c855cf07e..284f82c7c5e0721485e2dc14519dd474a9c84154 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
+@@ -109,6 +109,18 @@
+             }
+         }
+ 
++        /// Muxify: removes the layers of freed surfaces. See
++        /// `TerminalSurfaceCoordinator.onSurfaceFreed`. Every sublayer that
++        /// is not a subview's layer is one that ghostty added.
++        func removeRenderLayers() {
++            let subviewLayers = Set(subviews.map { ObjectIdentifier($0.layer) })
++            for sublayer in layer.sublayers ?? []
++                where !subviewLayers.contains(ObjectIdentifier(sublayer))
++            {
++                sublayer.removeFromSuperlayer()
++            }
++        }
++
+         func enforceSublayerScale() {
+             let scale = resolvedDisplayScale()
+             guard let sublayers = layer.sublayers else { return }
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift
 index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f32b612d8 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+UITextInput.swift
@@ -1713,7 +1736,7 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..d95ff8fde5c4f5b526946999cc25adccc3c9f62a 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..be0d9085eb29c47a44aebcaff3da4d9854c98b76 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 @@ -9,6 +9,18 @@
@@ -1799,6 +1822,48 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..d95ff8fde5c4f5b526946999cc25adcc
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
+@@ -128,6 +197,9 @@
+             core.onPostRender = { [weak self] in
+                 self?.enforceSublayerScale()
+             }
++            core.onSurfaceFreed = { [weak self] in
++                self?.removeRenderLayers()
++            }
+ 
+             setupApplicationLifecycleObservers()
+             syncApplicationActiveState()
+diff --git a/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..53a3806719c1cbd3c10f92573518fc52cd2e88b1 100644
+--- a/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
++++ b/ios/vendor/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+@@ -62,6 +62,17 @@ final class TerminalSurfaceCoordinator {
+     /// correcting any drift introduced by ghostty within a single frame.
+     var onPostRender: (() -> Void)?
+ 
++    /// Muxify: called after a surface is freed, while the view still holds
++    /// the layer that the surface drew in.
++    ///
++    /// ghostty adds its layer to the view when it makes a surface, and does
++    /// not take it out when the surface is freed. The layer keeps a pointer
++    /// to the freed renderer and draws through it when Core Animation next
++    /// asks it to display, which is a use after free: a crash, once anything
++    /// has reused the memory. Platform views use this hook to remove the
++    /// layer.
++    var onSurfaceFreed: (() -> Void)?
++
+     private var lastMetrics: TerminalViewportMetrics?
+     private var isDisplayVisible = true
+     private var isApplicationActive = true
+@@ -321,6 +332,9 @@ final class TerminalSurfaceCoordinator {
+         surface?.setFocus(false)
+         surface?.free()
+         surface = nil
++        if hadSurface {
++            onSurfaceFreed?()
++        }
+         lastMetrics = nil
+         pendingImmediateTick = true
+         lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
 index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..c33196b2175cf82a75c2cd2192861ccd9ee7ebba 100644
 --- a/src/ExpoLibghostty.types.ts
