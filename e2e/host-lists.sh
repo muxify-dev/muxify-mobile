@@ -30,19 +30,21 @@ PY_SWITCH
 agent-device open dev.muxify.app --platform ios --relaunch "${device[@]}"
 agent-device wait 'label="Host Dev Host"' 15000
 agent-device press 'label="Host Dev Host"' --settle
-agent-device wait 'label="Host Screen lists"' 8000
-agent-device press 'label="Host Screen lists"' --settle
+agent-device wait 'label="Host Options"' 8000
+agent-device press 'label="Host Options"' --settle
+agent-device press 'role=button label="Configure panels"' --settle
 agent-device wait 'label="Topics"' 8000
 control=$(topic_switch)
 agent-device press "$control" --settle
 control=$(topic_switch true)
 agent-device back --settle
-agent-device wait 'label="New Session or Topic"' 8000
+agent-device wait 'label="Host Options"' 8000
 agent-device back --settle
 agent-device wait 'label="Host Second Host"' 8000
 agent-device press 'label="Host Second Host"' --settle
-agent-device wait 'label="New Session"' 8000
-agent-device press 'label="Host Screen lists"' --settle
+agent-device wait 'label="Host Options"' 8000
+agent-device press 'label="Host Options"' --settle
+agent-device press 'role=button label="Configure panels"' --settle
 agent-device wait 'label="Topics"' 8000
 control=$(topic_switch)
 echo "Topics remains off on Second Host."
@@ -50,7 +52,7 @@ agent-device close
 agent-device open dev.muxify.app --platform ios --relaunch "${device[@]}"
 agent-device wait 'label="Host Dev Host"' 15000
 agent-device press 'label="Host Dev Host"' --settle
-agent-device wait 'label="New Session or Topic"' 8000
+agent-device wait 'label="Host Options"' 8000
 agent-device close
 python3 - "$DOCUMENTS" <<'PY'
 import json, pathlib, sys

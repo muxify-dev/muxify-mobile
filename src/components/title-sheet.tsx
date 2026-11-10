@@ -41,6 +41,7 @@ import type { HostScreenSection } from '@/domain/host-screen';
 import { SessionPreviews, type PreviewCard } from './picker-sheet';
 import { TAPPABLE_ROW } from './tappable-row';
 import type { TopicDetail } from '@/topics/topic-detail';
+import { CHOOSER_LIST_NAMES, type ChooserList, type ChooserLists } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 
 import { SheetHeader, SheetNote } from './sheet-chrome';
@@ -58,6 +59,7 @@ export interface TitlePick {
 
 export interface TitleSheetProps {
   isPresented: boolean;
+  lists: ChooserLists;
   onDismiss: () => void;
   rows: TitleRow[];
   topic?: TopicDetail | null;
@@ -80,17 +82,12 @@ export interface SheetTopics {
   onRetry: () => void;
 }
 
-type ChooserTab = 'sessions' | 'windows' | 'topics';
-const CHOOSER_TABS: { id: ChooserTab; label: string }[] = [
-  { id: 'sessions', label: 'Sessions' },
-  { id: 'windows', label: 'Windows' },
-  { id: 'topics', label: 'Topics' },
-];
 const ROW_HEIGHT = 44;
 const TABS_HEADER_HEIGHT = 36;
 
 export function TitleSheet({
   isPresented,
+  lists,
   onDismiss,
   rows,
   topic,
@@ -105,10 +102,11 @@ export function TitleSheet({
 }: TitleSheetProps) {
   const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
   const screen = useWindowDimensions();
-  const [selectedTab, setSelectedTab] = useState<ChooserTab>('sessions');
+  const [selected, setSelectedTab] = useState<ChooserList>(lists[0]);
+  const selectedTab = isPresented && lists.includes(selected) ? selected : lists[0];
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
   const [openedAt] = useState(() => new Date());
-  useEffect(() => { if (!isPresented || (!topics && selectedTab === 'topics')) setSelectedTab('sessions'); }, [isPresented, topics, selectedTab]);
+  useEffect(() => { setSelectedTab(lists[0]); }, [isPresented, lists]);
   const height = screen.height * 0.65;
 
   return (
@@ -135,12 +133,12 @@ export function TitleSheet({
             <SheetHeader title="Choose" onDismiss={onDismiss} />
 
             <VStack spacing={0} alignment="leading" modifiers={[padding({ top: HEADER_TO_CONTENT })]}>
-              <Picker
+              {lists.length > 1 ? <Picker
                 selection={selectedTab}
                 onSelectionChange={setSelectedTab}
                 modifiers={[pickerStyle('segmented'), accessibilityLabel('Terminal chooser'), padding({ bottom: 12 })]}>
-                {CHOOSER_TABS.filter((tab) => tab.id !== 'topics' || topics).map((tab) => <Text key={tab.id} modifiers={[tag(tab.id)]}>{tab.label}</Text>)}
-              </Picker>
+                {lists.map((list) => <Text key={list} modifiers={[tag(list)]}>{CHOOSER_LIST_NAMES[list]}</Text>)}
+              </Picker> : null}
 
               {error !== undefined ? (
                 <Text modifiers={[foregroundColor(chrome.destructive), padding({ vertical: 8 })]}>

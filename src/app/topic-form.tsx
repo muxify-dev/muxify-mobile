@@ -1,8 +1,10 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
+  Button,
+  Text,
   Form,
   Host,
   HStack,
@@ -30,18 +32,32 @@ import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { NewTopicRead } from '@/topics/new-topic';
-import { tagsFromParam } from '@/topics/tags-param';
+import type { Tag } from '@/topics/environment';
 import { topicSeedParam } from '@/topics/topic-detail';
 
 
 export default function TopicFormScreen() {
   const router = useRouter();
-  const { hostId, tags: tagsJson } = useLocalSearchParams<{
+  const { hostId } = useLocalSearchParams<{
     hostId: string;
-    tags?: string;
   }>();
   const { appearance, palette } = useSettings();
-  const tags = useMemo(() => tagsFromParam(tagsJson), [tagsJson]);
+  const [tags, setTags] = useState<Tag[] | null>(null);
+  const [tagError, setTagError] = useState<string | undefined>();
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let left = false;
+    setTags(null);
+    setTagError(undefined);
+    void (async () => {
+      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
+      if (!host) throw new Error('This Host is no longer saved.');
+      const result = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
+      if (result.kind !== 'listed') throw new Error(result.kind === 'failed' ? result.error : 'Update Muxify on this Host to create Topics.');
+      if (!left) setTags(result.snapshot.tags);
+    })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
+    return () => { left = true; };
+  }, [hostId, attempt]);
 
   const title = useNativeState('');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
@@ -55,7 +71,7 @@ export default function TopicFormScreen() {
   }, []);
 
   const save = useCallback(() => {
-    if (creating) return;
+    if (creating || tags === null) return;
     const wanted = title.value.trim();
     if (wanted === '') {
       setError('Give the Topic a title.');
@@ -118,8 +134,8 @@ export default function TopicFormScreen() {
           headerRight: () => (
             <ToolbarWord
               label={creating ? 'Saving…' : 'Save'}
-              color={creating ? palette.secondaryLabel : palette.controlAccent}
-              disabled={creating}
+              color={creating || tags === null ? palette.secondaryLabel : palette.controlAccent}
+              disabled={creating || tags === null}
               onPress={save}
             />
           ),
@@ -145,7 +161,12 @@ export default function TopicFormScreen() {
             <FieldError error={error} palette={palette} />
           </Section>
 
-          {tags.length === 0 ? null : (
+          {tags === null ? <Section
+            header={<SectionHeader palette={palette}>Tags</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Text>{tagError ?? 'Reading Tags…'}</Text>
+            {tagError ? <Button label="Retry Tags" onPress={() => setAttempt((value) => value + 1)} /> : null}
+          </Section> : tags.length === 0 ? null : (
             <Section
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}
               modifiers={[listRowBackground(palette.rowSurface)]}>

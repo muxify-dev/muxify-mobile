@@ -11,7 +11,7 @@ context platform=ios kind=simulator
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 wait 1500
 wait "label=\"Session e2e-reconnect\"" 15000
 press "label=\"Session e2e-reconnect\""
@@ -27,7 +27,7 @@ is "absent" "id=\"reconnect-screen\""
 
 # Back returns to the Host Screen.
 back
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""
 
 close

@@ -128,10 +128,17 @@ on start on, a cold start opens it again behind a "Trying to reconnect" screen.
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
-The Host Screen has its own list choices, reached from Host Screen lists in
-its Header. Each Host stores its enabled lists and their order independently.
+The Host Screen has its own list choices, reached from Configure panels in
+its Options menu. Each Host stores its enabled lists and their order independently.
 On upgrade, existing Hosts receive the previous global choices once. A new
-Host uses the default Recent Sessions and Sessions lists.
+Host uses the default Recent Sessions and Sessions lists. The same settings
+screen has separate Title chooser choices for this Host. Each view keeps its
+own enabled lists and order.
+
+The Host Screen has one Options menu. New Session and New Topic follow the
+order of the Sessions and Topics panels. A disabled panel's action comes last.
+Recent Sessions does not change this order. Configure panels follows them.
+Edit Host is in Settings.
 
 **Home**:
 The list of saved Hosts, in the order set in Settings. Each row shows the Host
@@ -251,11 +258,13 @@ _Avoid_: tag chip, tag dot
 
 **New Topic**:
 The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
-has a title and one button for each Tag of the Host's last Topics read, in
+has a title and one button for each Tag of the Host's Config, in
 Config order and in the Tag colour. Save opens Add a Session for the new Topic. That sheet confirms the Topic was
 created and offers Add later. An existing Topic keeps Cancel. An
-error from the Host shows in the sheet, and the sheet stays open. With the
-Topics list on, + on the Host Screen offers New Session and New Topic.
+error from the Host shows in the sheet, and the sheet stays open. The Host
+Screen Options menu always offers New Session and New Topic.
+New Topic reads Config Tags when it opens. A failed read offers Retry Tags
+and keeps the entered title.
 _Avoid_: Create Topic, Add Topic
 
 **Edit Topic**:
@@ -417,10 +426,12 @@ command failed.
 _Avoid_: title bar, toolbar
 
 **Title Sheet**:
-The chooser opened by the Header title or its down chevron. It starts on
-Sessions, with previews and the current Session marked. Windows and Topics
-are tabs in the same sheet. Topics is available when this Host enables it.
-A Session pick uses the Attach's Topic membership rules.
+The chooser opened by the Header title or its down chevron. Each Host has its
+own enabled lists and their order, separate from the Host Screen panels.
+Windows is the default. Sessions includes previews and marks the current
+Session. Topics can be enabled separately. The first enabled list opens first.
+A single enabled list has no tab control. Configure chooser in Terminal
+Options opens these settings. A Session pick uses the Attach's Topic membership rules.
 
 Windows shows the current Session's Windows. With a Topic, it shows the full
 title, Topic Note and Tags, then each live Session's Windows and Agent marks.
@@ -432,7 +443,7 @@ Window. Browser Tabs for the current Window appear below these rows.
 Topics shows the Host's Topics with the Bench open. A live Topic opens its
 chosen Session in the current Attach. A Dormant Topic offers the wake choice.
 An Empty Topic opens Add a Session. Closing and reopening the chooser returns
-to Sessions.
+to the first enabled list.
 _Avoid_: Windows picker, Windows sheet, Topic sheet
 
 **Browser Tab**:

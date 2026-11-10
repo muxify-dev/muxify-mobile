@@ -83,6 +83,8 @@ path = sys.argv[1]
 settings = json.load(open(path))
 settings.pop("hostListPreferences", None)
 settings["hostScreenLists"] = ["topics", "sessions"]
+records = json.load(open(path.replace('muxify-settings.json', 'muxify-records.json')))
+settings['chooserListPreferences'] = {host['id']: ['sessions', 'windows', 'topics'] for host in records['hosts']}
 json.dump(settings, open(path, "w"))
 PY
 TOPIC_ID=$(muxify topic new "$TOPIC" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["changed"]["topic_id"])') || fail "could not make a Topic"
@@ -153,7 +155,7 @@ echo "     the Topic opened its Session in the same Attach"
 
 echo "6/6  Disconnect ends the Attach and returns to the Host Screen"
 option "Disconnect"
-agent-device wait 'label="Edit Host"' 8000 >/dev/null 2>&1 || fail "Disconnect did not return to the Host Screen"
+agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Disconnect did not return to the Host Screen"
 sleep 2
 CLIENTS=$(on_host "tmux list-clients" | wc -l | tr -d ' ')
 [ "$CLIENTS" = 0 ] || fail "the Host still has $CLIENTS Client(s) on Session $SESSION after Disconnect"

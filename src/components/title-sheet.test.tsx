@@ -24,6 +24,7 @@ let renderer: ReactTestRenderer;
 let props: TitleSheetProps;
 beforeEach(() => {
   props = {
+    lists: ['sessions', 'windows'],
     isPresented: true, onDismiss: jest.fn(), rows: [
       { kind: 'window', index: 0, name: 'shell', program: 'bash', current: true, mark: null },
     ], loading: false, onPick: jest.fn(), tabs: [
@@ -64,6 +65,7 @@ it('keeps Windows and Browser Tabs within the same chooser', async () => {
 
 it('shows Topics even when there are no Sessions', async () => {
   props.sessions.cards = [];
+  props.lists = ['sessions', 'windows', 'topics'];
   props.topics = {
     sections: [{ id: 'topics', title: 'Topics', footer: null, rows: [{ kind: 'note', text: 'A Topic read is pending.' }] }],
     palette: require('@/constants/app-theme').AppPalettes.dark,
@@ -90,6 +92,7 @@ it('passes an Empty Topic pick to the existing Host entry action', async () => {
     kind: 'topic', id, label: 'Empty work', note: null, tags: [], mark: null, pinned: false, dimmed: true,
     seed: { id, label: 'Empty work', note: null, tags: [], state: 'empty', sessions: [] },
   };
+  props.lists = ['sessions', 'windows', 'topics'];
   props.topics = {
     sections: [{ id: 'topics', title: 'Topics', footer: null, rows: [topic] }],
     palette: require('@/constants/app-theme').AppPalettes.dark,
@@ -102,8 +105,32 @@ it('passes an Empty Topic pick to the existing Host entry action', async () => {
   expect(props.onDismiss).not.toHaveBeenCalled();
 });
 
-it('offers Topics only when the Host enables them', async () => {
+it('offers only the configured lists in their order', async () => {
   await mount();
   const labels = renderer.root.findByType(Picker).findAllByType(Text).map((node) => node.props.children);
   expect(labels).toEqual(['Sessions', 'Windows']);
+});
+
+it('shows Windows directly when it is the only enabled list', async () => {
+  props.lists = ['windows'];
+  await mount();
+  expect(renderer.root.findAllByType(Picker)).toHaveLength(0);
+  expect(button('shell')).toBeDefined();
+  expect(button('work')).toBeUndefined();
+});
+
+it('starts with the first configured list after each open', async () => {
+  props.lists = ['windows', 'sessions'];
+  await mount();
+  await select('sessions');
+  await act(async () => renderer.update(<TitleSheet {...props} isPresented={false} />));
+  await act(async () => renderer.update(<TitleSheet {...props} isPresented />));
+  expect(renderer.root.findByType(Picker).props.selection).toBe('windows');
+});
+
+it('shows a remaining list when the selected list is disabled', async () => {
+  await mount();
+  await act(async () => renderer.update(<TitleSheet {...props} lists={['windows']} />));
+  expect(button('shell')).toBeDefined();
+  expect(button('work')).toBeUndefined();
 });

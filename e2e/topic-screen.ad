@@ -3,7 +3,7 @@ context platform=ios kind=simulator
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 wait 1500
 
 wait "label=\"Topic e2e Topic Screen live\"" 15000
@@ -14,16 +14,15 @@ wait "id=\"topic-title\"" 15000
 is "text" "id=\"topic-title\"" "e2e Topic Screen live"
 press "id=\"header-title\""
 wait "label=\"Close Choose\"" 8000
-press "label=\"Windows\""
 wait "label=\"Note Seeded by e2e\"" 15000
 is "visible" "label=\"Session muxify-e2e-topic-screen/e2e-topic-screen-live\""
 is "visible" "role=text text=\"#work\""
 press "label=\"Close Choose\""
 back
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 press "label=\"Topic e2e Topic Screen empty\""
 wait "role=text-field" 15000
 press "label=\"Cancel\""
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 
 close

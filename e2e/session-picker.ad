@@ -2,7 +2,7 @@ context platform=ios kind=simulator
 
 # Session picker (ticket 08).
 #
-# The header opens the chooser on Sessions.
+# The header opens the configured chooser. Windows is the default.
 #
 # What this deliberately stops short of: selecting a row. Nothing inside a
 # presented sheet responds to agent-device — not a row at its own measured
@@ -25,7 +25,7 @@ wait "text" "Dev Host" 15000
 
 # Through the real flow now: a saved Host, its Sessions, then one of them.
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 # Home is still under the Host Screen until the push settles, and has the
 # same Session and Topic rows.
 wait 1500
@@ -40,8 +40,7 @@ wait "id=\"pane-command\"" 20000
 # The title opens the Title Sheet, waited for by its own close button.
 press "id=\"header-title\""
 wait "label=\"Close Choose\"" 15000
-is "exists" "label=\"Sessions\""
-is "exists" "label=\"Windows\""
+is "exists" "label=\"Close Choose\""
 
 # The sheet is up with its own chrome. The Sessions themselves are asserted in
 # e2e/pickers.sh, which can set up the Host's Topology first — this Host's

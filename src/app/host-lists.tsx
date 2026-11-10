@@ -3,16 +3,18 @@ import { Form, Host } from '@expo/ui/swift-ui';
 import { background, environment, scrollContentBackground, tint } from '@expo/ui/swift-ui/modifiers';
 import { StyleSheet, View } from 'react-native';
 
+import { ChooserListsSection } from '@/components/chooser-lists-section';
 import { HostScreenListsSection } from '@/components/host-screen-lists-section';
-import { useHostLists, useSettings } from '@/settings/settings-context';
+import { useChooserLists, useHostLists, useSettings } from '@/settings/settings-context';
 
 export default function HostListsScreen() {
   const { hostId } = useLocalSearchParams<{ hostId: string }>();
+  const chooserLists = useChooserLists(hostId);
   const lists = useHostLists(hostId);
-  const { updateHostLists, appearance, palette } = useSettings();
+  const { updateHostLists, updateChooserLists, appearance, palette } = useSettings();
   return (
     <View style={styles.fill}>
-      <Stack.Screen options={{ title: 'Host Screen lists' }} />
+      <Stack.Screen options={{ title: 'Panels and chooser' }} />
       <Host style={styles.fill} matchContents={false}>
         <Form modifiers={[
           environment('colorScheme', appearance),
@@ -21,6 +23,7 @@ export default function HostListsScreen() {
           background(palette.background),
           tint(palette.controlAccent),
         ]}>
+          <ChooserListsSection lists={chooserLists} onChange={(next) => updateChooserLists(hostId, next)} palette={palette} />
           <HostScreenListsSection lists={lists} onChange={(next) => updateHostLists(hostId, next)} palette={palette} />
         </Form>
       </Host>

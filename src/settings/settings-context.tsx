@@ -11,7 +11,7 @@ import {
   type TerminalPalette,
 } from '@/constants/app-theme';
 import { deviceSettingsStore } from './device-settings';
-import { DEFAULT_SETTINGS, hostListsFor, type HostScreenLists, type Settings } from './settings';
+import { DEFAULT_SETTINGS, hostListsFor, chooserListsFor, type ChooserLists, type HostScreenLists, type Settings } from './settings';
 import { deviceHostStore } from '@/storage/device-store';
 import { describeError } from '@/lib/describe-error';
 import { Alert } from 'react-native';
@@ -20,6 +20,7 @@ interface SettingsContextValue {
   settings: Settings;
   /** Changes one or more settings, and writes them. */
   update: (change: Partial<Settings>) => void;
+  updateChooserLists: (hostId: string, lists: ChooserLists) => void;
   updateHostLists: (hostId: string, lists: HostScreenLists) => void;
   /** Whether the app is drawn light or dark, which the Theme decides. */
   appearance: 'light' | 'dark';
@@ -85,18 +86,25 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     } }));
   }, [change]);
 
+  const updateChooserLists = useCallback((hostId: string, lists: ChooserLists) => {
+    change((value) => ({ ...value, chooserListPreferences: {
+      ...value.chooserListPreferences, [hostId]: lists,
+    } }));
+  }, [change]);
+
   const value = useMemo<SettingsContextValue>(
     () => ({
       settings,
       update,
       updateHostLists,
+      updateChooserLists,
       appearance: appearanceFor(settings.theme),
       palette: paletteFor(settings.theme),
       sheetPalette: sheetPaletteFor(settings.theme),
       terminal: Themes[settings.theme].palette,
       ansi: Themes[settings.theme].ansi,
     }),
-    [settings, update, updateHostLists],
+    [settings, update, updateHostLists, updateChooserLists],
   );
 
   if (!ready) return null;
@@ -111,4 +119,8 @@ export function useSettings(): SettingsContextValue {
 
 export function useHostLists(hostId: string): HostScreenLists {
   return hostListsFor(useSettings().settings, hostId);
+}
+
+export function useChooserLists(hostId: string): ChooserLists {
+  return chooserListsFor(useSettings().settings, hostId);
 }

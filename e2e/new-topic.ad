@@ -3,14 +3,14 @@ context platform=ios kind=simulator
 open "dev.muxify.app" --relaunch
 wait "text" "Dev Host" 15000
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 wait 1500
 
-wait "label=\"New Session or Topic\"" 15000
-press "label=\"New Session or Topic\""
+wait "label=\"Host Options\"" 15000
+press "label=\"Host Options\""
 wait "label=\"New Topic\"" 5000
 is "visible" "label=\"New Session\""
-press "label=\"New Topic\""
+press "role=button label=\"New Topic\""
 wait "label=\"Tag #work\"" 8000
 fill "role=text-field" "e2e New Topic it's"
 press "label=\"Tag #work\""

@@ -19,7 +19,7 @@ wait "text" "Dev Host" 15000
 
 # Through the real flow now: a saved Host, its Sessions, then one of them.
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 # Home is still under the Host Screen until the push settles, and has the
 # same Session and Topic rows.
 wait 1500

@@ -36,12 +36,57 @@ export interface Settings {
    * nobody asked for.
    */
   reconnectOnStart: boolean;
+  chooserListPreferences?: Readonly<Record<string, ChooserLists>>;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
 export const HOST_SCREEN_LISTS = ['recent', 'sessions', 'topics'] as const;
 export type HostScreenList = (typeof HOST_SCREEN_LISTS)[number];
 export type HostScreenLists = readonly [HostScreenList, ...HostScreenList[]];
+
+export const CHOOSER_LISTS = ['windows', 'sessions', 'topics'] as const;
+export type ChooserList = (typeof CHOOSER_LISTS)[number];
+export type ChooserLists = readonly [ChooserList, ...ChooserList[]];
+export const DEFAULT_CHOOSER_LISTS: ChooserLists = ['windows'];
+export const CHOOSER_LIST_NAMES: Record<ChooserList, string> = {
+  windows: 'Windows', sessions: 'Sessions', topics: 'Topics',
+};
+
+function parseChooserLists(raw: unknown): ChooserLists {
+  const lists = Array.isArray(raw) ? [...new Set(raw.filter((item): item is ChooserList =>
+    (CHOOSER_LISTS as readonly unknown[]).includes(item)))] : [];
+  const [first, ...rest] = lists;
+  return first === undefined ? DEFAULT_CHOOSER_LISTS : [first, ...rest];
+}
+
+export function chooserListsFor(settings: Settings, hostId: string): ChooserLists {
+  const preferences = settings.chooserListPreferences;
+  return preferences && Object.hasOwn(preferences, hostId) ? preferences[hostId] : DEFAULT_CHOOSER_LISTS;
+}
+
+export function chooserListRows(lists: ChooserLists): ChooserList[] {
+  return [...lists, ...CHOOSER_LISTS.filter((list) => !lists.includes(list))];
+}
+
+export function switchChooserList(lists: ChooserLists, list: ChooserList, on: boolean): ChooserLists {
+  if (lists.includes(list) === on) return lists;
+  const next = on ? [...lists, list] : lists.filter((item) => item !== list);
+  const [first, ...rest] = next;
+  return first === undefined ? lists : [first, ...rest];
+}
+
+export function moveChooserLists(lists: ChooserLists, sources: number[], destination: number): ChooserLists {
+  const rows = chooserListRows(lists);
+  const moving = rows.filter((_, index) => sources.includes(index));
+  const before = rows.filter((_, index) => index < destination && !sources.includes(index));
+  const after = rows.filter((_, index) => index >= destination && !sources.includes(index));
+  return parseChooserLists([...before, ...moving, ...after].filter((list) => lists.includes(list)));
+}
+
+export function hostCreationOrder(lists: HostScreenLists): ('sessions' | 'topics')[] {
+  const enabled = lists.filter((list): list is 'sessions' | 'topics' => list !== 'recent');
+  return [...enabled, ...(['sessions', 'topics'] as const).filter((list) => !enabled.includes(list))];
+}
 
 export const MIN_FONT_SIZE = 5;
 export const MAX_FONT_SIZE = 24;
@@ -205,7 +250,13 @@ export function parseSettings(raw: unknown): Settings {
     ? Object.fromEntries(Object.entries(preferences.byHost).map(([id, lists]) => [id, parseHostScreenLists(lists, undefined)]))
     : null;
 
+  const chooser = record.chooserListPreferences;
+  const chooserListPreferences = typeof chooser === 'object' && chooser !== null && !Array.isArray(chooser)
+    ? Object.fromEntries(Object.entries(chooser).map(([id, lists]) => [id, parseChooserLists(lists)]))
+    : undefined;
+
   return {
+    ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
     ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
     theme: parseTheme(theme),
