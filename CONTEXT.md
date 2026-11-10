@@ -254,7 +254,8 @@ _Avoid_: tag chip, tag dot
 **New Topic**:
 The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
 has a title and one button for each Tag of the Host's last Topics read, in
-Config order and in the Tag colour. Save opens Add a Session for the new Topic. An
+Config order and in the Tag colour. Save opens Add a Session for the new Topic. That sheet confirms the Topic was
+created and offers Add later. An existing Topic keeps Cancel. An
 error from the Host shows in the sheet, and the sheet stays open. With the
 Topics list on, + on the Host Screen offers New Session and New Topic.
 _Avoid_: Create Topic, Add Topic
@@ -274,10 +275,11 @@ _Avoid_: Topic settings, Topic properties
 The sheet that an Empty Topic card or Options > Topic > Add a Session opens.
 It reads the Host's folder choices once and groups them as In this Topic,
 Session Paths and Worktrees. Search matches names, paths, branches and Also in
-Topic labels. A tap makes a Session at that folder and opens it in the Attach.
+Topic labels. A tap selects a folder without a write. Create and open makes a Session at
+that folder and opens it in the Attach.
 The final row uses a typed folder, where a leading `~` is the Host's home folder.
 It does not create a Worktree or move an existing Session. An old Host CLI
-instead shows a Folder field and Save. Other read failures show Retry and keep
+instead shows a Folder field and Create and open. Other read failures show Retry and keep
 typed entry available. A Host write error keeps the sheet open. If entry fails
 after creation, Retry Attach uses the saved Session name and sends no second
 write. Cancel leaves any Session already made on the Host. Folder actions stay

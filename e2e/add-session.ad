@@ -11,10 +11,12 @@ press "label=\"Topic e2e Add Session\""
 wait "label=\"Search folders\"" 15000
 fill "role=text-field" "/tmp/muxify e2e missing"
 press "label=\"Use /tmp/muxify e2e missing\""
+press "label=\"Create and open\""
 wait "text" "no directory" 15000
 is "visible" "role=text-field"
 fill "role=text-field" "/tmp/muxify e2e add"
 press "label=\"Use /tmp/muxify e2e add\""
+press "label=\"Create and open\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "muxifye2eadd/e2e-add-session"
 press "label=\"Options\""
