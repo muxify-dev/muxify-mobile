@@ -54,9 +54,10 @@ Session squeezed to twenty-four rows for as long as the phone's keyboard was up
   stream. When output carries the cursor from above the fold to below it, the
   Window follows a beat later — once per screen-fill after a `clear`, and not
   at all while the screen is full, because the cursor stays on the last row.
-- The Window's height is measured only while the keyboard is down. A rotation
-  with the keyboard up is a frame or two of the wrong height, corrected when
-  the keyboard goes away.
+- The Window's full height comes from the Terminal Screen's bounds, minus
+  the visible Key Row and resting safe area. Rotation and physical keyboard
+  changes update that height even while the software keyboard is up. The
+  software keyboard and Composer do not change the normal-screen height.
 - Every e2e helper that used the grid changing as its signal that the keyboard
   had moved is wrong now, and reads the Dock's position instead.
 

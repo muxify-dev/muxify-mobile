@@ -3,7 +3,6 @@ import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,7 +10,6 @@ import {
   View,
   type GestureResponderEvent,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import type { Appearance } from '@/constants/app-theme';
@@ -63,9 +61,6 @@ export interface KeyRowProps {
  */
 export function KeyRow(props: KeyRowProps) {
   const { armed, onArm, onKey, onSymbol, keysDisabled, palette } = props;
-  const insets = useSafeAreaInsets();
-  const clearance = rowClearance(insets.bottom);
-  const lift = useKeyboardLift();
   const [bubble, setBubble] = useState<Bubble | null>(null);
 
   const fixedKey = (each: ModifierKey | NamedKey) =>
@@ -91,14 +86,7 @@ export function KeyRow(props: KeyRowProps) {
     );
 
   return (
-    // Moved in one layout step, and deliberately not smoothed. Both ways of
-    // smoothing it were tried and measured at 60fps against the painted
-    // frames, and both cost more than they bought: an `Animated` transform
-    // moves what is painted and not the frames VoiceOver and every e2e press
-    // go by, and `LayoutAnimation` came out non-monotonic.
-    <View
-      style={[styles.row, { paddingBottom: clearance }, { marginBottom: lift }]}
-      pointerEvents="box-none">
+    <View style={styles.row} pointerEvents="box-none">
       <Capsule>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
@@ -127,7 +115,7 @@ export function KeyRow(props: KeyRowProps) {
             styles.bubble,
             {
               left: bubble.center - BUBBLE_WIDTH / 2,
-              bottom: clearance + CAPSULE_HEIGHT + 6,
+              bottom: CAPSULE_HEIGHT + 6,
               backgroundColor: palette.rowSurface,
               borderColor: palette.separator,
             },
@@ -152,7 +140,7 @@ function Capsule({ children }: { children: ReactNode }) {
   // use, so probe the runtime API rather than the design-mode flag. A
   // GlassView on such a runtime renders nothing at all, hence the plain view.
   return isGlassEffectAPIAvailable() ? (
-    <GlassView style={styles.capsule} glassEffectStyle="regular" isInteractive>
+    <GlassView style={styles.capsule} glassEffectStyle="regular">
       {children}
     </GlassView>
   ) : (
@@ -190,7 +178,7 @@ function FixedKey({
       accessibilityLabel={label}
       accessibilityState={{ selected: held, disabled }}
       onPress={onPress}
-      style={[styles.key, disabled ? styles.dim : null]}>
+      style={({ pressed }) => [styles.key, disabled ? styles.dim : null, pressed && { backgroundColor: palette.rowSurface, borderRadius: KEY_HEIGHT / 2 }]}>
       {/* A circle, not a capsule the shape of the key: a held modifier should
           read as a key pressed down, and a tall rounded rectangle reads as a
           segmented control instead. */}
@@ -517,43 +505,8 @@ const STICK_ACTIONS = [
   { name: 'right', label: 'Right' },
 ] satisfies { name: ArrowDirection; label: string }[];
 
-/**
- * How far the keyboard has pushed the row up, in points.
- *
- * The keyboard is the only thing that moves it. iOS reports an input
- * accessory view's height as part of the keyboard frame, so one listener
- * covers a keyboard with or without one.
- */
-function useKeyboardLift(): number {
-  const insets = useSafeAreaInsets();
-  const [inset, setInset] = useState(0);
-
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardWillChangeFrame', (event) => {
-      setInset(event.endCoordinates?.height ?? 0);
-    });
-    const hide = Keyboard.addListener('keyboardWillHide', () => setInset(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-
-  // Above the home indicator, not over it. With the keyboard up there is no
-  // indicator to clear: it is behind the keyboard, and the row sits on that
-  // instead.
-  return inset > 0 ? inset + BOTTOM_GAP - rowClearance(insets.bottom) : 0;
-}
-
-/** The row's resting distance from the bottom of the screen. */
-function rowClearance(safeAreaBottom: number): number {
-  return Math.max(BOTTOM_GAP, safeAreaBottom);
-}
-
-/** The least clearance under the row, when there is no home indicator to clear. */
-const BOTTOM_GAP = 8;
-
 const CAPSULE_HEIGHT = 52;
+export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + 10;
 const KEY_HEIGHT = 44;
 
 /**
