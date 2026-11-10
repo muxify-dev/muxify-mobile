@@ -9,7 +9,9 @@
 #      one, past either end too, and the Window stays zoomed
 #   3  the Layout map names the active Pane, and a tap on it opens the Panes
 #      picker
-#   4  a short sideways drag and a diagonal drag change no Pane
+#   4  a slow sideways drag short of a quarter of the Surface's width and a
+#      diagonal drag change no Pane, and a slow drag past the quarter and a
+#      short flick each change it
 #   5  a vertical drag still moves the Scrollback, and a swipe moves none
 #   6  in a Pane whose program listens for the mouse, a swipe either way
 #      changes the Pane and the program gets nothing, a vertical drag is
@@ -69,8 +71,9 @@ drag() {
   agent-device gesture pan "$1" "$2" "$3" "$4" "${5:-300}" >/dev/null 2>&1
   sleep 1.5
 }
-swipe_left() { drag 300 "${1:-400}" -150 0; }
-swipe_right() { drag 100 "${1:-400}" 150 0; }
+# Past the commit point, a quarter of the Surface's width: 100 points here.
+swipe_left() { drag 320 "${1:-400}" -220 0; }
+swipe_right() { drag 80 "${1:-400}" 220 0; }
 
 expect_window() {
   [ "$(window_now)" = "$1" ] || fail "$2: the Window is at '$(window_now)', not '$1'"
@@ -122,14 +125,23 @@ agent-device press 'label="Close Panes"' >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1
 echo "     it follows the swipe, and a tap opens the picker"
 
-echo "4/7  a short sideways drag and a diagonal drag change no Pane"
-drag 300 400 -25 0
-expect_window "0 1" "a 25 point drag"
+echo "4/7  a drag changes the Pane past a quarter of the width, or on a flick"
+# Slow, so that the speed of the finger makes no swipe of it.
+drag 300 400 -80 0 1500
+expect_window "0 1" "a slow 80 point drag"
+drag 300 400 -160 0 1500
+expect_window "1 1" "a slow 160 point drag"
+drag 100 400 160 0 1500
+expect_window "0 1" "a slow 160 point drag back"
+drag 300 400 -60 0 50
+expect_window "1 1" "a 60 point flick"
+drag 100 400 60 0 50
+expect_window "0 1" "a 60 point flick back"
 drag 300 400 -120 100
 expect_window "0 1" "a diagonal drag"
 agent-device press 'label="Jump to latest"' >/dev/null 2>&1
 sleep 1
-echo "     Pane 0 still"
+echo "     the short slow drag and the diagonal one left Pane 0, the others did not"
 
 echo "5/7  a vertical drag moves the Scrollback, and a swipe moves none"
 scrolled_back && fail "the Pane is in its Scrollback before the drag"

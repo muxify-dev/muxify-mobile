@@ -41,7 +41,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     subscribe: () => () => {},
     switchSession: () => Promise.resolve(),
     selectWindow: () => Promise.resolve(),
-    selectPane: () => {},
+    selectPane: () => false,
     split: () => Promise.resolve(),
     newWindow: () => Promise.resolve(),
     setZoom: () => {},
