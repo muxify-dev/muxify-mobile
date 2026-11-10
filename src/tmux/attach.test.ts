@@ -470,6 +470,31 @@ describe('the verbs', () => {
     expect(kit.attach.state().zoomed).toBe(true);
   });
 
+  it('reads the mouse for the Pane that is active, not for the one before it', async () => {
+    const split = fakeHost();
+    const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+    split.answering('list-panes', [
+      `0\t%0\tclaude\t1\t/home/user\t${LAYOUT}`,
+      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
+    ]);
+    const kit = attachOn({ hosts: [split] });
+    await connected(kit);
+    // The program in %0 listens for the mouse, and the one in %2 does not.
+    split.answering('display-message', ['0\t0\t1\t0\t49\t20\t1\t1\t1']);
+    kit.attach.surfaceForPane('%0', fakeSurface(), { cols: 49, rows: 20 });
+    await settle();
+    split.answering('display-message', ['0\t0\t0\t100\t49\t20\t0\t1\t1']);
+    kit.attach.surfaceForPane('%2', fakeSurface(), { cols: 49, rows: 20 });
+    await settle();
+    expect(kit.attach.state().mouseTracking).toBe(true);
+
+    kit.attach.selectPane('%2');
+    expect(kit.attach.state().mouseTracking).toBe(false);
+
+    kit.attach.selectPane('%0');
+    expect(kit.attach.state().mouseTracking).toBe(true);
+  });
+
   it('turns a command nobody waited on into a quiet line, not a dead screen', async () => {
     const kit = attachOn();
     await connected(kit);

@@ -74,6 +74,12 @@ export type AttachPhase =
   | { kind: 'disconnected'; reason: DisconnectReason }
   | { kind: 'closed' };
 
+/** The parts of the state that belong to the active Pane. See paneFacts. */
+type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'cursorRow'>;
+
+/** A Pane no view has said anything about. */
+const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, cursorRow: null };
+
 /** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
 export interface AttachState {
   phase: AttachPhase;
@@ -449,6 +455,23 @@ export function openAttach(options: AttachOptions): Attach {
 
   // ---------------------------------------------------------------- Pane views
 
+  /**
+   * What each view last said about its Pane, for every Pane and not only the
+   * active one.
+   *
+   * The state holds these three for the active Pane. A view says each one when
+   * it changes and not again when its Pane becomes the active one, so the
+   * state takes them from here when the active Pane changes. Without this, a
+   * Pane picked after one that listens for the mouse kept the mouse layer.
+   */
+  const paneFacts = new Map<string, PaneFacts>();
+
+  function paneSaid(mine: number, paneId: string, fact: Partial<PaneFacts>): void {
+    if (stale(mine)) return;
+    paneFacts.set(paneId, { ...(paneFacts.get(paneId) ?? UNREAD_PANE), ...fact });
+    if (paneId === state.topology.activePane?.id) change(fact);
+  }
+
   function viewFor(paneId: string): PaneView {
     const existing = views.get(paneId);
     if (existing) return existing;
@@ -479,15 +502,9 @@ export function openAttach(options: AttachOptions): Attach {
         },
       },
       {
-        onScroll: (position) => {
-          if (!stale(mine) && active()) change({ scrolled: position });
-        },
-        onMouseTracking: (wanted) => {
-          if (!stale(mine) && active()) change({ mouseTracking: wanted });
-        },
-        onCursor: (row) => {
-          if (!stale(mine) && active()) change({ cursorRow: row });
-        },
+        onScroll: (position) => paneSaid(mine, paneId, { scrolled: position }),
+        onMouseTracking: (wanted) => paneSaid(mine, paneId, { mouseTracking: wanted }),
+        onCursor: (row) => paneSaid(mine, paneId, { cursorRow: row }),
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.
         onPainted: () => {
@@ -543,6 +560,7 @@ export function openAttach(options: AttachOptions): Attach {
       say(`${id} left the Topology; its view is released${onScreen.has(id) ? ', Surface kept' : ''}`);
       view.dispose();
       views.delete(id);
+      paneFacts.delete(id);
     }
     for (const id of onScreen.keys()) {
       if (wanted.has(id)) viewFor(id);
@@ -555,6 +573,7 @@ export function openAttach(options: AttachOptions): Attach {
     if (views.size > 0) say(`releasing ${views.size} views; ${onScreen.size} Surfaces kept`);
     for (const view of views.values()) view.dispose();
     views.clear();
+    paneFacts.clear();
   }
 
   /**
@@ -662,7 +681,13 @@ export function openAttach(options: AttachOptions): Attach {
       topology.subscribe((next) => {
         if (stale(mine)) return;
         pruneViews(next);
-        change({ topology: next });
+        const activeId = next.activePane?.id;
+        change({
+          topology: next,
+          ...(activeId !== state.topology.activePane?.id
+            ? (paneFacts.get(activeId ?? '') ?? UNREAD_PANE)
+            : {}),
+        });
         const size = windowGrid(next);
         if (!size) return;
         sizing.windowSized(size);
