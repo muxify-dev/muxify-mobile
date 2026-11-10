@@ -75,10 +75,10 @@ export type AttachPhase =
   | { kind: 'closed' };
 
 /** The parts of the state that belong to the active Pane. See paneFacts. */
-type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'cursorRow'>;
+type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'rowInSight'>;
 
 /** A Pane no view has said anything about. */
-const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, cursorRow: null };
+const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, rowInSight: null };
 
 /** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
 export interface AttachState {
@@ -115,13 +115,14 @@ export interface AttachState {
   /** Whether the application in the active Pane is listening for the mouse. */
   mouseTracking: boolean;
   /**
-   * The row the active Pane's cursor is on, or null before it has been read.
+   * The row of the active Pane the keyboard must not cover, or null before it
+   * has been read. The cursor's, or the last row of a full-screen program.
    *
    * What the screen slides the Window by when the keyboard covers part of it;
    * see windowSlide. The active Pane's only, for the same reason as the
    * Scrollback position: one Window, one place being typed into.
    */
-  cursorRow: number | null;
+  rowInSight: number | null;
 }
 
 /** What the Key Row's ⌘v delivers: the clipboard's text, or its image as a staged file. */
@@ -382,7 +383,7 @@ export function openAttach(options: AttachOptions): Attach {
     grid: null,
     scrolled: null,
     mouseTracking: false,
-    cursorRow: null,
+    rowInSight: null,
   };
 
   const sizing: ClientSizing = createClientSizing(async (grid) => {
@@ -407,7 +408,7 @@ export function openAttach(options: AttachOptions): Attach {
   /**
    * The facts a subscriber would notice, written down as they change.
    *
-   * Not every field: the cursor row and the Scrollback position move with
+   * Not every field: the row in sight and the Scrollback position move with
    * every burst of output, and a Log full of them is a Log with nothing else
    * left in it.
    */
@@ -508,7 +509,7 @@ export function openAttach(options: AttachOptions): Attach {
       {
         onScroll: (position) => paneSaid(mine, paneId, { scrolled: position }),
         onMouseTracking: (wanted) => paneSaid(mine, paneId, { mouseTracking: wanted }),
-        onCursor: (row) => paneSaid(mine, paneId, { cursorRow: row }),
+        onRowInSight: (row) => paneSaid(mine, paneId, { rowInSight: row }),
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.
         onPainted: () => {

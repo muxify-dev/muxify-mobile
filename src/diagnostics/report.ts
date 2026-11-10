@@ -49,7 +49,7 @@ function describeAttached(attached: ReportContext['attached']): string[] {
     `  Topology: ${describeTopology(state.topology)}`,
     `  Client grid: ${state.grid ? `${state.grid.cols}x${state.grid.rows}` : 'none yet'}` +
       `; Zoom preference ${state.zoomed ? 'on' : 'off'}` +
-      `; cursor row ${state.cursorRow ?? 'unread'}` +
+      `; row in sight ${state.rowInSight ?? 'unread'}` +
       `; mouse tracking ${state.mouseTracking ? 'on' : 'off'}` +
       `; scrolled ${state.scrolled ? `${state.scrolled.back} back` : 'live'}`,
   ];

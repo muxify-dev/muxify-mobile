@@ -153,6 +153,16 @@ surface() {
   done
   echo ""
 }
+# The row the screen keeps above the keyboard, from the Log's report.
+row_in_sight() {
+  agent-device press 'label="Options"' >/dev/null 2>&1
+  agent-device wait 'label="Copy log"' 3000 >/dev/null 2>&1 || return 0
+  agent-device press 'role=button label="Copy log"' >/dev/null 2>&1
+  agent-device wait 'label="OK"' 8000 >/dev/null 2>&1
+  agent-device press 'label="OK"' >/dev/null 2>&1
+  sleep 1
+  xcrun simctl pbpaste booted | grep -oE 'row in sight [0-9]+' | tail -1 | grep -oE '[0-9]+$'
+}
 window()  { on_host "tmux display-message -p -t '$SESSION' '#{window_width}x#{window_height}'"; }
 # Everything the Session and its Window carry, sorted so two readings can be
 # compared. `-w` is not optional: window-size lives there and nowhere else.
@@ -426,6 +436,23 @@ TOP=$(agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 print(round(next(n['rect']['y'] for n in json.load(sys.stdin)['data']['nodes'] if n['type'] == 'TextView')))")
 echo "     short Pane: cursor row ends at $BOTTOM, Surface top at $TOP"
+
+# A full-screen program keeps its last row in sight, not its cursor's: Claude
+# Code types four rows from the bottom and draws its footer under the cursor,
+# and vim's status line is under the text being edited. Drawn here by hand on
+# the alternate screen, with the cursor parked on row 3 and FOOTER on the last.
+on_host "tmux send-keys -t '$SESSION:' \"printf '\\\\033[?1049h\\\\033[2J\\\\033[$FULL;1HFOOTER\\\\033[3;1H'; sleep 600\" Enter"
+sleep 3
+on_host "tmux capture-pane -t '$SESSION:' -p" | tail -1 | grep -q FOOTER \
+  || fail "the full-screen stand-in did not draw its footer on the last row"
+# Read from the Log's report rather than from the Surface's frame, which the
+# accessibility tree clips to the strip that shows, slid or not.
+IN_SIGHT=$(row_in_sight)
+[ "$IN_SIGHT" = $((FULL - 1)) ] \
+  || fail "on the alternate screen the row kept in sight is ${IN_SIGHT:-unread}, not the last row $((FULL - 1))"
+echo "     full-screen program: row $IN_SIGHT, the last, is kept above the keys"
+on_host "tmux send-keys -t '$SESSION:' C-c; sleep 1; tmux send-keys -t '$SESSION:' 'clear' Enter"
+sleep 1
 ensure_keyboard away
 [ "$(on_host "tmux display-message -p -t '$SESSION:' '#{window_height}'")" = "$FULL" ] \
   || fail "the keyboard changed the Window on the way down"
