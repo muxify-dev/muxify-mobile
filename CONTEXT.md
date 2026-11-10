@@ -59,7 +59,7 @@ Where the Panes of one Window sit, as tmux's `#{window_layout}` string gives
 it. The only honest source: tmux reports a zoomed Pane's own coordinates as the
 whole Window. The Panes picker draws the Layout to its proportions, with a
 floor under the smallest Pane so it stays a tile that can be tapped — see ADR
-0004.
+0004. The Layout Map draws the same diagram, small.
 _Avoid_: Topology (which is what exists, not where it is), geometry
 
 **Zoom**:
@@ -72,8 +72,8 @@ Pane, each laid out where the Layout puts it.
 Muxify's is a *preference*, not tmux's flag: it says what a Session should
 arrive as and what the switch asks for, while what is on screen follows tmux.
 The two disagreeing is something the user can see, so every verb re-applies the
-preference afterwards — except picking a Pane, which carries it in the command
-instead. `select-pane -Z` has tmux keep the Window zoomed across the selection;
+preference afterwards — except picking a Pane, in the Panes picker or with a
+Pane Swipe, which carries it in the command instead. `select-pane -Z` has tmux keep the Window zoomed across the selection;
 putting the zoom back afterwards would work too, and costs two round trips of
 drawing the split it is about to throw away.
 
@@ -293,8 +293,9 @@ the published library does not offer and the app cannot do from outside it:
 hiding the Accessory Bar, which covered the Key Row (see ADR 0003); telling UIKit
 the view has a document behind its caret, without which a held delete key
 removes exactly one character; reporting the size of a cell with the grid,
-without which nothing outside the Surface can turn a touch into a cell; and
-two promises about its own readiness — nothing written to it is lost, and every
+without which nothing outside the Surface can turn a touch into a cell; giving
+the one-finger drag to Muxify, locked to one axis when it begins, as a scroll
+or as a Pane Swipe; and two promises about its own readiness — nothing written to it is lost, and every
 surface it builds underneath reports its grid — without which a Pane could be
 left blank with no way to notice (see ADR 0009). Each hunk says why in place.
 
@@ -304,6 +305,26 @@ bottom and right. Anything mapping a point to a cell has to divide by the cell
 and not by the Pane: the difference is a quarter of a point a row, which is
 nothing at the top and a whole row by the bottom. See `cellOf`.
 _Avoid_: Terminal, emulator, view
+
+**Pane Swipe**:
+A horizontal drag of one finger on the Surface. A swipe left goes to the next
+Pane of the Window and a swipe right to the previous one, in index order, and
+past either end it comes round to the other: tmux's `select-pane -t :.+` and
+`:.-`. The Zoom is kept. A drag is locked to one axis when it leaves the tap
+slop: horizontal when it sets off more than one and a half times further
+sideways than up or down, and a swipe when the finger lifts 40 points or more
+from where it landed. Every other drag is vertical and moves the Scrollback,
+or is the wheel for a program that listens for the mouse. That program gets
+nothing from a horizontal drag. The system's back swipe is off on the Terminal
+Screen except at the left edge, because it is the same drag as a swipe right.
+_Avoid_: page, slide (that is the keyboard's), flick
+
+**Layout Map**:
+The small diagram in the top right of the Surface area: the Window's Layout,
+with the active Pane in the accent colour. It shows which Pane the zoomed
+Window is on, and it follows a Pane Swipe. A tap opens the Panes picker. A
+Window with one Pane has no map.
+_Avoid_: minimap, Pane indicator, thumbnail
 
 **Header**:
 The row at the top of the Terminal Screen, on the terminal background under
