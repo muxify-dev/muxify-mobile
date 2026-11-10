@@ -45,7 +45,7 @@ import { useCopyLog } from '@/hooks/use-copy-log';
 import { useHostReading } from '@/hooks/use-host-reading';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
-import { useHostLists, useSettings } from '@/settings/settings-context';
+import { useChooserLists, useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { fieldsParam } from '@/topics/topic-edit';
@@ -822,8 +822,10 @@ export default function TerminalScreen() {
     activeView()?.jumpToLatest();
   }, [activeView]);
 
-  const hostLists = useHostLists(hostId ?? '');
-  const topicsOn = hostLists.includes('topics');
+  const chooserLists = useChooserLists(hostId ?? '');
+  const topicsOn = chooserLists.includes('topics');
+  const windowsOn = chooserLists.includes('windows');
+  const sessionsOn = chooserLists.includes('sessions');
   const { topics: hostTopics, read: readHost } = useHostReading(hostId ?? '', topicsOn);
   const pickerTopics = useMemo(
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
@@ -965,7 +967,7 @@ export default function TerminalScreen() {
   const titleRevision = titleSheet.open ? titleSheet.revision : null;
   useEffect(() => {
     setWindowTabs(null);
-    if (titleRevision === null || !hostId || !activeWindowId) return;
+    if (!windowsOn || titleRevision === null || !hostId || !activeWindowId) return;
     let current = true;
     void readBrowserTabs(hostId, activeWindowId).then((read) => {
       if (current && chooserRevision.current === titleRevision && holder.current() === attach &&
@@ -974,7 +976,7 @@ export default function TerminalScreen() {
       }
     });
     return () => { current = false; };
-  }, [titleRevision, hostId, activeWindowId, sessionName, attach, holder]);
+  }, [windowsOn, titleRevision, hostId, activeWindowId, sessionName, attach, holder]);
 
   const openTitleSheet = useCallback(() => {
     if (!attach) return;
@@ -982,10 +984,10 @@ export default function TerminalScreen() {
     setPicker({ open: false });
     setTitleSheet({ open: true, revision: ++chooserRevision.current });
     attach.refreshTopology();
-    attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
+    if (sessionsOn) attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
     if (state?.topic) rereadTopic();
     if (topicsOn) void readHost();
-  }, [attach, state, rereadTopic, topicsOn, readHost]);
+  }, [attach, state, rereadTopic, topicsOn, sessionsOn, readHost]);
 
   /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
   const openTab = useCallback(
@@ -1149,6 +1151,10 @@ export default function TerminalScreen() {
         disabled: !activePaneId,
       }),
       { kind: 'divider', id: 'divider' },
+      action('configure-chooser', 'Configure chooser', 'list.bullet', () => {
+        closeChooser();
+        if (hostId) router.push({ pathname: '/host-lists', params: { hostId } });
+      }),
       action('copy-log', 'Copy log', 'doc.text', copyLog),
       action('disconnect', 'Disconnect', 'xmark.circle', disconnect, { destructive: true }),
     ];
@@ -1170,6 +1176,7 @@ export default function TerminalScreen() {
     copyPaneText,
     copyLog,
     disconnect,
+    closeChooser,
   ]);
 
 
@@ -1364,6 +1371,7 @@ export default function TerminalScreen() {
       />
 
       <TitleSheet
+        lists={chooserLists}
         isPresented={titleSheet.open}
         onDismiss={closeChooser}
         rows={titleRows}

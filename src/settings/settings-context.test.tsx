@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { SettingsProvider, useSettings } from './settings-context';
 import { createSettingsStore, type SettingsStore } from './settings-store';
-import { hostListsFor } from './settings';
+import { chooserListsFor, hostListsFor } from './settings';
 
 let mockStore: SettingsStore;
 const mockHosts = jest.fn();
@@ -39,10 +39,14 @@ it('keeps two Host edits and a global edit issued before React renders again', a
   await act(async () => {
     editor.updateHostLists('one', ['sessions']);
     editor.updateHostLists('two', ['topics', 'recent']);
+    editor.updateChooserLists('one', ['windows', 'sessions']);
+    editor.updateChooserLists('two', ['topics']);
     editor.update({ theme: 'dracula' });
   });
   const saved = await mockStore.load();
   expect(hostListsFor(saved, 'one')).toEqual(['sessions']);
   expect(hostListsFor(saved, 'two')).toEqual(['topics', 'recent']);
   expect(saved.theme).toBe('dracula');
+  expect(chooserListsFor(saved, 'one')).toEqual(['windows', 'sessions']);
+  expect(chooserListsFor(saved, 'two')).toEqual(['topics']);
 });

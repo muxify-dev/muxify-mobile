@@ -1,7 +1,6 @@
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActionSheetIOS, Pressable, StyleSheet, Text as RNText, View } from 'react-native';
-import { SymbolView } from 'expo-symbols';
+import { StyleSheet, View } from 'react-native';
 
 import {
   Button,
@@ -48,8 +47,7 @@ import { useHostLists, useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import { lastSnapshot } from '@/topics/host-topics';
-import { tagsParam } from '@/topics/tags-param';
+import { hostCreationOrder } from '@/settings/settings';
 import { useHostEntry } from '@/hooks/use-host-entry';
 
 /** How many rows a section shows before it offers to show the rest. */
@@ -128,18 +126,7 @@ export default function HostScreen() {
   );
 
   const newSession = () => router.push({ pathname: '/session-form', params: { hostId: id } });
-  const newTopic = () => {
-    const tags = lastSnapshot(topics)?.tags ?? [];
-    router.push({ pathname: '/topic-form', params: { hostId: id, tags: tagsParam(tags) } });
-  };
-  /** With Topics on, + asks which of the two to make. With them off, it is New Session as before. */
-  const onNew = () => {
-    if (!topicsOn) return newSession();
-    ActionSheetIOS.showActionSheetWithOptions(
-      { options: ['New Session', 'New Topic', 'Cancel'], cancelButtonIndex: 2 },
-      (index) => [newSession, newTopic][index]?.(),
-    );
-  };
+  const newTopic = () => router.push({ pathname: '/topic-form', params: { hostId: id } });
 
   const sections = hostScreen({ settings: { ...settings, hostScreenLists: lists }, recent, listing, topics, opened, appearance });
 
@@ -217,17 +204,23 @@ export default function HostScreen() {
       <Stack.Screen
         options={{
           title: host?.displayName ?? 'Host',
-          headerRight: () => (
-            <ToolbarActions
-              palette={palette}
-              onLists={() => router.push({ pathname: '/host-lists', params: { hostId: id } })}
-              onEdit={() => router.push({ pathname: '/host-form', params: { id } })}
-              newLabel={topicsOn ? 'New Session or Topic' : 'New Session'}
-              onNew={onNew}
-            />
-          ),
         }}
       />
+
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="Host Options">
+          <Stack.Toolbar.Label>Options</Stack.Toolbar.Label>
+          {hostCreationOrder(lists).map((kind) => <Stack.Toolbar.MenuAction
+            key={kind}
+            icon={kind === 'sessions' ? 'terminal' : 'folder.badge.plus'}
+            onPress={kind === 'sessions' ? newSession : newTopic}>
+            {kind === 'sessions' ? 'New Session' : 'New Topic'}
+          </Stack.Toolbar.MenuAction>)}
+          <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/host-lists', params: { hostId: id } })}>
+            Configure panels
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
+      </Stack.Toolbar>
 
       <Host style={styles.fill} matchContents={false}>
         <Form
@@ -302,42 +295,6 @@ function DisclosureRow({
   );
 }
 
-/**
- * Edit and New, as one glass group — the shape iOS gives a toolbar item group.
- *
- * Plain React Native rather than a SwiftUI island, including the Symbol: a bar
- * button's glass is drawn around the width the custom view reports, and an
- * island reports its width too late, so the capsule came out clamped with the
- * plus cut off. Yoga measures these immediately.
- */
-function ToolbarActions({
-  palette,
-  newLabel,
-  onEdit,
-  onLists,
-  onNew,
-}: {
-  palette: Appearance;
-  newLabel: string;
-  onEdit: () => void;
-  onLists: () => void;
-  onNew: () => void;
-}) {
-  return (
-    <View style={styles.toolbarGroup}>
-      <Pressable onPress={onLists} accessibilityRole="button" accessibilityLabel="Host Screen lists" style={styles.toolbarIcon}>
-        <SymbolView name="list.bullet" size={21} tintColor={palette.toolbarTint} />
-      </Pressable>
-      <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit Host">
-        <RNText style={[styles.toolbarWord, { color: palette.toolbarTint }]}>Edit</RNText>
-      </Pressable>
-      <Pressable onPress={onNew} accessibilityRole="button" accessibilityLabel={newLabel}>
-        <SymbolView name="plus" size={23} tintColor={palette.toolbarTint} />
-      </Pressable>
-    </View>
-  );
-}
-
 /** Only the Sessions sections fold: the Topics sections keep the Mac's whole layout. */
 function collapsible(section: HostScreenSection): boolean {
   return section.id === 'recent' || section.id === 'sessions';
@@ -350,20 +307,5 @@ function collapse<T>(items: T[], expanded: boolean): T[] {
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
-  },
-  toolbarGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    gap: 8,
-  },
-  toolbarIcon: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toolbarWord: {
-    fontSize: 17,
   },
 });

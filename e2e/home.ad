@@ -4,7 +4,7 @@ open "dev.muxify.app" --relaunch
 wait "label=\"Host Dev Host\"" 15000
 is "absent" "label=\"Session 0\""
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 back
 wait "label=\"Settings\"" 8000
 is "visible" "label=\"Host Dev Host\""

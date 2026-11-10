@@ -79,7 +79,6 @@ attach() {
 open_title_sheet() {
   agent-device press 'id="header-title"' >/dev/null 2>&1
   agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
-  agent-device press 'label="Windows"' >/dev/null 2>&1
 }
 
 # Back from the Web View to the Session under it.
@@ -189,7 +188,7 @@ done
 sleep 2
 agent-device is exists 'text="Browser tabs"' >/dev/null 2>&1 && fail "the Title Sheet still shows Browser tabs"
 agent-device is exists 'label="Tab By address"' >/dev/null 2>&1 && fail "the Title Sheet still lists a Tab"
-agent-device is exists 'label="Windows"' >/dev/null 2>&1 || fail "the Title Sheet lost its other rows"
+agent-device is exists 'label="Close Choose"' >/dev/null 2>&1 || fail "the Title Sheet closed"
 agent-device press 'label="Close Choose"' >/dev/null 2>&1
 
 agent-device close >/dev/null 2>&1

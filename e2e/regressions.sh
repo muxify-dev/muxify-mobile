@@ -226,7 +226,7 @@ attach() {
   agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
   # The real flow: a saved Host, its Sessions, then one of them.
   agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
-  agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+  agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
@@ -505,7 +505,7 @@ on_host "tmux has-session -t '$SECOND' 2>/dev/null || tmux new-session -d -s '$S
 ensure_keyboard away
 # Back returns to the Host Screen with the new Session.
 agent-device back >/dev/null 2>&1
-agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SECOND\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SECOND\"" >/dev/null 2>&1
@@ -523,7 +523,7 @@ ensure_keyboard away
 echo "     second Session connected at $(surface), keyboard rose and fell"
 # Back to the first, the same way round, so what follows leaves it as found.
 agent-device back >/dev/null 2>&1
-agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
 agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
@@ -536,7 +536,7 @@ echo "10/10 leaving finds the Session exactly as it was, bar the zoom"
 # The keyboard is already away: check 8 put it there, and toggling it again
 # here would only raise it on the way out.
 agent-device back >/dev/null 2>&1
-agent-device wait 'label="Edit Host"' 8000 >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1
 sleep 2
 [ "$(options)" = "$BEFORE" ] || {
   diff <(echo "$BEFORE") <(options)

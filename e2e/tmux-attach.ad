@@ -19,7 +19,7 @@ wait "text" "Dev Host" 15000
 
 # Through the real flow now: a saved Host, its Sessions, then one of them.
 press "label=\"Host Dev Host\""
-wait "label=\"Edit Host\"" 15000
+wait "label=\"Host Options\"" 15000
 wait 1500
 wait "label=\"Session 0\"" 15000
 press "label=\"Session 0\""
@@ -43,6 +43,6 @@ wait 2500
 
 # Back returns to the Host Screen and keeps the Attach.
 back
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 
 close

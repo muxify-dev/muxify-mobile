@@ -41,7 +41,7 @@ agent-device close >/dev/null 2>&1
 agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1 || fail "could not open the app"
 agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
 agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
-agent-device wait 'label="Edit Host"' 15000 >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
 agent-device wait 'label="Session 0"' 15000 >/dev/null 2>&1
 agent-device press 'label="Session 0"' >/dev/null 2>&1

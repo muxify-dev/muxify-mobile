@@ -13,7 +13,7 @@ open "dev.muxify.app" --relaunch
 wait "id=\"reconnect-failure\"" 15000
 is "visible" "label=\"e2e-reconnect-gone is no longer on Dev Host\""
 press "label=\"Go to Host\""
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 is "visible" "label=\"Session e2e-reconnect\""
 
 press "label=\"Session e2e-reconnect\""
@@ -22,7 +22,7 @@ is "text" "id=\"attached-session\"" "e2e-reconnect"
 press "label=\"Options\""
 wait "role=button label=\"Disconnect\"" 8000
 press "role=button label=\"Disconnect\""
-wait "label=\"Edit Host\"" 8000
+wait "label=\"Host Options\"" 8000
 wait 2000
 
 open "dev.muxify.app" --relaunch

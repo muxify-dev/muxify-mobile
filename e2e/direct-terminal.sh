@@ -20,7 +20,7 @@ if ad wait 'label="Open"' 1500 >/dev/null 2>&1; then
 fi
 ad wait 'id="pane-command"' 20000
 ad back --settle
-ad wait 'label="Edit Host"' 8000
+ad wait 'label="Host Options"' 8000
 ad back --settle
 ad wait 'label="Host Dev Host"' 8000
 echo 'Cold direct entry returns through Host Screen to Hosts.'
