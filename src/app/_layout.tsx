@@ -121,7 +121,17 @@ function AppStack() {
         />
         {/* No navigation header: the screen draws its own Header, on the
             terminal background, with Back in it. */}
-        <Stack.Screen name="terminal" options={{ headerShown: false, title: 'Session' }} />
+        <Stack.Screen
+          name="terminal"
+          options={{
+            headerShown: false,
+            title: 'Session',
+            // A swipe right on the Surface is the previous Pane. From iOS 26
+            // the system's back swipe starts anywhere on a screen, and it took
+            // that drag. Back stays in the Header and at the left edge.
+            fullScreenGestureEnabled: false,
+          }}
+        />
       </Stack>
     </ThemeProvider>
   );

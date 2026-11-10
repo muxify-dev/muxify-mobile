@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Banner, Presence } from '@/components/banner';
 import { ReconnectScreen } from '@/components/reconnect-screen';
 import { KeyRow } from '@/components/key-row';
+import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
 import { stageClipboardImage } from '@/composer/staging';
@@ -24,7 +25,12 @@ import {
 } from '@/components/terminal-header';
 import { ThemedText } from '@/components/themed-text';
 import { TitleSheet, type TitlePick } from '@/components/title-sheet';
-import { paletteFor, type Appearance, type TerminalPalette } from '@/constants/app-theme';
+import {
+  paletteFor,
+  sheetPaletteFor,
+  type Appearance,
+  type TerminalPalette,
+} from '@/constants/app-theme';
 import { namedKeyName, type NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -62,6 +68,7 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
+import { panAxis, swipeOf, type PanAxis, type SwipeDirection } from '@/lib/pan-axis';
 import {
   applyModifiers,
   armedAfter,
@@ -77,6 +84,7 @@ import { phaseLabel } from '@/tmux/attach-labels';
 import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView } from '@/tmux/pane-view';
+import { paneForSwipe } from '@/tmux/pane-swipe';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
 import { trimPreview } from '@/tmux/preview';
 import type { Grid, Pane } from '@/tmux/tmux-client';
@@ -518,6 +526,18 @@ export default function TerminalScreen() {
       activeView()?.scroll(lines, size);
     },
     [activeView],
+  );
+
+  /**
+   * A horizontal swipe on a Pane: to the next or the previous Pane of the
+   * Window. The Zoom is kept, as it is for a pick in the Panes picker.
+   */
+  const swipePane = useCallback(
+    (direction: SwipeDirection) => {
+      const pane = paneForSwipe(state?.topology.panes ?? [], direction);
+      if (pane) attach?.selectPane(pane.id);
+    },
+    [attach, state?.topology.panes],
   );
 
   /** The Pane the mouse layer belongs to, and only its rectangle. */
@@ -1291,6 +1311,7 @@ export default function TerminalScreen() {
             onCell={reportCell}
             onInput={handlePaneInput}
             onScroll={handlePaneScroll}
+            onSwipe={swipePane}
             onSelect={(paneId) => attach?.selectPane(paneId)}
           />
         ))}
@@ -1310,6 +1331,7 @@ export default function TerminalScreen() {
             cell={cellSize}
             onTap={handleTapCell}
             onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
+            onSwipe={swipePane}
           />
         ) : null}
 
@@ -1326,6 +1348,15 @@ export default function TerminalScreen() {
               onPress={jumpToLatest}
             />
           </>
+        ) : null}
+
+        {/* Last, so it is over the mouse layer and a tap on it is the map's. */}
+        {(state?.topology.panes.length ?? 0) > 1 ? (
+          <LayoutMap
+            panes={state?.topology.panes ?? []}
+            palette={sheetPaletteFor(settings.theme)}
+            onPress={openPanes}
+          />
         ) : null}
       </View>
 
@@ -1572,6 +1603,7 @@ function PaneSurfaceView({
   onCell,
   onInput,
   onScroll,
+  onSwipe,
   onSelect,
 }: {
   slot: PaneSlot;
@@ -1586,6 +1618,7 @@ function PaneSurfaceView({
   onCell: (cell: Extent) => void;
   onInput: (paneId: string, data: string) => void;
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
+  onSwipe: (direction: SwipeDirection) => void;
   onSelect: (paneId: string) => void;
 }) {
   /**
@@ -1652,11 +1685,14 @@ function PaneSurfaceView({
         onInput={({ nativeEvent }) => onInput(slot.pane.id, nativeEvent.data)}
         // The Scrollback is tmux's, so the gesture has to be Muxify's:
         // ghostty would otherwise spend it on one of its own that does not
-        // exist here. Needs the local patch.
+        // exist here. The library locks the drag to one axis when it begins:
+        // a vertical drag is the scroll and a horizontal one is the swipe.
+        // Needs the local patch.
         ownsScrollGesture
         onScroll={({ nativeEvent }) =>
           onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
         }
+        onSwipe={({ nativeEvent }) => onSwipe(nativeEvent.direction)}
       />
 
       {/* The seam, and only the seam. A rectangle per Pane drew a rule along
@@ -1683,14 +1719,17 @@ function PaneSurfaceView({
             from.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
           }}
           // A tap, not a drag. Without the slop a finger that started on the
-          // other Pane on its way somewhere moved the keyboard with it.
+          // other Pane on its way somewhere moved the keyboard with it. A
+          // horizontal drag is the same swipe as on the active Pane.
           onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
-            const start = from.current;
-            const travelled = Math.hypot(
-              nativeEvent.locationX - start.x,
-              nativeEvent.locationY - start.y,
-            );
-            if (travelled <= TAP_SLOP) onSelect(slot.pane.id);
+            const dx = nativeEvent.locationX - from.current.x;
+            const dy = nativeEvent.locationY - from.current.y;
+            if (Math.hypot(dx, dy) <= TAP_SLOP) {
+              onSelect(slot.pane.id);
+              return;
+            }
+            const swipe = panAxis(dx, dy) === 'horizontal' ? swipeOf(dx) : null;
+            if (swipe) onSwipe(swipe);
           }}
         />
       ) : null}
@@ -1708,9 +1747,11 @@ const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
  * The finger, while an application in the Pane is listening for the mouse.
  *
  * It covers the Surface and takes every touch: a tap becomes a click at the
- * cell underneath, and a drag becomes wheel notches — which is what the
- * application would get from any terminal, and what makes Claude Code's "Jump
- * to bottom", vim's status line or a file in a picker tappable at all.
+ * cell underneath, and a vertical drag becomes wheel notches — which is what
+ * the application would get from any terminal, and what makes Claude Code's
+ * "Jump to bottom", vim's status line or a file in a picker tappable at all.
+ * A horizontal drag is the swipe to another Pane, on the same axis lock as the
+ * Surface's own gesture, so the application gets nothing from it. See panAxis.
  *
  * Why a layer rather than the Surface's own gesture. A tap already means
  * something there — it raises the keyboard — and that behaviour lives in the
@@ -1730,6 +1771,7 @@ function MouseLayer({
   cell,
   onTap,
   onScroll,
+  onSwipe,
 }: {
   box: PaneBox;
   grid: Grid;
@@ -1737,11 +1779,13 @@ function MouseLayer({
   cell: Extent | null;
   onTap: (column: number, row: number) => void;
   onScroll: (lines: number) => void;
+  onSwipe: (direction: SwipeDirection) => void;
 }) {
   const size = useRef({ width: 0, height: 0 });
-  const origin = useRef(0);
+  const origin = useRef({ x: 0, y: 0 });
   const previous = useRef(0);
-  const dragged = useRef(false);
+  /** What the drag is for, or null while the touch could still be a tap. */
+  const axis = useRef<PanAxis | null>(null);
   /** Fractions of a line a slow drag has not yet spent. */
   const carried = useRef(0);
   /** Where the finger has been lately, which is what a flick is worth. */
@@ -1823,9 +1867,9 @@ function MouseLayer({
         // A finger landing stops whatever the last one threw, exactly as
         // catching a scroll view does.
         stopCoasting();
-        origin.current = nativeEvent.locationY;
+        origin.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
         previous.current = nativeEvent.locationY;
-        dragged.current = false;
+        axis.current = null;
         carried.current = 0;
         track.current.clear();
         movedAt.current = Date.now();
@@ -1834,7 +1878,12 @@ function MouseLayer({
       onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
         const travelled = nativeEvent.locationY - previous.current;
         previous.current = nativeEvent.locationY;
-        if (Math.abs(nativeEvent.locationY - origin.current) > TAP_SLOP) dragged.current = true;
+        if (axis.current === null) {
+          const dx = nativeEvent.locationX - origin.current.x;
+          const dy = nativeEvent.locationY - origin.current.y;
+          if (Math.hypot(dx, dy) > TAP_SLOP) axis.current = panAxis(dx, dy);
+        }
+        if (axis.current === 'horizontal') return;
 
         // The last moment of the drag rather than the whole of it: what a
         // flick is worth is how fast the finger was going when it left, not
@@ -1846,7 +1895,12 @@ function MouseLayer({
       }}
       onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
         const { width, height } = size.current;
-        if (dragged.current) {
+        if (axis.current === 'horizontal') {
+          const swipe = swipeOf(nativeEvent.locationX - origin.current.x);
+          if (swipe) onSwipe(swipe);
+          return;
+        }
+        if (axis.current === 'vertical') {
           // Stale by more than a frame or two means the finger had already
           // stopped before it lifted, which is a placement rather than a throw.
           const now = Date.now();

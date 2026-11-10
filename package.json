@@ -60,6 +60,7 @@
     "e2e:regressions": "bash e2e/regressions.sh",
     "e2e:header": "bash e2e/header.sh",
     "e2e:key-row": "bash e2e/key-row.sh",
+    "e2e:pane-swipes": "bash e2e/pane-swipes.sh",
     "e2e:control": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/control-mode.test.ts",
     "e2e:composer": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/composer.test.ts",
     "e2e:topics": "jest --testPathIgnorePatterns /node_modules/ --runTestsByPath e2e/topics.test.ts",
