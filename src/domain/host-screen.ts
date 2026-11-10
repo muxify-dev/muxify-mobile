@@ -60,8 +60,8 @@ export type HostScreenRow =
 export type OpenableRow = 'no-topic' | 'bench';
 
 export interface HostScreenSection {
-  id: 'recent' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench';
-  /** Null for a section with no header: the Bench row is its own header. */
+  id: 'recent' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench' | 'no-topic';
+  /** Null when the section starts with its own named row. */
   title: string | null;
   footer: string | null;
   rows: HostScreenRow[];
@@ -163,11 +163,22 @@ export function topicSections(topics: HostTopics, appearance: ColorAppearance): 
   return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, leaveOut: NONE })
     .map((section) => ({
       ...section,
-      title: section.title ?? 'Bench',
+      title: SECTION_TITLES[section.id],
       rows: section.rows.filter((row) => ABOUT_TOPICS.has(row.kind)),
     }))
     .filter((section) => section.rows.length > 0);
 }
+
+const SECTION_TITLES: Record<HostScreenSection['id'], string> = {
+  recent: 'Recent Sessions',
+  sessions: 'Sessions',
+  topics: 'Topics',
+  pinned: 'Pinned',
+  'in-play': 'In Play',
+  guests: 'Guests',
+  bench: 'Bench',
+  'no-topic': 'No Topic',
+};
 
 const BENCH_OPENED: ReadonlySet<OpenableRow> = new Set(['bench']);
 
@@ -254,8 +265,13 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
   const { unpinned } = snapshot;
 
   if (unpinned.kind === 'list') {
-    const all = [...pinned, ...rows(unpinned.cards), ...noTopic];
-    return [topicsSection('topics', 'Topics', all.length > 0 ? all : [{ kind: 'note', text: 'No Topics yet.' }])];
+    const sections = [
+      topicsSection('topics', 'Topics', [...pinned, ...rows(unpinned.cards)]),
+      topicsSection('no-topic', null, noTopic),
+    ].filter((section) => section.rows.length > 0);
+    return sections.length > 0
+      ? sections
+      : [topicsSection('topics', 'Topics', [{ kind: 'note', text: 'No Topics yet.' }])];
   }
 
   const benchOpened = context.opened.has('bench');
@@ -267,7 +283,8 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
     topicsSection('pinned', 'Pinned', pinned),
     topicsSection('in-play', 'In Play', rows(unpinned.places)),
     topicsSection('guests', 'Guests', rows(unpinned.guests)),
-    topicsSection('bench', null, [...bench, ...noTopic]),
+    topicsSection('bench', null, bench),
+    topicsSection('no-topic', null, noTopic),
   ].filter((section) => section.rows.length > 0);
   return sections.length > 0
     ? sections

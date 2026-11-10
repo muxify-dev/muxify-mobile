@@ -228,6 +228,13 @@ Host Screen shows them as one Bench row, with no count and no marks, that opens
 to show their cards.
 _Avoid_: backlog, hidden Topics, overflow
 
+**No Topic**:
+The Sessions on a Host that belong to no Topic. With Topics on and the Sessions
+list off, the Host Screen shows them in a separate group after the Topics and
+the Bench. Its No Topic row shows the count and opens to list the Sessions.
+Recent Sessions are left out when that list is on. An empty group is not shown.
+_Avoid_: ungrouped Sessions, other Topics, Bench
+
 **Tag Mark**:
 A small square in the colour of one Tag, at the end of a Topic card. The colour
 is the Tag's light or dark value for the app's appearance. A Tag the Config no
