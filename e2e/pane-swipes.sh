@@ -33,6 +33,8 @@ set -uo pipefail
 APP=dev.muxify.app
 SESSION=0
 WINDOW="$SESSION:0"
+DEVICE_ARGS=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || DEVICE_ARGS=(--udid "$MUXIFY_E2E_DEVICE")
 
 # Runs a command on the dev Host, which is this Mac, in the sandbox.
 on_host() { sh -c "$*" 2>/dev/null; }
@@ -41,15 +43,19 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 attach() {
   agent-device close >/dev/null 2>&1
-  agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
-  agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+  agent-device open "$APP" --platform ios "${DEVICE_ARGS[@]}" --relaunch >/dev/null 2>&1
+  agent-device wait 'label="Host Dev Host"' 25000 >/dev/null 2>&1
   agent-device press 'label="Host Dev Host"' >/dev/null 2>&1
   agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1
   agent-device wait 1500 >/dev/null 2>&1  # Home is under the Host Screen until the push settles
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
-  agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 \
+  agent-device wait 'label="Open Terminal chooser" enabled=true' 20000 >/dev/null 2>&1 \
     || fail "never reached Connected"
+  agent-device wait 'text="bash"' 20000 >/dev/null 2>&1 \
+    || fail "the Header never reported the sandbox Pane program"
+  agent-device wait 'role="text-view" editable=true' 20000 >/dev/null 2>&1 \
+    || fail "the Surface never became ready for input"
   sleep 2
 }
 
@@ -109,7 +115,7 @@ swipe_right; expect_window "1 1" "a swipe right from Pane 2"
 # on a screen, and this is the drag it would take.
 drag 60 400 280 0
 expect_window "0 1" "a swipe right across the Surface"
-agent-device is exists 'id="pane-command"' >/dev/null 2>&1 \
+agent-device is exists 'label="Open Terminal chooser" enabled=true' >/dev/null 2>&1 \
   || fail "a swipe right across the Surface left the Terminal Screen"
 swipe_left
 echo "     0 → 1 → 2 → 0, then back 0 → 2 → 1 → 0, zoomed throughout"
@@ -196,7 +202,11 @@ echo "7/7  a Window that is not zoomed keeps its split across a swipe"
 # Two Panes side by side, so each one is a known half of the Surface.
 on_host "tmux kill-pane -t '$WINDOW.2'; tmux select-pane -t '$WINDOW.0'"
 sleep 2
-expect_window "0 0" "after closing a Pane from the Host"
+agent-device press 'label="Options"' >/dev/null 2>&1
+agent-device wait 'label="Zoom Pane" role="button"' 5000 >/dev/null 2>&1 || fail "no Zoom option"
+agent-device press 'label="Zoom Pane" role="button"' >/dev/null 2>&1
+sleep 2
+expect_window "0 0" "after turning Zoom off"
 # From the active Pane, on the left: the Surface's own gesture.
 drag 180 400 -150 0
 expect_window "1 0" "a swipe on the active Pane of a split"

@@ -38,7 +38,6 @@ import { placeToReconnect } from '@/domain/reconnect';
 import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
-import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 
 /**
  * Whether this run of the app has looked for a Last Place yet. Module state
@@ -140,9 +139,6 @@ function HostSection({ host, palette }: {
   palette: Appearance;
 }) {
   const router = useRouter();
-  const attach = useCurrentAttach();
-  const state = useAttachState(attach);
-  const attached = attach?.hostId === host.id ? state : null;
   return (
     <Section modifiers={[listRowBackground(palette.rowSurface)]}>
       <Button
@@ -153,7 +149,6 @@ function HostSection({ host, palette }: {
           <VStack alignment="leading" spacing={4}>
             <Text modifiers={[font({ size: 17, weight: 'semibold' }), foregroundColor(palette.toolbarTint)]}>{host.displayName}</Text>
             <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{host.address}</Text>
-            {attached && <Text modifiers={[font({ size: 13 }), foregroundColor(palette.controlAccent)]}>{attached.sessionName}</Text>}
           </VStack>
           <Spacer />
           <Image systemName="chevron.right" size={13} color={palette.secondaryLabel} />
