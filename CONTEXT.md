@@ -142,7 +142,7 @@ Edit Host is in Settings.
 
 **Home**:
 The list of saved Hosts, in the order set in Settings. Each row shows the Host
-name and address, and the current Session if this phone has an Attach there.
+name and address.
 A tap opens the Host Screen. Home does not read remote Listings.
 The fixed navigation order is Home, Host Screen, then Terminal Screen.
 Native Back has a chevron only and moves up one level without ending the Attach.
@@ -399,6 +399,23 @@ mouse. That program gets nothing from a horizontal drag. While a Selection is
 open a horizontal drag is for its handles and changes no Pane. The system's
 back swipe is off on the Terminal Screen except at the left edge, because it
 is the same drag as a swipe right.
+
+On iPad, a continuous two-finger scroll on a physical trackpad uses the same
+axis lock and Pane Swipe thresholds. A horizontal gesture cycles from the
+active Pane, including when the pointer is above an inactive Pane or at the
+Terminal area's left edge. A vertical gesture scrolls the Pane under the
+pointer when the gesture starts. It keeps
+that Pane and its grid until the gesture ends. It does not select or focus the
+Pane. Fractional lines belong to that gesture only. A vertical gesture during
+a Selection scrolls only the Selection's Pane. A horizontal gesture during a
+Selection changes no Pane.
+
+Trackpad gestures stop when the Attach, Session, Window, active Pane or Layout
+changes, when the app becomes inactive, or when the Terminal Screen loses
+focus. They are disabled while the Composer or a sheet is open, during a Pane Swipe
+transition, and while disconnected. Direct touch and click-drag do not enter this
+trackpad path. Trackpad gestures add no momentum after release.
+
 _Avoid_: page, slide (that is the keyboard's), flick
 
 **Layout Map**:

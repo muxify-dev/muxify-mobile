@@ -42,6 +42,8 @@ export interface PaneSwipe {
   cancel(): void;
   /** A Pane's Surface reported a grid, which is when a new Pane may come in. */
   surfaceReported(paneId: string): void;
+  /** Whether a committed or cancelled Pane Swipe is still moving. */
+  isTransitioning(): boolean;
 }
 
 /**
@@ -165,7 +167,12 @@ export function usePaneSwipe(options: {
     [send],
   );
 
-  return { offset, leaving, drag, swipe, cancel, surfaceReported };
+  const isTransitioning = useCallback(
+    () => state.current.phase === 'committing' || state.current.phase === 'settling',
+    [],
+  );
+
+  return { offset, leaving, drag, swipe, cancel, surfaceReported, isTransitioning };
 }
 
 function pastCommit(state: PaneSwipeState): boolean {

@@ -12,6 +12,8 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Banner, Presence } from '@/components/banner';
+import { TrackpadScroll } from '@/components/trackpad-scroll';
+import type { TrackpadTarget } from '@/lib/trackpad-gesture';
 import { ReconnectScreen } from '@/components/reconnect-screen';
 import { KeyRow, KEY_ROW_HEIGHT } from '@/components/key-row';
 import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
@@ -290,6 +292,7 @@ export default function TerminalScreen() {
 
   /** The Surface area's size in points, which every Pane is placed inside. */
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [paneGrids, setPaneGrids] = useState<ReadonlyMap<string, Grid>>(new Map());
   /** Scroll distance not yet worth a notch of the wheel. */
   const carriedLines = useRef(0);
   const physicalKeyboard = usePhysicalKeyboard();
@@ -509,7 +512,22 @@ export default function TerminalScreen() {
    * whose only job was to remember the last render's value. What a closing
    * sheet means for the Client's size is the sizing module's business.
    */
+  const [screenFocused, setScreenFocused] = useState(navigation.isFocused());
+  useFocusEffect(useCallback(() => {
+    setScreenFocused(true);
+    return () => setScreenFocused(false);
+  }, []));
   const sheetOpen = picker.open || titleSheet.open;
+  const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
+    paneId: slot.pane.id,
+    box: slot.box,
+    grid: paneGrids.get(slot.pane.id) ?? (slot.fillsWindow && visibleGrid
+      ? visibleGrid : { cols: slot.pane.width, rows: slot.rows }),
+  }));
+  const trackpadContext = JSON.stringify([
+    state?.sessionName, topology?.activeWindow?.index, activePaneId,
+    trackpadTargets, containerSize, fontSize,
+  ]);
   useEffect(() => {
     attach?.sheetPresented(sheetOpen);
   }, [attach, sheetOpen]);
@@ -648,6 +666,11 @@ export default function TerminalScreen() {
   const { surfaceReported } = swipe;
   const reportPaneGrid = useCallback(
     (paneId: string, grid: Grid) => {
+      setPaneGrids((before) => {
+        const known = before.get(paneId);
+        return known?.cols === grid.cols && known.rows === grid.rows
+          ? before : new Map(before).set(paneId, grid);
+      });
       attach?.paneGridReported(paneId, grid);
       surfaceReported(paneId);
     },
@@ -1278,49 +1301,60 @@ export default function TerminalScreen() {
           />
         ) : null}
 
-        {slots.map((slot) => (
-          <PaneSurfaceView
-            key={slot.pane.id}
-            slot={slot}
-            font={fontSize}
-            terminal={opened.terminal}
-            ansi={opened.ansi}
-            onRef={adoptPaneSurface}
-            onPaneResize={reportPaneGrid}
-            onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
-            onCell={reportCell}
-            onInput={handlePaneInput}
-            onScroll={handlePaneScroll}
-            swipe={swipe}
-            onSelect={(paneId) => attach?.selectPane(paneId)}
-            onSelectionPress={beginSelection}
-            onSelectionEnd={endSelection}
-            onSelectionEdge={scrollSelection}
-            onPaste={pasteFromSurface}
-          />
-        ))}
+        <TrackpadScroll
+          style={StyleSheet.absoluteFill}
+          enabled={connected && screenFocused && !composerOpen && !sheetOpen && !showReconnect}
+          context={trackpadContext}
+          targets={trackpadTargets}
+          scrollSpeed={SCROLL_SPEED}
+          selectionPane={frozenView.current?.paneId() ?? null}
+          attach={attach}
+          swipe={swipe}>
+          {slots.map((slot) => (
+            <PaneSurfaceView
+              key={slot.pane.id}
+              slot={slot}
+              font={fontSize}
+              terminal={opened.terminal}
+              ansi={opened.ansi}
+              onRef={adoptPaneSurface}
+              onPaneResize={reportPaneGrid}
+              onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
+              onCell={reportCell}
+              onInput={handlePaneInput}
+              onScroll={handlePaneScroll}
+              swipe={swipe}
+              onSelect={(paneId) => attach?.selectPane(paneId)}
+              onSelectionPress={beginSelection}
+              onSelectionEnd={endSelection}
+              onSelectionEdge={scrollSelection}
+              onPaste={pasteFromSurface}
+            />
+          ))}
 
-        {/* Under the Scrollback chrome, and that ordering is the whole of
-            whether the Jump to latest pill can be pressed. The layer covers
-            the Pane and claims every touch in it, so drawn after the pill it
-            took the pill's presses as well — and judged them by a terminal's
-            rules rather than a button's, where ten points of finger travel is
-            a scroll and not a tap. A press that drifted did nothing at all,
-            except scroll further back. Measured: a fourteen-point drag on the
-            pill left it exactly where it was. */}
-        {/* Gone while a Selection is open: the touches are the Selection
-            Layer's then, which is under this one. */}
-        {state?.mouseTracking && activeSlot && mouseGrid && !selecting ? (
-          <MouseLayer
-            box={activeSlot.box}
-            grid={mouseGrid}
-            cell={cellSize}
-            onTap={handleTapCell}
-            onLongPress={(press) => beginSelection(activePaneId, press)}
-            onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
-            swipe={swipe}
-          />
-        ) : null}
+          {/* Under the Scrollback chrome, and that ordering is the whole of
+              whether the Jump to latest pill can be pressed. The layer covers
+              the Pane and claims every touch in it, so drawn after the pill it
+              took the pill's presses as well — and judged them by a terminal's
+              rules rather than a button's, where ten points of finger travel is
+              a scroll and not a tap. A press that drifted did nothing at all,
+              except scroll further back. Measured: a fourteen-point drag on the
+              pill left it exactly where it was. */}
+          {/* Gone while a Selection is open: the touches are the Selection
+              Layer's then, which is under this one. */}
+          {state?.mouseTracking && activeSlot && mouseGrid && !selecting ? (
+            <MouseLayer
+              box={activeSlot.box}
+              grid={mouseGrid}
+              cell={cellSize}
+              onTap={handleTapCell}
+              onLongPress={(press) => beginSelection(activePaneId, press)}
+              onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
+              swipe={swipe}
+            />
+          ) : null}
+
+        </TrackpadScroll>
 
         {state?.scrolled ? (
           <>
