@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -8,6 +8,7 @@ import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
+import type { HostCliState } from '@/topics/host-cli-install';
 import {
   listedSessions,
   loadingTopics,
@@ -25,6 +26,9 @@ const say = speakingAs(deviceLog(), 'host');
  * the app's one Connection to it (ADR 0012).
  *
  * Asking again does not take down the last answer: see host-listing.
+ *
+ * `hostCli` is where the Host CLI install on the Host's Connection stands.
+ * When it answers `installed` or `updated`, the Topics are read again.
  *
  * With Topics on, the one exec of each read is `environment show`, whose
  * snapshot has the Sessions too. When it gives no snapshot — no desktop
@@ -77,5 +81,21 @@ export function useHostReading(hostId: string, topicsOn: boolean) {
     }
   }, [hostId, topicsOn]);
 
-  return { listing, topics, read };
+  // The Host CLI install runs once per Connection, beside the reads. When it
+  // puts a new Host CLI on the Host, the Topics module has forgotten where
+  // `muxify` was, and reading again finds the new one.
+  const hostCli: HostCliState = useSyncExternalStore(
+    (changed) => appConnections().subscribeHostCli(changed),
+    () => appConnections().hostCli(hostId),
+  );
+  useEffect(
+    () =>
+      appConnections().subscribeHostCli((changed, state) => {
+        if (changed !== hostId || !topicsOn || state.kind !== 'done') return;
+        if (state.result.kind === 'installed' || state.result.kind === 'updated') void read();
+      }),
+    [hostId, topicsOn, read],
+  );
+
+  return { listing, topics, hostCli, read };
 }

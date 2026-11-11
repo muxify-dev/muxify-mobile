@@ -5,6 +5,12 @@ import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
 import type { TmuxTransport } from '@/tmux/transport';
+import {
+  installHostCli,
+  type HostCliInstall,
+  type HostCliState,
+  type OpenCommandChannel,
+} from '@/topics/host-cli-install';
 import { createMuxifyCli, type MuxifyCli } from '@/topics/muxify-cli';
 
 /** How long a Connection with no Attach stays open after its last screen read. */
@@ -16,6 +22,8 @@ export const EXEC_DEADLINE_MS = 8_000;
 export interface Dialed {
   transport: TmuxTransport;
   upload?: HostConnection['upload'];
+  /** Opens a non-PTY channel for one command, outside the screen exec and its deadline. */
+  openChannel?: OpenCommandChannel;
   fingerprint: string;
   verdict: KeyVerdict;
   isConnected(): boolean;
@@ -51,6 +59,14 @@ export interface HostConnections {
   write<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /** React Native's app-state, forwarded as a fact. */
   lifecycleChanged(phase: LifecyclePhase): void;
+  /**
+   * The Host CLI install of the Host's latest Connection: not started, running,
+   * or what it answered. The answer stays after its Connection closes, until a
+   * new Connection installs again.
+   */
+  hostCli(hostId: string): HostCliState;
+  /** Hears every change of a Host's install. Answers the way to stop hearing. */
+  subscribeHostCli(listener: (hostId: string, state: HostCliState) => void): () => void;
 }
 
 /** An exec that passed its deadline. Its Connection is suspect. */
@@ -65,6 +81,8 @@ interface Entry {
   host: Host;
   dialed: Promise<Dialed>;
   muxify: MuxifyCli;
+  /** The Host CLI install on this Connection, once it has started. It never rejects. */
+  install: Promise<HostCliInstall> | null;
   /** Attaches that hold it. */
   attaches: number;
   /** Screen reads and writes in flight on it. */
@@ -96,6 +114,11 @@ export function createHostConnections(options: {
   const log = options.log ?? silentLog;
   const say = speakingAs(log, 'connections');
   const entries = new Map<string, Entry>();
+  /** Each Host's latest install, and the Connection it runs on. */
+  const installs = new Map<string, { entry: Entry; state: HostCliState }>();
+  const hostCliListeners = new Set<(hostId: string, state: HostCliState) => void>();
+  /** One value, so a reader that compares snapshots sees no change. */
+  const NOT_STARTED: HostCliState = { kind: 'idle' };
   let backgrounded = false;
 
   function open(host: Host): Entry {
@@ -115,6 +138,7 @@ export function createHostConnections(options: {
       host,
       dialed,
       muxify: createMuxifyCli((line) => say(`${host.displayName}: ${line}`)),
+      install: null,
       attaches: 0,
       uses: 0,
       idle: null,
@@ -122,12 +146,50 @@ export function createHostConnections(options: {
       gone: false,
     };
     self = entry;
-    entry.dialed.catch(() => {
-      entry.gone = true;
-      if (entries.get(host.id) === entry) entries.delete(host.id);
-    });
+    entry.dialed.then(
+      (opened) => {
+        // A changed Host key waits for a screen to accept it: see run().
+        if (opened.verdict.kind !== 'changed') install(entry, opened);
+      },
+      () => {
+        entry.gone = true;
+        if (entries.get(host.id) === entry) entries.delete(host.id);
+      },
+    );
     entries.set(host.id, entry);
     return entry;
+  }
+
+  function publish(entry: Entry, state: HostCliState): void {
+    const hostId = entry.host.id;
+    const latest = installs.get(hostId);
+    // An install on a Connection that a newer one replaced has nothing to say.
+    if (state.kind !== 'running' && latest && latest.entry !== entry) return;
+    installs.set(hostId, { entry, state });
+    for (const listener of [...hostCliListeners]) listener(hostId, state);
+  }
+
+  /**
+   * Installs or updates the Host CLI, once per Connection, on a channel of its
+   * own: it never goes through withDeadline, so a long download never makes
+   * the Connection suspect, and its failure never closes the Connection. It
+   * holds the Connection open as a screen's use does, so the idle minute does
+   * not cut a download short. See ADR 0016.
+   */
+  function install(entry: Entry, dialed: Dialed): void {
+    if (entry.install || entry.gone || !dialed.openChannel) return;
+    const { host } = entry;
+    entry.uses += 1;
+    busy(entry);
+    publish(entry, { kind: 'running' });
+    entry.install = installHostCli(dialed.openChannel, { clock }).then((result) => {
+      say(`${host.displayName}: Host CLI: ${result.line}`);
+      if (result.kind === 'installed' || result.kind === 'updated') entry.muxify.forget();
+      entry.uses -= 1;
+      settle(entry);
+      publish(entry, { kind: 'done', result });
+      return result;
+    });
   }
 
   /** Closes the Connection. Answers when the socket is shut. */
@@ -203,17 +265,18 @@ export function createHostConnections(options: {
 
   async function run<T>(
     host: Host,
-    use: ScreenUse<T>,
+    work: ScreenUse<T>,
     retry: boolean,
     options: ScreenOptions | undefined,
   ): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       const { entry, dialed } = await acquire(host);
       checkHostKey(entry, dialed, options);
+      install(entry, dialed);
       entry.uses += 1;
       busy(entry);
       try {
-        return await use(withDeadline(entry, dialed.transport), entry.muxify);
+        return await work(withDeadline(entry, dialed.transport), entry.muxify);
       } catch (error) {
         const failedByConnection = error instanceof ExecDeadlineError || !dialed.isConnected();
         if (!failedByConnection || !retry || attempt > 1) throw error;
@@ -265,6 +328,15 @@ export function createHostConnections(options: {
 
     read: (host, use, options) => run(host, use, true, options),
     write: (host, use, options) => run(host, use, false, options),
+
+    hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
+
+    subscribeHostCli(listener) {
+      hostCliListeners.add(listener);
+      return () => {
+        hostCliListeners.delete(listener);
+      };
+    },
 
     lifecycleChanged(phase: LifecyclePhase): void {
       if (phase === 'background') {

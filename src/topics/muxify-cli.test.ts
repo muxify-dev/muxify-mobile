@@ -98,6 +98,33 @@ describe('finding muxify on a Host', () => {
     expect(host.ran).toEqual(["'/opt/bin/muxify' environment show --json"]);
   });
 
+  it('probes again once told to forget, and finds the Host CLI that was just installed', async () => {
+    let installed = false;
+    const ran: string[] = [];
+    const exec: TmuxTransport['exec'] = async (command) => {
+      ran.push(command);
+      if (command.startsWith('test -x ~/.local/bin') && installed) {
+        return { stdout: '/home/me/.local/bin/muxify\n', stderr: '', exitCode: 0 };
+      }
+      if (command.includes('environment show')) return { stdout: JSON.stringify(inPlay), stderr: '', exitCode: 0 };
+      return { stdout: '', stderr: '', exitCode: 1 };
+    };
+    const cli = createMuxifyCli();
+
+    expect((await cli.read(exec)).kind).toBe('absent');
+    installed = true;
+    expect((await cli.read(exec)).kind).toBe('absent');
+    cli.forget();
+    ran.length = 0;
+
+    expect((await cli.read(exec)).kind).toBe('listed');
+    expect(ran).toEqual([
+      'command -v muxify',
+      'test -x ~/.local/bin/muxify && echo ~/.local/bin/muxify',
+      "'/home/me/.local/bin/muxify' environment show --json",
+    ]);
+  });
+
   it('probes again after an exec that threw, because it found nothing out', async () => {
     let calls = 0;
     const host = fakeHost([['command -v', PATH_FOUND], ['environment show', SHOW]]);

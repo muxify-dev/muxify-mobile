@@ -113,6 +113,13 @@ export interface MuxifyCli {
    * Window with no Browser lists no Tabs.
    */
   browserTabs(exec: Exec, window: string): Promise<BrowserTabsRead>;
+
+  /**
+   * Forgets where `muxify` was found, so the next call probes again. The
+   * registry calls it when the Host CLI install answers `installed` or
+   * `updated`, which puts a new one in `~/.local/bin`.
+   */
+  forget(): void;
 }
 
 /**
@@ -142,9 +149,9 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
   }
 
   async function locate(exec: Exec): Promise<string | null> {
-    probed ??= probe(exec);
-    return probed.catch((error: unknown) => {
-      probed = undefined;
+    const asked = (probed ??= probe(exec));
+    return asked.catch((error: unknown) => {
+      if (probed === asked) probed = undefined;
       throw error;
     });
   }
@@ -229,6 +236,10 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     async browserTabs(exec, window) {
       const parsed = await answerTo(exec, `browser tabs --window ${shellQuote(window)} --json`, parseBrowserTabs);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', tabs: parsed.value };
+    },
+
+    forget() {
+      probed = undefined;
     },
   };
 }
