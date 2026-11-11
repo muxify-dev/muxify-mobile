@@ -95,7 +95,7 @@ export function HostScreenRowView({
         <HStack spacing={10} modifiers={[frame({ maxWidth: 3000 })]}>
           <ProgressView />
           <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
-            {`Checking ${row.of}…`}
+            {row.text}
           </Text>
           <Spacer />
         </HStack>

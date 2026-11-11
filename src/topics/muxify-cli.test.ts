@@ -250,7 +250,7 @@ describe('reading one Topic', () => {
 
     expect(await createMuxifyCli().show(host.exec, topicId)).toEqual({
       kind: 'failed',
-      error: 'Desktop Muxify is not on this Host.',
+      error: 'Muxify is not on this Host.',
     });
   });
 
@@ -374,7 +374,7 @@ describe('making a Topic', () => {
   it('fails, and says why, on a Host with no muxify', async () => {
     expect(await createMuxifyCli().create(fakeHost([]).exec, 'Notes', [])).toEqual({
       kind: 'failed',
-      error: 'Desktop Muxify is not on this Host.',
+      error: 'Muxify is not on this Host.',
     });
   });
 });
@@ -479,7 +479,7 @@ describe('changing a Topic', () => {
         field: 'title',
         title: 'New',
       }),
-    ).toEqual({ kind: 'failed', error: 'Desktop Muxify is not on this Host.' });
+    ).toEqual({ kind: 'failed', error: 'Muxify is not on this Host.' });
   });
 });
 
@@ -563,7 +563,7 @@ describe('adding a Session to a Topic', () => {
   it('fails, and says why, on a Host with no muxify', async () => {
     expect(await createMuxifyCli().addSession(fakeHost([]).exec, ID, '/tmp')).toEqual({
       kind: 'failed',
-      error: 'Desktop Muxify is not on this Host.',
+      error: 'Muxify is not on this Host.',
     });
   });
 });
@@ -614,7 +614,7 @@ describe('waking a Dormant Topic', () => {
   it.each(['reopenTopic', 'startTopicFresh'] as const)('%s fails, and says why, on a Host with no muxify', async (call) => {
     expect(await createMuxifyCli()[call](fakeHost([]).exec, ID)).toEqual({
       kind: 'failed',
-      error: 'Desktop Muxify is not on this Host.',
+      error: 'Muxify is not on this Host.',
     });
   });
 });
@@ -646,7 +646,7 @@ describe('reading the Tabs of a Window', () => {
 
     expect(await createMuxifyCli().browserTabs(host.exec, '@12')).toEqual({
       kind: 'failed',
-      error: 'Desktop Muxify is not on this Host.',
+      error: 'Muxify is not on this Host.',
     });
   });
 });
@@ -671,7 +671,7 @@ describe('Session Path choices', () => {
   });
 
   it('reports a missing CLI', async () => {
-    expect(await createMuxifyCli().sessionPaths(fakeHost([]).exec, id)).toEqual({ kind: 'failed', error: 'Desktop Muxify is not on this Host.' });
+    expect(await createMuxifyCli().sessionPaths(fakeHost([]).exec, id)).toEqual({ kind: 'failed', error: 'Muxify is not on this Host.' });
   });
 
   it.each(['not json', JSON.stringify({ ...paths, rows: [{}] })])('reports an invalid answer', async (stdout) => {

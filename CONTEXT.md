@@ -30,6 +30,12 @@ ends when the transport is lost, when its keepalive goes unanswered for about
 0007 and ADR 0012.
 _Avoid_: SSH session, link, socket
 
+**Host CLI**:
+The `muxify` on a Host, which the phone uses to read and change its Topics. The
+phone, and desktop Muxify when it connects, install and update it in
+`~/.local/bin`; on a Mac with Muxify.app it is the app's own.
+_Avoid_: desktop CLI, desktop Muxify (when you mean the `muxify` command), remote helper
+
 **Fingerprint**:
 The host key hash recorded the first time a Host is reached, compared on every
 later Connection to detect a changed key.
@@ -182,9 +188,9 @@ _Avoid_: scroll (which is the Scrollback's), offset, keyboard avoidance
 
 ### Topics
 
-These words come from desktop Muxify on the Mac and keep its meanings. The phone
-reads Topics through the desktop `muxify` CLI and never writes the desktop
-record files.
+These words come from desktop Muxify and keep its meanings. The phone reads and
+changes a Host's Topics only through its Host CLI, and never writes the record
+files itself.
 
 **Topic**:
 One thing the user wants to get done, such as "Fix reward drop bug in GS". It

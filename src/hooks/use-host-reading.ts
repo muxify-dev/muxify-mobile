@@ -14,6 +14,7 @@ import {
   loadingTopics,
   settled,
   TOPICS_UNASKED,
+  withHostCli,
   type HostTopics,
 } from '@/topics/host-topics';
 
@@ -28,11 +29,13 @@ const say = speakingAs(deviceLog(), 'host');
  * Asking again does not take down the last answer: see host-listing.
  *
  * `hostCli` is where the Host CLI install on the Host's Connection stands.
- * When it answers `installed` or `updated`, the Topics are read again.
+ * The Topics say so while it runs on a Host with no Host CLI or an old one,
+ * and why when it fails. When it answers `installed` or `updated`, the Topics
+ * are read again.
  *
  * With Topics on, the one exec of each read is `environment show`, whose
- * snapshot has the Sessions too. When it gives no snapshot — no desktop
- * Muxify, an old one, a failed read — the Sessions still need their own
+ * snapshot has the Sessions too. When it gives no snapshot — no Host CLI,
+ * an old one, a failed read — the Sessions still need their own
  * answer, so tmux is asked after all.
  */
 export function useHostReading(hostId: string, topicsOn: boolean) {
@@ -97,5 +100,5 @@ export function useHostReading(hostId: string, topicsOn: boolean) {
     [hostId, topicsOn, read],
   );
 
-  return { listing, topics, hostCli, read };
+  return { listing, topics: withHostCli(topics, hostCli), hostCli, read };
 }

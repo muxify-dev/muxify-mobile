@@ -16,7 +16,7 @@ export interface BrowserTab {
 }
 
 /**
- * One read of a Window's Tabs. A Host with no desktop Muxify, a tmux server
+ * One read of a Window's Tabs. A Host with no Host CLI, a tmux server
  * that Muxify does not show and a `muxify` too old to have the command are
  * each a failed read, and the Title Sheet then lists no Tabs.
  */
