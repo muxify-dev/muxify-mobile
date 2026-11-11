@@ -100,5 +100,5 @@ export function useHostReading(hostId: string, topicsOn: boolean) {
     [hostId, topicsOn, read],
   );
 
-  return { listing, topics: withHostCli(topics, hostCli), hostCli, read };
+  return { listing, topics: withHostCli(topics, hostCli), read };
 }
