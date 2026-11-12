@@ -36,6 +36,7 @@ import {
   type ArrowDirection,
 } from '@/lib/arrow-stick';
 import type { Modifier, Modifiers } from '@/lib/modifier-keys';
+import type { KeyRowPlacement } from '@/lib/terminal-clearance';
 
 export interface KeyRowProps {
   /** Which modifiers are armed, so the row can show them held down. */
@@ -55,6 +56,12 @@ export interface KeyRowProps {
   panesDisabled: boolean;
   /** The chrome colours of the Theme in use: the row draws its own labels. */
   palette: Appearance;
+  /**
+   * A glass capsule floating over the keyboard, or a full-width strip with
+   * square corners on the top edge of a docked iPad keyboard, so the row
+   * reads as the keyboard's own top row. Only the frame changes.
+   */
+  placement: KeyRowPlacement;
 }
 
 /**
@@ -93,8 +100,8 @@ export function KeyRow(props: KeyRowProps) {
     );
 
   return (
-    <View style={styles.row} pointerEvents="box-none">
-      <Capsule>
+    <View style={[styles.row, props.placement === 'docked' && styles.dockedRow]} pointerEvents="box-none">
+      <Capsule docked={props.placement === 'docked'}>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
         <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
@@ -154,16 +161,17 @@ type Bubble =
   | { kind: 'pair'; pair: PairKey; progress: SharedValue<number>; center: number }
   | { kind: 'arrow'; symbol: string; center: number };
 
-function Capsule({ children }: { children: ReactNode }) {
+function Capsule({ docked, children }: { docked: boolean; children: ReactNode }) {
+  const style = [styles.capsule, docked && styles.dockedCapsule];
   // Some iOS 26 betas ship without the underlying effect class and crash on
   // use, so probe the runtime API rather than the design-mode flag. A
   // GlassView on such a runtime renders nothing at all, hence the plain view.
   return isGlassEffectAPIAvailable() ? (
-    <GlassView style={styles.capsule} glassEffectStyle="regular">
+    <GlassView style={style} glassEffectStyle="regular">
       {children}
     </GlassView>
   ) : (
-    <View style={[styles.capsule, styles.plainCapsule]}>{children}</View>
+    <View style={[style, styles.plainCapsule]}>{children}</View>
   );
 }
 
@@ -236,7 +244,11 @@ function PairStrip({
   onBubble: (bubble: Bubble | null) => void;
 }) {
   const [width, setWidth] = useState(0);
-  const visible = Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH));
+  // Where every pair fits, as on an iPad, they share the width and nothing scrolls.
+  const visible = Math.min(
+    PAIR_KEYS.length,
+    Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH)),
+  );
   const pairWidth = width > 0 ? (width - EDGE * 2) / visible : 0;
   const [more, setMore] = useState<ScrollEdges>({ before: false, after: false });
   const extent = useRef<ScrollExtent>({ offset: 0, viewport: 0, content: 0 });
@@ -649,6 +661,12 @@ const styles = StyleSheet.create({
     borderRadius: CAPSULE_HEIGHT / 2,
     paddingHorizontal: EDGE,
     overflow: 'hidden',
+  },
+  dockedRow: {
+    paddingHorizontal: 0,
+  },
+  dockedCapsule: {
+    borderRadius: 0,
   },
   plainCapsule: {
     backgroundColor: '#242838',

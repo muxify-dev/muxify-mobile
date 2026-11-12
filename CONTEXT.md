@@ -511,7 +511,10 @@ complete at 14 pt, and the release types the symbol in the main place, then
 the key springs back. The pairs fade
 at an end while there are more past it. At the right, fixed: the arrow key,
 Panes, which opens the Panes picker, ⌘ command, and Keyboard, which shows or
-hides the system keyboard. The arrow key is one key for the four arrows: a
+hides the system keyboard. On iPad, over a docked keyboard, the row is not a capsule
+but a full-width strip on the keyboard's top edge, and all twelve pairs fit
+without scrolling. Over a floating or split keyboard, or with none, it is the
+capsule. The arrow key is one key for the four arrows: a
 touch sends nothing, a drag of 12 pt sends the arrow it points at, a hold
 repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,

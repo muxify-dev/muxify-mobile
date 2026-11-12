@@ -4,7 +4,7 @@ import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
@@ -300,7 +300,12 @@ export default function TerminalScreen() {
   const keyboardVisible = keyboardFrame !== null && keyboardFrame.height > 0;
   const rootView = useRef<View>(null);
   const [rootBounds, setRootBounds] = useState<ScreenRect>({ x: 0, y: 0, width: 0, height: 0 });
-  const clearance = terminalClearance(rootBounds, keyboardFrame, insets.bottom, !physicalKeyboard);
+  const clearance = terminalClearance(
+    rootBounds,
+    keyboardFrame,
+    insets.bottom,
+    physicalKeyboard ? 'hidden' : Platform.OS === 'ios' && Platform.isPad ? 'dockable' : 'floating',
+  );
   const [composerOpen, setComposerOpen] = useState(false);
   const composerInput = useRef<ComposerInputRef | null>(null);
   /**
@@ -1449,6 +1454,7 @@ export default function TerminalScreen() {
         // One Pane is when you reach for Split, so never disabled while connected.
         panesDisabled={!connected}
         palette={chrome}
+        placement={clearance.placement}
       /> : null}
       <View style={{ height: clearance.bottom }} pointerEvents="none" />
 
