@@ -120,12 +120,6 @@ function groupsOf(section: HostScreenSection): Group[] {
   switch (section.id) {
     case 'pinned':
       return [{ section: section.id, cards, acrossLines: false }];
-    case 'topics': {
-      const pinned = cards.filter(isPinned);
-      return [pinned, cards.filter((card) => !isPinned(card))]
-        .filter((group) => group.length > 0)
-        .map((group) => ({ section: section.id, cards: group, acrossLines: false }));
-    }
     case 'in-play':
     case 'guests':
     case 'bench':
@@ -139,10 +133,6 @@ function isCard(row: HostScreenRow): row is CardRow {
   return (
     row.kind === 'topic' || row.kind === 'locked-session' || row.kind === 'open-place' || row.kind === 'unknown-card'
   );
-}
-
-function isPinned(card: CardRow): boolean {
-  return (card.kind === 'topic' || card.kind === 'locked-session') && card.pinned;
 }
 
 function isPicked(card: CardRow, picked: TopicId): boolean {

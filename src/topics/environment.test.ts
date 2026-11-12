@@ -1,6 +1,6 @@
 import inPlay from './__fixtures__/environment-in-play.json';
-import list from './__fixtures__/environment-list.json';
-import { parseEnvironment, type Card, type EnvironmentSnapshot } from './environment';
+import list from './__fixtures__/environment-flat-list.json';
+import { HostCliTooOld, parseEnvironment, type Card, type EnvironmentSnapshot } from './environment';
 
 /** Every Topic card of a snapshot, in the order the phone draws them. */
 function topicLabels(cards: Card[]): string[] {
@@ -20,7 +20,6 @@ describe('parsing what `environment show --json` said on the Mac', () => {
     expect(snapshot.no_topic).toHaveLength(9);
     expect(topicLabels(snapshot.pinned)).toEqual(['Chief of Staff']);
 
-    if (snapshot.unpinned.kind !== 'in_play') throw new Error('expected in_play');
     const { limit, places, guests, bench } = snapshot.unpinned;
     expect(limit).toBe(3);
     expect(places.map((card) => card.kind)).toEqual(['open_place', 'open_place', 'topic']);
@@ -34,21 +33,12 @@ describe('parsing what `environment show --json` said on the Mac', () => {
     expect(topicLabels(bench)[0]).toBe('Membr: Chat statuses');
   });
 
-  it('keeps the list form: the cards in the order they came', () => {
-    const snapshot = parseEnvironment(list);
-
-    if (snapshot.unpinned.kind !== 'list') throw new Error('expected list');
-    expect(snapshot.unpinned.cards).toHaveLength(21);
-    expect(topicLabels(snapshot.unpinned.cards).slice(0, 2)).toEqual([
-      'Muxify Mobile: How do we make it work with topics also?',
-      'GS: Try a verification skill in poteto-mode',
-    ]);
-    expect(snapshot.unpinned.cards.some((card) => card.kind === 'open_place')).toBe(false);
+  it('takes the flat list of an older desktop Muxify as a Host CLI that needs the update', () => {
+    expect(() => parseEnvironment(list)).toThrow(HostCliTooOld);
   });
 
   it('reads a Topic card with its Note, Tags, Sessions and mark', () => {
     const snapshot = parseEnvironment(inPlay);
-    if (snapshot.unpinned.kind !== 'in_play') throw new Error('expected in_play');
 
     expect(snapshot.unpinned.places[2]).toEqual({
       kind: 'topic',
@@ -71,11 +61,13 @@ function snapshotWith(overrides: Record<string, unknown>): unknown {
     tags: [],
     sessions: [],
     pinned: [],
-    unpinned: { kind: 'list', cards: [] },
+    unpinned: { kind: 'in_play', limit: 3, places: [], guests: [], bench: [] },
     no_topic: [],
     ...overrides,
   };
 }
+
+const inPlayOf = (places: unknown[]) => ({ kind: 'in_play', limit: 3, places, guests: [], bench: [] });
 
 const topicCard = (topic: Record<string, unknown>, mark: unknown = null) => ({
   kind: 'topic',
@@ -85,37 +77,32 @@ const topicCard = (topic: Record<string, unknown>, mark: unknown = null) => ({
 });
 
 function onlyCard(snapshot: EnvironmentSnapshot): Card {
-  if (snapshot.unpinned.kind !== 'list') throw new Error('expected list');
-  const [card] = snapshot.unpinned.cards;
+  const [card] = snapshot.unpinned.places;
   if (!card) throw new Error('expected a card');
   return card;
 }
 
 describe('what a newer desktop Muxify may send', () => {
-  it('turns a card kind it does not know into a plain card, and keeps the list', () => {
+  it('turns a card kind it does not know into a plain card, and keeps the place', () => {
     const snapshot = parseEnvironment(
       snapshotWith({
-        unpinned: {
-          kind: 'list',
-          cards: [{ kind: 'folder', mark: 'blocked', sessions: ['$1', '$2'] }, topicCard({})],
-        },
+        unpinned: inPlayOf([{ kind: 'folder', mark: 'blocked', sessions: ['$1', '$2'] }, topicCard({})]),
       }),
     );
 
-    if (snapshot.unpinned.kind !== 'list') throw new Error('expected list');
-    expect(snapshot.unpinned.cards).toHaveLength(2);
-    expect(snapshot.unpinned.cards[0]).toEqual({
+    expect(snapshot.unpinned.places).toHaveLength(2);
+    expect(snapshot.unpinned.places[0]).toEqual({
       kind: 'unknown',
       sourceKind: 'folder',
       mark: 'blocked',
       sessions: ['$1', '$2'],
     });
-    expect(snapshot.unpinned.cards[1]?.kind).toBe('topic');
+    expect(snapshot.unpinned.places[1]?.kind).toBe('topic');
   });
 
   it('turns a mark it does not know into no mark', () => {
     const snapshot = parseEnvironment(
-      snapshotWith({ unpinned: { kind: 'list', cards: [topicCard({}, 'sparkling')] } }),
+      snapshotWith({ unpinned: inPlayOf([topicCard({}, 'sparkling')]) }),
     );
 
     expect(onlyCard(snapshot)).toMatchObject({ kind: 'topic', mark: null });
@@ -123,7 +110,7 @@ describe('what a newer desktop Muxify may send', () => {
 
   it('turns a Topic state it does not know into live, so no card claims "No live Sessions"', () => {
     const snapshot = parseEnvironment(
-      snapshotWith({ unpinned: { kind: 'list', cards: [topicCard({ state: 'settled' })] } }),
+      snapshotWith({ unpinned: inPlayOf([topicCard({ state: 'settled' })]) }),
     );
 
     expect(onlyCard(snapshot)).toMatchObject({ topic: { state: 'live' } });
@@ -132,16 +119,12 @@ describe('what a newer desktop Muxify may send', () => {
   it('keeps an Empty Topic and a Locked Session', () => {
     const snapshot = parseEnvironment(
       snapshotWith({
-        unpinned: {
-          kind: 'list',
-          cards: [topicCard({ state: 'empty' }), { kind: 'session', mark: 'unread', sessions: ['$3'] }],
-        },
+        unpinned: inPlayOf([topicCard({ state: 'empty' }), { kind: 'session', mark: 'unread', sessions: ['$3'] }]),
       }),
     );
 
-    if (snapshot.unpinned.kind !== 'list') throw new Error('expected list');
-    expect(snapshot.unpinned.cards[0]).toMatchObject({ topic: { state: 'empty' } });
-    expect(snapshot.unpinned.cards[1]).toEqual({ kind: 'session', mark: 'unread', sessions: ['$3'] });
+    expect(snapshot.unpinned.places[0]).toMatchObject({ topic: { state: 'empty' } });
+    expect(snapshot.unpinned.places[1]).toEqual({ kind: 'session', mark: 'unread', sessions: ['$3'] });
   });
 });
 
@@ -186,9 +169,9 @@ describe('a shape it cannot use', () => {
 });
 
 it('keeps optional Window seeds and tolerates new marks', () => {
-  const original = parseEnvironment(list);
+  const original = parseEnvironment(inPlay);
   expect(original.sessions[0].windows).toBeNull();
-  const input = JSON.parse(JSON.stringify(list));
+  const input = JSON.parse(JSON.stringify(inPlay));
   input.sessions[0].windows = [
     { id: '@8', index: 2, name: 'editor', active: true, mark: 'working' },
     { id: '@9', index: 4, name: 'logs', active: false, mark: 'future-mark' },

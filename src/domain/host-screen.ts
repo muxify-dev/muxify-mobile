@@ -137,15 +137,15 @@ export function hostScreen({
 }
 
 /**
- * The rows Home shows of one Host. With the Topics list on and the Mac in In
- * Play, that is every Pinned, In Play and Guest card: the Host's live work
- * must not fall off Home behind an empty place. Otherwise the first `limit`
+ * The rows Home shows of one Host. With the Topics list on and the Host's
+ * Topics read, that is every Pinned, In Play and Guest card: the Host's live
+ * work must not fall off Home behind an empty place. Otherwise the first `limit`
  * rows of the Host Screen, counted across its sections.
  */
 export function homeRows(input: HostScreenInput, limit: number): HostScreenRow[] {
   const sections = hostScreen(input);
   const snapshot = lastSnapshot(input.topics);
-  if (input.settings.hostScreenLists.includes('topics') && snapshot?.unpinned.kind === 'in_play') {
+  if (input.settings.hostScreenLists.includes('topics') && snapshot) {
     return sections
       .filter((section) => HOME_SECTIONS.has(section.id))
       .flatMap((section) => section.rows.filter((row) => row.kind !== 'open-place'));
@@ -255,11 +255,10 @@ function topicsSection(
 }
 
 /**
- * The cards in the sections the Mac's Topics mode draws. With a list, that is
- * the Pinned cards, with a pin, and then the list, under one header. With In
- * Play, it is Pinned, the In Play places, the Guests, and then the Bench as one
- * row that opens. Never sorted: the order is the Mac's, and a card the phone
- * moved would not be where the user looks for it on the Mac.
+ * The cards in the sections the Mac draws: Pinned, the In Play places, the
+ * Guests, and then the Bench as one row that opens. Never sorted: the order is
+ * the Mac's, and a card the phone moved would not be where the user looks for it
+ * on the Mac.
  *
  * Always at least one section, so a failed read has a place for its error.
  */
@@ -279,16 +278,6 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
   const pinned = rows(snapshot.pinned, 'pinned');
   const noTopic = noTopicRows(snapshot, names, context);
   const { unpinned } = snapshot;
-
-  if (unpinned.kind === 'list') {
-    const sections = [
-      topicsSection('topics', 'Topics', [...pinned, ...rows(unpinned.cards, 'topics')]),
-      topicsSection('no-topic', null, noTopic),
-    ].filter((section) => section.rows.length > 0);
-    return sections.length > 0
-      ? sections
-      : [topicsSection('topics', 'Topics', [{ kind: 'note', text: 'No Topics yet.' }])];
-  }
 
   const benchOpened = context.opened.has('bench');
   const bench: HostScreenRow[] =

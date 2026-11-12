@@ -3,8 +3,7 @@ import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 
 import { folderArgument, parseAddedSession, type AddSessionRead } from './add-session';
-import { parseEnvironment } from './environment';
-import type { TopicId } from './environment';
+import { HostCliTooOld, parseEnvironment, type EnvironmentSnapshot, type TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
@@ -213,8 +212,9 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       const result = await exec(`${shellQuote(path)} environment show --json`);
       if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
       if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, parseEnvironment);
-      return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', snapshot: parsed.value };
+      const parsed = parseAnswer(result.stdout, parseEnvironmentOrOld);
+      if ('error' in parsed) return { kind: 'failed', ...parsed };
+      return parsed.value === 'old' ? { kind: 'old' } : { kind: 'listed', snapshot: parsed.value };
     },
 
     async show(exec, topic) {
@@ -277,6 +277,20 @@ function changeCommand(change: TopicChange): string {
       return change.note === null ? 'topic note --clear' : `topic note ${shellQuote(change.note)}`;
     case 'tags':
       return ['topic tag set', ...change.tags.map(shellQuote)].join(' ');
+  }
+}
+
+/**
+ * An answer in the layout that only an old `muxify` sends is `old`, as a usage
+ * error is. This is the one place that turns the parser's `HostCliTooOld` into
+ * the state the rest of the phone knows.
+ */
+function parseEnvironmentOrOld(json: unknown): EnvironmentSnapshot | 'old' {
+  try {
+    return parseEnvironment(json);
+  } catch (error) {
+    if (error instanceof HostCliTooOld) return 'old';
+    throw error;
   }
 }
 

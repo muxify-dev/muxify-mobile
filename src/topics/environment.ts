@@ -34,9 +34,24 @@ export type Card =
   /** A kind this phone does not know. Drawn as a plain row, never a failure. */
   | { kind: 'unknown'; sourceKind: string; mark: Mark | null; sessions: SessionId[] };
 
-export type Unpinned =
-  | { kind: 'in_play'; limit: number; places: Card[]; guests: Card[]; bench: Card[] }
-  | { kind: 'list'; cards: Card[] };
+/** The Topics that are not Pinned: the In Play places, the Guests and the Bench. */
+export interface Unpinned {
+  limit: number;
+  places: Card[];
+  guests: Card[];
+  bench: Card[];
+}
+
+/**
+ * A Host CLI that answers with a layout this phone no longer reads: the flat
+ * `list` of a desktop Muxify from before In Play was the only Topics mode.
+ * The Host needs the Host CLI update, so it is not a malformed answer.
+ */
+export class HostCliTooOld extends Error {
+  constructor() {
+    super('The Host CLI answers with the flat Topics list.');
+  }
+}
 
 /** A Tag the Host's Config defines. A colour this phone cannot read is null. */
 export interface Tag {
@@ -73,7 +88,8 @@ export interface EnvironmentSnapshot {
 /**
  * Parses the answer once, at the boundary, so nothing past it checks a shape.
  *
- * Throws with the path of the first thing that is wrong. Three things never
+ * Throws with the path of the first thing that is wrong, and `HostCliTooOld`
+ * for the one answer that is not wrong but old. Three things never
  * throw, because a newer desktop Muxify may send them: a card `kind` this
  * phone does not know becomes an `unknown` card, a `mark` it does not know
  * becomes no mark, and a Tag colour it cannot read becomes no colour. A Topic
@@ -115,14 +131,13 @@ function parseUnpinned(unpinned: Record<string, unknown>): Unpinned {
   switch (unpinned.kind) {
     case 'in_play':
       return {
-        kind: 'in_play',
         limit: number(unpinned.limit, 'unpinned.limit'),
         places: cards(unpinned.places, 'unpinned.places'),
         guests: cards(unpinned.guests, 'unpinned.guests'),
         bench: cards(unpinned.bench, 'unpinned.bench'),
       };
     case 'list':
-      return { kind: 'list', cards: cards(unpinned.cards, 'unpinned.cards') };
+      throw new HostCliTooOld();
     default:
       throw new Error(`unpinned.kind: unknown value ${JSON.stringify(unpinned.kind)}`);
   }
