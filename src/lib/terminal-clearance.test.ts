@@ -9,13 +9,13 @@ it('reserves the home indicator with no software keyboard', () => {
 });
 
 it('keeps software keyboard clearance when the physical keyboard hides the row', () => {
-  expect(terminalClearance(bounds, keyboard, 34, true).bottom).toBe(308);
+  expect(terminalClearance(bounds, keyboard, 34, true).bottom).toBe(302);
   expect(terminalClearance(bounds, keyboard, 34, false).bottom).toBe(300);
 });
 
 it('uses the current app bounds after rotation or multitasking', () => {
   expect(terminalClearance({ ...bounds, height: 500 }, keyboard, 20, false).bottom).toBe(100);
-  expect(terminalClearance({ ...bounds, x: 100, width: 200 }, keyboard, 20, true).bottom).toBe(308);
+  expect(terminalClearance({ ...bounds, x: 100, width: 200 }, keyboard, 20, true).bottom).toBe(302);
 });
 
 it('does not shrink the whole Terminal for a floating or offscreen keyboard', () => {

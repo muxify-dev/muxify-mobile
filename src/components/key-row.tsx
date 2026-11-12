@@ -203,7 +203,7 @@ function FixedKey({
           segmented control instead. */}
       {held ? <View style={[styles.held, { backgroundColor: palette.controlAccent }]} /> : null}
       {symbol ? (
-        <SymbolView name={symbol} size={18} tintColor={color} />
+        <SymbolView name={symbol} size={SYMBOL_SIZE} tintColor={color} />
       ) : (
         <Text allowFontScaling={false} style={[styles.keyLabel, { color }]}>
           {children}
@@ -550,7 +550,7 @@ function ArrowStick({
       <View pointerEvents="none">
         <SymbolView
           name="arrow.up.and.down.and.arrow.left.and.right"
-          size={18}
+          size={SYMBOL_SIZE}
           tintColor={palette.toolbarTint}
         />
       </View>
@@ -586,9 +586,13 @@ const STICK_ACTIONS = [
   { name: 'right', label: 'Right' },
 ] satisfies { name: ArrowDirection; label: string }[];
 
-const CAPSULE_HEIGHT = 52;
-export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + 10;
-const KEY_HEIGHT = 44;
+/** The glass. 44 pt is the iOS touch minimum, so the capsule stays easy to hit. */
+const CAPSULE_HEIGHT = 44;
+/** Clearance above the capsule, so that glass does not sit on the Surface's last row. */
+const ROW_CLEARANCE = 6;
+export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + ROW_CLEARANCE;
+/** Each key's touch frame inside the capsule. The capsule's edge still catches touches. */
+const KEY_HEIGHT = 38;
 
 /**
  * How wide a fixed key is.
@@ -601,6 +605,9 @@ const KEY_WIDTH = 30;
 
 /** How far each end of the pairs fades out while there are more past it. */
 const FADE = 32;
+
+/** An SF Symbol on a fixed key. */
+const SYMBOL_SIZE = 16;
 
 /** The disc behind a held modifier. */
 const DISC = 30;
@@ -632,9 +639,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 8,
-    // Clearance above the capsules, so that glass does not sit on the
-    // Surface's last row.
-    paddingTop: 10,
+    paddingTop: ROW_CLEARANCE,
   },
   capsule: {
     flex: 1,
@@ -686,7 +691,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   keyLabel: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '500',
   },
   held: {
