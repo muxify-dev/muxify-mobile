@@ -10,6 +10,13 @@ import {
   View,
   type GestureResponderEvent,
 } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import type { Appearance } from '@/constants/app-theme';
@@ -37,7 +44,7 @@ export interface KeyRowProps {
   onArm: (modifier: Modifier) => void;
   /** Escape, tab or an arrow, once for each repeat of a held arrow. */
   onKey: (key: NamedKey) => void;
-  /** One symbol of a pair: the top one on a tap, the bottom one on a drag down. */
+  /** One symbol of a pair: the main one on a tap, the alternate one on a drag down. */
   onSymbol: (symbol: string) => void;
   onPanes: () => void;
   onKeyboard: () => void;
@@ -120,20 +127,32 @@ export function KeyRow(props: KeyRowProps) {
               borderColor: palette.separator,
             },
           ]}>
-          <Text allowFontScaling={false} style={[styles.bubbleLabel, { color: palette.toolbarTint }]}>
-            {bubble.symbol}
-          </Text>
+          {bubble.kind === 'pair' ? (
+            <PairSymbols
+              pair={bubble.pair}
+              progress={bubble.progress}
+              height={BUBBLE_HEIGHT}
+              fontSize={BUBBLE_FONT_SIZE}
+              palette={palette}
+            />
+          ) : (
+            <Text allowFontScaling={false} style={[styles.bubbleLabel, { color: palette.toolbarTint }]}>
+              {bubble.symbol}
+            </Text>
+          )}
         </View>
       ) : null}
     </View>
   );
 }
 
-/** What a pair key or the arrow key will send, and where its key is across the row. */
-interface Bubble {
-  symbol: string;
-  center: number;
-}
+/**
+ * What the bubble over a key shows, and where that key is across the row: a
+ * pair key's two symbols as its touch moves them, or the arrow being sent.
+ */
+type Bubble =
+  | { kind: 'pair'; pair: PairKey; progress: SharedValue<number>; center: number }
+  | { kind: 'arrow'; symbol: string; center: number };
 
 function Capsule({ children }: { children: ReactNode }) {
   // Some iOS 26 betas ship without the underlying effect class and crash on
@@ -290,10 +309,11 @@ interface ScrollExtent {
 /**
  * One pair key: the iPad keyboard's flick down.
  *
- * A touch shows the main symbol in a bubble over the key, a drag down past
- * FLICK flips the bubble to the alternate symbol, and the release types what the
- * bubble shows. A sideways drag is the scroll view's: it takes the touch away
- * and nothing is typed.
+ * The alternate symbol sits small above the main one. A drag down moves the
+ * alternate symbol into the main one's place, in the key and in a bubble over
+ * it, and is complete at FLICK. The release types the alternate symbol if the
+ * drag got there and the main one if not. A sideways drag is the scroll
+ * view's: it takes the touch away and nothing is typed.
  */
 function PairKeyView({
   pair,
@@ -310,28 +330,30 @@ function PairKeyView({
   onSymbol: (symbol: string) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
-  /** The touch in progress: where it began, the key's centre, what it will type. */
-  const touch = useRef<{ startY: number; center: number; symbol: string } | null>(null);
+  /** The touch in progress: where it began, and whether its drag reached FLICK. */
+  const touch = useRef<{ startY: number; flicked: boolean } | null>(null);
+  /** How far the drag is to FLICK, from 0 to 1. The key and the bubble draw from it. */
+  const progress = useSharedValue(0);
 
-  const show = (symbol: string, center: number) => onBubble({ symbol, center });
   const begin = ({ nativeEvent }: GestureResponderEvent) => {
     const center = nativeEvent.pageX - nativeEvent.locationX + width / 2;
-    touch.current = { startY: nativeEvent.pageY, center, symbol: pair.main };
-    show(pair.main, center);
+    touch.current = { startY: nativeEvent.pageY, flicked: false };
+    progress.value = 0;
+    onBubble({ kind: 'pair', pair, progress, center });
   };
   const move = ({ nativeEvent }: GestureResponderEvent) => {
     const current = touch.current;
     if (!current) return;
-    const symbol = nativeEvent.pageY - current.startY >= FLICK ? pair.alternate : pair.main;
-    if (symbol === current.symbol) return;
-    current.symbol = symbol;
-    show(symbol, current.center);
+    const dragged = Math.min(Math.max((nativeEvent.pageY - current.startY) / FLICK, 0), 1);
+    current.flicked = dragged === 1;
+    progress.value = dragged;
   };
   const end = (type: boolean) => {
     const current = touch.current;
     touch.current = null;
     onBubble(null);
-    if (type && current) onSymbol(current.symbol);
+    progress.value = withSpring(0, SPRING_BACK);
+    if (type && current) onSymbol(current.flicked ? pair.alternate : pair.main);
   };
 
   return (
@@ -351,15 +373,74 @@ function PairKeyView({
       onResponderRelease={() => end(true)}
       onResponderTerminate={() => end(false)}
       style={[styles.pair, { width }, disabled ? styles.dim : null]}>
-      {/* Not a touch target, so `locationX` is measured from the key. */}
-      <View pointerEvents="none" style={styles.pairLabels}>
-        <Text allowFontScaling={false} style={[styles.pairMain, { color: palette.toolbarTint }]}>
-          {pair.main}
-        </Text>
-        <Text allowFontScaling={false} style={[styles.pairAlternate, { color: palette.secondaryLabel }]}>
-          {pair.alternate}
-        </Text>
-      </View>
+      <PairSymbols
+        pair={pair}
+        progress={progress}
+        height={KEY_HEIGHT}
+        fontSize={PAIR_FONT_SIZE}
+        palette={palette}
+      />
+    </View>
+  );
+}
+
+/**
+ * A pair's two symbols in a frame `height` tall, drawn from a drag's progress.
+ *
+ * At 0 the alternate symbol is small and grey, its line sitting on top of the
+ * main symbol's line, and the two together centred in the frame. Towards 1
+ * the main symbol drops half the frame, shrinks and fades out, and the
+ * alternate symbol moves down into its place, grows to full size and takes
+ * the tint. Both are set at full size and scaled down, so the one that ends
+ * large is drawn sharp.
+ *
+ * The spacing comes from the line height, not the frame: brackets and braces
+ * fill almost the whole line, and a smaller spacing lays one over the other.
+ */
+function PairSymbols({
+  pair,
+  progress,
+  height,
+  fontSize,
+  palette,
+}: {
+  pair: PairKey;
+  progress: SharedValue<number>;
+  height: number;
+  fontSize: number;
+  palette: Appearance;
+}) {
+  const lineHeight = Math.round(fontSize * 1.2);
+  /** From the main symbol's centre to the alternate one's at rest. */
+  const lift = (lineHeight * (1 + ALTERNATE_SCALE)) / 2;
+  const rest = lift / 2;
+  const { secondaryLabel, toolbarTint } = palette;
+  const main = useAnimatedStyle(() => ({
+    opacity: 1 - progress.value,
+    transform: [
+      { translateY: rest + (progress.value * height) / 2 },
+      { scale: 1 - 0.3 * progress.value },
+    ],
+  }));
+  const alternate = useAnimatedStyle(() => ({
+    color: interpolateColor(progress.value, [0, 1], [secondaryLabel, toolbarTint]),
+    transform: [
+      { translateY: rest - lift * (1 - progress.value) },
+      { scale: ALTERNATE_SCALE + (1 - ALTERNATE_SCALE) * progress.value },
+    ],
+  }));
+
+  return (
+    // Not a touch target, so `locationX` is measured from the key.
+    <View pointerEvents="none" style={styles.pairSymbols}>
+      <Animated.Text
+        allowFontScaling={false}
+        style={[styles.pairSymbol, { fontSize, lineHeight, color: toolbarTint }, main]}>
+        {pair.main}
+      </Animated.Text>
+      <Animated.Text allowFontScaling={false} style={[styles.pairSymbol, { fontSize, lineHeight }, alternate]}>
+        {pair.alternate}
+      </Animated.Text>
     </View>
   );
 }
@@ -442,7 +523,7 @@ function ArrowStick({
     }
     const key = ARROW_KEYS[direction];
     latestOnKey.current(key);
-    onBubble({ symbol: key.label, center: touch.center });
+    onBubble({ kind: 'arrow', symbol: key.label, center: touch.center });
     stick.current = { phase: 'sending', touch, direction, timer: repeatAfter(REPEAT_DELAY) };
   };
 
@@ -530,10 +611,21 @@ const PAIR_MIN_WIDTH = 32;
 /** The gap at each end of the capsule, and of the pairs. */
 const EDGE = 4;
 
-/** How far down a touch on a pair goes before it means the bottom symbol. */
+/** How far down a touch on a pair goes before it means the alternate symbol. */
 const FLICK = 14;
 
+/** A pair's main symbol at rest, in the key. */
+const PAIR_FONT_SIZE = 16;
+
+/** How big a pair's alternate symbol is at rest, against the main one. */
+const ALTERNATE_SCALE = 0.6;
+
+/** How a pair key's symbols return to rest when the touch ends. */
+const SPRING_BACK = { mass: 1, stiffness: 320, damping: 36 };
+
 const BUBBLE_WIDTH = 44;
+const BUBBLE_HEIGHT = 48;
+const BUBBLE_FONT_SIZE = 24;
 
 const styles = StyleSheet.create({
   row: {
@@ -615,22 +707,19 @@ const styles = StyleSheet.create({
     height: KEY_HEIGHT,
     justifyContent: 'center',
   },
-  pairLabels: {
+  pairSymbols: {
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  pairMain: {
-    fontSize: 14,
-    lineHeight: 17,
-    fontWeight: '600',
-  },
-  pairAlternate: {
-    fontSize: 12,
-    lineHeight: 15,
+  pairSymbol: {
+    position: 'absolute',
+    fontWeight: '500',
   },
   bubble: {
     position: 'absolute',
     width: BUBBLE_WIDTH,
-    height: 48,
+    height: BUBBLE_HEIGHT,
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
