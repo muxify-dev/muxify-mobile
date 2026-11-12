@@ -5,20 +5,13 @@ export interface ScreenRect {
   height: number;
 }
 
-/**
- * Which Key Row the Terminal Screen shows: none, under a physical keyboard;
- * one that always floats, on iPhone; or one that docks on the top edge of a
- * docked keyboard, on iPad.
- */
+/** 'dockable' is the iPad row, which docks on a docked keyboard. */
 export type KeyRowMode = 'hidden' | 'floating' | 'dockable';
 
-/** How the Key Row sits now: glass floating over the keyboard, or a strip on its top edge. */
 export type KeyRowPlacement = 'floating' | 'docked';
 
-/** The least space under the Key Row with no keyboard up, for the glass to clear the screen's edge. */
 const RESTING_MARGIN = 8;
 
-/** The space between the floating Key Row's glass and the top of a docked keyboard. */
 export const KEYBOARD_GAP = 2;
 
 export function terminalClearance(

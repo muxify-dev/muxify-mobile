@@ -56,11 +56,6 @@ export interface KeyRowProps {
   panesDisabled: boolean;
   /** The chrome colours of the Theme in use: the row draws its own labels. */
   palette: Appearance;
-  /**
-   * A glass capsule floating over the keyboard, or a full-width strip with
-   * square corners on the top edge of a docked iPad keyboard, so the row
-   * reads as the keyboard's own top row. Only the frame changes.
-   */
   placement: KeyRowPlacement;
 }
 
@@ -153,10 +148,6 @@ export function KeyRow(props: KeyRowProps) {
   );
 }
 
-/**
- * What the bubble over a key shows, and where that key is across the row: a
- * pair key's two symbols as its touch moves them, or the arrow being sent.
- */
 type Bubble =
   | { kind: 'pair'; pair: PairKey; progress: SharedValue<number>; center: number }
   | { kind: 'arrow'; symbol: string; center: number };
@@ -244,7 +235,6 @@ function PairStrip({
   onBubble: (bubble: Bubble | null) => void;
 }) {
   const [width, setWidth] = useState(0);
-  // Where every pair fits, as on an iPad, they share the width and nothing scrolls.
   const visible = Math.min(
     PAIR_KEYS.length,
     Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH)),
@@ -319,12 +309,7 @@ interface ScrollExtent {
 }
 
 /**
- * One pair key: the iPad keyboard's flick down.
- *
- * The alternate symbol sits small above the main one. A drag down moves the
- * alternate symbol into the main one's place, in the key and in a bubble over
- * it, and is complete at FLICK. The release types the alternate symbol if the
- * drag got there and the main one if not. A sideways drag is the scroll
+ * One pair key: the iPad keyboard's flick down. A sideways drag is the scroll
  * view's: it takes the touch away and nothing is typed.
  */
 function PairKeyView({
@@ -342,9 +327,7 @@ function PairKeyView({
   onSymbol: (symbol: string) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
-  /** The touch in progress: where it began, and whether its drag reached FLICK. */
   const touch = useRef<{ startY: number; flicked: boolean } | null>(null);
-  /** How far the drag is to FLICK, from 0 to 1. The key and the bubble draw from it. */
   const progress = useSharedValue(0);
 
   const begin = ({ nativeEvent }: GestureResponderEvent) => {
@@ -397,17 +380,9 @@ function PairKeyView({
 }
 
 /**
- * A pair's two symbols in a frame `height` tall, drawn from a drag's progress.
- *
- * At 0 the alternate symbol is small and grey, its line sitting on top of the
- * main symbol's line, and the two together centred in the frame. Towards 1
- * the main symbol drops half the frame, shrinks and fades out, and the
- * alternate symbol moves down to the centre of the frame, grows to full size
- * and takes the tint. Both are set at full size and scaled down, so the one that ends
- * large is drawn sharp.
- *
- * The spacing comes from the line height, not the frame: brackets and braces
- * fill almost the whole line, and a smaller spacing lays one over the other.
+ * Both symbols are set at full size and scaled down, so the one that ends
+ * large is drawn sharp. Their spacing comes from the line height, not the
+ * frame: brackets and braces fill almost the whole line.
  */
 function PairSymbols({
   pair,
@@ -423,7 +398,6 @@ function PairSymbols({
   palette: Appearance;
 }) {
   const lineHeight = Math.round(fontSize * 1.2);
-  /** From the main symbol's centre to the alternate one's at rest. */
   const lift = (lineHeight * (1 + ALTERNATE_SCALE)) / 2;
   const rest = lift / 2;
   const { secondaryLabel, toolbarTint } = palette;
@@ -598,12 +572,11 @@ const STICK_ACTIONS = [
   { name: 'right', label: 'Right' },
 ] satisfies { name: ArrowDirection; label: string }[];
 
-/** The glass. 44 pt is the iOS touch minimum, so the capsule stays easy to hit. */
+/** 44 pt is the iOS touch minimum. */
 const CAPSULE_HEIGHT = 44;
 /** Clearance above the capsule, so that glass does not sit on the Surface's last row. */
 const ROW_CLEARANCE = 6;
 export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + ROW_CLEARANCE;
-/** Each key's touch frame inside the capsule. The capsule's edge still catches touches. */
 const KEY_HEIGHT = 38;
 
 /**
@@ -618,7 +591,6 @@ const KEY_WIDTH = 30;
 /** How far each end of the pairs fades out while there are more past it. */
 const FADE = 32;
 
-/** An SF Symbol on a fixed key. */
 const SYMBOL_SIZE = 16;
 
 /** The disc behind a held modifier. */
@@ -633,13 +605,10 @@ const EDGE = 4;
 /** How far down a touch on a pair goes before it means the alternate symbol. */
 const FLICK = 14;
 
-/** A pair's main symbol at rest, in the key. */
 const PAIR_FONT_SIZE = 16;
 
-/** How big a pair's alternate symbol is at rest, against the main one. */
 const ALTERNATE_SCALE = 0.6;
 
-/** How a pair key's symbols return to rest when the touch ends. */
 const SPRING_BACK = { mass: 1, stiffness: 320, damping: 36 };
 
 const BUBBLE_WIDTH = 44;
