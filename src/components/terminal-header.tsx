@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
-import type { TerminalPalette } from '@/constants/app-theme';
+import { chromeHeaderColors, type Appearance, type TerminalPalette } from '@/constants/app-theme';
 
 /** What the header says the screen is showing. */
 export type HeaderTitle =
@@ -34,6 +34,11 @@ export interface TerminalHeaderProps {
   title: HeaderTitle | null;
   /** The Theme's terminal colours: the header sits on the terminal background. */
   terminal: TerminalPalette;
+  /**
+   * Set while the Reconnect Screen covers the Surface: the header then sits on
+   * the app's chrome, as the screen below it does, not on the terminal.
+   */
+  chrome: Appearance | null;
   onTitle: () => void;
   options: OptionsItem[];
 }
@@ -42,6 +47,7 @@ export interface TerminalHeaderProps {
 export function TerminalHeader({
   title,
   terminal,
+  chrome,
   onTitle,
   options,
 }: TerminalHeaderProps) {
@@ -53,8 +59,9 @@ export function TerminalHeader({
         headerShown: true,
         headerTransparent: false,
         headerBackVisible: true,
-        headerStyle: { backgroundColor: terminal.background },
-        headerTintColor: terminal.foreground,
+        ...(chrome
+          ? chromeHeaderColors(chrome)
+          : { headerStyle: { backgroundColor: terminal.background }, headerTintColor: terminal.foreground }),
       }} />
       <Stack.Title asChild>
         <Pressable

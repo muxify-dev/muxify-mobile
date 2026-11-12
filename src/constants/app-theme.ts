@@ -252,3 +252,14 @@ export function appearanceFor(theme: ThemeId): 'light' | 'dark' {
 export function paletteFor(theme: ThemeId): Appearance {
   return AppPalettes[appearanceFor(theme)];
 }
+
+/**
+ * The navigation Header's colours over the app's chrome: every screen's, and
+ * the Terminal Screen's while the Reconnect Screen covers the Surface.
+ */
+export function chromeHeaderColors(palette: Appearance) {
+  return {
+    headerStyle: { backgroundColor: palette.background },
+    headerTintColor: palette.toolbarTint,
+  };
+}
