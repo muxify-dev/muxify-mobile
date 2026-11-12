@@ -9,6 +9,8 @@ import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import inPlay from './__fixtures__/environment-in-play.json';
 import liveTopic from './__fixtures__/topic-live.json';
 import type { TopicId } from './environment';
+import type { TopicAction } from './topic-action';
+import type { Drop } from './topic-drop';
 import type { TopicChange } from './topic-edit';
 
 type Answer = Partial<TmuxExecResult>;
@@ -480,6 +482,89 @@ describe('changing a Topic', () => {
         title: 'New',
       }),
     ).toEqual({ kind: 'failed', error: 'Muxify is not on this Host.' });
+  });
+});
+
+describe('sending a menu order for a Topic', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const CHANGED = JSON.stringify({ changed: { created: false, topic_id: ID } });
+
+  it.each<[TopicAction, string[]]>([
+    ['mark-read', ['topic', 'mark-read']],
+    ['mark-unread', ['topic', 'mark-unread', '--topic-only']],
+    ['move-up', ['topic', 'move', 'up']],
+    ['move-down', ['topic', 'move', 'down']],
+    ['bench', ['topic', 'bench']],
+    ['make-guest', ['topic', 'make-guest']],
+    ['settle', ['topic', 'settle']],
+    ['settle-stopping-sessions', ['topic', 'settle', '--kill-sessions']],
+  ])('%s sends exactly its command with the Topic id and --json', async (action, command) => {
+    const host = scriptedHost(CHANGED);
+
+    const write = await createMuxifyCli().act(host.exec, ID, action);
+
+    expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
+    expect(write).toEqual({ kind: 'changed' });
+  });
+
+  it("fails with the Host's reason when the Mac refuses", async () => {
+    const message = 'This card is Pinned.';
+    const host = scriptedHost(
+      JSON.stringify({ failed: { kind: 'card_pinned', message, phase: 'nothing_changed' } }),
+      1,
+    );
+
+    expect(await createMuxifyCli().act(host.exec, ID, 'bench')).toEqual({
+      kind: 'failed',
+      error: message,
+    });
+  });
+});
+
+describe('sending the drop of a dragged Topic card', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const OTHER = '0b6c1f4e-7c53-4f0a-9d53-3d4f6a0e2b11' as TopicId;
+  const CHANGED = JSON.stringify({ changed: { created: false, topic_id: ID } });
+
+  it.each<[Drop, string[]]>([
+    [{ kind: 'place', side: 'before', anchor: { kind: 'topic', id: OTHER } }, ['topic', 'move', '--before', OTHER]],
+    [
+      { kind: 'place', side: 'after', anchor: { kind: 'locked-session', name: "my project/it's" } },
+      ['topic', 'move', '--after-session', "my project/it's"],
+    ],
+    [
+      { kind: 'place', side: 'after', anchor: { kind: 'open-place', id: 'open-place-2' } },
+      ['topic', 'move', '--after-place', 'open-place-2'],
+    ],
+    [{ kind: 'trade', with: { kind: 'topic', id: OTHER } }, ['topic', 'move', '--trade-with', OTHER]],
+    [
+      { kind: 'trade', with: { kind: 'locked-session', name: 'gs/fix' } },
+      ['topic', 'move', '--trade-with-session', 'gs/fix'],
+    ],
+    [{ kind: 'fill', place: 2 }, ['topic', 'fill-place', '2']],
+  ])('%j sends exactly its command with the Topic id and --json', async (drop, command) => {
+    const host = scriptedHost(CHANGED);
+
+    const write = await createMuxifyCli().drop(host.exec, ID, drop);
+
+    expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
+    expect(write).toEqual({ kind: 'changed' });
+  });
+
+  it('fails with the old-muxify reason, in one command, on a muxify that cannot place a card', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['topic move --before', { stdout: 'usage: muxify topic move (up | down)', exitCode: 2 }],
+    ]);
+
+    const write = await createMuxifyCli().drop(host.exec, ID, {
+      kind: 'place',
+      side: 'before',
+      anchor: { kind: 'topic', id: OTHER },
+    });
+
+    expect(write.kind === 'failed' && write.error).toContain('an old muxify does not have this command');
+    expect(host.ran.slice(1)).toEqual([`'/opt/bin/muxify' topic move --before '${OTHER}' --topic '${ID}' --json`]);
   });
 });
 

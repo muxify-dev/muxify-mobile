@@ -9,6 +9,8 @@ import type { TopicsRead } from './host-topics';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
 import type { TopicChange, TopicWrite } from './topic-edit';
+import { topicActionCommand, type TopicAction } from './topic-action';
+import { dropCommand, type Drop } from './topic-drop';
 import { parseSessionPaths, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
@@ -78,6 +80,24 @@ export interface MuxifyCli {
    * changes nothing.
    */
   change(exec: Exec, topic: TopicId, change: TopicChange): Promise<TopicWrite>;
+
+  /**
+   * Sends one order of the long-press menu: `topic mark-unread`, `topic move
+   * up` or `down`, `topic bench` or `topic make-guest`. The Mac applies its own
+   * rules for the order. It names the Topic by id and finds `muxify` as `read`
+   * does. A refusal, such as a move at the end, fails with the Host's reason,
+   * and the Host changes nothing.
+   */
+  act(exec: Exec, topic: TopicId, action: TopicAction): Promise<TopicWrite>;
+
+  /**
+   * Sends one drop of the Edit mode drag: `topic move --before`, `--after` or
+   * `--trade-with` a card, or `topic fill-place`. It is one command, and the
+   * Mac applies its own rules. It answers as `act` does. A `muxify` too old
+   * to place a card next to another fails with the usual old-muxify reason,
+   * and nothing stands in for the command.
+   */
+  drop(exec: Exec, topic: TopicId, drop: Drop): Promise<TopicWrite>;
 
   /**
    * Makes a Session at a folder on the Host in this Topic: `topic add-session`,
@@ -209,6 +229,10 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     },
 
     change: (exec, topic, change) => writeTopic(exec, changeCommand(change), topic),
+
+    act: (exec, topic, action) => writeTopic(exec, topicActionCommand(action), topic),
+
+    drop: (exec, topic, drop) => writeTopic(exec, dropCommand(drop), topic),
 
     reopenTopic: (exec, topic) => writeTopic(exec, 'topic reopen', topic),
 

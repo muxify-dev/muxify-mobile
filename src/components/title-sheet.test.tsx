@@ -89,7 +89,7 @@ it('starts at Sessions after the chooser closes and opens again', async () => {
 it('passes an Empty Topic pick to the existing Host entry action', async () => {
   const id = 'topic' as TopicId;
   const topic: TopicRow = {
-    kind: 'topic', id, label: 'Empty work', note: null, tags: [], mark: null, pinned: false, dimmed: true,
+    kind: 'topic', id, label: 'Empty work', note: null, tags: [], mark: null, pinned: false, section: 'topics', dimmed: true,
     seed: { id, label: 'Empty work', note: null, tags: [], state: 'empty', sessions: [] },
   };
   props.lists = ['sessions', 'windows', 'topics'];

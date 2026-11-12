@@ -325,6 +325,7 @@ const topicRow = (
   tags: [],
   mark: null,
   pinned: false,
+  section: 'topics',
   dimmed: false,
   // The seed's content is checked once, below, and in topic-detail.test.ts.
   seed: expect.objectContaining({ id: tid(id) }) as Extract<HostScreenRow, { kind: 'topic' }>['seed'],
@@ -396,7 +397,7 @@ describe('hostScreen with Topics', () => {
         unpinned: { kind: 'list', cards: [topicCard('z'), topicCard('a')] },
       }),
       sections: [
-        topicsSection(topicRow('p', { pinned: true }), topicRow('z'), topicRow('a')),
+        topicsSection(topicRow('p', { pinned: true, section: 'pinned' }), topicRow('z'), topicRow('a')),
       ],
     },
     {
@@ -412,9 +413,9 @@ describe('hostScreen with Topics', () => {
         },
       }),
       sections: [
-        section('pinned', 'Pinned', topicRow('p', { pinned: true })),
-        section('in-play', 'In Play', topicRow('place'), { kind: 'open-place', id: 'open1' }),
-        section('guests', 'Guests', topicRow('guest')),
+        section('pinned', 'Pinned', topicRow('p', { pinned: true, section: 'pinned' })),
+        section('in-play', 'In Play', topicRow('place', { section: 'in-play' }), { kind: 'open-place', id: 'open1' }),
+        section('guests', 'Guests', topicRow('guest', { section: 'guests' })),
         section('bench', null, { kind: 'bench', opened: false }),
       ],
     },
@@ -424,7 +425,7 @@ describe('hostScreen with Topics', () => {
       opened: new Set<OpenableRow>(['bench']),
       sections: [
         section('in-play', 'In Play', OPEN_PLACE_ROW),
-        section('bench', null, { kind: 'bench', opened: true }, topicRow('b2'), topicRow('b1')),
+        section('bench', null, { kind: 'bench', opened: true }, topicRow('b2', { section: 'bench' }), topicRow('b1', { section: 'bench' })),
       ],
     },
     {
@@ -457,7 +458,7 @@ describe('hostScreen with Topics', () => {
           'pinned',
           'Pinned',
           { kind: 'refused', message: 'muxify exited with status 1' },
-          topicRow('p', { pinned: true }),
+          topicRow('p', { pinned: true, section: 'pinned' }),
         ),
         section('in-play', 'In Play', OPEN_PLACE_ROW),
       ],
