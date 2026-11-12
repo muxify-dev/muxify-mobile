@@ -195,7 +195,7 @@ files itself.
 **Topic**:
 One thing the user wants to get done, such as "Fix reward drop bug in GS". It
 groups Sessions with no limit per folder or repository. The Host Screen shows
-the Topics of a Host in the order that the Mac's Topics mode shows them.
+the Topics of a Host in the order that the Mac shows them.
 _Avoid_: task, project, workspace, thread
 
 **Topic Note**:
@@ -228,9 +228,10 @@ _Avoid_: Dormant (when it remembers no Session), blank, cleared
 
 **In Play**:
 The Mac's limited set of places for the Topics in work now, and the Guests
-after them. With In Play on the Mac, the Host Screen shows the sections Pinned,
-In Play, Guests, then the Bench row. Without it, the Host Screen shows the
-Pinned Topics and then one list, with no section headers.
+after them. In Play is always on: it is the only way the Mac and the phone show
+Topics. The Host Screen shows the sections Pinned, In Play, Guests, then the
+Bench row. A Host CLI that still sends the flat Topics list of a Mac from before
+this is too old: the phone treats it as old and offers the update.
 _Avoid_: active Topics, focus Topics, WIP limit
 
 **Open Place**:
