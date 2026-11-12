@@ -3,6 +3,7 @@ import type { Settings } from '@/settings/settings';
 import type { RecentSession } from '@/storage/records';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, TopicId } from '@/topics/environment';
 import { lastSnapshot, type HostTopics } from '@/topics/host-topics';
+import type { CardSection } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
@@ -41,6 +42,8 @@ export type HostScreenRow =
       tags: TagMark[];
       mark: Mark | null;
       pinned: boolean;
+      /** Where the card sits, which says what its menu offers. */
+      section: CardSection;
       dimmed: boolean;
       /** What the Attach can show before its first Topic read. */
       seed: TopicDetail;
@@ -271,15 +274,15 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
     }),
   );
   const sessions = new Map(snapshot.sessions.map((session) => [session.id, session]));
-  const rows = (cards: Card[], pinned = false) =>
-    cards.map((card) => cardRow(card, { pinned, names, colors, sessions }));
-  const pinned = rows(snapshot.pinned, true);
+  const rows = (cards: Card[], section: CardSection) =>
+    cards.map((card) => cardRow(card, { section, names, colors, sessions }));
+  const pinned = rows(snapshot.pinned, 'pinned');
   const noTopic = noTopicRows(snapshot, names, context);
   const { unpinned } = snapshot;
 
   if (unpinned.kind === 'list') {
     const sections = [
-      topicsSection('topics', 'Topics', [...pinned, ...rows(unpinned.cards)]),
+      topicsSection('topics', 'Topics', [...pinned, ...rows(unpinned.cards, 'topics')]),
       topicsSection('no-topic', null, noTopic),
     ].filter((section) => section.rows.length > 0);
     return sections.length > 0
@@ -291,11 +294,11 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
   const bench: HostScreenRow[] =
     unpinned.bench.length === 0
       ? []
-      : [{ kind: 'bench', opened: benchOpened }, ...(benchOpened ? rows(unpinned.bench) : [])];
+      : [{ kind: 'bench', opened: benchOpened }, ...(benchOpened ? rows(unpinned.bench, 'bench') : [])];
   const sections = [
     topicsSection('pinned', 'Pinned', pinned),
-    topicsSection('in-play', 'In Play', rows(unpinned.places)),
-    topicsSection('guests', 'Guests', rows(unpinned.guests)),
+    topicsSection('in-play', 'In Play', rows(unpinned.places, 'in-play')),
+    topicsSection('guests', 'Guests', rows(unpinned.guests, 'guests')),
     topicsSection('bench', null, bench),
     topicsSection('no-topic', null, noTopic),
   ].filter((section) => section.rows.length > 0);
@@ -335,13 +338,14 @@ function tagMarks(tags: string[], colors: ReadonlyMap<string, string | null>): T
 
 interface CardRowContext {
   sessions: ReadonlyMap<SessionId, EnvironmentSnapshot['sessions'][number]>;
-  pinned: boolean;
+  section: CardSection;
   names: ReadonlyMap<SessionId, string>;
   /** Each Tag the Config defines, in Config order, with its colour in this appearance. */
   colors: ReadonlyMap<string, string | null>;
 }
 
-function cardRow(card: Card, { pinned, names, colors, sessions }: CardRowContext): HostScreenRow {
+function cardRow(card: Card, { section, names, colors, sessions }: CardRowContext): HostScreenRow {
+  const pinned = section === 'pinned';
   switch (card.kind) {
     case 'topic':
       return {
@@ -352,6 +356,7 @@ function cardRow(card: Card, { pinned, names, colors, sessions }: CardRowContext
         tags: tagMarks(card.topic.tags, colors),
         mark: card.mark,
         pinned,
+        section,
         dimmed: card.topic.state !== 'live',
         seed: seededTopic(card, sessions),
       };
