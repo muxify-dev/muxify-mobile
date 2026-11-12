@@ -402,8 +402,8 @@ function PairKeyView({
  * At 0 the alternate symbol is small and grey, its line sitting on top of the
  * main symbol's line, and the two together centred in the frame. Towards 1
  * the main symbol drops half the frame, shrinks and fades out, and the
- * alternate symbol moves down into its place, grows to full size and takes
- * the tint. Both are set at full size and scaled down, so the one that ends
+ * alternate symbol moves down to the centre of the frame, grows to full size
+ * and takes the tint. Both are set at full size and scaled down, so the one that ends
  * large is drawn sharp.
  *
  * The spacing comes from the line height, not the frame: brackets and braces
@@ -437,7 +437,7 @@ function PairSymbols({
   const alternate = useAnimatedStyle(() => ({
     color: interpolateColor(progress.value, [0, 1], [secondaryLabel, toolbarTint]),
     transform: [
-      { translateY: rest - lift * (1 - progress.value) },
+      { translateY: (rest - lift) * (1 - progress.value) },
       { scale: ALTERNATE_SCALE + (1 - ALTERNATE_SCALE) * progress.value },
     ],
   }));

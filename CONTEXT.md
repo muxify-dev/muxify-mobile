@@ -506,8 +506,8 @@ In the middle, scrolling sideways: twelve pair keys, each with two symbols:
 the *main* symbol large, and the *alternate* symbol small and grey above it. A
 tap types the main symbol. A touch dragged down types the alternate one. As
 the touch moves down, the main symbol drops out of the key and the alternate
-one moves into its place, in the key and in a bubble over it. The drag is
-complete at 14 pt, and the release types the symbol in the main place, then
+one grows into the centre of the key, in the key and in a bubble over it.
+The drag is complete at 14 pt, and the release types the large symbol, then
 the key springs back. The pairs fade
 at an end while there are more past it. At the right, fixed: the arrow key,
 Panes, which opens the Panes picker, ⌘ command, and Keyboard, which shows or
