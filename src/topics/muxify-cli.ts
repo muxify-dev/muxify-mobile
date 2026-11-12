@@ -16,7 +16,7 @@ type Exec = TmuxTransport['exec'];
 const APP_BUNDLE_CLI = '/Applications/Muxify.app/Contents/Resources/bin/muxify';
 
 /**
- * Where desktop Muxify's `muxify` can be, in the order the probe asks. An SSH
+ * Where the Host CLI can be, in the order the probe asks. An SSH
  * exec runs `$SHELL -c` without a login shell, so its PATH can lack the
  * folder that holds `muxify`. The second and third steps are the places the
  * Mac app puts it.
@@ -33,7 +33,7 @@ const PROBE_STEPS = [
   },
 ] as const;
 
-const NO_MUXIFY = 'Desktop Muxify is not on this Host.';
+const NO_MUXIFY = 'Muxify is not on this Host.';
 
 /** `muxify` exits 2 on a usage error, which is how a CLI with no `environment show` answers. */
 const USAGE_ERROR = 2;
@@ -113,10 +113,17 @@ export interface MuxifyCli {
    * Window with no Browser lists no Tabs.
    */
   browserTabs(exec: Exec, window: string): Promise<BrowserTabsRead>;
+
+  /**
+   * Forgets where `muxify` was found, so the next call probes again. The
+   * registry calls it when the Host CLI install answers `installed` or
+   * `updated`, which puts a new one in `~/.local/bin`.
+   */
+  forget(): void;
 }
 
 /**
- * The only code that talks to desktop Muxify's CLI. The registry of
+ * The only code that talks to the Host CLI. The registry of
  * Connections makes one per Connection: it remembers where `muxify` is for as
  * long as it lives, so a read is one exec. See ADR 0012.
  *
@@ -142,9 +149,9 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
   }
 
   async function locate(exec: Exec): Promise<string | null> {
-    probed ??= probe(exec);
-    return probed.catch((error: unknown) => {
-      probed = undefined;
+    const asked = (probed ??= probe(exec));
+    return asked.catch((error: unknown) => {
+      if (probed === asked) probed = undefined;
       throw error;
     });
   }
@@ -229,6 +236,10 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     async browserTabs(exec, window) {
       const parsed = await answerTo(exec, `browser tabs --window ${shellQuote(window)} --json`, parseBrowserTabs);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', tabs: parsed.value };
+    },
+
+    forget() {
+      probed = undefined;
     },
   };
 }

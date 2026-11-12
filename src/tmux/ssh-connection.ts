@@ -1,4 +1,4 @@
-import { createUploader } from '@/composer/upload';
+import { createUploader, type OpenUploadChannel } from '@/composer/upload';
 import { deviceLog } from '@/diagnostics/device-log';
 import { connectToHost } from '@/ssh/connect-host';
 import { createHostConnections, type Dial, type HostConnections } from '@/ssh/host-connections';
@@ -22,9 +22,14 @@ export function sshDial(store: HostStore): Dial {
       undefined,
       dropped,
     );
+    // A non-PTY channel for one command, beside the screen exec: the Composer's
+    // uploads and the Host CLI install run on these.
+    const openChannel: OpenUploadChannel = (command, events) =>
+      connection.openShell({ term: '', command }, events);
     return {
       transport: sshTmuxTransport(connection),
-      upload: createUploader((command, events) => connection.openShell({ term: '', command }, events)),
+      upload: createUploader(openChannel),
+      openChannel,
       fingerprint,
       verdict,
       isConnected: () => connection.isConnected,

@@ -21,7 +21,14 @@ import type {
 } from '@/topics/environment';
 import inPlayFixture from '@/topics/__fixtures__/environment-in-play.json';
 import { parseEnvironment } from '@/topics/environment';
-import { listedSessions, TOPICS_UNASKED, type HostTopics } from '@/topics/host-topics';
+import type { HostCliOutcome, HostCliState } from '@/topics/host-cli-install';
+import {
+  listedSessions,
+  settled,
+  TOPICS_UNASKED,
+  withHostCli,
+  type HostTopics,
+} from '@/topics/host-topics';
 
 const remembered = (name: string, lastOpenedAt = '2026-09-15T10:00:00Z'): RecentSession => ({
   hostId: 'host1',
@@ -36,7 +43,13 @@ const recentRow = (name: string, windowCount?: number, lastOpenedAt = '2026-09-1
 const availableRow = (name: string) => ({ kind: 'available', name }) as const;
 const note = (text: string) => ({ kind: 'note', text }) as const;
 
-const CHECKING = { kind: 'checking', of: 'Sessions' } as const;
+const INSTALL_RUNNING: HostCliState = { kind: 'running' };
+const installDone = (kind: HostCliOutcome, text: string): HostCliState => ({
+  kind: 'done',
+  result: { kind, text, line: kind === 'failed' || kind === 'skipped' ? `${kind}: ${text}` : `${kind} ${text}` },
+});
+
+const CHECKING = { kind: 'checking', text: 'Checking Sessions…' } as const;
 const NOTHING_OPENED = note('Nothing opened on this Host yet.');
 const NO_OTHERS = note('No other Sessions on this Host.');
 
@@ -73,7 +86,7 @@ const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({
 });
 
 // What the Topics list shows before the Host has answered about Topics.
-const TOPICS = topicsSection({ kind: 'checking', of: 'Topics' });
+const TOPICS = topicsSection({ kind: 'checking', text: 'Checking Topics…' });
 
 interface Case {
   name: string;
@@ -730,15 +743,78 @@ describe('hostScreen with Topics', () => {
       sections: [topicsSection(topicRow('t1'))],
     },
     {
-      name: 'says there are no Topics on a Host with no desktop Muxify',
+      name: 'says there are no Topics on a Host with no Host CLI',
       topics: { kind: 'absent' },
       sections: [topicsSection(note('No Topics on this Host'))],
     },
     {
       name: 'asks for an update on a Host whose Muxify is old',
-      topics: { kind: 'old' },
+      topics: { kind: 'old', last: null },
       sections: [topicsSection(note('Update Muxify on this Host'))],
     },
+    {
+      name: 'says the Host CLI is being installed on a Host with none',
+      topics: withHostCli({ kind: 'absent' }, INSTALL_RUNNING),
+      sections: [topicsSection({ kind: 'checking', text: 'Installing Muxify on this Host…' })],
+    },
+    {
+      name: 'says an old Host CLI is being updated, with nothing under it without a last snapshot',
+      topics: withHostCli({ kind: 'old', last: null }, INSTALL_RUNNING),
+      sections: [topicsSection({ kind: 'checking', text: 'Updating Muxify on this Host…' })],
+    },
+    {
+      name: 'says an old Host CLI is being updated above the last snapshot, which it keeps',
+      topics: withHostCli(
+        settled(
+          { kind: 'loading', last: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }) },
+          { kind: 'old' },
+        ),
+        INSTALL_RUNNING,
+      ),
+      sections: [
+        topicsSection({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topicRow('t1')),
+      ],
+    },
+    {
+      name: 'says why the Host CLI could not be installed on a Host with none',
+      topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
+      sections: [
+        topicsSection({
+          kind: 'refused',
+          message: 'Could not install Muxify on this Host: neither curl nor wget',
+        }),
+      ],
+    },
+    {
+      name: 'still asks for an update, with the reason, when an old Host CLI could not be updated',
+      topics: withHostCli({ kind: 'old', last: null }, installDone('failed', 'no answer in 3 minutes')),
+      sections: [
+        topicsSection(note('Update Muxify on this Host. Could not update it: no answer in 3 minutes')),
+      ],
+    },
+    {
+      name: 'shows the Topics read after the install put a Host CLI there',
+      topics: withHostCli(
+        settled({ kind: 'loading', last: null }, {
+          kind: 'listed',
+          snapshot: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }),
+        }),
+        installDone('installed', 'abc1234 1760000000'),
+      ),
+      sections: [topicsSection(topicRow('t1'))],
+    },
+    ...(['current', 'kept', 'skipped'] as const).flatMap((outcome) => [
+      {
+        name: `says there are no Topics on a Host with no Host CLI after an install that answered ${outcome}`,
+        topics: withHostCli({ kind: 'absent' }, installDone(outcome, 'x')),
+        sections: [topicsSection(note('No Topics on this Host'))],
+      },
+      {
+        name: `asks for an update on an old Host CLI after an install that answered ${outcome}`,
+        topics: withHostCli({ kind: 'old', last: null }, installDone(outcome, 'x')),
+        sections: [topicsSection(note('Update Muxify on this Host'))],
+      },
+    ]),
     {
       name: 'shows the error of a failed read, and nothing under it without a last snapshot',
       topics: { kind: 'failed', error: 'muxify exited with status 1', last: null },

@@ -27,8 +27,8 @@ export interface TagMark {
 export type HostScreenRow =
   | RecentRow
   | { kind: 'available'; name: string }
-  /** The first question to the Host is still in flight. */
-  | { kind: 'checking'; of: 'Sessions' | 'Topics' }
+  /** The first question to the Host is still in flight, or the Host CLI install is running. */
+  | { kind: 'checking'; text: string }
   /** The Host could not be asked. The screen offers Retry. */
   | { kind: 'refused'; message: string }
   | { kind: 'note'; text: string }
@@ -209,23 +209,35 @@ interface CardsContext {
 
 /**
  * The Topics list. Before a snapshot, it is one Topics section with a row that
- * says why. A failed read puts its error above the last snapshot's cards.
+ * says why. A failed read, an old Host CLI and its update put their row above
+ * the last snapshot's cards.
  */
 function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
-  const only = (row: HostScreenRow): HostScreenSection[] => [topicsSection('topics', 'Topics', [row])];
+  const above = (row: HostScreenRow, last: EnvironmentSnapshot | null): HostScreenSection[] => {
+    if (!last) return [topicsSection('topics', 'Topics', [row])];
+    const [first, ...rest] = cardSections(last, context);
+    return [{ ...first, rows: [row, ...first.rows] }, ...rest];
+  };
   switch (topics.kind) {
     case 'absent':
-      return only({ kind: 'note', text: 'No Topics on this Host' });
-    case 'old':
-      return only({ kind: 'note', text: 'Update Muxify on this Host' });
-    case 'loading':
-      return topics.last ? cardSections(topics.last, context) : only({ kind: 'checking', of: 'Topics' });
-    case 'failed': {
-      const refused: HostScreenRow = { kind: 'refused', message: topics.error };
-      if (!topics.last) return only(refused);
-      const [first, ...rest] = cardSections(topics.last, context);
-      return [{ ...first, rows: [refused, ...first.rows] }, ...rest];
+      return above({ kind: 'note', text: 'No Topics on this Host' }, null);
+    case 'installing':
+      return above({ kind: 'checking', text: 'Installing Muxify on this Host…' }, null);
+    case 'old': {
+      const text =
+        topics.failure === undefined
+          ? 'Update Muxify on this Host'
+          : `Update Muxify on this Host. Could not update it: ${topics.failure}`;
+      return above({ kind: 'note', text }, topics.last);
     }
+    case 'updating':
+      return above({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topics.last);
+    case 'loading':
+      return topics.last
+        ? cardSections(topics.last, context)
+        : above({ kind: 'checking', text: 'Checking Topics…' }, null);
+    case 'failed':
+      return above({ kind: 'refused', message: topics.error }, topics.last);
     case 'listed':
       return cardSections(topics.snapshot, context);
   }
@@ -436,5 +448,5 @@ function recentRow(session: RecentSession, windowCount: number | undefined): Rec
  */
 function unansweredRow(listing: Listing): HostScreenRow {
   if (listing.phase === 'failed') return { kind: 'refused', message: listing.message };
-  return { kind: 'checking', of: 'Sessions' };
+  return { kind: 'checking', text: 'Checking Sessions…' };
 }
