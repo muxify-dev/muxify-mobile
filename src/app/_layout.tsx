@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 
+import { chromeHeaderColors } from '@/constants/app-theme';
 import { SettingsProvider, useSettings } from '@/settings/settings-context';
 import { AttachProvider } from '@/tmux/attach-context';
 
@@ -50,8 +51,7 @@ function AppStack() {
       <StatusBar style={appearance === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: palette.background },
-          headerTintColor: palette.toolbarTint,
+          ...chromeHeaderColors(palette),
           headerTitleStyle: { color: palette.toolbarTint },
           headerTitleAlign: 'center',
           // No hairline under the title. The screens below are grouped lists

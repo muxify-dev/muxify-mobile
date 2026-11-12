@@ -1261,6 +1261,7 @@ export default function TerminalScreen() {
       <TerminalHeader
         title={headerTitle}
         terminal={opened.terminal}
+        chrome={reconnectShown ? chrome : null}
         onTitle={openTitleSheet}
         options={options}
       />

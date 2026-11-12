@@ -119,7 +119,7 @@ export function PickerSheet({
   // decides whether the app is light or dark, and CONTEXT.md is explicit that
   // the chrome follows it immediately even though the Surface waits for the
   // next Attach.
-  const { appearance, sheetPalette: palette } = useSettings();
+  const { appearance, palette: chrome, sheetPalette: palette } = useSettings();
   // The sheet's width is known only once it is laid out, so the window stands
   // in until then. The measurement that follows fits everything to the sheet.
   const screen = useWindowDimensions();
@@ -171,7 +171,7 @@ export function PickerSheet({
               {loading ? (
                 <SheetNote palette={palette}>Reading…</SheetNote>
               ) : error !== undefined ? (
-                <Text modifiers={[foregroundColor('#ff6b6b')]}>{error}</Text>
+                <Text modifiers={[foregroundColor(chrome.destructive)]}>{error}</Text>
               ) : cards.length === 0 ? (
                 <SheetNote palette={palette}>{emptyMessage}</SheetNote>
               ) : null}
