@@ -290,8 +290,8 @@ interface ScrollExtent {
 /**
  * One pair key: the iPad keyboard's flick down.
  *
- * A touch shows the top symbol in a bubble over the key, a drag down past
- * FLICK flips the bubble to the bottom symbol, and the release types what the
+ * A touch shows the main symbol in a bubble over the key, a drag down past
+ * FLICK flips the bubble to the alternate symbol, and the release types what the
  * bubble shows. A sideways drag is the scroll view's: it takes the touch away
  * and nothing is typed.
  */
@@ -316,13 +316,13 @@ function PairKeyView({
   const show = (symbol: string, center: number) => onBubble({ symbol, center });
   const begin = ({ nativeEvent }: GestureResponderEvent) => {
     const center = nativeEvent.pageX - nativeEvent.locationX + width / 2;
-    touch.current = { startY: nativeEvent.pageY, center, symbol: pair.top };
-    show(pair.top, center);
+    touch.current = { startY: nativeEvent.pageY, center, symbol: pair.main };
+    show(pair.main, center);
   };
   const move = ({ nativeEvent }: GestureResponderEvent) => {
     const current = touch.current;
     if (!current) return;
-    const symbol = nativeEvent.pageY - current.startY >= FLICK ? pair.bottom : pair.top;
+    const symbol = nativeEvent.pageY - current.startY >= FLICK ? pair.alternate : pair.main;
     if (symbol === current.symbol) return;
     current.symbol = symbol;
     show(symbol, current.center);
@@ -340,10 +340,10 @@ function PairKeyView({
       accessibilityRole="button"
       accessibilityLabel={pair.spoken}
       accessibilityState={{ disabled }}
-      // VoiceOver has no drag down, so the bottom symbol is an action of its own.
-      accessibilityActions={[{ name: 'activate' }, { name: 'bottom', label: pair.bottom }]}
+      // VoiceOver has no drag down, so the alternate symbol is an action of its own.
+      accessibilityActions={[{ name: 'activate' }, { name: 'alternate', label: pair.alternate }]}
       onAccessibilityAction={({ nativeEvent }) => {
-        if (!disabled) onSymbol(nativeEvent.actionName === 'bottom' ? pair.bottom : pair.top);
+        if (!disabled) onSymbol(nativeEvent.actionName === 'alternate' ? pair.alternate : pair.main);
       }}
       onStartShouldSetResponder={() => !disabled}
       onResponderGrant={begin}
@@ -353,11 +353,11 @@ function PairKeyView({
       style={[styles.pair, { width }, disabled ? styles.dim : null]}>
       {/* Not a touch target, so `locationX` is measured from the key. */}
       <View pointerEvents="none" style={styles.pairLabels}>
-        <Text allowFontScaling={false} style={[styles.pairTop, { color: palette.toolbarTint }]}>
-          {pair.top}
+        <Text allowFontScaling={false} style={[styles.pairMain, { color: palette.toolbarTint }]}>
+          {pair.main}
         </Text>
-        <Text allowFontScaling={false} style={[styles.pairBottom, { color: palette.secondaryLabel }]}>
-          {pair.bottom}
+        <Text allowFontScaling={false} style={[styles.pairAlternate, { color: palette.secondaryLabel }]}>
+          {pair.alternate}
         </Text>
       </View>
     </View>
@@ -618,12 +618,12 @@ const styles = StyleSheet.create({
   pairLabels: {
     alignItems: 'center',
   },
-  pairTop: {
+  pairMain: {
     fontSize: 14,
     lineHeight: 17,
     fontWeight: '600',
   },
-  pairBottom: {
+  pairAlternate: {
     fontSize: 12,
     lineHeight: 15,
   },
