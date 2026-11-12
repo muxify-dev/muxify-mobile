@@ -1288,6 +1288,7 @@ export default function TerminalScreen() {
             style={[styles.paneBox, { left: 0, top: -slide, ...windowArea }]}
             fontSize={fontSize}
             accessoryBar={false}
+            shortcutBar={false}
             theme={{
               background: opened.terminal.background,
               foreground: opened.terminal.foreground,
@@ -1720,9 +1721,10 @@ function PaneSurfaceView({
         style={styles.surface}
         fontSize={font}
         // The library's own bar of ctrl/esc/tab/arrows above the keyboard,
-        // turned off by a local patch. The Key Row stands in its place; see
-        // ADR 0003.
+        // and the iPad's undo, redo and Paste bar, both turned off by a local
+        // patch. The Key Row stands in their place; see ADR 0003.
         accessoryBar={false}
+        shortcutBar={false}
         theme={{
           background: terminal.background,
           foreground: terminal.foreground,

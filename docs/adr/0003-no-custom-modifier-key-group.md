@@ -130,3 +130,17 @@ and VoiceOver needs an action for each arrow.
 The decision above does not change. Each arrow is still a tmux key name from
 `ARROW_KEYS`, and an armed ctrl or opt goes with the first arrow of a drag and
 not with its repeats.
+
+## The iPad shortcut bar is hidden too
+
+On iPad, iOS shows a second bar over the keyboard: the shortcut bar, with
+undo, redo and Paste. It is the first responder's `inputAssistantItem`, not
+the library's view, and iOS leaves it out when its button groups are empty.
+The local patch exposes this as a `shortcutBar` prop next to `accessoryBar`,
+and Muxify sets it to `false`. The patch empties the groups of the terminal
+view and of the Selection layer, because both become first responder, and
+the bar would come back during a selection.
+
+The bar took about 55 pt over the keyboard for three commands, and the Key
+Row sits there now. Paste stays available: in the Selection menu, as ⌘ v from
+the Key Row, and as ⌘ v on a hardware keyboard.
