@@ -233,7 +233,9 @@ afterAll(() => {
     const { pinned, unpinned } = read.snapshot;
     const cards: Card[] = [
       ...pinned,
-      ...(unpinned.kind === 'list' ? unpinned.cards : [...unpinned.places, ...unpinned.guests, ...unpinned.bench]),
+      ...unpinned.places,
+      ...unpinned.guests,
+      ...unpinned.bench,
     ];
     expect(cards).toContainEqual(
       expect.objectContaining({ kind: 'topic', topic: expect.objectContaining({ id: created.topic, label: title }) }),

@@ -76,7 +76,6 @@ describe('homeSection', () => {
 
   describe('of a Host in In Play', () => {
     const mac = parseEnvironment(inPlayFixture);
-    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
     const { places, guests, bench } = mac.unpinned;
     const listed: HostTopics = { kind: 'listed', snapshot: mac };
     const topicIds = (cards: typeof places) =>

@@ -99,11 +99,6 @@ describe('Pinned cards', () => {
   it('are no target for an unpinned card', () => {
     expect(Object.keys(offered(IN_PLAY, 'G1'))).not.toContain('PinA');
   });
-
-  it('stay a group of their own in the Topics list with no In Play', () => {
-    const list = [section('topics', [topic('PinA', 'topics', true), topic('T1', 'topics'), topic('T2', 'topics')])];
-    expect(offered(list, 'T2')).toEqual({ T1: "Move above: topic move --before 'T1'" });
-  });
 });
 
 it('offers nothing for a Topic the sections do not show', () => {

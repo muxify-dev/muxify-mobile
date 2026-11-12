@@ -68,14 +68,13 @@ export const TOPIC_ACTION_ICON: Record<TopicAction, SFSymbol> = {
 };
 
 /** The section of the Host Screen that a Topic card sits in. */
-export type CardSection = 'pinned' | 'topics' | 'in-play' | 'guests' | 'bench';
+export type CardSection = 'pinned' | 'in-play' | 'guests' | 'bench';
 
 /**
  * The actions the Mac's Sidebar menu offers for a card of this section, as
  * `WorkspaceStore.canBench` and `guestState` say. A Pinned card is never
- * Benched or made a Guest, and the Topics list with no In Play has neither. A
- * Benched card becomes a Guest. A card in a place or among the Guests goes to
- * the Bench. Move Up and Move Down are always offered: the Mac decides at the
+ * Benched or made a Guest. A Benched card becomes a Guest. A card in a place
+ * or among the Guests goes to the Bench. Move Up and Move Down are always offered: the Mac decides at the
  * edges, and a refusal shows its reason.
  */
 export function menuActions(card: { section: CardSection; mark: Mark | null }): TopicAction[] {

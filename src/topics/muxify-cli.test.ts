@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createMuxifyCli } from './muxify-cli';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 
+import flatList from './__fixtures__/environment-flat-list.json';
 import inPlay from './__fixtures__/environment-in-play.json';
 import liveTopic from './__fixtures__/topic-live.json';
 import type { TopicId } from './environment';
@@ -167,6 +168,12 @@ describe('reading the Topics', () => {
       found,
       ['environment show', { exitCode: 2, stderr: 'error: unknown subcommand environment' }],
     ]);
+
+    expect(await createMuxifyCli().read(host.exec)).toEqual({ kind: 'old' });
+  });
+
+  it('is old when muxify answers with the flat Topics list of a desktop from before In Play was the only mode', async () => {
+    const host = fakeHost([found, ['environment show', { exitCode: 0, stdout: JSON.stringify(flatList) }]]);
 
     expect(await createMuxifyCli().read(host.exec)).toEqual({ kind: 'old' });
   });

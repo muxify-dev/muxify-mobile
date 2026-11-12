@@ -12,7 +12,6 @@ const offered = (section: CardSection, mark: Mark | null = null) => menuActions(
 describe('what the menu of a Topic card offers', () => {
   it.each<[CardSection, TopicAction[]]>([
     ['pinned', ['mark-unread', 'move-up', 'move-down']],
-    ['topics', ['mark-unread', 'move-up', 'move-down']],
     ['in-play', ['mark-unread', 'move-up', 'move-down', 'bench']],
     ['guests', ['mark-unread', 'move-up', 'move-down', 'bench']],
     ['bench', ['mark-unread', 'move-up', 'move-down', 'make-guest']],

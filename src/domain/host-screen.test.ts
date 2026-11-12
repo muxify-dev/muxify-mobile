@@ -325,7 +325,7 @@ const topicRow = (
   tags: [],
   mark: null,
   pinned: false,
-  section: 'topics',
+  section: 'in-play',
   dimmed: false,
   // The seed's content is checked once, below, and in topic-detail.test.ts.
   seed: expect.objectContaining({ id: tid(id) }) as Extract<HostScreenRow, { kind: 'topic' }>['seed'],
@@ -346,7 +346,7 @@ function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot 
     tags: [],
     sessions: [],
     pinned: [],
-    unpinned: { kind: 'list', cards: [] },
+    unpinned: inPlay({ places: [] }),
     no_topic: [],
     ...over,
   };
@@ -365,12 +365,13 @@ const section = (
   ...rows: HostScreenRow[]
 ): HostScreenSection => ({ id, title, footer: null, rows });
 
+const inPlaySection = (...rows: HostScreenRow[]): HostScreenSection => section('in-play', 'In Play', ...rows);
+
 const OPEN_PLACE: Card = { kind: 'open_place', id: 'open1' };
 const OPEN_PLACE_ROW: HostScreenRow = { kind: 'open-place', id: 'open1' };
 
 /** An In Play answer with one Open Place and nothing else, unless told. */
-const inPlay = (over: Partial<Extract<Unpinned, { kind: 'in_play' }>> = {}): Unpinned => ({
-  kind: 'in_play',
+const inPlay = (over: Partial<Unpinned> = {}): Unpinned => ({
   limit: 3,
   places: [OPEN_PLACE],
   guests: [],
@@ -391,26 +392,25 @@ const TAG_NAMES = ['gone', 'ui', 'odd', 'work'];
 describe('hostScreen with Topics', () => {
   it.each<TopicsCase>([
     {
-      name: 'puts Pinned cards first, with a pin, then the list in the order it came',
+      name: 'puts the Pinned cards in their own section, and the places in the order they came',
       topics: listed({
         pinned: [topicCard('p')],
-        unpinned: { kind: 'list', cards: [topicCard('z'), topicCard('a')] },
+        unpinned: inPlay({ places: [topicCard('z'), topicCard('a')] }),
       }),
       sections: [
-        topicsSection(topicRow('p', { pinned: true, section: 'pinned' }), topicRow('z'), topicRow('a')),
+        section('pinned', 'Pinned', topicRow('p', { pinned: true, section: 'pinned' })),
+        inPlaySection(topicRow('z'), topicRow('a')),
       ],
     },
     {
       name: 'with In Play, draws Pinned, the places, the Guests, then a closed Bench row',
       topics: listed({
         pinned: [topicCard('p')],
-        unpinned: {
-          kind: 'in_play',
-          limit: 3,
+        unpinned: inPlay({
           places: [topicCard('place'), OPEN_PLACE],
           guests: [topicCard('guest')],
           bench: [topicCard('b1'), topicCard('b2')],
-        },
+        }),
       }),
       sections: [
         section('pinned', 'Pinned', topicRow('p', { pinned: true, section: 'pinned' })),
@@ -465,9 +465,9 @@ describe('hostScreen with Topics', () => {
     },
     {
       name: 'draws the Tags in Config order, in their light colours, and an undefined one last',
-      topics: listed({ tags: TAGS, unpinned: { kind: 'list', cards: [topicCard('t1', { tags: TAG_NAMES })] } }),
+      topics: listed({ tags: TAGS, unpinned: inPlay({ places: [topicCard('t1', { tags: TAG_NAMES })] }) }),
       sections: [
-        topicsSection(
+        inPlaySection(
           topicRow('t1', {
             tags: [
               { name: 'work', color: '#ff9500' },
@@ -482,9 +482,9 @@ describe('hostScreen with Topics', () => {
     {
       name: 'draws each Tag in the dark colour of its Config entry in dark appearance',
       appearance: 'dark',
-      topics: listed({ tags: TAGS, unpinned: { kind: 'list', cards: [topicCard('t1', { tags: TAG_NAMES })] } }),
+      topics: listed({ tags: TAGS, unpinned: inPlay({ places: [topicCard('t1', { tags: TAG_NAMES })] }) }),
       sections: [
-        topicsSection(
+        inPlaySection(
           topicRow('t1', {
             tags: [
               { name: 'work', color: '#ff9f0a' },
@@ -499,17 +499,16 @@ describe('hostScreen with Topics', () => {
     {
       name: 'shows the label, the Note and the mark of a Topic, and dims a Dormant and an Empty one',
       topics: listed({
-        unpinned: {
-          kind: 'list',
-          cards: [
+        unpinned: inPlay({
+          places: [
             topicCard('live', { note: 'Repro with seed 4411', mark: 'blocked' }),
             topicCard('sleeping', { state: 'dormant' }),
             topicCard('blank', { state: 'empty' }),
           ],
-        },
+        }),
       }),
       sections: [
-        topicsSection(
+        inPlaySection(
           topicRow('live', { note: 'Repro with seed 4411', mark: 'blocked' }),
           topicRow('sleeping', { dimmed: true }),
           topicRow('blank', { dimmed: true }),
@@ -521,42 +520,38 @@ describe('hostScreen with Topics', () => {
       topics: listed({
         sessions: [snapshotSession('$1', 'scratch', null), snapshotSession('$2', 'notes', null)],
         pinned: [{ kind: 'session', mark: 'unread', sessions: [sid('$2')] }],
-        unpinned: { kind: 'list', cards: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] },
+        unpinned: inPlay({ places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] }),
       }),
       sections: [
-        topicsSection(
-          { kind: 'locked-session', name: 'notes', mark: 'unread', pinned: true },
-          { kind: 'locked-session', name: 'scratch', mark: null, pinned: false },
-        ),
+        section('pinned', 'Pinned', { kind: 'locked-session', name: 'notes', mark: 'unread', pinned: true }),
+        inPlaySection({ kind: 'locked-session', name: 'scratch', mark: null, pinned: false }),
       ],
     },
     {
       name: 'draws a card it does not know as a plain row: its Session names, else its kind',
       topics: listed({
         sessions: [snapshotSession('$1', 'one', null), snapshotSession('$2', 'two', null)],
-        unpinned: {
-          kind: 'list',
-          cards: [
+        unpinned: inPlay({
+          places: [
             { kind: 'unknown', sourceKind: 'folder', mark: null, sessions: [sid('$1'), sid('$2')] },
             { kind: 'unknown', sourceKind: 'banner', mark: null, sessions: [] },
           ],
-        },
+        }),
       }),
       sections: [
-        topicsSection({ kind: 'unknown-card', text: 'one, two' }, { kind: 'unknown-card', text: 'banner' }),
+        inPlaySection({ kind: 'unknown-card', text: 'one, two' }, { kind: 'unknown-card', text: 'banner' }),
       ],
     },
     {
       name: 'gives a Topic row the card and its Sessions before the Attach reads the Topic',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', 't1'), snapshotSession('$2', 'work', 't1')],
-        unpinned: {
-          kind: 'list',
-          cards: [topicCard('t1', { note: 'Repro', tags: ['work'], sessions: [sid('$2'), sid('$1')] })],
-        },
+        unpinned: inPlay({
+          places: [topicCard('t1', { note: 'Repro', tags: ['work'], sessions: [sid('$2'), sid('$1')] })],
+        }),
       }),
       sections: [
-        topicsSection(
+        inPlaySection(
           topicRow('t1', {
             note: 'Repro',
             tags: [{ name: 'work', color: null }],
@@ -579,11 +574,11 @@ describe('hostScreen with Topics', () => {
       name: 'ends the list with one closed No Topic row when Topics stand alone',
       topics: listed({
         sessions: [snapshotSession('$1', 'cook', null), snapshotSession('$2', 'work', 't1')],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
         no_topic: [sid('$1')],
       }),
       sections: [
-        topicsSection(topicRow('t1')),
+        inPlaySection(topicRow('t1')),
         section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
       ],
     },
@@ -591,12 +586,12 @@ describe('hostScreen with Topics', () => {
       name: 'opens the No Topic row into plain Session rows, in the order they came',
       topics: listed({
         sessions: [snapshotSession('$1', 'zeta', null), snapshotSession('$2', 'alpha', null)],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
         no_topic: [sid('$1'), sid('$2')],
       }),
       opened: new Set<OpenableRow>(['no-topic']),
       sections: [
-        topicsSection(topicRow('t1')),
+        inPlaySection(topicRow('t1')),
         section(
           'no-topic',
           null,
@@ -610,9 +605,9 @@ describe('hostScreen with Topics', () => {
       name: 'has no No Topic row when every Session is in a Topic',
       topics: listed({
         sessions: [snapshotSession('$1', 'work', 't1')],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
       }),
-      sections: [topicsSection(topicRow('t1'))],
+      sections: [inPlaySection(topicRow('t1'))],
     },
     {
       name: 'shows only the No Topic section when the list has no Topic cards',
@@ -639,7 +634,7 @@ describe('hostScreen with Topics', () => {
     {
       name: 'says so when the Host has no Topics at all',
       topics: listed({}),
-      sections: [topicsSection(note('No Topics yet.'))],
+      sections: [inPlaySection(note('No Topics yet.'))],
     },
     {
       // D2: one Session, one row. The Topic's Sessions are under the Topic.
@@ -653,11 +648,11 @@ describe('hostScreen with Topics', () => {
           snapshotSession('$2', 'cook', null),
           snapshotSession('$3', 'play', null),
         ],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
         no_topic: [sid('$2'), sid('$3')],
       }),
       sections: [
-        topicsSection(topicRow('t1')),
+        inPlaySection(topicRow('t1')),
         recentSection(recentRow('cook', 1)),
         sessionsSection(availableRow('play')),
       ],
@@ -673,13 +668,13 @@ describe('hostScreen with Topics', () => {
           snapshotSession('$2', 'cook', null),
           snapshotSession('$3', 'play', null),
         ],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
         no_topic: [sid('$2'), sid('$3')],
       }),
       opened: new Set<OpenableRow>(['no-topic']),
       sections: [
         recentSection(recentRow('cook', 1)),
-        topicsSection(topicRow('t1')),
+        inPlaySection(topicRow('t1')),
         section(
           'no-topic',
           null,
@@ -695,10 +690,10 @@ describe('hostScreen with Topics', () => {
       listing: answered([running('cook')]),
       topics: listed({
         sessions: [snapshotSession('$2', 'cook', null)],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
         no_topic: [sid('$2')],
       }),
-      sections: [topicsSection(topicRow('t1')), recentSection(recentRow('cook', 1))],
+      sections: [inPlaySection(topicRow('t1')), recentSection(recentRow('cook', 1))],
     },
     {
       name: 'with Sessions and Topics, leaves a Session in a Topic out of Sessions',
@@ -707,9 +702,9 @@ describe('hostScreen with Topics', () => {
       listing: answered([running('work'), running('cook')]),
       topics: listed({
         sessions: [snapshotSession('$1', 'work', 't1'), snapshotSession('$2', 'cook', null)],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
       }),
-      sections: [allSessionsSection(availableRow('cook')), topicsSection(topicRow('t1'))],
+      sections: [allSessionsSection(availableRow('cook')), inPlaySection(topicRow('t1'))],
     },
     {
       name: 'with Topics off, a Session in a Topic stays in Sessions',
@@ -718,7 +713,7 @@ describe('hostScreen with Topics', () => {
       listing: answered([running('work')]),
       topics: listed({
         sessions: [snapshotSession('$1', 'work', 't1')],
-        unpinned: { kind: 'list', cards: [topicCard('t1')] },
+        unpinned: inPlay({ places: [topicCard('t1')] }),
       }),
       sections: [recentSection(NOTHING_OPENED), sessionsSection(availableRow('work'))],
     },
@@ -740,8 +735,8 @@ describe('hostScreen with Topics', () => {
     },
     {
       name: 'draws the last snapshot while it reads again',
-      topics: { kind: 'loading', last: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }) },
-      sections: [topicsSection(topicRow('t1'))],
+      topics: { kind: 'loading', last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
+      sections: [inPlaySection(topicRow('t1'))],
     },
     {
       name: 'says there are no Topics on a Host with no Host CLI',
@@ -767,13 +762,13 @@ describe('hostScreen with Topics', () => {
       name: 'says an old Host CLI is being updated above the last snapshot, which it keeps',
       topics: withHostCli(
         settled(
-          { kind: 'loading', last: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }) },
+          { kind: 'loading', last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
           { kind: 'old' },
         ),
         INSTALL_RUNNING,
       ),
       sections: [
-        topicsSection({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topicRow('t1')),
+        inPlaySection({ kind: 'checking', text: 'Updating Muxify on this Host…' }, topicRow('t1')),
       ],
     },
     {
@@ -798,11 +793,11 @@ describe('hostScreen with Topics', () => {
       topics: withHostCli(
         settled({ kind: 'loading', last: null }, {
           kind: 'listed',
-          snapshot: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }),
+          snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
         }),
         installDone('installed', 'abc1234 1760000000'),
       ),
-      sections: [topicsSection(topicRow('t1'))],
+      sections: [inPlaySection(topicRow('t1'))],
     },
     ...(['current', 'kept', 'skipped'] as const).flatMap((outcome) => [
       {
@@ -826,10 +821,10 @@ describe('hostScreen with Topics', () => {
       topics: {
         kind: 'failed',
         error: 'muxify exited with status 1',
-        last: snapshot({ unpinned: { kind: 'list', cards: [topicCard('t1')] } }),
+        last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
       },
       sections: [
-        topicsSection({ kind: 'refused', message: 'muxify exited with status 1' }, topicRow('t1')),
+        inPlaySection({ kind: 'refused', message: 'muxify exited with status 1' }, topicRow('t1')),
       ],
     },
   ])('$name', ({
@@ -866,7 +861,6 @@ describe('hostScreen with Topics, against the snapshot `environment show` gave o
       opened: new Set<OpenableRow>(['bench']),
       appearance: 'dark',
     });
-    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
     const ids = (cards: Card[]) => cards.map((card) => (card.kind === 'topic' ? card.topic.id : card.kind));
     const rowIds = (rows: HostScreenRow[]) =>
       rows.flatMap((row) => (row.kind === 'topic' ? [row.id] : row.kind === 'open-place' ? ['open_place'] : []));
@@ -903,7 +897,6 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
   const mac = parseEnvironment(inPlayFixture);
 
   it('lists every Topic of the Host, the Bench too, and no Session or place', () => {
-    if (mac.unpinned.kind !== 'in_play') throw new Error('expected in_play');
     const topicIds = (cards: Card[]) => cards.flatMap((card) => (card.kind === 'topic' ? [card.topic.id] : []));
     const sections = topicSections({ kind: 'listed', snapshot: mac }, 'dark');
     const rows = sections.flatMap((section) => section.rows);
