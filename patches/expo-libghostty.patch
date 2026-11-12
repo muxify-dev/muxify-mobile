@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7e08c0b08 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d27ec7e84 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -34,7 +34,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7
 +    showSelection(rows: TerminalSelectionRow[], top: number, press: TerminalPoint | null): Promise<void>;
 +    /** Close the selection and let its rows go. */
 +    endSelection(): Promise<void>;
- };
++};
 +/** One row of terminal text for the Selection Layer. */
 +export type TerminalSelectionRow = {
 +    /** The caller's number for the row. Rows are told apart and ordered by it. */
@@ -47,7 +47,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7
 +    cells?: number[];
 +    /** Whether the row runs on into the next one, so a copy joins the two. */
 +    wraps: boolean;
-+};
+ };
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +/** What the user chose to paste: text, or an image saved to a file. */
@@ -55,7 +55,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +90,72 @@ export type TerminalViewProps = {
+@@ -52,10 +90,77 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -64,6 +64,11 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9a5245b30c774697b32880745fb13cb7
 +     * above the system keyboard. Defaults to true. iOS only.
 +     */
 +    accessoryBar?: boolean;
++    /**
++     * Whether to show the system shortcut bar (undo, redo, Paste) above the
++     * iPad keyboard. Defaults to true. iOS only.
++     */
++    shortcutBar?: boolean;
      /** User keyboard/IME input to forward to the PTY. */
      onInput?: (event: {
          nativeEvent: TerminalInputEvent;
@@ -193,7 +198,7 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54086fec9f 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd73e9491e 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
 @@ -1,11 +1,21 @@
@@ -219,7 +224,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +46,44 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +46,50 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -256,6 +261,12 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54
 +        view.setAccessoryBar(visible: visible ?? true)
 +      }
 +
++      // The iPad shortcut bar of undo, redo and Paste above the keyboard.
++      // Defaults to visible, which is the system's own behaviour.
++      Prop("shortcutBar") { (view: ExpoLibghosttyView, visible: Bool?) in
++        view.setShortcutBar(visible: visible ?? true)
++      }
++
 +      // Whether the touch scroll gesture belongs to JavaScript rather than to
 +      // ghostty. For terminals whose history lives at the far end.
 +      Prop("ownsScrollGesture") { (view: ExpoLibghosttyView, owned: Bool?) in
@@ -264,7 +275,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54
      }
    }
  }
-@@ -46,6 +94,24 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +100,24 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -290,10 +301,10 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..eaee0a56815058f92bcbfdaafc079e54
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09cd4e85c21 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc63a1d90c 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
-@@ -4,10 +4,53 @@ import GhosttyTerminal
+@@ -4,10 +4,55 @@ import GhosttyTerminal
  // Ghostty-backed terminal view. The JS side owns transport and session
  // lifecycle; this view only renders bytes pushed via `write` and reports
  // user input / grid resizes back through events.
@@ -321,6 +332,8 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09c
    private let terminalView = TerminalView(frame: .zero)
 +  /// Text selection over the terminal. See TerminalSelectionLayer.
 +  private let selectionLayer = TerminalSelectionLayer(frame: .zero)
++  /// The shortcut bar groups iOS gave each responder, kept while the bar is hidden.
++  private var hiddenShortcutGroups: [ObjectIdentifier: (leading: [UIBarButtonItemGroup], trailing: [UIBarButtonItemGroup])] = [:]
    private var session: InMemoryTerminalSession?
  
 +  /// One grid, as reported across the bridge. Points, not pixels.
@@ -348,7 +361,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09c
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -44,6 +87,50 @@ class ExpoLibghosttyView: ExpoView {
+@@ -44,6 +89,50 @@ class ExpoLibghosttyView: ExpoView {
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -399,7 +412,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09c
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +143,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +145,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -421,7 +434,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09c
        }
      )
      self.session = session
-@@ -66,21 +164,239 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +166,265 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -659,6 +672,32 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..b0cf68e8788bc09cb6a57da7935fc09c
 +  func setAccessoryBar(visible: Bool) {
 +    #if !targetEnvironment(macCatalyst)
 +      terminalView.inputAccessoryItems = visible ? TerminalInputAccessoryItem.defaultItems : []
++    #endif
++  }
++
++  /// Show or hide the iPad shortcut bar, the undo, redo and Paste row iOS puts
++  /// over the keyboard.
++  ///
++  /// The bar is the first responder's `inputAssistantItem`, and iOS leaves it
++  /// out when it has no button groups. The terminal and the selection layer
++  /// both become first responder, so both are emptied, or the bar comes back
++  /// during a selection. Showing it again puts back the groups iOS gave.
++  func setShortcutBar(visible: Bool) {
++    #if !targetEnvironment(macCatalyst)
++      for responder in [terminalView as UIResponder, selectionLayer] {
++        let item = responder.inputAssistantItem
++        let key = ObjectIdentifier(responder)
++        if visible {
++          guard let groups = hiddenShortcutGroups.removeValue(forKey: key) else { continue }
++          item.leadingBarButtonGroups = groups.leading
++          item.trailingBarButtonGroups = groups.trailing
++        } else if hiddenShortcutGroups[key] == nil {
++          hiddenShortcutGroups[key] = (item.leadingBarButtonGroups, item.trailingBarButtonGroups)
++          item.leadingBarButtonGroups = []
++          item.trailingBarButtonGroups = []
++        }
++        if responder.isFirstResponder { responder.reloadInputViews() }
++      }
 +    #endif
 +  }
  }

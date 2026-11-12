@@ -41,8 +41,8 @@ describe('the Key Row itself', () => {
     expect(LEFT_KEYS.map((each) => each.label)).toEqual(['⎋', '⌃', '⌥', '⇥']);
   });
 
-  it('has the twelve pairs in the middle, top symbol first', () => {
-    expect(PAIR_KEYS.map((each) => `${each.top} ${each.bottom}`)).toEqual([
+  it('has the twelve pairs in the middle, main symbol first', () => {
+    expect(PAIR_KEYS.map((each) => `${each.main} ${each.alternate}`)).toEqual([
       '- _', ': |', '/ \\', "~ '", '[ ]', '{ }', '< >', '( )', '" `', '= +', '* &', '$ #',
     ]);
   });
