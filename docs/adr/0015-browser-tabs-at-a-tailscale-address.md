@@ -1,5 +1,9 @@
 # The phone opens only the Browser Tabs at a Tailscale address
 
+> **Status: superseded in part by [ADR 0016](0016-browser-tabs-the-phone-can-reach.md).**
+> The phone now also lists public sites. The "Why only those" section no
+> longer applies. The rest of this decision still applies.
+
 The Title Sheet lists the Browser Tabs of the Window on screen, and a tap opens
 one in the Web View. The phone reads the Tabs from desktop Muxify with
 `muxify browser tabs --window <id> --json`, on the Host's Connection, as it
