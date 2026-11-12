@@ -87,7 +87,7 @@ export function KeyRow(props: KeyRowProps) {
 
   return (
     <View style={styles.row} pointerEvents="box-none">
-      <Capsule>
+      <Capsule palette={palette}>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
         <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
@@ -135,7 +135,7 @@ interface Bubble {
   center: number;
 }
 
-function Capsule({ children }: { children: ReactNode }) {
+function Capsule({ palette, children }: { palette: Appearance; children: ReactNode }) {
   // Some iOS 26 betas ship without the underlying effect class and crash on
   // use, so probe the runtime API rather than the design-mode flag. A
   // GlassView on such a runtime renders nothing at all, hence the plain view.
@@ -144,7 +144,7 @@ function Capsule({ children }: { children: ReactNode }) {
       {children}
     </GlassView>
   ) : (
-    <View style={[styles.capsule, styles.plainCapsule]}>{children}</View>
+    <View style={[styles.capsule, { backgroundColor: palette.background }]}>{children}</View>
   );
 }
 
@@ -552,9 +552,6 @@ const styles = StyleSheet.create({
     borderRadius: CAPSULE_HEIGHT / 2,
     paddingHorizontal: EDGE,
     overflow: 'hidden',
-  },
-  plainCapsule: {
-    backgroundColor: '#242838',
   },
   // The scroll view takes the capsule's whole height, so a touch anywhere in
   // the middle section scrolls it.
