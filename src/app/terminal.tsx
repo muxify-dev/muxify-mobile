@@ -641,6 +641,20 @@ export default function TerminalScreen() {
 
   /** The Pane the mouse layer belongs to, and only its rectangle. */
   const activeSlot = slots.find((slot) => slot.pane.id === activePaneId);
+
+  /**
+   * With a hardware keyboard, the active Pane takes the keyboard by itself, so
+   * the user can type at once: on Attach, after a pick in the title chooser,
+   * after a Pane change, and when the keyboard connects. The Composer, a
+   * Selection, a sheet or another screen holds input while it is up, and the
+   * Pane takes it back when that closes. Without a hardware keyboard a focus
+   * would raise the on-screen keyboard, so nothing happens.
+   */
+  const takesKeyboard = physicalKeyboard && activeSlot !== undefined && screenFocused
+    && !composerOpen && !selecting && !sheetOpen && !showReconnect;
+  useEffect(() => {
+    if (takesKeyboard) activeView()?.focusKeyboard();
+  }, [takesKeyboard, activeView, sessionName]);
   const mouseGrid = activeSlot
     ? activeSlot.fillsWindow
       ? visibleGrid
