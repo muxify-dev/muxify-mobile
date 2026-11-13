@@ -29,6 +29,11 @@ connected=states[-1].endswith('physical keyboard connected')
 row=any(n.get('label','').lower()=='escape' for n in nodes)
 assert row != connected, (row,connected)
 print('Key Row matches native physical keyboard presence.')
+focused=[l for l in log.splitlines() if l.endswith('keyboard: focus')]
+print('\n'.join(focused))
+assert bool(focused) == connected, (focused, connected)
+print('The active Pane takes the keyboard on Attach only with a physical keyboard.' if connected
+      else 'Without a physical keyboard, Attach leaves the on-screen keyboard down.')
 PY
 ad press 'label="Options"' --settle
 ad press 'label="Panes"' --settle
