@@ -9,6 +9,8 @@ import { KeyRow } from './key-row';
 jest.mock('expo-glass-effect', () => ({ GlassView: 'GlassView', isGlassEffectAPIAvailable: () => false }));
 jest.mock('expo-symbols', () => ({ SymbolView: 'SymbolView' }));
 jest.mock('@expo/ui/community/masked-view', () => ({ MaskedView: 'MaskedView' }));
+jest.mock('react-native-worklets', () => jest.requireActual('react-native-worklets/src/mock'));
+jest.mock('react-native-reanimated', () => jest.requireActual('react-native-reanimated/mock'));
 
 function luminance(hex: string) {
   const [r, g, b] = [1, 3, 5].map((at) => {
@@ -26,7 +28,12 @@ function contrast(a: string, b: string) {
 let renderer: ReactTestRenderer;
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
-it.each(['dark', 'light'] as const)('draws readable keys on a runtime without glass, %s', async (appearance) => {
+it.each([
+  ['dark', 'floating'],
+  ['light', 'floating'],
+  ['dark', 'docked'],
+  ['light', 'docked'],
+] as const)('draws readable keys on a runtime without glass, %s and %s', async (appearance, placement) => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const palette = AppPalettes[appearance];
   await act(async () => {
@@ -34,6 +41,7 @@ it.each(['dark', 'light'] as const)('draws readable keys on a runtime without gl
       <KeyRow
         armed={NO_MODIFIERS} onArm={jest.fn()} onKey={jest.fn()} onSymbol={jest.fn()} onPanes={jest.fn()}
         onKeyboard={jest.fn()} keyboardVisible={false} keysDisabled={false} panesDisabled={false} palette={palette}
+        placement={placement}
       />,
     );
   });
