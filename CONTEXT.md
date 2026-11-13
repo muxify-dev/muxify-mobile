@@ -475,10 +475,13 @@ One page that is open in a Window's Browser on the Host. The Browser and its
 Tabs are desktop Muxify's, and the phone reads them through `muxify browser
 tabs` for one Window, named by tmux's id. Each Tab has a URL, a title and
 whether it is the Tab that the Browser shows. The phone lists a Tab only when
-its URL is http or https at a Tailscale address: a `*.ts.net` name, or an IPv4
-address in 100.64.0.0/10. Other Tabs, such as `localhost` and public sites,
-are not shown. A Host with no desktop Muxify, or whose Muxify does not show
-the tmux server, lists no Tabs. See ADR 0015.
+it can reach the URL: http or https at a Tailscale address (a `*.ts.net` name,
+or an IPv4 address in 100.64.0.0/10), or at a public site such as
+`github.com`. It does not list host-local Tabs, such as `localhost`, a name
+with no dot or a private IPv4 address, because on the phone that address is
+the phone or a network that the phone is not on. A Host with no desktop
+Muxify, or whose Muxify does not show the tmux server, lists no Tabs. See ADR
+0015 and ADR 0017.
 _Avoid_: page, link, bookmark, browser tab (in lower case, for the term)
 
 **Web View**:
