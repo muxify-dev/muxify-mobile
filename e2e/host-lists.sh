@@ -16,43 +16,51 @@ settings['hostScreenLists'] = ['sessions']
 PY
 device=()
 [ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
-topic_switch() {
+# The ref of a row's reorder handle or delete control, found beside the row's identifier.
+control_of() {
   agent-device snapshot --json > "$MUXIFY_E2E_ROOT/host-lists-tree.json"
-  python3 - "$MUXIFY_E2E_ROOT/host-lists-tree.json" "${1:-false}" <<'PY_SWITCH'
+  python3 - "$MUXIFY_E2E_ROOT/host-lists-tree.json" "$1" "$2" <<'PY_CONTROL'
 import json, sys
 nodes = json.load(open(sys.argv[1]))['data']['nodes']
-row = next(node for node in nodes if node.get('label') == 'Topics' and node.get('kind') == 'switch')
-assert row.get('checked') is (sys.argv[2] == 'true'), row
-control = next(node for node in nodes if node.get('parentIndex') == row['index'] and node.get('role') == 'UISwitch')
-print('@' + control['ref'])
-PY_SWITCH
+row = next(node for node in nodes if node.get('identifier') == sys.argv[2])
+siblings = [node for node in nodes if node.get('parentIndex') == row['parentIndex']]
+wanted = {'handle': lambda node: node.get('label', '').startswith('Reorder'),
+          'delete': lambda node: node.get('identifier') == 'minus.circle.fill'}[sys.argv[3]]
+print('@' + next(node for node in siblings if wanted(node))['ref'])
+PY_CONTROL
+}
+open_lists() {
+  agent-device wait "label=\"Host $1\"" 15000
+  agent-device press "label=\"Host $1\"" --settle
+  agent-device wait 'label="Host Options"' 8000
+  agent-device press 'label="Host Options"' --settle
+  agent-device press 'role=button label="Configure panels"' --settle
+  agent-device wait "label=\"$1 lists\"" 8000
+  agent-device wait "label=\"These settings are for $1 only. Each Host keeps its own.\"" 8000
 }
 agent-device open dev.muxify.app --platform ios --relaunch "${device[@]}"
-agent-device wait 'label="Host Dev Host"' 15000
-agent-device press 'label="Host Dev Host"' --settle
-agent-device wait 'label="Host Options"' 8000
-agent-device press 'label="Host Options"' --settle
-agent-device press 'role=button label="Configure panels"' --settle
-agent-device wait 'label="Topics"' 8000
-control=$(topic_switch)
-agent-device press "$control" --settle
-control=$(topic_switch true)
+open_lists 'Dev Host'
+agent-device wait 'label="Sessions, must stay shown"' 8000
+echo "The last list that reaches every Session shows a disabled delete control."
+agent-device press 'id="host-screen-hidden-topics"' --settle
+agent-device wait 'id="host-screen-shown-topics"' 8000
+agent-device press 'id="host-screen-hidden-recent"' --settle
+agent-device wait 'id="host-screen-shown-recent"' 8000
+echo "A plus shows a hidden list at the end of the shown lists."
+agent-device gesture drag "$(control_of host-screen-shown-topics handle)" "$(control_of host-screen-shown-sessions handle)" 600 600 300
+agent-device press "$(control_of host-screen-shown-recent delete)" --settle
+agent-device press 'role=button label="Delete"' --settle
+agent-device wait 'id="host-screen-hidden-recent"' 8000
+echo "A delete control hides a shown list."
 agent-device back --settle
 agent-device wait 'label="Host Options"' 8000
 agent-device back --settle
-agent-device wait 'label="Host Second Host"' 8000
-agent-device press 'label="Host Second Host"' --settle
-agent-device wait 'label="Host Options"' 8000
-agent-device press 'label="Host Options"' --settle
-agent-device press 'role=button label="Configure panels"' --settle
-agent-device wait 'label="Topics"' 8000
-control=$(topic_switch)
-echo "Topics remains off on Second Host."
+open_lists 'Second Host'
+agent-device wait 'id="host-screen-hidden-topics"' 8000
+echo "Topics remains hidden on Second Host."
 agent-device close
 agent-device open dev.muxify.app --platform ios --relaunch "${device[@]}"
 agent-device wait 'label="Host Dev Host"' 15000
-agent-device press 'label="Host Dev Host"' --settle
-agent-device wait 'label="Host Options"' 8000
 agent-device close
 python3 - "$DOCUMENTS" <<'PY'
 import json, pathlib, sys
@@ -60,7 +68,7 @@ root = pathlib.Path(sys.argv[1])
 records = json.loads((root / 'muxify-records.json').read_text())
 dev = next(host for host in records['hosts'] if host['displayName'] == 'Dev Host')
 prefs = json.loads((root / 'muxify-settings.json').read_text())['hostListPreferences']['byHost']
-assert prefs[dev['id']] == ['sessions', 'topics'], prefs
+assert prefs[dev['id']] == ['topics', 'sessions'], prefs
 assert prefs['e2e-second'] == ['sessions'], prefs
-print('Host choices remain independent after relaunch.')
+print('Host choices, with the dragged order, remain independent after relaunch.')
 PY

@@ -1,7 +1,7 @@
 import {
   clampFontSize,
   DEFAULT_SETTINGS,
-  hostScreenListRows,
+  hiddenHostScreenLists,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
   moveHostScreenLists,
@@ -159,11 +159,11 @@ describe('parseSettings', () => {
 
 describe('Host Screen lists in Settings', () => {
   it.each<[HostScreenLists, string[]]>([
-    [['sessions'], ['sessions', 'recent', 'topics']],
-    [['topics'], ['topics', 'recent', 'sessions']],
-    [['topics', 'recent', 'sessions'], ['topics', 'recent', 'sessions']],
-  ])('shows %j as the rows %j: the lists that are on, then the rest', (lists, rows) => {
-    expect(hostScreenListRows(lists)).toEqual(rows);
+    [['sessions'], ['recent', 'topics']],
+    [['topics'], ['recent', 'sessions']],
+    [['topics', 'recent', 'sessions'], []],
+  ])('with %j shown, offers %j as hidden', (lists, hidden) => {
+    expect(hiddenHostScreenLists(lists)).toEqual(hidden);
   });
 
   it('turns a list on at the bottom of the Host Screen', () => {
@@ -205,8 +205,7 @@ describe('Host Screen lists in Settings', () => {
     ]);
   });
 
-  it('gives a list that is off no place, so moving it changes nothing', () => {
-    expect(moveHostScreenLists(['sessions'], [1], 0)).toEqual(['sessions']);
-    expect(moveHostScreenLists(['sessions'], [0], 2)).toEqual(['sessions']);
+  it('leaves a single list where it is', () => {
+    expect(moveHostScreenLists(['sessions'], [0], 1)).toEqual(['sessions']);
   });
 });

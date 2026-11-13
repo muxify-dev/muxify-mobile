@@ -43,6 +43,9 @@ export interface Settings {
 export const HOST_SCREEN_LISTS = ['recent', 'sessions', 'topics'] as const;
 export type HostScreenList = (typeof HOST_SCREEN_LISTS)[number];
 export type HostScreenLists = readonly [HostScreenList, ...HostScreenList[]];
+export const HOST_SCREEN_LIST_NAMES: Record<HostScreenList, string> = {
+  recent: 'Recent Sessions', sessions: 'Sessions', topics: 'Topics',
+};
 
 export const CHOOSER_LISTS = ['windows', 'sessions', 'topics'] as const;
 export type ChooserList = (typeof CHOOSER_LISTS)[number];
@@ -64,10 +67,12 @@ export function chooserListsFor(settings: Settings, hostId: string): ChooserList
   return preferences && Object.hasOwn(preferences, hostId) ? preferences[hostId] : DEFAULT_CHOOSER_LISTS;
 }
 
-export function chooserListRows(lists: ChooserLists): ChooserList[] {
-  return [...lists, ...CHOOSER_LISTS.filter((list) => !lists.includes(list))];
+/** The chooser lists that are off, in the order Settings offers them. */
+export function hiddenChooserLists(lists: ChooserLists): ChooserList[] {
+  return CHOOSER_LISTS.filter((list) => !lists.includes(list));
 }
 
+/** Shows one list, as the last tab of the chooser, or hides it. The last list stays. */
 export function switchChooserList(lists: ChooserLists, list: ChooserList, on: boolean): ChooserLists {
   if (lists.includes(list) === on) return lists;
   const next = on ? [...lists, list] : lists.filter((item) => item !== list);
@@ -76,11 +81,18 @@ export function switchChooserList(lists: ChooserLists, list: ChooserList, on: bo
 }
 
 export function moveChooserLists(lists: ChooserLists, sources: number[], destination: number): ChooserLists {
-  const rows = chooserListRows(lists);
-  const moving = rows.filter((_, index) => sources.includes(index));
-  const before = rows.filter((_, index) => index < destination && !sources.includes(index));
-  const after = rows.filter((_, index) => index >= destination && !sources.includes(index));
-  return parseChooserLists([...before, ...moving, ...after].filter((list) => lists.includes(list)));
+  return parseChooserLists(moved(lists, sources, destination));
+}
+
+/**
+ * The items after a drag, with SwiftUI's move: `sources` are the dragged
+ * indices and `destination` is an index from before the move.
+ */
+function moved<T>(items: readonly T[], sources: number[], destination: number): T[] {
+  const moving = items.filter((_, at) => sources.includes(at));
+  const before = items.filter((_, at) => at < destination && !sources.includes(at));
+  const after = items.filter((_, at) => at >= destination && !sources.includes(at));
+  return [...before, ...moving, ...after];
 }
 
 export function hostCreationOrder(lists: HostScreenLists): ('sessions' | 'topics')[] {
@@ -186,18 +198,15 @@ function parseHostScreenLists(raw: unknown, recentSessionsFirst: unknown): HostS
   return (saved && reachable(saved)) ?? DEFAULT_SETTINGS.hostScreenLists;
 }
 
-/**
- * The rows of the Host Screen section in Settings: the lists that are on, in
- * their order, then the ones that are off.
- */
-export function hostScreenListRows(lists: HostScreenLists): HostScreenList[] {
-  return [...lists, ...HOST_SCREEN_LISTS.filter((list) => !lists.includes(list))];
+/** The Host Screen lists that are off, in the order Settings offers them. */
+export function hiddenHostScreenLists(lists: HostScreenLists): HostScreenList[] {
+  return HOST_SCREEN_LISTS.filter((list) => !lists.includes(list));
 }
 
 /**
- * Turns one list on, at the bottom of the Host Screen, or off. Sessions or
- * Topics stays on (see mustStayOn): Settings disables that switch, and this
- * keeps the rule if a switch is pressed anyway.
+ * Shows one list, at the bottom of the Host Screen, or hides it. Sessions or
+ * Topics stays on (see mustStayOn): Settings disables that delete control, and
+ * this keeps the rule if it is pressed anyway.
  */
 export function switchHostScreenList(
   lists: HostScreenLists,
@@ -208,22 +217,13 @@ export function switchHostScreenList(
   return reachable(on ? [...others, list] : others) ?? lists;
 }
 
-/**
- * The lists that are on after the user drags rows of the Host Screen section,
- * with SwiftUI's move: `destination` is a row index from before the move.
- * A list that is off has no place to keep, so dragging one changes nothing.
- */
+/** The lists after the user drags rows of the shown Host Screen lists. */
 export function moveHostScreenLists(
   lists: HostScreenLists,
   sources: number[],
   destination: number,
 ): HostScreenLists {
-  const rows = hostScreenListRows(lists);
-  const moving = rows.filter((_, at) => sources.includes(at));
-  const before = rows.filter((_, at) => at < destination && !sources.includes(at));
-  const after = rows.filter((_, at) => at >= destination && !sources.includes(at));
-  const moved = [...before, ...moving, ...after].filter((list) => lists.includes(list));
-  return reachable(moved) ?? lists;
+  return reachable(moved(lists, sources, destination)) ?? lists;
 }
 
 /**
