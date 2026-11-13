@@ -497,8 +497,14 @@ export function openAttach(options: AttachOptions): Attach {
     if (existing) return existing;
 
     const mine = generation;
-    /** The Client as it is now, refused once this view's Connection is over. */
-    const reading = () => {
+    /**
+     * The Client as it is now, refused once this view's Connection is over.
+     *
+     * Refused as a rejection, never a throw: PaneReader promises, and its
+     * callers catch rejections. A throw went past them, up through a gesture
+     * handler, and React Native ended the app.
+     */
+    const reading = async () => {
       if (stale(mine) || !client) throw new Error('the Connection has gone');
       return client;
     };
@@ -507,19 +513,19 @@ export function openAttach(options: AttachOptions): Attach {
     const view = createPaneView(
       paneId,
       {
-        paneState: (id) => reading().paneState(id),
-        capturePane: (id) => reading().capturePane(id),
-        captureScrollback: (id, start, end) => reading().captureScrollback(id, start, end),
-        captureSelection: (id, start, end) => reading().captureSelection(id, start, end),
+        paneState: (id) => reading().then((current) => current.paneState(id)),
+        capturePane: (id) => reading().then((current) => current.capturePane(id)),
+        captureScrollback: (id, start, end) => reading().then((current) => current.captureScrollback(id, start, end)),
+        captureSelection: (id, start, end) => reading().then((current) => current.captureSelection(id, start, end)),
         // Input is what says the phone is the one in use, so it is what takes
         // the Window back from a laptop that resized it.
         sendKeys: (id, bytes) => {
           sizing.reclaim();
-          return reading().sendKeys(id, bytes);
+          return reading().then((current) => current.sendKeys(id, bytes));
         },
         sendKey: (id, key) => {
           sizing.reclaim();
-          return reading().sendKey(id, key);
+          return reading().then((current) => current.sendKey(id, key));
         },
       },
       {
