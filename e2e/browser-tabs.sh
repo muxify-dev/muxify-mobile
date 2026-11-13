@@ -4,9 +4,9 @@
 #
 # What this proves, against the sandbox's Session 0:
 #
-#   1  the Title Sheet lists the Tabs at a Tailscale address, an IPv4 address
-#      in 100.64.0.0/10 and a *.ts.net name, and no Tab at localhost or at a
-#      public site
+#   1  the Title Sheet lists the Tabs that the phone can reach: an IPv4
+#      address in 100.64.0.0/10, a *.ts.net name and a public site. It lists
+#      no Tab at localhost or at a private address on the Host's LAN
 #   2  the app asked the Host for the Tabs of the Window on screen, by tmux's id
 #   3  a tap on a Tab loads its page in the Web View, and the page's title is
 #      the screen's title
@@ -21,7 +21,8 @@
 # The sandbox's `muxify` is a stub for `browser` (see e2e/sandbox.sh), so no
 # step talks to the Muxify app on this Mac. The Tabs are a fixture. The page is
 # real: a web server on this Mac's own Tailscale address, which the simulator
-# reaches as a phone on the tailnet does.
+# reaches as a phone on the tailnet does. No step taps the public site's Tab,
+# so the run does not need the internet.
 #
 # Step 3 runs a second time for this Mac's *.ts.net name when Tailscale gives
 # it one that resolves. That page is plain http at a name, which iOS loads only
@@ -98,7 +99,7 @@ open_tab() {
   back
 }
 
-echo "0/6  a page on this Mac's Tailscale address, and five Tabs on the Host"
+echo "0/6  a page on this Mac's Tailscale address, and six Tabs on the Host"
 ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
 [ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
 NAME=$(tailscale status --json 2>/dev/null \
@@ -121,21 +122,24 @@ json.dump([
     {"active": False, "id": "33333333-3333-3333-3333-333333333333", "title": "", "url": by_name},
     {"active": False, "id": "44444444-4444-4444-4444-444444444444", "title": "Public page", "url": "https://example.com/"},
     {"active": False, "id": "55555555-5555-5555-5555-555555555555", "title": "Down page", "url": down},
+    {"active": False, "id": "66666666-6666-6666-6666-666666666666", "title": "LAN page", "url": "http://192.168.1.10:8080/"},
 ], open(path, "w"))
 PY
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; true" || fail "could not reach the dev Host"
 attach
 
-echo "1/6  the Title Sheet lists the Tabs at a Tailscale address, and no other"
+echo "1/6  the Title Sheet lists the Tabs the phone can reach, and no other"
 open_title_sheet
 agent-device wait 'label="Tab By address"' 15000 >/dev/null 2>&1 \
   || fail "the Title Sheet does not list the Tab at the Tailscale address"
 agent-device is exists "label=\"Tab http://${NAME:-$FAKE_NAME}:$PORT/\"" >/dev/null 2>&1 \
   || fail "the Title Sheet does not list the Tab at the *.ts.net name"
 agent-device is exists 'text="Browser tabs"' >/dev/null 2>&1 || fail "the Tabs have no Browser tabs header"
+agent-device is exists 'label="Tab Public page"' >/dev/null 2>&1 \
+  || fail "the Title Sheet does not list the Tab at a public site"
 agent-device is exists 'label="Tab Localhost page"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at localhost"
-agent-device is exists 'label="Tab Public page"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at a public site"
-echo "     By address and the *.ts.net Tab listed; localhost and the public site left out"
+agent-device is exists 'label="Tab LAN page"' >/dev/null 2>&1 && fail "the Title Sheet lists a Tab at a LAN address"
+echo "     By address, the *.ts.net Tab and the public site listed; localhost and the LAN address left out"
 
 echo "2/6  the app asked for the Tabs of the Window on screen"
 WINDOW=$(on_host "tmux display-message -p -t '$SESSION:' '#{window_id}'")
@@ -193,8 +197,8 @@ agent-device press 'label="Close Choose"' >/dev/null 2>&1
 
 agent-device close >/dev/null 2>&1
 echo
-echo "PASS: the Title Sheet lists the Window's Browser Tabs at a Tailscale"
-echo "      address and no other, a tap loads the page in the Web View with the"
+echo "PASS: the Title Sheet lists the Window's Browser Tabs that the phone can"
+echo "      reach and no other, a tap loads the page in the Web View with the"
 echo "      page's title, Back finds the Session attached, a page that is down"
 echo "      shows the reason and loads on Try again, and a Window with no Browser"
 echo "      has no Browser tabs section."
