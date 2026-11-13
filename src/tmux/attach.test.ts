@@ -1039,6 +1039,26 @@ describe('the Panes on screen', () => {
     expect(said).toContain('pane %0: painted 0 lines at 41 rows, cursor 0,0');
   });
 
+  it('lets a Pane be scrolled and typed into after its Connection has gone', async () => {
+    // The screen keeps a Surface after a disconnect, and a finger still on it
+    // reaches a fresh view with no Client. This ended the app on the iPhone.
+    const kit = attachOn();
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    kit.hosts[0].exit('server exited unexpectedly');
+    await settle();
+    expect(kit.attach.state().phase.kind).toBe('disconnected');
+
+    const view = kit.attach.view('%0');
+    kit.clock.advance(5000);
+    expect(() => view.scroll(3, GRID)).not.toThrow();
+    expect(() => view.type(new TextEncoder().encode('a'))).not.toThrow();
+    await settle();
+  });
+
   it('never writes what was typed into the Log, only how much', async () => {
     const kit = attachOn();
     await connected(kit);
