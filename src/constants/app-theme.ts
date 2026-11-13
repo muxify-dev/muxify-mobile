@@ -26,6 +26,8 @@ export interface Appearance {
   secondaryLabel: string;
   /** Something destructive. */
   destructive: string;
+  /** The plus that adds a row, iOS's own insert green. */
+  insert: string;
 }
 
 export const AppPalettes: Record<'light' | 'dark', Appearance> = {
@@ -39,6 +41,7 @@ export const AppPalettes: Record<'light' | 'dark', Appearance> = {
     rowIcon: '#c9d4e8',
     secondaryLabel: '#9aa1b2',
     destructive: '#ff6b6b',
+    insert: '#30d158',
   },
   light: {
     background: '#f2f2f7',
@@ -50,6 +53,7 @@ export const AppPalettes: Record<'light' | 'dark', Appearance> = {
     rowIcon: '#6c6c70',
     secondaryLabel: '#8e8e93',
     destructive: '#d70015',
+    insert: '#34c759',
   },
 };
 

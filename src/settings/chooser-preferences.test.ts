@@ -1,4 +1,4 @@
-import { chooserListsFor, DEFAULT_SETTINGS, hostCreationOrder, hostListsFor, moveChooserLists, parseSettings, switchChooserList } from './settings';
+import { chooserListsFor, DEFAULT_SETTINGS, hiddenChooserLists, hostCreationOrder, hostListsFor, moveChooserLists, parseSettings, switchChooserList } from './settings';
 import { createSettingsStore } from './settings-store';
 
 it('defaults to Windows without changing Host panels', () => {
@@ -32,10 +32,15 @@ it('does not disable the final chooser list', () => {
   expect(switchChooserList(['windows', 'sessions'], 'windows', false)).toEqual(['sessions']);
 });
 
-it('reorders enabled lists and leaves disabled lists out', () => {
+it('reorders the shown lists', () => {
   expect(moveChooserLists(['windows', 'sessions', 'topics'], [2], 0)).toEqual(['topics', 'windows', 'sessions']);
   expect(moveChooserLists(['windows', 'sessions'], [0], 2)).toEqual(['sessions', 'windows']);
-  expect(moveChooserLists(['windows'], [1], 0)).toEqual(['windows']);
+  expect(moveChooserLists(['windows'], [0], 1)).toEqual(['windows']);
+});
+
+it('offers the lists that are not shown as hidden', () => {
+  expect(hiddenChooserLists(['topics'])).toEqual(['windows', 'sessions']);
+  expect(hiddenChooserLists(['sessions', 'windows', 'topics'])).toEqual([]);
 });
 
 it.each([

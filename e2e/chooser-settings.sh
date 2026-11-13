@@ -51,17 +51,9 @@ PY
 ad press 'label="Close Choose"' --settle
 ad press 'label="Options"' --settle
 ad press 'role=button label="Configure chooser"' --settle
-ad wait 'label="Chooser Sessions"' 8000
-ad snapshot --json > "$MUXIFY_E2E_ROOT/settings.json"
-control=$(python3 - "$MUXIFY_E2E_ROOT/settings.json" <<'PY'
-import json, sys
-nodes = json.load(open(sys.argv[1]))['data']['nodes']
-row = next(n for n in nodes if n.get('label') == 'Chooser Sessions' and n.get('kind') == 'switch')
-control = next(n for n in nodes if n.get('parentIndex') == row['index'] and n.get('role') == 'UISwitch')
-print('@' + control['ref'])
-PY
-)
-ad press "$control" --settle
+ad wait 'id="chooser-hidden-sessions"' 8000
+ad press 'id="chooser-hidden-sessions"' --settle
+ad wait 'id="chooser-shown-sessions"' 8000
 ad back --settle
 ad wait 'id="pane-command"' 8000
 ad press 'id="header-title"' --settle
