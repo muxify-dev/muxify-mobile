@@ -10,6 +10,13 @@ import {
   View,
   type GestureResponderEvent,
 } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import type { Appearance } from '@/constants/app-theme';
@@ -29,6 +36,7 @@ import {
   type ArrowDirection,
 } from '@/lib/arrow-stick';
 import type { Modifier, Modifiers } from '@/lib/modifier-keys';
+import type { KeyRowPlacement } from '@/lib/terminal-clearance';
 
 export interface KeyRowProps {
   /** Which modifiers are armed, so the row can show them held down. */
@@ -37,7 +45,7 @@ export interface KeyRowProps {
   onArm: (modifier: Modifier) => void;
   /** Escape, tab or an arrow, once for each repeat of a held arrow. */
   onKey: (key: NamedKey) => void;
-  /** One symbol of a pair: the top one on a tap, the bottom one on a drag down. */
+  /** One symbol of a pair: the main one on a tap, the alternate one on a drag down. */
   onSymbol: (symbol: string) => void;
   onPanes: () => void;
   onKeyboard: () => void;
@@ -48,6 +56,7 @@ export interface KeyRowProps {
   panesDisabled: boolean;
   /** The chrome colours of the Theme in use: the row draws its own labels. */
   palette: Appearance;
+  placement: KeyRowPlacement;
 }
 
 /**
@@ -86,8 +95,8 @@ export function KeyRow(props: KeyRowProps) {
     );
 
   return (
-    <View style={styles.row} pointerEvents="box-none">
-      <Capsule palette={palette}>
+    <View style={[styles.row, props.placement === 'docked' && styles.dockedRow]} pointerEvents="box-none">
+      <Capsule docked={props.placement === 'docked'} palette={palette}>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
         <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
@@ -120,31 +129,40 @@ export function KeyRow(props: KeyRowProps) {
               borderColor: palette.separator,
             },
           ]}>
-          <Text allowFontScaling={false} style={[styles.bubbleLabel, { color: palette.toolbarTint }]}>
-            {bubble.symbol}
-          </Text>
+          {bubble.kind === 'pair' ? (
+            <PairSymbols
+              pair={bubble.pair}
+              progress={bubble.progress}
+              height={BUBBLE_HEIGHT}
+              fontSize={BUBBLE_FONT_SIZE}
+              palette={palette}
+            />
+          ) : (
+            <Text allowFontScaling={false} style={[styles.bubbleLabel, { color: palette.toolbarTint }]}>
+              {bubble.symbol}
+            </Text>
+          )}
         </View>
       ) : null}
     </View>
   );
 }
 
-/** What a pair key or the arrow key will send, and where its key is across the row. */
-interface Bubble {
-  symbol: string;
-  center: number;
-}
+type Bubble =
+  | { kind: 'pair'; pair: PairKey; progress: SharedValue<number>; center: number }
+  | { kind: 'arrow'; symbol: string; center: number };
 
-function Capsule({ palette, children }: { palette: Appearance; children: ReactNode }) {
+function Capsule({ docked, palette, children }: { docked: boolean; palette: Appearance; children: ReactNode }) {
+  const style = [styles.capsule, docked && styles.dockedCapsule];
   // Some iOS 26 betas ship without the underlying effect class and crash on
   // use, so probe the runtime API rather than the design-mode flag. A
   // GlassView on such a runtime renders nothing at all, hence the plain view.
   return isGlassEffectAPIAvailable() ? (
-    <GlassView style={styles.capsule} glassEffectStyle="regular">
+    <GlassView style={style} glassEffectStyle="regular">
       {children}
     </GlassView>
   ) : (
-    <View style={[styles.capsule, { backgroundColor: palette.background }]}>{children}</View>
+    <View style={[style, { backgroundColor: palette.background }]}>{children}</View>
   );
 }
 
@@ -184,7 +202,7 @@ function FixedKey({
           segmented control instead. */}
       {held ? <View style={[styles.held, { backgroundColor: palette.controlAccent }]} /> : null}
       {symbol ? (
-        <SymbolView name={symbol} size={18} tintColor={color} />
+        <SymbolView name={symbol} size={SYMBOL_SIZE} tintColor={color} />
       ) : (
         <Text allowFontScaling={false} style={[styles.keyLabel, { color }]}>
           {children}
@@ -217,7 +235,10 @@ function PairStrip({
   onBubble: (bubble: Bubble | null) => void;
 }) {
   const [width, setWidth] = useState(0);
-  const visible = Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH));
+  const visible = Math.min(
+    PAIR_KEYS.length,
+    Math.max(1, Math.floor((width - EDGE * 2) / PAIR_MIN_WIDTH)),
+  );
   const pairWidth = width > 0 ? (width - EDGE * 2) / visible : 0;
   const [more, setMore] = useState<ScrollEdges>({ before: false, after: false });
   const extent = useRef<ScrollExtent>({ offset: 0, viewport: 0, content: 0 });
@@ -288,12 +309,8 @@ interface ScrollExtent {
 }
 
 /**
- * One pair key: the iPad keyboard's flick down.
- *
- * A touch shows the top symbol in a bubble over the key, a drag down past
- * FLICK flips the bubble to the bottom symbol, and the release types what the
- * bubble shows. A sideways drag is the scroll view's: it takes the touch away
- * and nothing is typed.
+ * One pair key: the iPad keyboard's flick down. A sideways drag is the scroll
+ * view's: it takes the touch away and nothing is typed.
  */
 function PairKeyView({
   pair,
@@ -310,28 +327,28 @@ function PairKeyView({
   onSymbol: (symbol: string) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
-  /** The touch in progress: where it began, the key's centre, what it will type. */
-  const touch = useRef<{ startY: number; center: number; symbol: string } | null>(null);
+  const touch = useRef<{ startY: number; flicked: boolean } | null>(null);
+  const progress = useSharedValue(0);
 
-  const show = (symbol: string, center: number) => onBubble({ symbol, center });
   const begin = ({ nativeEvent }: GestureResponderEvent) => {
     const center = nativeEvent.pageX - nativeEvent.locationX + width / 2;
-    touch.current = { startY: nativeEvent.pageY, center, symbol: pair.top };
-    show(pair.top, center);
+    touch.current = { startY: nativeEvent.pageY, flicked: false };
+    progress.value = 0;
+    onBubble({ kind: 'pair', pair, progress, center });
   };
   const move = ({ nativeEvent }: GestureResponderEvent) => {
     const current = touch.current;
     if (!current) return;
-    const symbol = nativeEvent.pageY - current.startY >= FLICK ? pair.bottom : pair.top;
-    if (symbol === current.symbol) return;
-    current.symbol = symbol;
-    show(symbol, current.center);
+    const dragged = Math.min(Math.max((nativeEvent.pageY - current.startY) / FLICK, 0), 1);
+    current.flicked = dragged === 1;
+    progress.value = dragged;
   };
   const end = (type: boolean) => {
     const current = touch.current;
     touch.current = null;
     onBubble(null);
-    if (type && current) onSymbol(current.symbol);
+    progress.value = withSpring(0, SPRING_BACK);
+    if (type && current) onSymbol(current.flicked ? pair.alternate : pair.main);
   };
 
   return (
@@ -340,10 +357,10 @@ function PairKeyView({
       accessibilityRole="button"
       accessibilityLabel={pair.spoken}
       accessibilityState={{ disabled }}
-      // VoiceOver has no drag down, so the bottom symbol is an action of its own.
-      accessibilityActions={[{ name: 'activate' }, { name: 'bottom', label: pair.bottom }]}
+      // VoiceOver has no drag down, so the alternate symbol is an action of its own.
+      accessibilityActions={[{ name: 'activate' }, { name: 'alternate', label: pair.alternate }]}
       onAccessibilityAction={({ nativeEvent }) => {
-        if (!disabled) onSymbol(nativeEvent.actionName === 'bottom' ? pair.bottom : pair.top);
+        if (!disabled) onSymbol(nativeEvent.actionName === 'alternate' ? pair.alternate : pair.main);
       }}
       onStartShouldSetResponder={() => !disabled}
       onResponderGrant={begin}
@@ -351,15 +368,65 @@ function PairKeyView({
       onResponderRelease={() => end(true)}
       onResponderTerminate={() => end(false)}
       style={[styles.pair, { width }, disabled ? styles.dim : null]}>
-      {/* Not a touch target, so `locationX` is measured from the key. */}
-      <View pointerEvents="none" style={styles.pairLabels}>
-        <Text allowFontScaling={false} style={[styles.pairTop, { color: palette.toolbarTint }]}>
-          {pair.top}
-        </Text>
-        <Text allowFontScaling={false} style={[styles.pairBottom, { color: palette.secondaryLabel }]}>
-          {pair.bottom}
-        </Text>
-      </View>
+      <PairSymbols
+        pair={pair}
+        progress={progress}
+        height={KEY_HEIGHT}
+        fontSize={PAIR_FONT_SIZE}
+        palette={palette}
+      />
+    </View>
+  );
+}
+
+/**
+ * Both symbols are set at full size and scaled down, so the one that ends
+ * large is drawn sharp. Their spacing comes from the line height, not the
+ * frame: brackets and braces fill almost the whole line.
+ */
+function PairSymbols({
+  pair,
+  progress,
+  height,
+  fontSize,
+  palette,
+}: {
+  pair: PairKey;
+  progress: SharedValue<number>;
+  height: number;
+  fontSize: number;
+  palette: Appearance;
+}) {
+  const lineHeight = Math.round(fontSize * 1.2);
+  const lift = (lineHeight * (1 + ALTERNATE_SCALE)) / 2;
+  const rest = lift / 2;
+  const { secondaryLabel, toolbarTint } = palette;
+  const main = useAnimatedStyle(() => ({
+    opacity: 1 - progress.value,
+    transform: [
+      { translateY: rest + (progress.value * height) / 2 },
+      { scale: 1 - 0.3 * progress.value },
+    ],
+  }));
+  const alternate = useAnimatedStyle(() => ({
+    color: interpolateColor(progress.value, [0, 1], [secondaryLabel, toolbarTint]),
+    transform: [
+      { translateY: (rest - lift) * (1 - progress.value) },
+      { scale: ALTERNATE_SCALE + (1 - ALTERNATE_SCALE) * progress.value },
+    ],
+  }));
+
+  return (
+    // Not a touch target, so `locationX` is measured from the key.
+    <View pointerEvents="none" style={styles.pairSymbols}>
+      <Animated.Text
+        allowFontScaling={false}
+        style={[styles.pairSymbol, { fontSize, lineHeight, color: toolbarTint }, main]}>
+        {pair.main}
+      </Animated.Text>
+      <Animated.Text allowFontScaling={false} style={[styles.pairSymbol, { fontSize, lineHeight }, alternate]}>
+        {pair.alternate}
+      </Animated.Text>
     </View>
   );
 }
@@ -442,7 +509,7 @@ function ArrowStick({
     }
     const key = ARROW_KEYS[direction];
     latestOnKey.current(key);
-    onBubble({ symbol: key.label, center: touch.center });
+    onBubble({ kind: 'arrow', symbol: key.label, center: touch.center });
     stick.current = { phase: 'sending', touch, direction, timer: repeatAfter(REPEAT_DELAY) };
   };
 
@@ -469,7 +536,7 @@ function ArrowStick({
       <View pointerEvents="none">
         <SymbolView
           name="arrow.up.and.down.and.arrow.left.and.right"
-          size={18}
+          size={SYMBOL_SIZE}
           tintColor={palette.toolbarTint}
         />
       </View>
@@ -505,9 +572,12 @@ const STICK_ACTIONS = [
   { name: 'right', label: 'Right' },
 ] satisfies { name: ArrowDirection; label: string }[];
 
-const CAPSULE_HEIGHT = 52;
-export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + 10;
-const KEY_HEIGHT = 44;
+/** 44 pt is the iOS touch minimum. */
+const CAPSULE_HEIGHT = 44;
+/** Clearance above the capsule, so that glass does not sit on the Surface's last row. */
+const ROW_CLEARANCE = 6;
+export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + ROW_CLEARANCE;
+const KEY_HEIGHT = 38;
 
 /**
  * How wide a fixed key is.
@@ -521,6 +591,8 @@ const KEY_WIDTH = 30;
 /** How far each end of the pairs fades out while there are more past it. */
 const FADE = 32;
 
+const SYMBOL_SIZE = 16;
+
 /** The disc behind a held modifier. */
 const DISC = 30;
 
@@ -530,19 +602,25 @@ const PAIR_MIN_WIDTH = 32;
 /** The gap at each end of the capsule, and of the pairs. */
 const EDGE = 4;
 
-/** How far down a touch on a pair goes before it means the bottom symbol. */
+/** How far down a touch on a pair goes before it means the alternate symbol. */
 const FLICK = 14;
 
+const PAIR_FONT_SIZE = 16;
+
+const ALTERNATE_SCALE = 0.6;
+
+const SPRING_BACK = { mass: 1, stiffness: 320, damping: 36 };
+
 const BUBBLE_WIDTH = 44;
+const BUBBLE_HEIGHT = 48;
+const BUBBLE_FONT_SIZE = 24;
 
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 8,
-    // Clearance above the capsules, so that glass does not sit on the
-    // Surface's last row.
-    paddingTop: 10,
+    paddingTop: ROW_CLEARANCE,
   },
   capsule: {
     flex: 1,
@@ -552,6 +630,12 @@ const styles = StyleSheet.create({
     borderRadius: CAPSULE_HEIGHT / 2,
     paddingHorizontal: EDGE,
     overflow: 'hidden',
+  },
+  dockedRow: {
+    paddingHorizontal: 0,
+  },
+  dockedCapsule: {
+    borderRadius: 0,
   },
   // The scroll view takes the capsule's whole height, so a touch anywhere in
   // the middle section scrolls it.
@@ -591,7 +675,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   keyLabel: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '500',
   },
   held: {
@@ -612,22 +696,19 @@ const styles = StyleSheet.create({
     height: KEY_HEIGHT,
     justifyContent: 'center',
   },
-  pairLabels: {
+  pairSymbols: {
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  pairTop: {
-    fontSize: 14,
-    lineHeight: 17,
-    fontWeight: '600',
-  },
-  pairBottom: {
-    fontSize: 12,
-    lineHeight: 15,
+  pairSymbol: {
+    position: 'absolute',
+    fontWeight: '500',
   },
   bubble: {
     position: 'absolute',
     width: BUBBLE_WIDTH,
-    height: 48,
+    height: BUBBLE_HEIGHT,
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',

@@ -35,11 +35,11 @@ export interface NamedKey {
   takesCtrl?: false;
 }
 
-/** Two symbols on one key: a tap types `top`, a drag down types `bottom`. */
+/** Two symbols on one key: a tap types `main`, a drag down types `alternate`. */
 export interface PairKey {
   kind: 'pair';
-  top: string;
-  bottom: string;
+  main: string;
+  alternate: string;
   spoken: string;
 }
 
@@ -65,18 +65,18 @@ export const LEFT_KEYS: (ModifierKey | NamedKey)[] = [
 
 /** The middle, which scrolls sideways. */
 export const PAIR_KEYS: PairKey[] = [
-  { kind: 'pair', top: '-', bottom: '_', spoken: 'minus underscore' },
-  { kind: 'pair', top: ':', bottom: '|', spoken: 'colon bar' },
-  { kind: 'pair', top: '/', bottom: '\\', spoken: 'slash backslash' },
-  { kind: 'pair', top: '~', bottom: "'", spoken: 'tilde quote' },
-  { kind: 'pair', top: '[', bottom: ']', spoken: 'left bracket right bracket' },
-  { kind: 'pair', top: '{', bottom: '}', spoken: 'left brace right brace' },
-  { kind: 'pair', top: '<', bottom: '>', spoken: 'less than greater than' },
-  { kind: 'pair', top: '(', bottom: ')', spoken: 'left paren right paren' },
-  { kind: 'pair', top: '"', bottom: '`', spoken: 'double quote backtick' },
-  { kind: 'pair', top: '=', bottom: '+', spoken: 'equals plus' },
-  { kind: 'pair', top: '*', bottom: '&', spoken: 'asterisk ampersand' },
-  { kind: 'pair', top: '$', bottom: '#', spoken: 'dollar hash' },
+  { kind: 'pair', main: '-', alternate: '_', spoken: 'minus underscore' },
+  { kind: 'pair', main: ':', alternate: '|', spoken: 'colon bar' },
+  { kind: 'pair', main: '/', alternate: '\\', spoken: 'slash backslash' },
+  { kind: 'pair', main: '~', alternate: "'", spoken: 'tilde quote' },
+  { kind: 'pair', main: '[', alternate: ']', spoken: 'left bracket right bracket' },
+  { kind: 'pair', main: '{', alternate: '}', spoken: 'left brace right brace' },
+  { kind: 'pair', main: '<', alternate: '>', spoken: 'less than greater than' },
+  { kind: 'pair', main: '(', alternate: ')', spoken: 'left paren right paren' },
+  { kind: 'pair', main: '"', alternate: '`', spoken: 'double quote backtick' },
+  { kind: 'pair', main: '=', alternate: '+', spoken: 'equals plus' },
+  { kind: 'pair', main: '*', alternate: '&', spoken: 'asterisk ampersand' },
+  { kind: 'pair', main: '$', alternate: '#', spoken: 'dollar hash' },
 ];
 
 /** The four arrows the arrow key at the right sends, by the way it is dragged. */

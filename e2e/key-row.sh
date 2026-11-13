@@ -5,8 +5,8 @@
 #
 # What this proves, against the sandbox's Session 0:
 #
-#   1  a tap on a pair key types its top symbol
-#   2  a touch dragged down types the bottom symbol, and a sideways drag
+#   1  a tap on a pair key types its main symbol
+#   2  a touch dragged down types the alternate symbol, and a sideways drag
 #      scrolls the pairs and types nothing
 #   3  ⌃ and then c on the system keyboard interrupts the program
 #   4  ⌥ and then b reaches the Pane as Meta-b
@@ -111,13 +111,13 @@ for _ in 1 2 3; do
 done
 keyboard_up || fail "the Keyboard button did not raise the keyboard"
 
-echo "1/8  a tap on a pair types its top symbol"
+echo "1/8  a tap on a pair types its main symbol"
 agent-device press 'label="minus underscore"' >/dev/null 2>&1
 sleep 1
 [ "$(typed_line)" = '$ -' ] || fail "a tap on - _ typed: $(typed_line)"
 echo "     - is on the prompt"
 
-echo "2/8  a drag down types the bottom symbol, and a sideways drag scrolls"
+echo "2/8  a drag down types the alternate symbol, and a sideways drag scrolls"
 read -r X Y W H <<<"$(frame_of 'minus underscore')"
 [ -n "${X:-}" ] || fail "no - _ pair on screen"
 agent-device gesture pan "$((X + W / 2))" "$((Y + H / 2))" 0 30 600 >/dev/null 2>&1
@@ -245,7 +245,7 @@ echo "     the prompt, and nothing above it"
 agent-device close >/dev/null 2>&1
 fresh_prompt
 echo
-echo "PASS: a pair types its top symbol on a tap and its bottom one on a drag"
+echo "PASS: a pair types its main symbol on a tap and its alternate one on a drag"
 echo "      down, the pairs scroll sideways, ⌃ and ⌥ apply to the next key of"
 echo "      the system keyboard, the arrow key sends the arrow it is dragged"
 echo "      towards and repeats it while held, and ⌘ c, v and k copy, paste"

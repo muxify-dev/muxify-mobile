@@ -509,12 +509,19 @@ _Avoid_: Toolbar, key bar
 Muxify's own Liquid Glass row pinned to the bottom of the Terminal Screen,
 riding the keyboard: the keys a phone keyboard does not have, in one capsule,
 three sections. At the left, fixed: ⎋ escape, ⌃ control, ⌥ option and ⇥ tab.
-In the middle, scrolling sideways: twelve pair keys, each with two symbols. A
-tap types the top symbol. A touch dragged down types the bottom one, and a
-bubble over the key shows which symbol the release will type. The pairs fade
+In the middle, scrolling sideways: twelve pair keys, each with two symbols:
+the *main* symbol large, and the *alternate* symbol small and grey above it. A
+tap types the main symbol. A touch dragged down types the alternate one. As
+the touch moves down, the main symbol drops out of the key and the alternate
+one grows into the centre of the key, in the key and in a bubble over it.
+The drag is complete at 14 pt, and the release types the large symbol, then
+the key springs back. The pairs fade
 at an end while there are more past it. At the right, fixed: the arrow key,
 Panes, which opens the Panes picker, ⌘ command, and Keyboard, which shows or
-hides the system keyboard. The arrow key is one key for the four arrows: a
+hides the system keyboard. On iPad, over a docked keyboard, the row is not a capsule
+but a full-width strip on the keyboard's top edge, and all twelve pairs fit
+without scrolling. Over a floating or split keyboard, or with none, it is the
+capsule. The arrow key is one key for the four arrows: a
 touch sends nothing, a drag of 12 pt sends the arrow it points at, a hold
 repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
