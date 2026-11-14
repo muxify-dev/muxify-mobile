@@ -1,0 +1,25 @@
+context platform=ios kind=simulator
+
+# The Session on screen has ended on the Host. Its last content stays, dimmed
+# and taking no touch, with a card that says so: Choose a Session and Go to
+# Host, and no Reconnect, which would fail the same way. Choose a Session opens
+# the Title Sheet with the Host's Sessions, and a pick attaches.
+#
+# Run with:  bash e2e/reconnect-on-start.sh
+
+open "dev.muxify.app"
+wait "id=\"cover-card\"" 15000
+is "visible" "id=\"cover-dimmed\""
+is "exists" "label=\"e2e-reconnect-ends has ended\""
+is "visible" "id=\"choose-session\""
+is "visible" "id=\"go-to-host\""
+is "absent" "id=\"reconnect\""
+press "id=\"choose-session\""
+wait "label=\"e2e-reconnect\"" 15000
+press "label=\"e2e-reconnect\""
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "e2e-reconnect"
+is "absent" "id=\"cover-card\""
+is "absent" "id=\"cover-dimmed\""
+
+close

@@ -9,6 +9,6 @@ open "dev.muxify.app" --relaunch
 wait "label=\"Settings\"" 15000
 wait 3000
 is "visible" "label=\"Settings\""
-is "absent" "id=\"reconnect-screen\""
+is "absent" "id=\"connection-screen\""
 
 close

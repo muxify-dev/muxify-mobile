@@ -1,5 +1,6 @@
 import type { Host } from '@/storage/records';
 import { createComposer } from '@/composer/composer';
+import { typingOf } from '@/domain/typing';
 
 import type { Attach, AttachState, LifecyclePhase } from './attach';
 import { createAttachHolder, type AttachRequest } from './attach-holder';
@@ -21,6 +22,10 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
   log.push(`open ${options.host.id}:${options.destination.sessionName}`);
   const state = (): AttachState => ({
     phase,
+    typing: typingOf({ phase, switching: false, keyChanged: false }),
+    step: 'connecting',
+    painted: new Set(),
+    paintedOnce: false,
     sessionName: destination.sessionName,
     topic: destination.topic ? { id: destination.topic.id, view: { kind: 'loading', last: destination.topic.seed } } : null,
     fingerprint: '',
@@ -57,6 +62,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     refreshTopology: () => {},
     refreshTopic: async () => {},
     reconnect: () => {},
+    acceptHostKey: () => Promise.resolve(),
     view: () => {
       throw new Error('no views here');
     },

@@ -3,6 +3,7 @@ import type { TopicId } from '@/topics/environment';
 import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
+import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
@@ -150,10 +151,11 @@ function verbOf(line: string): string {
 
 function fakeStore() {
   const wrote: string[] = [];
+  let saved = HOST;
   const store: HostStore = {
     load: () =>
       Promise.resolve({
-        hosts: [HOST],
+        hosts: [saved],
         identities: [],
         fingerprints: [],
         recentSessions: [],
@@ -180,7 +182,11 @@ function fakeStore() {
     },
     forgetLastPlace: () => Promise.resolve(),
   };
-  return { store, wrote };
+  /** The Host as Edit Host saves it. */
+  const edit = (host: Host) => {
+    saved = host;
+  };
+  return { store, wrote, edit };
 }
 
 /**
@@ -200,10 +206,13 @@ function attachOn(
     zoomed?: boolean;
     upload?: Upload;
     colours?: PaneColours;
+    verdict?: KeyVerdict;
   } = {},
 ) {
   const hosts = options.hosts ?? [fakeHost()];
-  const { store, wrote } = fakeStore();
+  const { store, wrote, edit } = fakeStore();
+  /** The Host record each connect was opened with. */
+  const dialled: Host[] = [];
   const clock = createTestClock();
   const seen: AttachState[] = [];
   const opened: ReturnType<typeof fakeHost>[] = [];
@@ -223,7 +232,9 @@ function attachOn(
     store,
     clock,
     log,
-    openConnection: (): Promise<HostConnection> => {
+    openConnection: (record, progress): Promise<HostConnection> => {
+      dialled.push(record);
+      progress?.('signing-in');
       const failure = options.failLink?.();
       if (failure) return Promise.reject(failure);
       const host = hosts[Math.min(next, hosts.length - 1)];
@@ -232,7 +243,7 @@ function attachOn(
       return Promise.resolve({
         transport: host.transport,
         fingerprint: 'SHA256:abcdef',
-        verdict: { kind: 'first-sight' },
+        verdict: options.verdict ?? { kind: 'first-sight' },
         upload: options.upload,
         close: () => {
           letGo.push('close');
@@ -260,6 +271,8 @@ function attachOn(
     suspects,
     store,
     wrote,
+    edit,
+    dialled,
     clock,
     seen,
     phases: () => seen.map((state) => state.phase.kind),
@@ -296,6 +309,152 @@ function fakeSurface(): PaneSurface & { written: Uint8Array[] } {
     followSelectionPress: () => {},
   };
 }
+
+/** Whether the last DECTCEM a Surface got left its cursor shown, or null for none. */
+function lastCursor(written: Uint8Array[]): 'shown' | 'hidden' | null {
+  const text = written.map((each) => new TextDecoder().decode(each)).join('');
+  const at = Math.max(text.lastIndexOf('\u001b[?25h'), text.lastIndexOf('\u001b[?25l'));
+  if (at < 0) return null;
+  return text.startsWith('\u001b[?25h', at) ? 'shown' : 'hidden';
+}
+
+/** A Surface for %0, painted. */
+async function painted(kit: ReturnType<typeof attachOn>) {
+  const surface = fakeSurface();
+  kit.attach.surfaceForPane('%0', surface);
+  kit.attach.paneGridReported('%0', GRID);
+  kit.clock.advance(1000);
+  await settle();
+  return surface;
+}
+
+describe('whether keys reach the active Pane', () => {
+  it('waits while it connects, through each step, and opens once connected', async () => {
+    const kit = attachOn();
+    expect(kit.attach.state().typing).toEqual({ kind: 'waiting', for: 'connecting' });
+
+    await connected(kit);
+
+    expect(kit.attach.state().typing).toEqual({ kind: 'open' });
+    const steps = kit.seen.map((state) => state.step).filter((step, at, all) => step !== all[at - 1]);
+    expect(steps).toEqual(['connecting', 'signing-in', 'attaching']);
+  });
+
+  it('waits while a Session switch is in progress, and opens when it ends', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].hold('switch-client');
+
+    const switching = kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(kit.attach.state().typing).toEqual({ kind: 'waiting', for: 'switching' });
+
+    kit.hosts[0].release();
+    await switching;
+    expect(kit.attach.state().typing).toEqual({ kind: 'open' });
+  });
+
+  it('stays closed on a changed Host key until the user accepts it', async () => {
+    const kit = attachOn({ verdict: { kind: 'changed', stored: 'SHA256:old' } });
+    await connected(kit);
+    expect(kit.attach.state().typing).toEqual({ kind: 'waiting', for: 'host-key' });
+
+    await kit.attach.acceptHostKey();
+
+    expect(kit.attach.state().typing).toEqual({ kind: 'open' });
+    expect(kit.wrote).toContain('fingerprint host-1 SHA256:abcdef');
+  });
+
+  it('stops on a lost link and waits again while it reconnects', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.hosts[0].drop();
+    await settle();
+
+    const kinds = kit.seen.map((state) => state.typing.kind).filter((kind, at, all) => kind !== all[at - 1]);
+    expect(kinds).toEqual(['waiting', 'open', 'stopped', 'waiting']);
+    expect(kit.attach.state().typing).toEqual({ kind: 'waiting', for: 'reconnecting' });
+    const steps = kit.seen.map((state) => state.step).filter((step, at, all) => step !== all[at - 1]);
+    expect(steps).toEqual(['connecting', 'signing-in', 'attaching', 'connecting', 'signing-in', 'attaching']);
+  });
+
+  it('dials the Host as it is saved now, so a retry after Edit Host has the edit', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.edit({ ...HOST, address: '10.0.0.9' });
+
+    kit.hosts[0].drop();
+    await settle();
+
+    expect(kit.dialled.map((host) => host.address)).toEqual(['10.0.0.2', '10.0.0.9']);
+  });
+});
+
+describe('the cursor and the Panes it has painted', () => {
+  it('shows the cursor on the active Pane once it is painted and keys reach it', async () => {
+    const kit = attachOn();
+    await connected(kit);
+
+    const surface = await painted(kit);
+
+    expect(lastCursor(surface.written)).toBe('shown');
+    expect([...kit.attach.state().painted]).toEqual(['%0']);
+    expect(kit.attach.state().paintedOnce).toBe(true);
+  });
+
+  it('shows no cursor on a Surface that arrives before the Connection is up', async () => {
+    const kit = attachOn();
+    const surface = await painted(kit);
+    expect(lastCursor(surface.written)).toBe('hidden');
+    expect(kit.attach.state().painted.size).toBe(0);
+  });
+
+  it('hides the cursor when the link drops, keeps the content painted, and shows it after the next paint', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    const surface = await painted(kit);
+
+    kit.hosts[0].drop();
+    await settle();
+    expect(lastCursor(surface.written)).toBe('hidden');
+    expect([...kit.attach.state().painted]).toEqual(['%0']);
+
+    await connected(kit, 1);
+    await settle();
+    expect(lastCursor(surface.written)).toBe('shown');
+  });
+
+  it('hides the cursor during a Session switch', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    const surface = await painted(kit);
+    kit.hosts[0].hold('switch-client');
+
+    const switching = kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+    expect(lastCursor(surface.written)).toBe('hidden');
+
+    kit.hosts[0].release();
+    await switching;
+    await settle();
+    expect(lastCursor(surface.written)).toBe('shown');
+  });
+
+  it('forgets a Pane as painted when its Surface goes or is replaced by a blank one', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    await painted(kit);
+
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    expect(kit.attach.state().painted.size).toBe(0);
+
+    await painted(kit);
+    kit.attach.surfaceForPane('%0', null);
+    expect(kit.attach.state().painted.size).toBe(0);
+    expect(kit.attach.state().paintedOnce).toBe(true);
+  });
+});
 
 describe('the order an Attach happens in', () => {
   it('connects, checks the key, settles the grid, opens, sizes, zooms, reads', async () => {

@@ -157,7 +157,11 @@ function fakeSurface() {
   };
 }
 
-function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
+/**
+ * A view as the Attach makes it. `shown` is what the Attach tells it first:
+ * true for the active Pane while Typing is open, which is most of these tests.
+ */
+function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0', shown = true) {
   const positions: (ScrollPosition | null)[] = [];
   const errors: unknown[] = [];
   const mouse: boolean[] = [];
@@ -180,6 +184,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0') {
     },
     { clock },
   );
+  view.setCursor(shown);
 
   return {
     view,
@@ -444,7 +449,8 @@ describe('showing a Pane', () => {
     await settle();
 
     kit.view.receive(bytes('while painting'));
-    expect(kit.written).toHaveLength(0);
+    // Only the hidden cursor every new Surface is given.
+    expect(shown(kit.written)).toBe('<ESC>[?25l');
 
     release();
     await settle();
@@ -815,6 +821,7 @@ describe('a view that has been let go', () => {
     kit.written.length = 0;
 
     kit.view.dispose();
+    kit.written.length = 0;
     kit.view.receive(bytes('too late'));
     kit.view.type(bytes('x'));
     kit.clock.advance(1000);
@@ -941,7 +948,7 @@ describe('which Pane draws a cursor', () => {
     await paints(kit);
     kit.written.length = 0;
 
-    kit.view.setActive(false);
+    kit.view.setCursor(false);
 
     expect(shown(kit.written)).toBe('<ESC>[?25l');
   });
@@ -950,7 +957,7 @@ describe('which Pane draws a cursor', () => {
     const host = fakePane(paneState({ cursorColumn: 5, cursorRow: 1 }));
     const kit = viewOn(host);
     await paints(kit);
-    kit.view.setActive(false);
+    kit.view.setCursor(false);
     kit.written.length = 0;
 
     // A resize, which is what makes tmux redraw and this view repaint.
@@ -980,10 +987,10 @@ describe('which Pane draws a cursor', () => {
     const host = fakePane(paneState({ cursorShown: false }));
     const kit = viewOn(host);
     await paints(kit);
-    kit.view.setActive(false);
+    kit.view.setCursor(false);
     kit.written.length = 0;
 
-    kit.view.setActive(true);
+    kit.view.setCursor(true);
 
     expect(shown(kit.written)).not.toContain('<ESC>[?25h');
   });
@@ -992,10 +999,10 @@ describe('which Pane draws a cursor', () => {
     const host = fakePane();
     const kit = viewOn(host);
     await paints(kit);
-    kit.view.setActive(false);
+    kit.view.setCursor(false);
     kit.written.length = 0;
 
-    kit.view.setActive(true);
+    kit.view.setCursor(true);
 
     expect(shown(kit.written)).toBe('<ESC>[?25h');
   });
@@ -1009,7 +1016,7 @@ describe('which Pane draws a cursor', () => {
     const host = fakePane();
     const kit = viewOn(host);
     await paints(kit);
-    kit.view.setActive(false);
+    kit.view.setCursor(false);
     kit.written.length = 0;
 
     kit.view.receive(bytes('[?25hhello'));
@@ -1046,8 +1053,79 @@ describe('which Pane draws a cursor', () => {
     const kit = viewOn(host);
     await paints(kit);
     kit.written.length = 0;
-    kit.view.setActive(true);
+    kit.view.setCursor(true);
     expect(kit.written).toHaveLength(0);
+  });
+});
+
+/** Whether the last DECTCEM the Surface got left its cursor shown, or null for none. */
+function lastCursor(written: Uint8Array[]): 'shown' | 'hidden' | null {
+  const text = shown(written);
+  const at = Math.max(text.lastIndexOf('<ESC>[?25h'), text.lastIndexOf('<ESC>[?25l'));
+  if (at < 0) return null;
+  return text.startsWith('<ESC>[?25h', at) ? 'shown' : 'hidden';
+}
+
+type CursorStep =
+  | 'surface'
+  | 'paint'
+  | 'cursor on'
+  | 'cursor off'
+  | 'output shows it'
+  | 'dispose';
+
+describe('a cursor only where keys go', () => {
+  it.each<[string, boolean, CursorStep[], 'shown' | 'hidden']>([
+    ['a new Surface, before anything paints it', true, ['surface'], 'hidden'],
+    ['a new Surface whose Pane may draw one, not yet painted', false, ['cursor on', 'surface'], 'hidden'],
+    ['a first paint where keys go', true, ['surface', 'paint'], 'shown'],
+    ['a first paint while Typing is not open', false, ['surface', 'paint'], 'hidden'],
+    ['Typing opening on a painted Pane', false, ['surface', 'paint', 'cursor on'], 'shown'],
+    ['Typing closing on a painted Pane', true, ['surface', 'paint', 'cursor off'], 'hidden'],
+    ['Typing opening before the first paint, then the paint', false, ['surface', 'cursor on', 'paint'], 'shown'],
+    ['output that asks for the cursor before the first paint', true, ['surface', 'output shows it'], 'hidden'],
+    ['output that asks for it while Typing is not open', false, ['surface', 'paint', 'output shows it'], 'hidden'],
+    ['a view let go, as on a lost Connection', true, ['surface', 'paint', 'dispose'], 'hidden'],
+  ])('%s', async (_, open, steps, expected) => {
+    const host = fakePane();
+    const kit = viewOn(host, '%0', open);
+    for (const step of steps) {
+      if (step === 'surface') kit.view.setSurface(kit.screen.surface);
+      if (step === 'paint') kit.view.reportGrid(GRID);
+      if (step === 'cursor on') kit.view.setCursor(true);
+      if (step === 'cursor off') kit.view.setCursor(false);
+      if (step === 'output shows it') kit.view.receive(bytes('\u001b[?25h$ '));
+      if (step === 'dispose') kit.view.dispose();
+      await settle();
+    }
+    expect(lastCursor(kit.written)).toBe(expected);
+  });
+
+  it('hides it on a new Surface until that Surface is painted', async () => {
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    const release = host.hold();
+    const other = fakeSurface();
+
+    kit.view.setSurface(other.surface);
+    kit.view.reportGrid(GRID);
+    await settle();
+    expect(lastCursor(other.written)).toBe('hidden');
+
+    release();
+    await settle();
+    expect(lastCursor(other.written)).toBe('shown');
+  });
+
+  it('leaves it hidden where the program in the Pane hides it, whatever Typing does', async () => {
+    const host = fakePane(paneState({ cursorShown: false }));
+    const kit = viewOn(host, '%0', false);
+    await paints(kit);
+    kit.view.setCursor(true);
+    kit.view.setCursor(false);
+    kit.view.setCursor(true);
+    expect(lastCursor(kit.written)).toBe('hidden');
   });
 });
 

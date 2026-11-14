@@ -35,7 +35,7 @@ export interface TerminalHeaderProps {
   /** The Theme's terminal colours: the header sits on the terminal background. */
   terminal: TerminalPalette;
   /**
-   * Set while the Reconnect Screen covers the Surface: the header then sits on
+   * Set while the Connection Screen covers the Surface: the header then sits on
    * the app's chrome, as the screen below it does, not on the terminal.
    */
   chrome: Appearance | null;

@@ -19,11 +19,11 @@ wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "e2e-reconnect"
 
 open "dev.muxify.app" --relaunch
-wait "id=\"reconnect-screen\"" 15000
+wait "id=\"connection-screen\"" 15000
 is "visible" "label=\"Go to Host\""
 wait "id=\"pane-command\"" 20000
 is "text" "id=\"attached-session\"" "e2e-reconnect"
-is "absent" "id=\"reconnect-screen\""
+is "absent" "id=\"connection-screen\""
 
 # Back returns to the Host Screen.
 back

@@ -1,17 +1,20 @@
 context platform=ios kind=simulator
 
 # A Last Place that names a Session the Host does not have: the reconnect stops
-# at "Looking for the Session" with its message, and stays there. The app is
-# left open, so reconnect-try-again.ad can press Try again once the script has
-# made the Session.
+# at "Looking for the Session" with its message, and stays there. A retry would
+# fail the same way, so the Connection Screen offers Choose a Session and Go to
+# Host, and no Try again. The app is left open, so
+# reconnect-choose-session.ad can choose the Session once the script has made
+# it.
 #
 # Run with:  bash e2e/reconnect-on-start.sh
 
 open "dev.muxify.app" --relaunch
-wait "id=\"reconnect-failure\"" 15000
+wait "id=\"connection-failure\"" 15000
 is "visible" "label=\"e2e-reconnect-later is no longer on Dev Host\""
 is "visible" "label=\"Looking for the Session, failed\""
-is "visible" "label=\"Try again\""
+is "visible" "label=\"Choose a Session\""
 is "visible" "label=\"Go to Host\""
+is "absent" "label=\"Try again\""
 wait 3000
-is "visible" "id=\"reconnect-failure\""
+is "visible" "id=\"connection-failure\""

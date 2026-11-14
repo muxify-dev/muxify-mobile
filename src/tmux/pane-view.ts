@@ -129,12 +129,14 @@ export interface PaneView {
    */
   reportGrid(grid: Grid): void;
   /**
-   * Whether this is the Pane the keyboard and the Key Row are about.
+   * Whether this Pane may draw a cursor: it is the active Pane and Typing is
+   * open. The Attach decides both and tells the view when either changes.
    *
-   * Owns the cursor: only one Pane of a split has the keyboard, and a cursor
-   * in each of the others reads as several places to type.
+   * The view adds two facts of its own. It shows the cursor only once it has
+   * painted the Surface it holds, and only where the program in the Pane shows
+   * it. A cursor anywhere else reads as a place to type that does not take keys.
    */
-  setActive(active: boolean): void;
+  setCursor(shown: boolean): void;
   /** Raises the keyboard on this Pane, whatever it was doing. */
   focusKeyboard(): void;
   /** Raises it if it is down and dismisses it if it is up. */
@@ -214,7 +216,10 @@ export interface PaneView {
   followSelectionPress(point: SurfacePoint, lifted: boolean): void;
   /** The Selection is over: the Layer closes, and the Pane is live again. */
   endSelection(): void;
-  /** Nothing more is wanted from this view. Releases the Surface. */
+  /**
+   * Nothing more is wanted from this view. Hides the cursor on the Surface,
+   * which keeps its last content, and releases it.
+   */
   dispose(): void;
 }
 
@@ -224,6 +229,10 @@ export interface PaneView {
  * second notch, not the second drag.
  */
 const STATE_STALE_MS = 1500;
+
+/** DECTCEM: the only way to hide ghostty's cursor, which has no prop for it. */
+const HIDE_CURSOR = asciiBytes('\u001b[?25l');
+const SHOW_CURSOR = asciiBytes('\u001b[?25h');
 
 /**
  * How long a Pane has to stay quiet before it is read one last time.
@@ -269,10 +278,12 @@ export const OUTPUT_SETTLE_MS = 300;
  * screen the gesture becomes input and the application scrolls itself, exactly
  * as it would under any terminal.
  *
- * **One cursor, in the Pane with the keyboard.** Told whether it is the active
- * Pane, the view hides or shows its cursor and keeps it hidden after every
- * chunk — an unattended Pane is still running something, and anything that
- * redraws ends by asking for the cursor back.
+ * **A cursor only where keys go.** Told whether it may show one, the view
+ * hides or shows its cursor and keeps it hidden after every chunk — an
+ * unattended Pane is still running something, and anything that redraws ends
+ * by asking for the cursor back. A new Surface is told to hide it at once, so
+ * ghostty's own cursor at 1;1 never shows before the first paint, and a
+ * Surface let go keeps its content without one.
  */
 export function createPaneView(
   paneId: string,
@@ -351,8 +362,13 @@ export function createPaneView(
   let painting = false;
   let wanted = false;
 
-  /** Whether this Pane draws a cursor. False for a Pane nobody is typing in. */
-  let cursorVisible = true;
+  /** What the Attach last said: whether this Pane may draw a cursor. See setCursor. */
+  let cursorWanted = false;
+  /** Whether a live repaint has landed on the Surface held now. */
+  let painted = false;
+
+  /** Whether the cursor is drawn, unless the program in the Pane hides it. */
+  const cursorShown = () => cursorWanted && painted;
 
   /**
    * The Selection that holds this Pane frozen, or null.
@@ -395,7 +411,7 @@ export function createPaneView(
    */
   function writeOutput(bytes: Uint8Array): void {
     write(bytes);
-    if (!cursorVisible) write(asciiBytes('\u001b[?25l'));
+    if (!cursorShown()) write(HIDE_CURSOR);
   }
 
   function announce(): void {
@@ -567,9 +583,10 @@ export function createPaneView(
           // Where it is, and whether it is drawn, are two different questions:
           // an unattended Pane's cursor still moves with its output.
           cursor: next ? { column: next.cursorColumn, row: next.cursorRow } : undefined,
-          cursorVisible: cursorVisible && (next?.cursorShown ?? true),
+          cursorVisible: cursorWanted && (next?.cursorShown ?? true),
         }),
       );
+      if (!paused) painted = true;
       say(
         `painted ${lines.length} lines at ${rows} rows` +
           (next
@@ -719,6 +736,7 @@ export function createPaneView(
       surface = next;
       held = null;
       droppedWithoutSurface = false;
+      painted = false;
       // A Surface arrives blank, so what it is showing is nothing rather than
       // wherever the last one had been dragged back to.
       back = 0;
@@ -727,6 +745,9 @@ export function createPaneView(
         return;
       }
       say('Surface arrived');
+      // Straight to the Surface, paused or not: a Surface shows ghostty's own
+      // cursor at 1;1 until something says otherwise.
+      next.write(HIDE_CURSOR);
       armPaint();
     },
 
@@ -742,14 +763,20 @@ export function createPaneView(
       armPaint();
     },
 
-    setActive(active: boolean): void {
-      if (disposed || active === cursorVisible) return;
-      cursorVisible = active;
+    setCursor(shown: boolean): void {
+      if (disposed || shown === cursorWanted) return;
+      cursorWanted = shown;
+      // Not painted yet: the Surface was told to hide it when it arrived, and
+      // the first paint shows it if it is wanted by then.
+      if (!painted) {
+        say(`cursor ${shown ? 'wanted, shown at the first paint' : 'not wanted'}`);
+        return;
+      }
       // Shown only if the application shows it: one that hid its cursor would
       // otherwise get a second one back the moment its Pane took the keyboard.
-      const shows = active && state?.cursorShown !== false;
-      say(active ? `active: cursor ${shows ? 'shown' : 'left hidden, as the application has it'}` : 'inactive: cursor hidden');
-      write(asciiBytes(shows ? '\u001b[?25h' : '\u001b[?25l'));
+      const shows = shown && state?.cursorShown !== false;
+      say(shown ? `cursor ${shows ? 'shown' : 'left hidden, as the application has it'}` : 'cursor hidden');
+      write(shows ? SHOW_CURSOR : HIDE_CURSOR);
     },
 
     focusKeyboard(): void {
@@ -905,7 +932,12 @@ export function createPaneView(
     },
 
     dispose(): void {
-      if (!disposed) say('disposed');
+      if (!disposed) {
+        say('disposed');
+        // The Surface keeps this content after the view goes, and nothing
+        // that follows can type into it.
+        surface?.write(HIDE_CURSOR);
+      }
       disposed = true;
       clock.cancel(settleTimer);
       settleTimer = null;

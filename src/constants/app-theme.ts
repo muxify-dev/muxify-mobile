@@ -332,7 +332,7 @@ export function sheetPaletteFor(theme: ThemeId): SheetPalette {
 
 /**
  * The navigation Header's colours over the app's chrome: every screen's, and
- * the Terminal Screen's while the Reconnect Screen covers the Surface.
+ * the Terminal Screen's while the Connection Screen covers the Surface.
  */
 export function chromeHeaderColors(palette: Appearance) {
   return {

@@ -43,7 +43,7 @@ host=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["lastPla
 set_key "$RECORDS" lastPlace "{\"hostId\": \"$host\", \"session\": \"$SESSION-later\", \"topicId\": null}"
 agent-device test ./e2e/reconnect-failed.ad "${device[@]}" || exit 1
 tmux new-session -d -s "$SESSION-later" || exit 1
-agent-device test ./e2e/reconnect-try-again.ad "${device[@]}" || exit 1
+agent-device test ./e2e/reconnect-choose-session.ad "${device[@]}" || exit 1
 
 set_key "$RECORDS" lastPlace "{\"hostId\": \"$host\", \"session\": \"$SESSION-gone\", \"topicId\": null}"
 agent-device test ./e2e/reconnect-go-home.ad "${device[@]}" || exit 1
@@ -51,4 +51,11 @@ agent-device test ./e2e/reconnect-go-home.ad "${device[@]}" || exit 1
 # The suite's Disconnect must have cleared the Last Place.
 python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("lastPlace") is not None)' "$RECORDS" \
   || { echo "the Last Place survived the Disconnect"; exit 1; }
+
+# A Session that ends on the Host while it is on screen.
+tmux new-session -d -s "$SESSION-ends" || exit 1
+set_key "$RECORDS" lastPlace "{\"hostId\": \"$host\", \"session\": \"$SESSION-ends\", \"topicId\": null}"
+agent-device test ./e2e/session-ends-open.ad "${device[@]}" || exit 1
+tmux kill-session -t "$SESSION-ends" || exit 1
+agent-device test ./e2e/session-ended.ad "${device[@]}" || exit 1
 echo "Reconnect on start: all suites passed"

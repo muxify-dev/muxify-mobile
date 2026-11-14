@@ -1,0 +1,12 @@
+context platform=ios kind=simulator
+
+# Opens the Last Place, e2e-reconnect-ends, and leaves it on screen, so the
+# script can end that Session under it. See session-ended.ad.
+#
+# Run with:  bash e2e/reconnect-on-start.sh
+
+open "dev.muxify.app" --relaunch
+wait "id=\"pane-command\"" 20000
+is "text" "id=\"attached-session\"" "e2e-reconnect-ends"
+is "absent" "id=\"connection-screen\""
+is "absent" "id=\"cover-dimmed\""

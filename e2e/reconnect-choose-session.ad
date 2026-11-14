@@ -1,0 +1,18 @@
+context platform=ios kind=simulator
+
+# Choose a Session on the failed reconnect that reconnect-failed.ad left on
+# screen. The Title Sheet opens with the Host's Sessions, read again; the script
+# has made the Session since, so picking it attaches.
+#
+# Run with:  bash e2e/reconnect-on-start.sh
+
+open "dev.muxify.app"
+is "visible" "id=\"connection-failure\""
+press "label=\"Choose a Session\""
+wait "label=\"e2e-reconnect-later\"" 15000
+press "label=\"e2e-reconnect-later\""
+wait "id=\"pane-command\"" 20000
+is "absent" "id=\"connection-screen\""
+is "text" "id=\"attached-session\"" "e2e-reconnect-later"
+
+close

@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Banner, Presence } from '@/components/banner';
 import { TrackpadScroll } from '@/components/trackpad-scroll';
 import type { TrackpadTarget } from '@/lib/trackpad-gesture';
-import { ReconnectScreen } from '@/components/reconnect-screen';
+import { ConnectionScreen } from '@/components/connection-screen';
 import { KeyRow, KEY_ROW_HEIGHT } from '@/components/key-row';
 import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
 import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
@@ -40,11 +40,14 @@ import { namedKeyName, type NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
+import { actionLabel, coverOf, type Cover, type CoverAction } from '@/domain/cover';
+import { lastAnswer } from '@/domain/host-listing';
+import { keyboardMove } from '@/domain/typing';
 import { topicSections } from '@/domain/host-screen';
 import { useCopyLog } from '@/hooks/use-copy-log';
 import { useHostReading } from '@/hooks/use-host-reading';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
-import { clampFontSize, fontSizeInForce } from '@/settings/settings';
+import { clampFontSize, fontSizeInForce, type ChooserLists } from '@/settings/settings';
 import { useChooserLists, useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
 import { useHostEntry } from '@/hooks/use-host-entry';
@@ -58,7 +61,6 @@ import {
 import {
   LOOKUP_START,
   reconnect as reconnectToSession,
-  reconnectProgress,
   type Lookup,
   type SessionVisit,
 } from '@/domain/reconnect';
@@ -81,10 +83,8 @@ import {
   type Modifiers,
 } from '@/lib/modifier-keys';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
-import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
+import type { Attach, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import { phaseLabel } from '@/tmux/attach-labels';
-import { retryCouldWork } from '@/tmux/disconnect-reason';
 import { cellOf, paneBoxes, windowSlide, clippedRowHeight, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
@@ -134,7 +134,8 @@ type PaneSlot = {
 };
 
 type PickerState = { open: false } | { open: true; error?: string };
-type TitleSheetState = { open: false } | { open: true; revision: number; error?: string };
+/** `sessionsOnly` is the sheet opened by Choose a Session, on a Session that has ended. */
+type TitleSheetState = { open: false } | { open: true; revision: number; error?: string; sessionsOnly?: boolean };
 
 /**
  * One Session, on screen.
@@ -176,24 +177,18 @@ export default function TerminalScreen() {
   const hostId = attach?.hostId ?? routeHostId;
   /** Why the screen could not even ask for an Attach: a Host that has gone. */
   const [missing, setMissing] = useState<string | null>(null);
-  /** The visit that finds the Session before a cold-start reconnect attaches. */
-  const [lookup, setLookup] = useState<Lookup>(reconnect ? LOOKUP_START : { kind: 'found' });
+  /**
+   * The visit that finds the Session before a cold-start reconnect attaches,
+   * or null when this screen was not opened by one.
+   */
+  const [lookup, setLookup] = useState<Lookup | null>(reconnect ? LOOKUP_START : null);
   const [reconnectHost, setReconnectHost] = useState('');
-  /** Dismissed by the user; the Attach still knows the key changed. */
-  const [keyWarningSeen, setKeyWarningSeen] = useState(false);
   /** Bumped by Try again, to run the reconnect once more. Nothing else retries it. */
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const tryReconnectAgain = useCallback(() => {
-    setKeyWarningSeen(false);
     setLookup(LOOKUP_START);
     setReconnectAttempt((attempt) => attempt + 1);
   }, []);
-  const reconnecting = reconnectProgress(lookup, state?.phase ?? null);
-  /** Up until the reconnect first attaches; a later drop is the Banner's. */
-  const [showReconnect, setShowReconnect] = useState(reconnect !== undefined);
-  useEffect(() => {
-    if (reconnecting.kind === 'attached') setShowReconnect(false);
-  }, [reconnecting.kind]);
 
   const goHost = useCallback(() => {
     if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
@@ -329,7 +324,14 @@ export default function TerminalScreen() {
   const topology = state?.topology;
   const visibleGrid = state?.grid ?? null;
   const activePaneId = topology?.activePane?.id ?? '';
-  const connected = state?.phase.kind === 'connected';
+  /** Whether keys reach the active Pane. Every control that sends keys reads this. */
+  const open = state?.typing.kind === 'open';
+  const painted = state?.painted ?? NOTHING_PAINTED;
+  /** Whether the active Pane's Surface may hold the keyboard: keys reach it and it shows something. */
+  const canType = open && painted.has(activePaneId);
+  /** The same, where the Surface's input callback can read it without rebuilding. */
+  const typingOpen = useRef(false);
+  typingOpen.current = open;
 
   /**
    * How big one cell is, as the Surface that drew it says.
@@ -622,7 +624,7 @@ export default function TerminalScreen() {
   const sessionName = state?.sessionName;
   useEffect(
     () => endSelection,
-    [endSelection, activePaneId, activeWindowIndex, sessionName, connected],
+    [endSelection, activePaneId, activeWindowIndex, sessionName, open],
   );
 
   /** A handle held at the top or bottom edge of a Selection: one more line. */
@@ -644,11 +646,41 @@ export default function TerminalScreen() {
    * Pane takes it back when that closes. Without a hardware keyboard a focus
    * would raise the on-screen keyboard, so nothing happens.
    */
-  const takesKeyboard = physicalKeyboard && activeSlot !== undefined && screenFocused
-    && !composerOpen && !selecting && !sheetOpen && !showReconnect;
+  const takesKeyboard = physicalKeyboard && activeSlot !== undefined && canType && screenFocused
+    && !composerOpen && !selecting && !sheetOpen;
   useEffect(() => {
     if (takesKeyboard) activeView()?.focusKeyboard();
   }, [takesKeyboard, activeView, sessionName]);
+
+  /**
+   * Each Pane's Surface, as the Pane view sees it. Kept here as well, because
+   * the keyboard rule below must reach the Surface after a lost Connection
+   * has released its view.
+   */
+  const surfaces = useRef(new Map<string, PaneSurface>());
+  /** Whether the active Surface had the keyboard when typing last stopped. */
+  const keyboardRemembered = useRef(false);
+  const inputElsewhere = composerOpen || selecting || sheetOpen || !screenFocused;
+  /**
+   * The system keyboard follows whether keys can reach the active Pane. It
+   * goes down when they cannot, so no key goes nowhere, and comes back when
+   * they can if it was up. See keyboardMove.
+   */
+  const moveKeyboard = useEffectEvent((can: boolean) => {
+    const paneId = activePaneId;
+    const surface = surfaces.current.get(paneId);
+    const elsewhere = inputElsewhere;
+    void (async () => {
+      const focused = !can && surface ? await surface.isFocused() : false;
+      const move = keyboardMove({ canType: can, focused, remembered: keyboardRemembered.current, inputElsewhere: elsewhere });
+      keyboardRemembered.current = move.remembered;
+      if (move.act === 'none') return;
+      say(`keyboard: ${move.act} ${paneId}, as keys ${can ? 'reach it again' : 'no longer reach it'}`);
+      if (move.act === 'blur') surface?.blur();
+      else surface?.focus();
+    })();
+  });
+  useEffect(() => moveKeyboard(canType), [canType]);
   const mouseGrid = activeSlot
     ? activeSlot.fillsWindow
       ? visibleGrid
@@ -666,12 +698,14 @@ export default function TerminalScreen() {
    */
   const adoptPaneSurface = useCallback(
     (paneId: string, ref: TerminalViewRef | null, grid: Grid | null) => {
-      attach?.surfaceForPane(paneId, ref === null ? null : surfaceFor(ref), grid);
+      const surface = ref === null ? null : surfaceFor(ref);
+      if (surface) surfaces.current.set(paneId, surface);
+      else surfaces.current.delete(paneId);
+      attach?.surfaceForPane(paneId, surface, grid);
     },
     [attach],
   );
 
-  const { surfaceReported } = swipe;
   const reportPaneGrid = useCallback(
     (paneId: string, grid: Grid) => {
       setPaneGrids((before) => {
@@ -680,10 +714,16 @@ export default function TerminalScreen() {
           ? before : new Map(before).set(paneId, grid);
       });
       attach?.paneGridReported(paneId, grid);
-      surfaceReported(paneId);
     },
-    [attach, surfaceReported],
+    [attach],
   );
+
+  // A Pane Swipe brings the next Pane in once it is painted: before that its
+  // Surface is invisible, and the swipe would slide in the bare background.
+  const { panePainted } = swipe;
+  useEffect(() => {
+    if (activePaneId !== '' && painted.has(activePaneId)) panePainted(activePaneId);
+  }, [painted, activePaneId, panePainted]);
 
   /**
    * The last grid a Surface spanning the Window reported, and the area it was
@@ -800,6 +840,9 @@ export default function TerminalScreen() {
    */
   const handlePaneInput = useCallback(
     (paneId: string, data: string) => {
+      // The keyboard goes down when typing stops, but a hardware keyboard or a
+      // key already on its way can still arrive. It has nowhere to go.
+      if (!typingOpen.current) return;
       const view = attach?.view(paneId);
       if (!view) return;
       // `data` is base64. The sibling `text` field must not be used: a
@@ -863,7 +906,7 @@ export default function TerminalScreen() {
   const topicsOn = chooserLists.includes('topics');
   const windowsOn = chooserLists.includes('windows');
   const sessionsOn = chooserLists.includes('sessions');
-  const { topics: hostTopics, read: readHost } = useHostReading(hostId ?? '', topicsOn);
+  const { topics: hostTopics, listing, read: readHost } = useHostReading(hostId ?? '', topicsOn);
   const pickerTopics = useMemo(
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
     [topicsOn, hostTopics, appearance],
@@ -894,16 +937,36 @@ export default function TerminalScreen() {
     }, SHEET_HANDOVER_MS);
   }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName]);
 
+  /** The Session a switch is on its way to, whose row shows it is busy. */
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  /**
+   * Where the Sessions list comes from. The Attach's own list while it is up;
+   * once it has stopped, it has no Connection to ask, so the Host is asked
+   * the way the Host Screen asks it.
+   */
+  const sessionsFromHost = state?.typing.kind !== 'open' && state?.typing.kind !== 'waiting';
   const sessionCards = useMemo((): PreviewCard[] => {
+    if (sessionsFromHost) {
+      return (lastAnswer(listing) ?? []).map((session) => ({
+        id: session.name,
+        title: session.name,
+        detail: session.windowCount === undefined
+          ? session.name
+          : `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
+        current: false,
+        preview: [],
+      }));
+    }
     if (!state) return [];
     return (state.sessions ?? []).map((session) => ({
       id: session.name,
       title: session.name,
       detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
       current: session.name === state?.sessionName,
+      busy: session.name === switchingTo,
       preview: previewOf(state.previews, `${session.name}:`),
     }));
-  }, [state]);
+  }, [state, sessionsFromHost, listing, switchingTo]);
   const paneCards = useMemo((): PreviewCard[] => {
     if (!state) return [];
     const frames = paneTopologyFrames(state.topology.panes);
@@ -1051,6 +1114,7 @@ export default function TerminalScreen() {
     const revision = chooserRevision.current;
     const current = () => chooserRevision.current === revision && holder.current() === attach;
     chooserBusy.current = true;
+    if (pick.session !== null && pick.session !== state.sessionName) setSwitchingTo(pick.session);
     void (async () => {
       try {
         if (pick.session !== null) {
@@ -1064,10 +1128,29 @@ export default function TerminalScreen() {
         if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
       } finally {
         chooserBusy.current = false;
+        setSwitchingTo(null);
       }
     })();
   }, [attach, state, topic, holder, closeChooser]);
-  const selectSession = useCallback((session: string) => choose({ session, window: null }, false), [choose]);
+  const selectSession = useCallback((session: string) => {
+    if (!sessionsFromHost) {
+      choose({ session, window: null }, false);
+      return;
+    }
+    // The Attach has stopped, so the pick is a new one. A cold start's visit
+    // is over too: what the screen shows is the new Attach.
+    say(`choosing ${session} in place of a Session that has stopped`);
+    setLookup(null);
+    hostEntry.openSession(session);
+  }, [choose, sessionsFromHost, hostEntry]);
+
+  /** Choose a Session, from a Session that has ended: the Title Sheet with its Sessions only. */
+  const chooseSession = useCallback(() => {
+    if (handover.current) clearTimeout(handover.current);
+    setPicker({ open: false });
+    setTitleSheet({ open: true, revision: ++chooserRevision.current, sessionsOnly: true });
+    void readHost();
+  }, [readHost]);
   const pickTitleRow = useCallback((pick: TitlePick) => choose(pick, true), [choose]);
 
   /**
@@ -1124,7 +1207,7 @@ export default function TerminalScreen() {
         toggleComposer,
         { disabled: !activePaneId },
       ),
-      action('panes', 'Panes', 'square.grid.2x2', openPanes, { disabled: !connected }),
+      action('panes', 'Panes', 'square.grid.2x2', openPanes, { disabled: !open }),
       action('keyboard', 'Keyboard', 'keyboard', toggleKeyboard),
       ...(state?.topic ? [{
         kind: 'menu' as const, id: 'topic', label: 'Topic', systemImage: 'rectangle.stack' as const,
@@ -1157,7 +1240,7 @@ export default function TerminalScreen() {
         'New Window',
         'plus.rectangle',
         () => runVerb('add a Window', () => attach?.newWindow() ?? Promise.resolve()),
-        { disabled: !connected },
+        { disabled: !open },
       ),
       {
         kind: 'menu',
@@ -1170,14 +1253,14 @@ export default function TerminalScreen() {
             'Split →',
             'rectangle.split.2x1',
             () => runVerb('split the Pane', () => attach?.split('right') ?? Promise.resolve()),
-            { disabled: !connected },
+            { disabled: !open },
           ),
           action(
             'split-down',
             'Split ↓',
             'rectangle.split.1x2',
             () => runVerb('split the Pane', () => attach?.split('down') ?? Promise.resolve()),
-            { disabled: !connected },
+            { disabled: !open },
           ),
         ],
       },
@@ -1206,7 +1289,7 @@ export default function TerminalScreen() {
     activePaneId,
     state?.zoomed,
     attach,
-    connected,
+    open,
     runVerb,
     stepFontSize,
     copyPaneText,
@@ -1216,44 +1299,53 @@ export default function TerminalScreen() {
   ]);
 
 
-  const status = statusOf(state, missing);
-  /**
-   * A changed key, from the reconnect's visit, which stopped at it, or from an
-   * Attach, which went on. Accepting it after the visit is the user asking to
-   * go on, so the reconnect runs again.
-   */
-  const keyWarning =
-    reconnecting.kind === 'failed' && reconnecting.step === 'checking-host-key'
-      ? {
-          hostName: reconnectHost,
-          fingerprint: reconnecting.fingerprint,
-          onAccepted: tryReconnectAgain,
+  const place = {
+    hostName: attach?.hostName ?? reconnectHost,
+    session: state?.sessionName ?? bootstrap.current.session ?? '',
+  };
+  const cover = coverOf({
+    missing,
+    lookup,
+    attach: state ? { typing: state.typing, step: state.step, paintedOnce: state.paintedOnce } : null,
+    place,
+  });
+
+  /** A Cover's button. Each is the same act wherever it shows: the Connection Screen or a card. */
+  const runCoverAction = useCallback((action: CoverAction) => {
+    say(`Cover: ${actionLabel(action)}`);
+    switch (action) {
+      case 'reconnect':
+      case 'try-again':
+        // The cold start's visit, if that is what stopped; else the Attach,
+        // which reads the Host record again, so an edit to it counts.
+        if (lookup?.kind === 'failed' || !attach) tryReconnectAgain();
+        else attach.reconnect();
+        return;
+      case 'edit-host':
+        if (hostId) router.push({ pathname: '/host-form', params: { id: hostId } });
+        return;
+      case 'accept-key':
+        if (lookup?.kind === 'failed' && lookup.step === 'checking-host-key') {
+          const fingerprint = lookup.fingerprint;
+          void (async () => {
+            if (hostId) await deviceHostStore().rememberFingerprint(hostId, fingerprint);
+            tryReconnectAgain();
+          })();
+        } else {
+          void attach?.acceptHostKey();
         }
-      : state?.keyChanged === true && attach
-        ? { hostName: attach.hostName, fingerprint: state.fingerprint, onAccepted: () => {} }
-        : null;
-  const keyBanner = (
-    <Presence shown={keyWarning !== null && !keyWarningSeen}>
-      {keyWarning ? (
-        <HostKeyWarning
-          hostName={keyWarning.hostName}
-          appearance={appearance}
-          palette={chrome}
-          onAccept={() => {
-            setKeyWarningSeen(true);
-            void (async () => {
-              if (hostId && keyWarning.fingerprint) {
-                await deviceHostStore().rememberFingerprint(hostId, keyWarning.fingerprint);
-              }
-              keyWarning.onAccepted();
-            })();
-          }}
-          onDismiss={() => setKeyWarningSeen(true)}
-        />
-      ) : null}
-    </Presence>
-  );
-  const reconnectShown = showReconnect && reconnecting.kind !== 'attached';
+        return;
+      case 'choose-session':
+        chooseSession();
+        return;
+      case 'go-to-host':
+        goHost();
+        return;
+      case 'go-to-hosts':
+        router.dismissTo('/');
+        return;
+    }
+  }, [lookup, attach, hostId, router, tryReconnectAgain, chooseSession, goHost]);
 
   return (
     // The ground the Surface sits on follows the Theme, or the safe-area strip
@@ -1274,7 +1366,7 @@ export default function TerminalScreen() {
       <TerminalHeader
         title={headerTitle}
         terminal={terminal}
-        chrome={reconnectShown ? chrome : null}
+        chrome={cover.kind === 'connection-screen' ? chrome : null}
         onTitle={openTitleSheet}
         options={options}
       />
@@ -1294,32 +1386,39 @@ export default function TerminalScreen() {
             but a Surface can measure a cell — so one stands in as the ruler.
             That is the sizing module's decision, not this screen's; see its
             docblock. It is replaced by the real Panes the moment they are
-            known, and their resync paints them. */}
+            known, and their resync paints them. Nobody sees it: no Pane is
+            painted on it, and an empty Surface shows ghostty's own cursor. */}
         {slots.length === 0 ? (
-          <TerminalView
+          <View
             // In the Window's box rather than filling the container, so that the
             // grid it measures is the Window's whatever the keyboard is doing.
-            style={[styles.paneBox, { left: 0, top: -slide, ...windowArea }]}
-            fontSize={fontSize}
-            accessoryBar={false}
-            shortcutBar={false}
-            theme={{
-              background: terminal.background,
-              foreground: terminal.foreground,
-              cursorColor: terminal.cursor,
-              palette: ansi ? [...ansi] : undefined,
-            }}
-            onResize={(event) => {
-              say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
-              reportWindowGrid(event);
-              reportCell({ width: event.nativeEvent.cellWidth, height: event.nativeEvent.cellHeight });
-            }}
-          />
+            style={[styles.paneBox, styles.unseen, { left: 0, top: -slide, ...windowArea }]}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants">
+            <TerminalView
+              style={styles.surface}
+              fontSize={fontSize}
+              accessoryBar={false}
+              shortcutBar={false}
+              theme={{
+                background: terminal.background,
+                foreground: terminal.foreground,
+                cursorColor: terminal.cursor,
+                palette: ansi ? [...ansi] : undefined,
+              }}
+              onResize={(event) => {
+                say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
+                reportWindowGrid(event);
+                reportCell({ width: event.nativeEvent.cellWidth, height: event.nativeEvent.cellHeight });
+              }}
+            />
+          </View>
         ) : null}
 
         <TrackpadScroll
           style={StyleSheet.absoluteFill}
-          enabled={connected && screenFocused && !composerOpen && !sheetOpen && !showReconnect}
+          enabled={canType && screenFocused && !composerOpen && !sheetOpen}
           context={trackpadContext}
           targets={trackpadTargets}
           scrollSpeed={SCROLL_SPEED}
@@ -1330,6 +1429,7 @@ export default function TerminalScreen() {
             <PaneSurfaceView
               key={slot.pane.id}
               slot={slot}
+              painted={painted.has(slot.pane.id)}
               font={fontSize}
               terminal={terminal}
               ansi={ansi}
@@ -1418,6 +1518,26 @@ export default function TerminalScreen() {
             onPress={openPanes}
           />
         ) : null}
+
+        {/* The last content, dimmed, and every touch with it: nothing on it
+            can be typed into, scrolled or tapped until Typing opens. */}
+        {cover.kind === 'content' ? (
+          <View
+            style={[StyleSheet.absoluteFill, styles.dimmed, { backgroundColor: terminal.background }]}
+            testID="cover-dimmed"
+            onStartShouldSetResponder={() => true}
+          />
+        ) : null}
+        {cover.kind === 'content' && cover.notice.kind === 'card' ? (
+          <View style={[StyleSheet.absoluteFill, styles.cardArea]} pointerEvents="box-none">
+            <FailureCard
+              failure={cover.notice.failure}
+              appearance={appearance}
+              palette={chrome}
+              onAction={runCoverAction}
+            />
+          </View>
+        ) : null}
       </View>
 
       <PickerSheet
@@ -1435,9 +1555,9 @@ export default function TerminalScreen() {
       />
 
       <TitleSheet
-        lists={chooserLists}
         isPresented={titleSheet.open}
         onDismiss={closeChooser}
+        lists={titleSheet.open && titleSheet.sessionsOnly ? SESSIONS_ONLY : chooserLists}
         rows={titleRows}
         topic={topic}
         onRetry={titleSheet.open && titleSheet.error !== undefined ? undefined : rereadTopic}
@@ -1448,7 +1568,11 @@ export default function TerminalScreen() {
               (topicView?.kind === 'failed' ? topicView.error : undefined))
             : undefined
         }
-        sessions={{ cards: sessionCards, loading: state?.sessions == null, onSelect: selectSession }}
+        sessions={{
+          cards: sessionCards,
+          loading: sessionsFromHost ? listing.phase === 'reading' : state?.sessions == null,
+          onSelect: selectSession,
+        }}
         topics={topicsOn ? { sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost() } : undefined}
         onPick={pickTitleRow}
         tabs={windowTabs?.revision === titleRevision && windowTabs.session === sessionName && windowTabs.window === activeWindowId ? windowTabs.tabs : NO_TABS}
@@ -1460,7 +1584,7 @@ export default function TerminalScreen() {
           key={`${attach.hostId}:${activePaneId}`}
           composer={attach.composer}
           paneId={activePaneId}
-          connected={connected}
+          connected={open}
           palette={chrome}
           appearance={appearance}
           inputRef={composerInput}
@@ -1474,23 +1598,25 @@ export default function TerminalScreen() {
         onPanes={openPanes}
         onKeyboard={toggleKeyboard}
         keyboardVisible={keyboardVisible}
-        keysDisabled={!connected || composerOpen}
-        // One Pane is when you reach for Split, so never disabled while connected.
-        panesDisabled={!connected}
+        keysDisabled={!open || composerOpen}
+        // One Pane is when you reach for Split, so never disabled while keys go through.
+        panesDisabled={!open}
         below={clearance.bottom}
       /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
 
       {/* The native Header ends where this content area begins. */}
       <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
-        {reconnectShown ? null : keyBanner}
-
-        <Presence shown={!status.quiet}>
-          <StatusBanner
-            status={status}
-            appearance={appearance}
-            palette={chrome}
-            onReconnect={attach ? () => attach.reconnect() : undefined}
-          />
+        <Presence shown={cover.kind === 'content' && cover.notice.kind === 'banner'}>
+          {cover.kind === 'content' && cover.notice.kind === 'banner' ? (
+            <Banner
+              title={cover.notice.label}
+              leading={{ busy: true }}
+              tone="neutral"
+              appearance={appearance}
+              palette={chrome}
+              accessibilityLabel={cover.notice.label}
+            />
+          ) : null}
         </Presence>
 
         <View style={styles.overlay} pointerEvents="none">
@@ -1508,97 +1634,17 @@ export default function TerminalScreen() {
         </View>
       </View>
 
-      {reconnectShown ? (
-        <ReconnectScreen
-          hostName={reconnectHost}
-          session={bootstrap.current.session ?? ''}
-          progress={reconnecting}
+      {cover.kind === 'connection-screen' ? (
+        <ConnectionScreen
+          cover={cover}
+          place={missing === null && place.hostName !== '' ? place : null}
           palette={chrome}
           appearance={appearance}
-          onTryAgain={tryReconnectAgain}
-          onGoHost={goHost}
+          onAction={runCoverAction}
         />
-      ) : null}
-      {/* The reconnect stops at a changed key, so its warning sits above it. */}
-      {reconnectShown ? (
-        <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
-          {keyBanner}
-        </View>
       ) : null}
     </View>
   );
-}
-
-/**
- * What the banner and the quiet line say, from the Attach's phase.
- *
- * The labels are `remux`'s own, so the two apps describe the same thing the
- * same way: Connecting, Connected, Restoring after a foreground check,
- * Reconnecting after a lost transport, and a short label per disconnect
- * reason. See shortLabel.
- */
-type Status = {
-  label: string;
-  busy: boolean;
-  /** Only a lost transport is worth offering; see allowsAutomaticReconnect. */
-  offerReconnect: boolean;
-  quiet: boolean;
-  detail?: string;
-  /** What the Banner leads with when it is not busy. */
-  symbol: SFSymbol;
-};
-
-/** Something is being waited on: the Banner leads with a spinner. */
-const WAITING: Omit<Status, 'label'> = {
-  busy: true,
-  offerReconnect: false,
-  quiet: false,
-  symbol: 'antenna.radiowaves.left.and.right',
-};
-
-function statusOf(state: AttachState | null, missing: string | null): Status {
-  if (missing) {
-    return {
-      label: 'Failed',
-      detail: missing,
-      busy: false,
-      offerReconnect: false,
-      quiet: false,
-      symbol: 'exclamationmark.triangle.fill',
-    };
-  }
-  // Nothing attached yet, which from here is indistinguishable from an Attach
-  // that has not answered — and is the same word either way.
-  if (!state) return { label: 'Connecting', ...WAITING };
-  return statusForPhase(state.phase);
-}
-
-function statusForPhase(phase: AttachPhase): Status {
-  const label = phaseLabel(phase);
-  switch (phase.kind) {
-    case 'connected':
-      return { label, busy: false, offerReconnect: false, quiet: true, symbol: 'checkmark' };
-    case 'connecting':
-    case 'restoring':
-    case 'reconnecting':
-      return { label, ...WAITING };
-    case 'disconnected': {
-      // Offered for a lost transport and nothing else: a wrong password and a
-      // Session that has ended would both fail again in exactly the same way,
-      // and a button that cannot work is worse than none.
-      const offerReconnect = retryCouldWork(phase.reason);
-      return {
-        label,
-        detail: phase.reason.detail,
-        busy: false,
-        offerReconnect,
-        quiet: false,
-        symbol: offerReconnect ? 'wifi.slash' : 'exclamationmark.triangle.fill',
-      };
-    }
-    case 'closed':
-      return { label, busy: false, offerReconnect: false, quiet: false, symbol: 'xmark.circle.fill' };
-  }
 }
 
 /**
@@ -1656,9 +1702,14 @@ async function pasteInto(attach: Attach | null, read: () => Promise<Paste>): Pro
  * one should move tmux's active Pane to it, and a Surface taking first
  * responder instead would raise the keyboard over a Pane that is not the one
  * being typed into.
+ *
+ * Until its Pane is painted the Surface is laid out but not seen and not
+ * touched: an empty Surface is ghostty's own cursor at 1;1, and a tap on it
+ * would raise the keyboard over nothing.
  */
 function PaneSurfaceView({
   slot,
+  painted,
   font,
   terminal,
   ansi,
@@ -1677,6 +1728,8 @@ function PaneSurfaceView({
   onPaste,
 }: {
   slot: PaneSlot;
+  /** Whether the Attach has painted this Pane's Surface. */
+  painted: boolean;
   font: number;
   terminal: TerminalPalette;
   ansi: readonly string[] | undefined;
@@ -1747,7 +1800,11 @@ function PaneSurfaceView({
   );
 
   return (
-    <Animated.View style={[styles.paneBox, slot.box, moved]}>
+    <Animated.View
+      style={[styles.paneBox, slot.box, moved, painted ? null : styles.unseen]}
+      pointerEvents={painted ? 'auto' : 'none'}
+      accessibilityElementsHidden={!painted}
+      importantForAccessibility={painted ? 'auto' : 'no-hide-descendants'}>
       <TerminalView
         ref={register}
         style={styles.surface}
@@ -2225,37 +2282,43 @@ function ScrollBackIndicator({
 }
 
 /**
- * The Banner for the Attach's phase, shown while it is anything but connected.
- *
- * It carries the Reconnect action, and only where trying again could work: a
- * lost transport, and nothing else. The quiet always-present indicator beneath
- * it carries the same label for assertions.
+ * Why the Attach stopped, over its last content: a card, because a Banner has
+ * no room for three buttons. Its first action is the one it asks for.
  */
-function StatusBanner({
-  status,
+function FailureCard({
+  failure,
   appearance,
   palette,
-  onReconnect,
+  onAction,
 }: {
-  status: Status;
+  failure: Extract<Extract<Cover, { kind: 'content' }>['notice'], { kind: 'card' }>['failure'];
   appearance: 'light' | 'dark';
   palette: Appearance;
-  onReconnect?: () => void;
+  onAction: (action: CoverAction) => void;
 }) {
   return (
     <Banner
-      title={status.label}
-      body={status.detail}
-      leading={status.busy ? { busy: true } : { symbol: status.symbol }}
-      tone={status.busy ? 'neutral' : 'warning'}
-      actions={
-        status.offerReconnect && onReconnect
-          ? [{ id: 'reconnect', label: 'Reconnect', onPress: onReconnect, testID: 'reconnect' }]
-          : undefined
-      }
+      title={failure.title}
+      body={failure.reason ?? undefined}
+      leading={{
+        symbol: failure.stop === 'transport-lost'
+          ? 'wifi.slash'
+          : failure.stop === 'key-changed'
+            ? 'exclamationmark.shield.fill'
+            : 'exclamationmark.triangle.fill',
+      }}
+      tone="warning"
+      actions={failure.actions.map((action, index) => ({
+        id: action,
+        label: actionLabel(action),
+        onPress: () => onAction(action),
+        prominent: index === 0 ? undefined : false,
+        testID: action,
+      }))}
       appearance={appearance}
       palette={palette}
-      accessibilityLabel={status.label}
+      accessibilityLabel={failure.title}
+      testID="cover-card"
     />
   );
 }
@@ -2269,6 +2332,8 @@ const PANE_ACTIONS: SheetAction[] = [
 const SHEET_HANDOVER_MS = 450;
 
 const NO_TABS: BrowserTab[] = [];
+const NOTHING_PAINTED: ReadonlySet<string> = new Set();
+const SESSIONS_ONLY: ChooserLists = ['sessions'];
 
 /** How many captured lines a preview box can show before it is just noise. */
 const PREVIEW_LINES = 14;
@@ -2298,44 +2363,6 @@ function confirmRunLines(): Promise<boolean> {
 
 function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
-}
-
-/**
- * Shown when a Host presents a different key from the one last seen.
- *
- * Loud, and over the terminal, because the two explanations — a rebuilt machine
- * or something sitting in the middle — look identical from here and only the
- * user knows which. It does not block: someone who has just rebuilt a machine
- * still has to be able to reach it.
- */
-function HostKeyWarning({
-  hostName,
-  appearance,
-  palette,
-  onAccept,
-  onDismiss,
-}: {
-  hostName: string;
-  appearance: 'light' | 'dark';
-  palette: Appearance;
-  onAccept: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <Banner
-      title={`${hostName} presented a different host key`}
-      body="It may have been rebuilt, or something may be intercepting the connection."
-      leading={{ symbol: 'exclamationmark.shield.fill' }}
-      tone="warning"
-      actions={[
-        { id: 'dismiss', label: 'Not now', onPress: onDismiss, prominent: false },
-        { id: 'accept', label: 'Accept new key', onPress: onAccept },
-      ]}
-      appearance={appearance}
-      palette={palette}
-      accessibilityLabel={`Host key changed for ${hostName}`}
-    />
-  );
 }
 
 /** The shortest the rail's thumb may get, so it never vanishes entirely. */
@@ -2410,6 +2437,18 @@ const styles = StyleSheet.create({
   },
   surface: {
     flex: 1,
+  },
+  /** Laid out and measuring, but not seen, not touched and not read out. */
+  unseen: {
+    opacity: 0,
+  },
+  /** The last content at about 40%: the terminal's own background over it. */
+  dimmed: {
+    opacity: 0.6,
+  },
+  cardArea: {
+    justifyContent: 'center',
+    paddingHorizontal: 16,
   },
   top: {
     position: 'absolute',

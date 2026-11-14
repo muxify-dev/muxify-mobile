@@ -15,11 +15,16 @@ import { sshTmuxTransport } from './ssh-transport';
  * verified by running the app rather than by a test.
  */
 export function sshDial(store: HostStore): Dial {
-  return async (host, dropped) => {
+  return async (host, dropped, progress) => {
     const { connection, fingerprint, verdict } = await connectToHost(
       host,
       store,
-      undefined,
+      // The key is checked and the sign-in starts. The Connection is not
+      // blocked here: a changed key is the Attach's to put to the user.
+      () => {
+        progress?.('signing-in');
+        return true;
+      },
       dropped,
     );
     // A non-PTY channel for one command, beside the screen exec: the Composer's

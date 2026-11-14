@@ -137,7 +137,8 @@ _Avoid_: workspace, saved session, history
 Where the user was when Muxify last closed: the Host, the Session and the Topic
 the Attach currently holds, if any. The app writes it each time an Attach reaches its
 attached phase or switches Session, and clears it on Disconnect. With Reconnect
-on start on, a cold start opens it again behind a "Trying to reconnect" screen.
+on start on, a cold start opens it again behind the Connection Screen, titled
+"Trying to reconnect".
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
@@ -405,7 +406,7 @@ faster than 600 points a second the way the drag went. The phone gives one
 light tick each time the drag crosses the commit point, out and back. In a
 zoomed Window the Pane follows the finger: with it up to the commit point,
 more slowly after. On a swipe it goes off the side, and the next Pane comes in
-from the other side when its Surface has reported its grid. On no swipe it
+from the other side when its Surface has been painted. On no swipe it
 springs back. Behind the Pane that moves is the terminal background. In a
 Window that is not zoomed no Pane moves. Every other drag is vertical and
 moves the Scrollback, or is the wheel for a program that listens for the
@@ -427,7 +428,7 @@ Selection changes no Pane.
 Trackpad gestures stop when the Attach, Session, Window, active Pane or Layout
 changes, when the app becomes inactive, or when the Terminal Screen loses
 focus. They are disabled while the Composer or a sheet is open, during a Pane Swipe
-transition, and while disconnected. Direct touch and click-drag do not enter this
+transition, and while keys cannot reach the active Pane (see Typing). Direct touch and click-drag do not enter this
 trackpad path. Trackpad gestures add no momentum after release.
 
 _Avoid_: page, slide (that is the keyboard's), flick
@@ -537,7 +538,7 @@ repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
 and spent on the next key from either the row or the system keyboard. ⌥ is
 tmux's `M-`. ⌘ makes the next letter a Shortcut. While the Composer is open,
-or with no Connection, the keys are disabled. The strip and key frames stay
+or while Typing is not open, the keys are disabled. The strip and key frames stay
 fixed during touch. A physical keyboard hides the row. iOS supplies its
 initial state, connection changes, and a fresh state on foreground entry.
 Hiding the software keyboard alone does not hide the row. Hiding the row
@@ -585,13 +586,39 @@ includes its remote path in the message delivered to the Pane.
 **Banner**:
 The Terminal Screen's one kind of notice: a Liquid Glass card that slides in
 under the Header, the way iOS delivers a notification over whatever is on
-screen. It says what the Attach is doing while that is anything other than
-connected — Connecting, Reconnecting, a disconnect reason with Reconnect where
-retrying could work — and it is where the changed-host-key warning is shown.
+screen. It says what the Attach waits for over content already painted —
+Connecting, Reconnecting, Restoring. A failure is not a Banner: it is a card
+in the middle of the dimmed content, with the actions for it (see Cover).
 Drawn in the Appearance of the Theme in use, so a light card never sits over
 a Dracula terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
+
+**Typing**:
+Whether keys reach the active Pane now. Open, waiting (connecting,
+reconnecting, restoring, a Session switch, or a changed Host key that the user
+has not accepted), or stopped (a disconnect reason, or closed on purpose). The
+Attach decides it and publishes it. The cursor, the keyboard, the Key Row, the
+trackpad and the Cover read only it. A cursor shows only while Typing is open,
+in the active Pane, after Muxify has painted that Pane, and where the program
+in it shows one. The keyboard goes down when Typing stops and comes back when
+it opens, if it was up. A Pane's first paint is not part of Typing: before it,
+the Connection is up and tmux takes keys.
+_Avoid_: connected (which is one phase of the Attach), input enabled, ready
+
+**Cover**:
+What the Terminal Screen draws over the Window while Typing is not open, and
+before the Attach has painted anything. With nothing painted yet, it is the
+Connection Screen: the steps of the connect,
+the failure if there is one, and Go to Host. With content painted, it is that
+content dimmed, which takes no touch, with a Banner for a wait or a card for a
+failure. Each failure has its actions: Try again (Reconnect for a lost link)
+where a retry by the user could work, Edit Host where the Host record could be
+the cause, Choose a Session for a Session that ended, Accept new key for a
+changed key, and always Go to Host. A Session switch dims and says nothing:
+the Title Sheet shows it. No Surface shows before its Pane is painted, so an
+empty Surface is never on screen.
+_Avoid_: overlay, loading screen, error screen, Reconnect Screen (the old name)
 
 ### Diagnosing
 

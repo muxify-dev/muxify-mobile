@@ -3,7 +3,7 @@ import { systemClock, type Clock, type Timer } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
-import type { HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
+import type { ConnectStep, HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
 import type { TmuxTransport } from '@/tmux/transport';
 import {
   installHostCli,
@@ -33,8 +33,9 @@ export interface Dialed {
 /**
  * Opens a new SSH Connection. `dropped` is called when the library finds the
  * Connection dead, which its keepalive does when the Host stops answering.
+ * `progress` hears each SSH step as it starts.
  */
-export type Dial = (host: Host, dropped: () => void) => Promise<Dialed>;
+export type Dial = (host: Host, dropped: () => void, progress?: (step: ConnectStep) => void) => Promise<Dialed>;
 
 /** What a screen does with a Connection: its commands, and the Host's `muxify`. */
 export type ScreenUse<T> = (transport: TmuxTransport, muxify: MuxifyCli) => Promise<T>;
@@ -121,13 +122,13 @@ export function createHostConnections(options: {
   const NOT_STARTED: HostCliState = { kind: 'idle' };
   let backgrounded = false;
 
-  function open(host: Host): Entry {
+  function open(host: Host, progress?: (step: ConnectStep) => void): Entry {
     say(`${host.displayName}: connecting`);
     let self: Entry | undefined;
     const dialed = (async () => {
       const opened = await dial(host, () => {
         if (self) void drop(self, 'the keepalive found it dead');
-      });
+      }, progress);
       if (opened.verdict.kind === 'first-sight') {
         await store.rememberFingerprint(host.id, opened.fingerprint);
       }
@@ -214,10 +215,10 @@ export function createHostConnections(options: {
   }
 
   /** The Host's Connection, open and connected, made new when the one held is dead. */
-  async function acquire(host: Host): Promise<{ entry: Entry; dialed: Dialed }> {
+  async function acquire(host: Host, progress?: (step: ConnectStep) => void): Promise<{ entry: Entry; dialed: Dialed }> {
     for (;;) {
       const held = entries.get(host.id);
-      const entry = held ?? open(host);
+      const entry = held ?? open(host, progress);
       const dialed = await entry.dialed;
       if (!entry.gone && dialed.isConnected()) return { entry, dialed };
       void drop(entry, 'it was no longer connected');
@@ -289,8 +290,8 @@ export function createHostConnections(options: {
   }
 
   return {
-    async openConnection(host: Host): Promise<HostConnection> {
-      const { entry, dialed } = await acquire(host);
+    async openConnection(host: Host, progress?: (step: ConnectStep) => void): Promise<HostConnection> {
+      const { entry, dialed } = await acquire(host, progress);
       entry.attaches += 1;
       busy(entry);
       const mine = new Set<() => void>();

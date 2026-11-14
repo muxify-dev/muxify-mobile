@@ -15,7 +15,7 @@ export type PaneSwipeState =
   /**
    * The finger lifted past the commit point and tmux has the move. The Pane
    * `leaving` slides out, and the next one waits for both that and its own
-   * Surface's first grid before it comes in.
+   * first paint before it comes in: until then its Surface is not seen.
    */
   | {
       phase: 'committing';
@@ -36,7 +36,7 @@ export type PaneSwipeEvent =
   | { type: 'commit'; direction: SwipeDirection; leaving: string }
   /** The Pane that is leaving is off the screen. */
   | { type: 'slidOut' }
-  /** The Surface of `pane` reported a grid. */
+  /** The Surface of `pane` was painted. */
   | { type: 'arrived'; pane: string }
   /** The Pane on screen is at rest. */
   | { type: 'rested' }

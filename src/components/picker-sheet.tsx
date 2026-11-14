@@ -7,6 +7,7 @@ import {
   Group,
   Host,
   HStack,
+  ProgressView,
   Spacer,
   Text,
   Toggle,
@@ -65,6 +66,8 @@ export interface PreviewCard {
   detail: string;
   /** Whether this is where the Surface is attached right now. */
   current: boolean;
+  /** Whether a switch to this card's Session is in progress. */
+  busy?: boolean;
   /** What the Pane behind this card is showing, already trimmed to fit. */
   preview: string[];
   /** Where a Pane sits in the diagram, as fractions. Panes only. */
@@ -388,6 +391,7 @@ function PreviewButton({
               {card.detail}
             </Text>
             <Spacer />
+            {card.busy ? <ProgressView modifiers={[padding({ all: 8 })]} /> : null}
           </HStack>
         </VStack>
       </ZStack>

@@ -10,7 +10,7 @@ context platform=ios kind=simulator
 # Run with:  bash e2e/reconnect-on-start.sh
 
 open "dev.muxify.app" --relaunch
-wait "id=\"reconnect-failure\"" 15000
+wait "id=\"connection-failure\"" 15000
 is "visible" "label=\"e2e-reconnect-gone is no longer on Dev Host\""
 press "label=\"Go to Host\""
 wait "label=\"Host Options\"" 8000
@@ -29,6 +29,6 @@ open "dev.muxify.app" --relaunch
 wait "label=\"Settings\"" 15000
 wait 3000
 is "visible" "label=\"Settings\""
-is "absent" "id=\"reconnect-screen\""
+is "absent" "id=\"connection-screen\""
 
 close

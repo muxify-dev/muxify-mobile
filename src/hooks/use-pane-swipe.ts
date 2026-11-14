@@ -40,8 +40,8 @@ export interface PaneSwipe {
   swipe(direction: SwipeDirection): void;
   /** The finger lifted short of a swipe. */
   cancel(): void;
-  /** A Pane's Surface reported a grid, which is when a new Pane may come in. */
-  surfaceReported(paneId: string): void;
+  /** A Pane's Surface was painted, which is when a new Pane may come in. */
+  panePainted(paneId: string): void;
   /** Whether a committed or cancelled Pane Swipe is still moving. */
   isTransitioning(): boolean;
 }
@@ -162,7 +162,7 @@ export function usePaneSwipe(options: {
     [send, cancel],
   );
 
-  const surfaceReported = useCallback(
+  const panePainted = useCallback(
     (paneId: string) => send({ type: 'arrived', pane: paneId }),
     [send],
   );
@@ -172,7 +172,7 @@ export function usePaneSwipe(options: {
     [],
   );
 
-  return { offset, leaving, drag, swipe, cancel, surfaceReported, isTransitioning };
+  return { offset, leaving, drag, swipe, cancel, panePainted, isTransitioning };
 }
 
 function pastCommit(state: PaneSwipeState): boolean {

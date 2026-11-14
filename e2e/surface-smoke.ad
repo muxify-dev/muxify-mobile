@@ -31,4 +31,12 @@ press "label=\"Session 0\""
 # Topology is in.
 wait "id=\"pane-command\"" 20000
 
+# Nothing covers the painted Pane once keys reach it. Before that, the
+# Connection Screen covers a Surface nobody can see: the ruler, at opacity 0,
+# still measured the grid the Attach waited for, or nothing above would have
+# connected.
+wait 2000
+is "absent" "id=\"connection-screen\""
+is "absent" "id=\"cover-dimmed\""
+
 close

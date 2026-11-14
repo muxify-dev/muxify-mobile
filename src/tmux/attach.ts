@@ -3,6 +3,7 @@ import { createComposer, type Composer } from '@/composer/composer';
 import { checkAborted, uniqueId, type AttachmentFile, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
+import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
@@ -68,8 +69,18 @@ export interface HostConnection {
   suspected?(check: () => void): () => void;
 }
 
-/** Opens one. Where the SSH library lives, and the one thing tests replace. */
-export type OpenConnection = (host: Host) => Promise<HostConnection>;
+/**
+ * How far a first connect has gone, for the Connection Screen's step list.
+ * The SSH steps come from the Connection; `attaching` is the Attach's own.
+ */
+export type ConnectStep = 'connecting' | 'checking-host-key' | 'signing-in' | 'attaching';
+
+/**
+ * Opens one. Where the SSH library lives, and the one thing tests replace.
+ * `progress` hears the SSH steps when this opens a new link, and nothing when
+ * it gives back one that is already open.
+ */
+export type OpenConnection = (host: Host, progress?: (step: ConnectStep) => void) => Promise<HostConnection>;
 
 /** What the app is doing, as React Native reports it. */
 export type LifecyclePhase = 'active' | 'inactive' | 'background';
@@ -93,12 +104,28 @@ const UNREAD_PANE: PaneFacts = { scrolled: null, mouseTracking: false, rowInSigh
 /** Everything the Terminal Screen, the Host Screen and the Hosts list draw. */
 export interface AttachState {
   phase: AttachPhase;
+  /** Whether keys reach the active Pane now. See typingOf. */
+  typing: Typing;
+  /** How far the current connect has gone. `attaching` once the Connection is open. */
+  step: ConnectStep;
+  /**
+   * The Panes whose Surface on screen this Attach has painted.
+   *
+   * A Pane leaves the set when its Surface goes or is replaced, because a new
+   * Surface is blank. A reconnect keeps the set, as it keeps the Surfaces and
+   * the content on them. The Terminal Screen shows no Surface until its Pane
+   * is here.
+   */
+  painted: ReadonlySet<string>;
+  /** Whether this Attach has painted any Pane yet: the Cover keeps content only after it has. */
+  paintedOnce: boolean;
   /** Which Session is attached, held once and published from here. */
   sessionName: string;
   topic: AttachedTopic | null;
   fingerprint: string;
   /**
-   * Whether the Host's key is not the one last seen. Never blocks.
+   * Whether the Host's key is not the one last seen, and the user has not
+   * accepted it. Typing stays closed while it is true; see acceptHostKey.
    *
    * A flag rather than a record: the Host's name is on the Attach and the key
    * it presented is the `fingerprint` beside this, so anything else here would
@@ -197,6 +224,8 @@ export interface Attach {
   refreshTopology(): void;
   /** The user asking for another go, from a disconnected phase. */
   reconnect(): void;
+  /** The user accepting the key the Host presented: it is remembered, and Typing opens. */
+  acceptHostKey(): Promise<void>;
 
   // Per-Pane, for the views the screen puts Surfaces into.
   view(paneId: string): PaneView;
@@ -280,7 +309,9 @@ export interface AttachOptions {
  * exactly this reason: nothing from the dead Connection survives to be believed.
  */
 export function openAttach(options: AttachOptions): Attach {
-  const { host, openConnection, store } = options;
+  const { openConnection, store } = options;
+  /** The Host record, read again on every connect. See connect. */
+  let host = options.host;
   const clock = options.clock ?? systemClock;
   const log = options.log ?? silentLog;
   const say = speakingAs(log, 'attach');
@@ -392,6 +423,10 @@ export function openAttach(options: AttachOptions): Attach {
   const listeners = new Set<(state: AttachState) => void>();
   let state: AttachState = {
     phase: { kind: 'connecting' },
+    typing: { kind: 'waiting', for: 'connecting' },
+    step: 'connecting',
+    painted: new Set(),
+    paintedOnce: false,
     sessionName: options.destination.sessionName,
     topic: options.destination.topic ? { id: options.destination.topic.id, view: topicStartingFrom(options.destination.topic.seed) } : null,
     fingerprint: '',
@@ -423,8 +458,33 @@ export function openAttach(options: AttachOptions): Attach {
   function change(over: Partial<AttachState>): void {
     if (closed && over.phase?.kind !== 'closed') return;
     noteChange(over);
-    state = { ...state, ...over };
+    const next = { ...state, ...over };
+    const typing = typingOf({ phase: next.phase, switching: pendingSwitch !== null, keyChanged: next.keyChanged });
+    const retyped = !sameTyping(typing, state.typing);
+    state = retyped ? { ...next, typing } : next;
+    if (retyped) {
+      say(`typing ${typing.kind}${typing.kind === 'waiting' ? ` for ${typing.for}` : ''}`);
+      showCursors();
+    }
     publish();
+  }
+
+  /** Whether the view of `paneId` may draw a cursor: the active Pane, while Typing is open. */
+  function cursorWanted(paneId: string, activeId = state.topology.activePane?.id): boolean {
+    return state.typing.kind === 'open' && paneId === activeId;
+  }
+
+  function showCursors(): void {
+    for (const [id, view] of views) view.setCursor(cursorWanted(id));
+  }
+
+  /** The state change for a Pane whose Surface was painted, or became blank. */
+  function paintedChange(paneId: string, painted: boolean): Partial<AttachState> {
+    if (state.painted.has(paneId) === painted) return {};
+    const next = new Set(state.painted);
+    if (painted) next.add(paneId);
+    else next.delete(paneId);
+    return painted ? { painted: next, paintedOnce: true } : { painted: next };
   }
 
   /**
@@ -514,8 +574,6 @@ export function openAttach(options: AttachOptions): Attach {
       if (stale(mine) || !client) throw new Error('the Connection has gone');
       return client;
     };
-    const active = () => paneId === state.topology.activePane?.id;
-
     const view = createPaneView(
       paneId,
       {
@@ -542,7 +600,7 @@ export function openAttach(options: AttachOptions): Attach {
         // A Pane that painted is a Pane that is talking to the Host again,
         // which is the honest moment to take a line of trouble down.
         onPainted: () => {
-          if (!stale(mine)) change({ trouble: null });
+          if (!stale(mine)) change({ trouble: null, ...paintedChange(paneId, true) });
         },
         onError: (error) => {
           if (!stale(mine)) change({ trouble: describeError(error) });
@@ -564,7 +622,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (shown.grid) view.reportGrid(shown.grid);
     }
     view.setPaused(suspended);
-    view.setActive(active());
+    view.setCursor(cursorWanted(paneId));
     return view;
   }
 
@@ -577,8 +635,8 @@ export function openAttach(options: AttachOptions): Attach {
    * view *gets one*, which is what re-creates every view after a replacement:
    * the Surfaces belong to the screen and did not go anywhere, so a fresh view
    * over the same Surface resyncs it from a fresh capture exactly as a first
-   * paint does. And one cursor, in the Pane the keyboard is in — remembered by
-   * each view so a repaint does not bring a second one back.
+   * paint does. And one cursor at most, in the Pane the keyboard is in —
+   * remembered by each view so a repaint does not bring a second one back.
    *
    * The Surface itself is *kept* when its Pane leaves. It is the screen's, and
    * the screen says when it goes — and the screen may not agree that it has:
@@ -599,7 +657,7 @@ export function openAttach(options: AttachOptions): Attach {
     for (const id of onScreen.keys()) {
       if (wanted.has(id)) viewFor(id);
     }
-    for (const [id, view] of views) view.setActive(id === next.activePane?.id);
+    for (const [id, view] of views) view.setCursor(cursorWanted(id, next.activePane?.id));
   }
 
   /** Disposes every view but keeps the Surfaces, which the screen still holds. */
@@ -703,8 +761,15 @@ export function openAttach(options: AttachOptions): Attach {
   async function connect(): Promise<void> {
     const mine = generation;
     try {
+      // Read again each time: a Try again after Edit Host is a try with the
+      // edit in it.
+      const saved = (await store.load()).hosts.find((each) => each.id === host.id);
+      if (stale(mine)) return;
+      if (saved) host = saved;
       say(`connecting to ${host.displayName} (${host.address}:${host.port}) for ${state.sessionName}`);
-      const opened = await openConnection(host);
+      const opened = await openConnection(host, (step) => {
+        if (!stale(mine)) change({ step });
+      });
       if (stale(mine)) {
         say('Connection opened after it was no longer wanted; closing it');
         await opened.close();
@@ -722,6 +787,7 @@ export function openAttach(options: AttachOptions): Attach {
       }
       if (stale(mine)) return;
       change({
+        step: 'attaching',
         fingerprint: opened.fingerprint,
         keyChanged: opened.verdict.kind === 'changed',
       });
@@ -991,7 +1057,7 @@ export function openAttach(options: AttachOptions): Attach {
     say(`replacing the Connection (generation ${generation})`);
     void teardown();
     connection = null;
-    change({ phase });
+    change({ phase, step: 'connecting' });
     void connect();
   }
 
@@ -1073,6 +1139,7 @@ export function openAttach(options: AttachOptions): Attach {
       const observed = sessionRevision;
       const switching: PendingSwitch = { destination, confirmed: null };
       pendingSwitch = switching;
+      change({});
       try {
         await current.switchSession(destination.sessionName);
         if (stale(mine) || client !== current) throw new Error('The Attach changed before the Session opened.');
@@ -1097,7 +1164,10 @@ export function openAttach(options: AttachOptions): Attach {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
       } finally {
-        if (pendingSwitch === switching) pendingSwitch = null;
+        if (pendingSwitch === switching) {
+          pendingSwitch = null;
+          change({});
+        }
       }
     },
 
@@ -1263,6 +1333,14 @@ export function openAttach(options: AttachOptions): Attach {
       replace({ kind: 'reconnecting' });
     },
 
+    async acceptHostKey(): Promise<void> {
+      if (closed || !state.keyChanged) return;
+      const fingerprint = state.fingerprint;
+      say('the user accepted the new Host key');
+      await store.rememberFingerprint(host.id, fingerprint);
+      if (state.fingerprint === fingerprint) change({ keyChanged: false });
+    },
+
     view: viewFor,
 
     surfaceForPane(paneId: string, surface: PaneSurface | null, grid: Grid | null = null): void {
@@ -1271,6 +1349,7 @@ export function openAttach(options: AttachOptions): Attach {
         say(`Surface for ${paneId} left`);
         onScreen.delete(paneId);
         views.get(paneId)?.setSurface(null);
+        change(paintedChange(paneId, false));
         return;
       }
       say(
@@ -1282,7 +1361,9 @@ export function openAttach(options: AttachOptions): Attach {
       // The grid is the Surface's own or nothing: a Surface that has not
       // reported yet says so as soon as it is laid out, and the grid the one
       // before it reported is not this one's.
+      const blank = onScreen.get(paneId)?.surface !== surface;
       onScreen.set(paneId, { surface, grid });
+      if (blank) change(paintedChange(paneId, false));
       const existing = views.get(paneId);
       if (!existing) {
         // Made from what is on screen, which is both halves at once.
@@ -1370,7 +1451,7 @@ export function openAttach(options: AttachOptions): Attach {
       sizing.dispose();
       onScreen.clear();
       listeners.clear();
-      state = { ...state, phase: { kind: 'closed' } };
+      state = { ...state, phase: { kind: 'closed' }, typing: { kind: 'stopped', reason: null } };
       // Awaited, so that "this Session is gone" is true by the time this
       // resolves. The holder opens the next one on the strength of it.
       await teardown();

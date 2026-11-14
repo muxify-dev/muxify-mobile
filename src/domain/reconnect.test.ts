@@ -1,18 +1,9 @@
 import type { Host } from '@/storage/records';
 
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { AttachPhase } from '@/tmux/attach';
-import { reasonForAttachFailure, reasonForConnectFailure } from '@/tmux/disconnect-reason';
 
-import {
-  failureText,
-  placeToReconnect,
-  reconnect,
-  reconnectProgress,
-  type Lookup,
-  type ReconnectProgress,
-  type SessionVisit,
-} from './reconnect';
+import { coverOf } from './cover';
+import { placeToReconnect, reconnect, type Lookup, type SessionVisit } from './reconnect';
 
 const HOST: Host = {
   id: 'host1',
@@ -36,39 +27,6 @@ describe('placeToReconnect', () => {
     ['its Host was deleted', true, [], PLACE],
   ])('is the Hosts list when %s', (_, on, hosts, lastPlace) => {
     expect(placeToReconnect({ reconnectOnStart: on }, { hosts, lastPlace })).toBeNull();
-  });
-});
-
-describe('reconnectProgress', () => {
-  it.each<[string, Lookup]>([
-    ['connecting', { kind: 'at', step: 'connecting' }],
-    ['signing in', { kind: 'at', step: 'signing-in' }],
-    ['looking for the Session', { kind: 'at', step: 'looking-for-session' }],
-  ])('follows the visit while it is %s, whatever the Attach says', (_, lookup) => {
-    expect(reconnectProgress(lookup, { kind: 'connected' })).toEqual(lookup);
-  });
-
-  it('stays failed at the step the visit failed at', () => {
-    const lookup: Lookup = { kind: 'failed', step: 'looking-for-session', reason: null };
-    expect(reconnectProgress(lookup, null)).toEqual(lookup);
-  });
-
-  it.each<[string, AttachPhase | null, ReconnectProgress]>([
-    ['not yet asked for', null, { kind: 'at', step: 'attaching' }],
-    ['connecting', { kind: 'connecting' }, { kind: 'at', step: 'attaching' }],
-    ['connected', { kind: 'connected' }, { kind: 'attached' }],
-    [
-      'closed',
-      { kind: 'closed' },
-      { kind: 'failed', step: 'attaching', title: 'Disconnected', reason: null },
-    ],
-    [
-      'disconnected',
-      { kind: 'disconnected', reason: { kind: 'host-unreachable', detail: 'no route' } },
-      { kind: 'failed', step: 'attaching', title: 'Host unreachable', reason: 'no route' },
-    ],
-  ])('follows the Attach once the Session is found and the Attach is %s', (_, phase, progress) => {
-    expect(reconnectProgress({ kind: 'found' }, phase)).toEqual(progress);
   });
 });
 
@@ -113,9 +71,11 @@ async function reconnectTo(host: ReturnType<typeof fakeHost>, session = 'main') 
   return steps;
 }
 
-function messageOf(progress: ReconnectProgress) {
-  if (progress.kind !== 'failed') throw new Error(`not failed: ${progress.kind}`);
-  return failureText(progress, { hostName: 'Dev', session: 'main' });
+/** What the Connection Screen says about where the visit stopped. */
+function messageOf(lookup: Lookup) {
+  const cover = coverOf({ missing: null, lookup, attach: null, place: { hostName: 'Dev', session: 'main' } });
+  if (cover.kind !== 'connection-screen' || !cover.failure) throw new Error(`not failed: ${lookup.kind}`);
+  return { title: cover.failure.title, reason: cover.failure.reason };
 }
 
 describe('reconnect', () => {
@@ -156,7 +116,10 @@ describe('reconnect', () => {
     [
       'the Host presents a changed key',
       { verdict: { kind: 'changed', stored: 'SHA256:old' } },
-      { title: 'Dev presented a different host key', reason: null },
+      {
+        title: 'Dev presented a different host key',
+        reason: 'It may have been rebuilt, or something may be intercepting the connection.',
+      },
     ],
     [
       'the Host refuses the Identity',
@@ -177,31 +140,7 @@ describe('reconnect', () => {
     const host = fakeHost(options);
     const steps = await reconnectTo(host);
 
-    expect(messageOf(reconnectProgress(steps.at(-1)!, null))).toEqual(text);
+    expect(messageOf(steps.at(-1)!)).toEqual(text);
     expect(host.seen.attached).toBe(false);
-  });
-
-  it.each<[string, AttachPhase, { title: string; reason: string | null }]>([
-    [
-      'tmux has let go of the Session',
-      {
-        kind: 'disconnected',
-        reason: reasonForAttachFailure(new Error("can't find session: main")),
-      },
-      { title: 'Session ended', reason: "can't find session: main" },
-    ],
-    [
-      'the Host did not answer the Attach',
-      {
-        kind: 'disconnected',
-        reason: reasonForConnectFailure(Object.assign(new Error(''), { code: 'TIMEOUT' })),
-      },
-      {
-        title: 'Host unreachable',
-        reason: 'The Host did not answer in time. Check the address and that it is reachable.',
-      },
-    ],
-  ])('says why the Attach failed when %s', (_, phase, text) => {
-    expect(messageOf(reconnectProgress({ kind: 'found' }, phase))).toEqual(text);
   });
 });

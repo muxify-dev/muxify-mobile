@@ -3,10 +3,8 @@ import type { Settings } from '@/settings/settings';
 import { describeConnectionFailure } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { LastPlace, Records } from '@/storage/records';
-import type { AttachPhase } from '@/tmux/attach';
-import { shortLabel } from '@/tmux/disconnect-reason';
 
-/** What "Trying to reconnect" shows, in the order a reconnect goes through them. */
+/** What the Connection Screen shows for a cold start, in the order a reconnect goes through them. */
 export const RECONNECT_STEPS = [
   'connecting',
   'checking-host-key',
@@ -28,22 +26,11 @@ export type LookupFailure =
   /** `reason` is null when the Host answered and the Session is not in its list. */
   | { step: 'looking-for-session'; reason: string | null };
 
-/** Why a reconnect stopped. It stays stopped until the user asks again. */
-export type ReconnectFailure =
-  | LookupFailure
-  | { step: 'attaching'; title: string; reason: string | null };
-
 /** How far that visit has gone. */
 export type Lookup =
   | { kind: 'at'; step: LookupStep }
   | { kind: 'found' }
   | ({ kind: 'failed' } & LookupFailure);
-
-/** Where a reconnect is, from the visit and then from the Attach's own phases. */
-export type ReconnectProgress =
-  | { kind: 'at'; step: ReconnectStep }
-  | ({ kind: 'failed' } & ReconnectFailure)
-  | { kind: 'attached' };
 
 export const LOOKUP_START: Lookup = { kind: 'at', step: 'connecting' };
 
@@ -60,29 +47,6 @@ export function placeToReconnect(
   return records.hosts.some((host) => host.id === place.hostId) ? place : null;
 }
 
-/**
- * The step to show. The Attach is asked for only once the visit has found the
- * Session, so until then its phase says nothing about this reconnect.
- */
-export function reconnectProgress(lookup: Lookup, phase: AttachPhase | null): ReconnectProgress {
-  if (lookup.kind !== 'found') return lookup;
-  switch (phase?.kind) {
-    case 'connected':
-      return { kind: 'attached' };
-    case 'disconnected':
-      return {
-        kind: 'failed',
-        step: 'attaching',
-        title: shortLabel(phase.reason),
-        reason: phase.reason.detail === '' ? null : phase.reason.detail,
-      };
-    case 'closed':
-      return { kind: 'failed', step: 'attaching', title: 'Disconnected', reason: null };
-    default:
-      return { kind: 'at', step: 'attaching' };
-  }
-}
-
 export function reconnectStepLabel(step: ReconnectStep): string {
   switch (step) {
     case 'connecting':
@@ -95,28 +59,6 @@ export function reconnectStepLabel(step: ReconnectStep): string {
       return 'Looking for the Session';
     case 'attaching':
       return 'Attaching';
-  }
-}
-
-/** What a failed step says: a headline, and the Host's or the library's own words. */
-export function failureText(
-  failure: ReconnectFailure,
-  place: { hostName: string; session: string },
-): { title: string; reason: string | null } {
-  const { hostName, session } = place;
-  switch (failure.step) {
-    case 'connecting':
-      return { title: `Could not reach ${hostName}`, reason: failure.reason };
-    case 'checking-host-key':
-      return { title: `${hostName} presented a different host key`, reason: null };
-    case 'signing-in':
-      return { title: `${hostName} did not accept the Identity`, reason: null };
-    case 'looking-for-session':
-      return failure.reason === null
-        ? { title: `${session} is no longer on ${hostName}`, reason: null }
-        : { title: `Could not look for ${session} on ${hostName}`, reason: failure.reason };
-    case 'attaching':
-      return { title: failure.title, reason: failure.reason };
   }
 }
 
