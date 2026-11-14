@@ -509,9 +509,9 @@ in its place.
 _Avoid_: Toolbar, key bar
 
 **Key Row**:
-Muxify's own Liquid Glass row pinned to the bottom of the Terminal Screen,
-riding the keyboard: the keys a phone keyboard does not have, in one capsule,
-three sections. At the left, fixed: ⎋ escape, ⌃ control, ⌥ option and ⇥ tab.
+Muxify's own strip of keys, docked on top of the software keyboard, or at
+the bottom of the Terminal Screen while the keyboard is down: the keys a
+phone keyboard does not have, in three sections. At the left, fixed: ⎋ escape, ⌃ control, ⌥ option and ⇥ tab.
 In the middle, scrolling sideways: twelve pair keys, each with two symbols:
 the *main* symbol large, and the *alternate* symbol small and grey above it. A
 tap types the main symbol. A touch dragged down types the alternate one. As
@@ -521,16 +521,16 @@ The drag is complete at 14 pt, and the release types the large symbol, then
 the key springs back. The pairs fade
 at an end while there are more past it. At the right, fixed: the arrow key,
 Panes, which opens the Panes picker, ⌘ command, and Keyboard, which shows or
-hides the system keyboard. On iPad, over a docked keyboard, the row is not a capsule
-but a full-width strip on the keyboard's top edge, and all twelve pairs fit
-without scrolling. Over a floating or split keyboard, or with none, it is the
-capsule. The arrow key is one key for the four arrows: a
+hides the system keyboard. The strip is the same on iPhone and iPad, in the
+system keyboard's own light or dark colour, so it reads as the keyboard's top
+row. Over a floating or split iPad keyboard it stays at the bottom of the
+screen. The arrow key is one key for the four arrows: a
 touch sends nothing, a drag of 12 pt sends the arrow it points at, a hold
 repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
 and spent on the next key from either the row or the system keyboard. ⌥ is
 tmux's `M-`. ⌘ makes the next letter a Shortcut. While the Composer is open,
-or with no Connection, the keys are disabled. The glass and key frames stay
+or with no Connection, the keys are disabled. The strip and key frames stay
 fixed during touch. A physical keyboard hides the row. iOS supplies its
 initial state, connection changes, and a fresh state on foreground entry.
 Hiding the software keyboard alone does not hide the row. Hiding the row

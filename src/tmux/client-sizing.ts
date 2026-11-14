@@ -2,7 +2,7 @@ import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import type { Clock, Timer } from '@/lib/clock';
 import { systemClock } from '@/lib/clock';
 
-import { cellSizeOf, gridForContainer, type Extent } from './pane-layout';
+import { gridForContainer, type Extent } from './pane-layout';
 import { createResizeScheduler } from './resize-scheduler';
 import { sameGrid, type Grid } from './tmux-client';
 
@@ -35,6 +35,11 @@ export interface ClientSizing {
   containerLaidOut(container: Extent): void;
   /** Whether anything on screen currently spans the whole Window. */
   spanningSurface(present: boolean): void;
+  /**
+   * A Surface said how big one cell is: the font's own measure. A split is
+   * sized from it, so a new font size resizes a split as well.
+   */
+  cellReported(cell: Extent): void;
   /**
    * A sheet is up, or is not.
    *
@@ -104,9 +109,9 @@ export interface ClientSizing {
  * window passes without it changing.
  *
  * **A split has nothing that spans the Window**, so nothing reports the
- * Window's grid. It is worked out from the cell metric instead, measured while
- * a spanning Surface was up and kept — the font fixes the cell and a resize
- * does not change it.
+ * Window's grid. It is worked out from the container and the cell instead.
+ * Every Surface reports its cell, the Panes and the ruler alike, so the cell
+ * follows the font size.
  *
  * **Something has to be the ruler.** Before there is a Topology there are no
  * Panes to mount and so nothing to measure a cell from, and no arithmetic here
@@ -130,11 +135,9 @@ export function createClientSizing(
 
   /** The grid last reported, which may still be moving. */
   let reported: Grid | null = null;
-  /** The size in points that produced `reported`, for the cell metric. */
-  let reportedAt: Extent = { width: 0, height: 0 };
   /** The last grid that stood still for a whole settle window. */
   let stable: Grid | null = null;
-  /** How big one cell is, learned from a Surface that filled the container. */
+  /** How big one cell is, as a Surface last reported it. */
   let cell: Extent | null = null;
   let container: Extent = { width: 0, height: 0 };
   /** True until something on screen says otherwise; a single Pane spans. */
@@ -176,19 +179,10 @@ export function createClientSizing(
     scheduler.request(next, force);
   }
 
-  /** Believes a grid: measures the cell from it, wakes Attach, and sends it. */
+  /** Believes a grid: wakes Attach, and sends it. */
   function adopt(grid: Grid): void {
     stable = grid;
-    // Measured here and kept, because a split mounts nothing that spans the
-    // Window and so has nothing to measure. A pre-layout grid against a
-    // container this size would imply a cell nothing is drawn at, which is the
-    // other reason it is settled first.
-    const measured = cellSizeOf(grid, reportedAt);
-    if (measured) cell = measured;
-    say(
-      `settled on ${grid.cols}x${grid.rows}` +
-        (measured ? `, cell ${measured.width.toFixed(2)}x${measured.height.toFixed(2)}` : ''),
-    );
+    say(`settled on ${grid.cols}x${grid.rows}`);
 
     for (const wake of waiting.splice(0)) wake(grid);
     options.onSettled?.(grid);
@@ -226,7 +220,6 @@ export function createClientSizing(
           `${Math.round(surface.width)}x${Math.round(surface.height)}`,
       );
       reported = { cols: grid.cols, rows: grid.rows };
-      reportedAt = surface;
       if (settleTimer === null) {
         tries = 0;
         settling = reported;
@@ -241,6 +234,13 @@ export function createClientSizing(
       // A spanning Surface answers a container change by reporting a new grid,
       // which is a better answer than this one — it is the Surface's own
       // measurement rather than arithmetic over a remembered cell.
+      if (!spanning) push(false);
+    },
+
+    cellReported(next: Extent): void {
+      if (disposed || (cell && cell.width === next.width && cell.height === next.height)) return;
+      cell = next;
+      say(`cell ${next.width.toFixed(2)}x${next.height.toFixed(2)}`);
       if (!spanning) push(false);
     },
 

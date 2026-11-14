@@ -1,8 +1,8 @@
 import React from 'react';
+import * as ReactNative from 'react-native';
 import { StyleSheet, Text, View } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-import { AppPalettes } from '@/constants/app-theme';
 import { NO_MODIFIERS } from '@/lib/modifier-keys';
 import { KeyRow } from './key-row';
 
@@ -28,34 +28,30 @@ function contrast(a: string, b: string) {
 let renderer: ReactTestRenderer;
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
-it.each([
-  ['dark', 'floating'],
-  ['light', 'floating'],
-  ['dark', 'docked'],
-  ['light', 'docked'],
-] as const)('draws readable keys on a runtime without glass, %s and %s', async (appearance, placement) => {
+it.each(['dark', 'light'] as const)('draws readable keys on its strip, %s', async (appearance) => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const palette = AppPalettes[appearance];
+  jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(appearance);
   await act(async () => {
     renderer = create(
       <KeyRow
         armed={NO_MODIFIERS} onArm={jest.fn()} onKey={jest.fn()} onSymbol={jest.fn()} onPanes={jest.fn()}
-        onKeyboard={jest.fn()} keyboardVisible={false} keysDisabled={false} panesDisabled={false} palette={palette}
-        placement={placement}
+        onKeyboard={jest.fn()} keyboardVisible={false} keysDisabled={false} panesDisabled={false}
+        below={34}
       />,
     );
   });
 
-  const capsules = renderer.root.findAllByType(View)
+  // The strip is the view that fills what lies under the row.
+  const [strip] = renderer.root.findAllByType(View)
     .map((node) => StyleSheet.flatten(node.props.style))
-    .filter((style) => style?.borderRadius !== undefined && style.overflow === 'hidden' && style.backgroundColor);
+    .filter((style) => style?.paddingBottom === 34);
   const labels = renderer.root.findAllByType(Text)
     .map((node) => StyleSheet.flatten(node.props.style)?.color)
-    .filter((color): color is string => color === palette.toolbarTint);
+    .filter((color): color is string => typeof color === 'string' && color.startsWith('#'));
 
-  expect(capsules.length).toBeGreaterThan(0);
+  expect(strip?.backgroundColor).toBeDefined();
   expect(labels.length).toBeGreaterThan(0);
-  for (const capsule of capsules) {
-    expect(contrast(capsule.backgroundColor as string, palette.toolbarTint)).toBeGreaterThanOrEqual(4.5);
+  for (const label of labels) {
+    expect(contrast(strip.backgroundColor as string, label)).toBeGreaterThanOrEqual(4.5);
   }
 });

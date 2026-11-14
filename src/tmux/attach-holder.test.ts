@@ -64,6 +64,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     windowGridReported: () => {},
     containerLaidOut: () => {},
     spanningSurface: () => {},
+    cellReported: () => {},
     sheetPresented: () => {},
     lifecycleChanged: (next: LifecyclePhase) =>
       log.push(`lifecycle ${options.destination.sessionName} ${next}`),

@@ -218,6 +218,8 @@ export interface Attach {
   windowGridReported(grid: Grid, surface: Extent): void;
   containerLaidOut(container: Extent): void;
   spanningSurface(present: boolean): void;
+  /** A Surface said how big one cell is. See ClientSizing. */
+  cellReported(cell: Extent): void;
   sheetPresented(open: boolean): void;
   lifecycleChanged(phase: LifecyclePhase): void;
 
@@ -1269,6 +1271,7 @@ export function openAttach(options: AttachOptions): Attach {
 
     containerLaidOut: (extent: Extent) => sizing.containerLaidOut(extent),
     spanningSurface: (present: boolean) => sizing.spanningSurface(present),
+    cellReported: (cell: Extent) => sizing.cellReported(cell),
     sheetPresented: (open: boolean) => sizing.sheetPresented(open),
 
     lifecycleChanged(phase: LifecyclePhase): void {

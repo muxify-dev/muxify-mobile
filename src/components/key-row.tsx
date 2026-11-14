@@ -1,12 +1,12 @@
 import { MaskedView } from '@expo/ui/community/masked-view';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
   type GestureResponderEvent,
 } from 'react-native';
@@ -36,7 +36,6 @@ import {
   type ArrowDirection,
 } from '@/lib/arrow-stick';
 import type { Modifier, Modifiers } from '@/lib/modifier-keys';
-import type { KeyRowPlacement } from '@/lib/terminal-clearance';
 
 export interface KeyRowProps {
   /** Which modifiers are armed, so the row can show them held down. */
@@ -54,22 +53,56 @@ export interface KeyRowProps {
   /** Not connected, or the Composer has the keyboard: no key can reach a Pane. */
   keysDisabled: boolean;
   panesDisabled: boolean;
-  /** The chrome colours of the Theme in use: the row draws its own labels. */
-  palette: Appearance;
-  placement: KeyRowPlacement;
+  /**
+   * What lies under the row down to the screen's edge: the docked keyboard,
+   * or the home indicator. The strip's colour fills it, so that it shows in
+   * the keyboard's rounded corners rather than the Surface.
+   */
+  below: number;
 }
 
+type KeyRowColors = Pick<
+  Appearance,
+  'background' | 'rowSurface' | 'separator' | 'toolbarTint' | 'controlAccent' | 'secondaryLabel'
+>;
+
 /**
- * The glass row pinned to the bottom of the Terminal Screen, riding the
- * keyboard: the keys a phone keyboard lacks, in one capsule with three
- * sections.
+ * The system keyboard's own colours, measured on iOS 27, so that the strip
+ * reads as the keyboard's top row. They follow the system's light or dark
+ * appearance, as the keyboard does, and not the Theme.
+ */
+const KEYBOARD_COLORS: Record<'light' | 'dark', KeyRowColors> = {
+  light: {
+    background: '#CDCED4',
+    rowSurface: '#FFFFFF',
+    separator: 'rgba(60, 60, 67, 0.29)',
+    toolbarTint: '#000000',
+    controlAccent: '#007AFF',
+    secondaryLabel: 'rgba(60, 60, 67, 0.6)',
+  },
+  dark: {
+    background: '#2A2C2E',
+    rowSurface: '#5B5E62',
+    separator: 'rgba(84, 84, 88, 0.65)',
+    toolbarTint: '#FFFFFF',
+    controlAccent: '#0A84FF',
+    secondaryLabel: 'rgba(235, 235, 245, 0.6)',
+  },
+};
+
+/**
+ * The strip docked on top of the software keyboard, or at the bottom of the
+ * Terminal Screen while the keyboard is down: the keys a phone keyboard
+ * lacks, in three sections.
  *
- * All of it is React Native over `GlassView`. Each fixed section has a sticky
- * key that must draw as *held*, and the middle scrolls sideways inside the
- * capsule; neither has a SwiftUI equivalent reachable through `@expo/ui`.
+ * All of it is React Native. Each fixed section has a sticky key that must
+ * draw as *held*, and the middle scrolls sideways; neither has a SwiftUI
+ * equivalent reachable through `@expo/ui`.
  */
 export function KeyRow(props: KeyRowProps) {
-  const { armed, onArm, onKey, onSymbol, keysDisabled, palette } = props;
+  const { armed, onArm, onKey, onSymbol, keysDisabled } = props;
+  const scheme = useColorScheme() === 'light' ? 'light' : 'dark';
+  const palette = KEYBOARD_COLORS[scheme];
   const [bubble, setBubble] = useState<Bubble | null>(null);
 
   const fixedKey = (each: ModifierKey | NamedKey) =>
@@ -95,8 +128,8 @@ export function KeyRow(props: KeyRowProps) {
     );
 
   return (
-    <View style={[styles.row, props.placement === 'docked' && styles.dockedRow]} pointerEvents="box-none">
-      <Capsule docked={props.placement === 'docked'} palette={palette}>
+    <View style={{ backgroundColor: palette.background, paddingBottom: props.below }}>
+      <View style={styles.row}>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
         <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
@@ -116,7 +149,6 @@ export function KeyRow(props: KeyRowProps) {
           onPress={props.onKeyboard}
           symbol={props.keyboardVisible ? 'keyboard.chevron.compact.down' : 'keyboard'}
         />
-      </Capsule>
       {bubble ? (
         <View
           pointerEvents="none"
@@ -124,7 +156,7 @@ export function KeyRow(props: KeyRowProps) {
             styles.bubble,
             {
               left: bubble.center - BUBBLE_WIDTH / 2,
-              bottom: CAPSULE_HEIGHT + 6,
+              bottom: ROW_HEIGHT + 6,
               backgroundColor: palette.rowSurface,
               borderColor: palette.separator,
             },
@@ -144,6 +176,7 @@ export function KeyRow(props: KeyRowProps) {
           )}
         </View>
       ) : null}
+      </View>
     </View>
   );
 }
@@ -152,21 +185,7 @@ type Bubble =
   | { kind: 'pair'; pair: PairKey; progress: SharedValue<number>; center: number }
   | { kind: 'arrow'; symbol: string; center: number };
 
-function Capsule({ docked, palette, children }: { docked: boolean; palette: Appearance; children: ReactNode }) {
-  const style = [styles.capsule, docked && styles.dockedCapsule];
-  // Some iOS 26 betas ship without the underlying effect class and crash on
-  // use, so probe the runtime API rather than the design-mode flag. A
-  // GlassView on such a runtime renders nothing at all, hence the plain view.
-  return isGlassEffectAPIAvailable() ? (
-    <GlassView style={style} glassEffectStyle="regular">
-      {children}
-    </GlassView>
-  ) : (
-    <View style={[style, { backgroundColor: palette.background }]}>{children}</View>
-  );
-}
-
-function Divider({ palette }: { palette: Appearance }) {
+function Divider({ palette }: { palette: KeyRowColors }) {
   return <View style={[styles.divider, { backgroundColor: palette.secondaryLabel }]} />;
 }
 
@@ -183,7 +202,7 @@ function FixedKey({
   label: string;
   held?: boolean;
   disabled?: boolean;
-  palette: Appearance;
+  palette: KeyRowColors;
   onPress: () => void;
   symbol?: SFSymbol;
   children?: string;
@@ -219,9 +238,7 @@ function FixedKey({
  * that a whole number of them fit with the same gap at each end. A fixed pair
  * width leaves a remainder, which shows as a sliver of the next key.
  *
- * Each end fades out while there are more pairs past it. The fade is a mask
- * rather than a gradient painted over the pairs, because what is behind them
- * is glass, and no one colour matches it.
+ * Each end fades out while there are more pairs past it.
  */
 function PairStrip({
   disabled,
@@ -230,7 +247,7 @@ function PairStrip({
   onBubble,
 }: {
   disabled: boolean;
-  palette: Appearance;
+  palette: KeyRowColors;
   onSymbol: (symbol: string) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
@@ -323,7 +340,7 @@ function PairKeyView({
   pair: PairKey;
   width: number;
   disabled: boolean;
-  palette: Appearance;
+  palette: KeyRowColors;
   onSymbol: (symbol: string) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
@@ -395,7 +412,7 @@ function PairSymbols({
   progress: SharedValue<number>;
   height: number;
   fontSize: number;
-  palette: Appearance;
+  palette: KeyRowColors;
 }) {
   const lineHeight = Math.round(fontSize * 1.2);
   const lift = (lineHeight * (1 + ALTERNATE_SCALE)) / 2;
@@ -446,7 +463,7 @@ function ArrowStick({
   onBubble,
 }: {
   disabled: boolean;
-  palette: Appearance;
+  palette: KeyRowColors;
   onKey: (key: NamedKey) => void;
   onBubble: (bubble: Bubble | null) => void;
 }) {
@@ -573,17 +590,15 @@ const STICK_ACTIONS = [
 ] satisfies { name: ArrowDirection; label: string }[];
 
 /** 44 pt is the iOS touch minimum. */
-const CAPSULE_HEIGHT = 44;
-/** Clearance above the capsule, so that glass does not sit on the Surface's last row. */
-const ROW_CLEARANCE = 6;
-export const KEY_ROW_HEIGHT = CAPSULE_HEIGHT + ROW_CLEARANCE;
+const ROW_HEIGHT = 44;
+export const KEY_ROW_HEIGHT = ROW_HEIGHT;
 const KEY_HEIGHT = 38;
 
 /**
  * How wide a fixed key is.
  *
  * Sized from the middle: the pairs get what the fixed sections leave. Eight
- * of these, the dividers and the capsule's padding come to 266 pt, which
+ * of these, the dividers and the strip's padding come to 266 pt, which
  * leaves three whole pairs on a 393 pt phone.
  */
 const KEY_WIDTH = 30;
@@ -599,7 +614,7 @@ const DISC = 30;
 /** The narrowest a pair may be before the strip shows one fewer of them. */
 const PAIR_MIN_WIDTH = 32;
 
-/** The gap at each end of the capsule, and of the pairs. */
+/** The gap at each end of the strip, and of the pairs. */
 const EDGE = 4;
 
 /** How far down a touch on a pair goes before it means the alternate symbol. */
@@ -618,26 +633,11 @@ const BUBBLE_FONT_SIZE = 24;
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 8,
-    paddingTop: ROW_CLEARANCE,
-  },
-  capsule: {
-    flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    height: CAPSULE_HEIGHT,
-    borderRadius: CAPSULE_HEIGHT / 2,
+    height: ROW_HEIGHT,
     paddingHorizontal: EDGE,
-    overflow: 'hidden',
   },
-  dockedRow: {
-    paddingHorizontal: 0,
-  },
-  dockedCapsule: {
-    borderRadius: 0,
-  },
-  // The scroll view takes the capsule's whole height, so a touch anywhere in
+  // The scroll view takes the strip's whole height, so a touch anywhere in
   // the middle section scrolls it.
   strip: {
     flex: 1,

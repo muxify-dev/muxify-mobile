@@ -1,7 +1,6 @@
 import {
   cellOf,
   clippedRowHeight,
-  cellSizeOf,
   gridForContainer,
   paneBoxes,
   windowGridOf,
@@ -129,19 +128,7 @@ describe('where each Pane goes', () => {
 });
 
 describe('the cell metric', () => {
-  it('comes from a container known to hold exactly one grid', () => {
-    expect(cellSizeOf({ cols: 49, rows: 41 }, { width: 490, height: 410 })).toEqual({
-      width: 10,
-      height: 10,
-    });
-  });
-
-  it('says nothing when there is nothing to measure', () => {
-    expect(cellSizeOf({ cols: 0, rows: 0 }, { width: 490, height: 410 })).toBeUndefined();
-    expect(cellSizeOf({ cols: 49, rows: 41 }, { width: 0, height: 0 })).toBeUndefined();
-  });
-
-  it('works back to the grid a container holds', () => {
+  it('gives the grid a container holds', () => {
     expect(gridForContainer({ width: 10, height: 10 }, { width: 490, height: 410 })).toEqual({
       cols: 49,
       rows: 41,

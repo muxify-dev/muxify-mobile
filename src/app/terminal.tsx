@@ -3,8 +3,8 @@ import { File } from 'expo-file-system';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
@@ -300,12 +300,7 @@ export default function TerminalScreen() {
   const keyboardVisible = keyboardFrame !== null && keyboardFrame.height > 0;
   const rootView = useRef<View>(null);
   const [rootBounds, setRootBounds] = useState<ScreenRect>({ x: 0, y: 0, width: 0, height: 0 });
-  const clearance = terminalClearance(
-    rootBounds,
-    keyboardFrame,
-    insets.bottom,
-    physicalKeyboard ? 'hidden' : Platform.OS === 'ios' && Platform.isPad ? 'dockable' : 'floating',
-  );
+  const clearance = terminalClearance(rootBounds, keyboardFrame, insets.bottom);
   const [composerOpen, setComposerOpen] = useState(false);
   const composerInput = useRef<ComposerInputRef | null>(null);
   /**
@@ -367,11 +362,17 @@ export default function TerminalScreen() {
       return cell;
     });
   }, []);
+  // The cell a split is sized from, as the font gives it now.
+  useEffect(() => {
+    if (cellSize) attach?.cellReported(cellSize);
+  }, [attach, cellSize]);
 
   /** The full height survives keyboard and Composer layout changes. */
   const windowHeight = Math.max(0, rootBounds.height - (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) - clearance.resting);
   const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
   const selecting = selectionArea !== null;
+  /** The mouse layer's long press is still down. See MouseLayer. */
+  const [mousePressHeld, setMousePressHeld] = useState(false);
   const windowArea = useMemo(
     (): Extent => selectionArea ?? {
       width: containerSize.width,
@@ -1324,6 +1325,7 @@ export default function TerminalScreen() {
             onResize={(event) => {
               say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
               reportWindowGrid(event);
+              reportCell({ width: event.nativeEvent.cellWidth, height: event.nativeEvent.cellHeight });
             }}
           />
         ) : null}
@@ -1352,6 +1354,7 @@ export default function TerminalScreen() {
               onScroll={handlePaneScroll}
               swipe={swipe}
               onSelect={(paneId) => attach?.selectPane(paneId)}
+              selecting={selecting}
               onSelectionPress={beginSelection}
               onSelectionEnd={endSelection}
               onSelectionEdge={scrollSelection}
@@ -1368,14 +1371,27 @@ export default function TerminalScreen() {
               except scroll further back. Measured: a fourteen-point drag on the
               pill left it exactly where it was. */}
           {/* Gone while a Selection is open: the touches are the Selection
-              Layer's then, which is under this one. */}
-          {state?.mouseTracking && activeSlot && mouseGrid && !selecting ? (
+              Layer's then, which is under this one. Not before the press
+              that began it lifts: its finger is this layer's touch, and the
+              selection follows it. */}
+          {state?.mouseTracking && activeSlot && mouseGrid && (!selecting || mousePressHeld) ? (
             <MouseLayer
               box={activeSlot.box}
               grid={mouseGrid}
               cell={cellSize}
               onTap={handleTapCell}
-              onLongPress={(press) => beginSelection(activePaneId, press)}
+              onLongPress={(press) => {
+                setMousePressHeld(true);
+                beginSelection(activePaneId, press);
+                // Held from here, so the rows that answer the press find a
+                // finger to follow even before it moves.
+                attach?.view(activePaneId).followSelectionPress(press, false);
+              }}
+              onPressMove={(point) => attach?.view(activePaneId).followSelectionPress(point, false)}
+              onPressEnd={(point) => {
+                setMousePressHeld(false);
+                attach?.view(activePaneId).followSelectionPress(point, true);
+              }}
               onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
               swipe={swipe}
             />
@@ -1474,10 +1490,8 @@ export default function TerminalScreen() {
         keysDisabled={!connected || composerOpen}
         // One Pane is when you reach for Split, so never disabled while connected.
         panesDisabled={!connected}
-        palette={chrome}
-        placement={clearance.placement}
-      /> : null}
-      <View style={{ height: clearance.bottom }} pointerEvents="none" />
+        below={clearance.bottom}
+      /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
 
       {/* The native Header ends where this content area begins. */}
       <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
@@ -1617,6 +1631,7 @@ function surfaceFor(ref: TerminalViewRef): PaneSurface {
     isFocused: () => ref.isFocused(),
     showSelection: (rows, press) => void ref.showSelection(rows.rows, rows.top, press),
     endSelection: () => void ref.endSelection(),
+    followSelectionPress: (point, lifted) => void ref.followSelectionPress(point.x, point.y, lifted),
   };
 }
 
@@ -1668,6 +1683,7 @@ function PaneSurfaceView({
   onScroll,
   swipe,
   onSelect,
+  selecting,
   onSelectionPress,
   onSelectionEnd,
   onSelectionEdge,
@@ -1687,6 +1703,8 @@ function PaneSurfaceView({
   onScroll: (paneId: string, grid: Grid, height: number, points: number) => void;
   swipe: PaneSwipe;
   onSelect: (paneId: string) => void;
+  /** A Selection is open on the active Pane. */
+  selecting: boolean;
   /** A long press on the Surface, which has no text until it is given some. */
   onSelectionPress: (paneId: string, press: SurfacePoint) => void;
   /** The Selection Layer closed its selection, or found no text to select. */
@@ -1814,6 +1832,9 @@ function PaneSurfaceView({
       {!slot.fillsWindow && !slot.pane.active ? (
         <View
           style={StyleSheet.absoluteFill}
+          // A Selection handle at the seam reaches over this Pane, and a
+          // short drag of it read here as a tap that changed Pane.
+          pointerEvents={selecting ? 'none' : 'auto'}
           accessibilityRole="button"
           accessibilityLabel={`Pane ${slot.pane.index}`}
           onStartShouldSetResponder={() => true}
@@ -1857,8 +1878,8 @@ function PaneSurfaceView({
 /** How far a finger may travel and still be a tap rather than a drag, in points. */
 const TAP_SLOP = 10;
 
-/** How long a finger stays still to be a long press, as iOS counts it. */
-const LONG_PRESS_MS = 500;
+/** How long a finger stays still to be a long press: the Selection Layer's own 0.35 s. */
+const LONG_PRESS_MS = 350;
 
 /** What the Jump to latest pill claims beyond its own edges, to reach 44pt. */
 const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
@@ -1891,6 +1912,8 @@ function MouseLayer({
   cell,
   onTap,
   onLongPress,
+  onPressMove,
+  onPressEnd,
   onScroll,
   swipe,
 }: {
@@ -1901,6 +1924,10 @@ function MouseLayer({
   onTap: (column: number, row: number) => void;
   /** A finger held still: the start of a Selection, and no click. */
   onLongPress: (press: SurfacePoint) => void;
+  /** That finger moved on without lifting: the Selection grows with it. */
+  onPressMove: (point: SurfacePoint) => void;
+  /** That finger lifted, or the touch was taken away. */
+  onPressEnd: (point: SurfacePoint) => void;
   onScroll: (lines: number) => void;
   swipe: PaneSwipe;
 }) {
@@ -1926,8 +1953,15 @@ function MouseLayer({
   const coasting = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   /** Runs out when the finger has been still long enough to be a long press. */
   const holding = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Whether this touch became a long press, so its release is not a tap. */
+  /** A long press is down: its release is not a tap, and it ends once. */
   const held = useRef(false);
+  /** Where that long press's finger last was. */
+  const lastPoint = useRef<SurfacePoint>({ x: 0, y: 0 });
+  // Gone with the press still down, the release never comes: end it here.
+  const endHeldPress = useEffectEvent(() => {
+    if (held.current) onPressEnd(lastPoint.current);
+  });
+  useEffect(() => () => endHeldPress(), []);
   const stopHolding = useCallback(() => {
     if (holding.current !== null) clearTimeout(holding.current);
     holding.current = null;
@@ -2021,6 +2055,7 @@ function MouseLayer({
         holding.current = setTimeout(() => {
           holding.current = null;
           held.current = true;
+          lastPoint.current = press;
           onLongPress(press);
         }, LONG_PRESS_MS);
       }}
@@ -2037,7 +2072,11 @@ function MouseLayer({
             sideways.current.clear();
           }
         }
-        if (held.current) return;
+        if (held.current) {
+          lastPoint.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+          onPressMove(lastPoint.current);
+          return;
+        }
         if (axis.current === 'horizontal') {
           sideways.current.add(nativeEvent.locationX, Date.now());
           swipe.drag(nativeEvent.locationX - swipeFrom.current, size.current.width, true);
@@ -2055,7 +2094,11 @@ function MouseLayer({
       onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
         const { width, height } = size.current;
         stopHolding();
-        if (held.current) return;
+        if (held.current) {
+          held.current = false;
+          onPressEnd({ x: nativeEvent.locationX, y: nativeEvent.locationY });
+          return;
+        }
         if (axis.current === 'horizontal') {
           const direction = swipeOf(
             nativeEvent.locationX - swipeFrom.current,
@@ -2082,6 +2125,10 @@ function MouseLayer({
       onResponderTerminate={() => {
         stopCoasting();
         stopHolding();
+        if (held.current) {
+          held.current = false;
+          onPressEnd(lastPoint.current);
+        }
         if (axis.current === 'horizontal') swipe.cancel();
       }}
     />

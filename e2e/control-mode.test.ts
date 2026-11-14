@@ -148,6 +148,7 @@ function recordingSurface() {
     isFocused: () => Promise.resolve(focused),
     showSelection: (rows) => selections.push(rows),
     endSelection: () => {},
+    followSelectionPress: () => {},
   };
   return {
     surface,

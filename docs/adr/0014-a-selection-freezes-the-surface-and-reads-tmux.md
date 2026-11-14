@@ -89,3 +89,21 @@ the user drags the Pane through its Scrollback.
 - A line that falls off the top of a full Scrollback moves each key by one.
   A Selection held open across that is one row off. tmux gives no number
   that stays the same there.
+
+## Later: the grid has no padding, the press is shorter, and a drag extends
+
+- **No padding.** The Selection Layer maps a point to a cell from the
+  Surface's top left. Ghostty's default padding of 2 pt drew each glyph 2 pt
+  to the right of that, so a selection seemed to end before the last letter
+  of a word. The Surface now sets the padding to zero. The mouse layer's taps
+  use the same mapping and are exact now too.
+- **0.35 s, not 0.5 s.** Most of the wait for a selection was the long press
+  itself. The rows from tmux take one round trip after it, about 50 ms on
+  this Mac. The Selection Layer and the mouse layer use the same time.
+- **A drag extends.** The finger that made the selection can move without
+  lifting, and the selection then runs by whole words from the first word to
+  the word under the finger, as in a text view. At the top or bottom edge
+  the Pane scrolls, as for a handle. Over the mouse layer the touch is the
+  mouse layer's, so it gives each move of the finger to the Selection Layer,
+  and stays until the finger lifts. The program in the Pane gets no mouse
+  event for it.

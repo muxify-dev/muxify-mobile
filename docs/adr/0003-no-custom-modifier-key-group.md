@@ -131,6 +131,20 @@ The decision above does not change. Each arrow is still a tmux key name from
 `ARROW_KEYS`, and an armed ctrl or opt goes with the first arrow of a drag and
 not with its repeats.
 
+## A strip on the keyboard, not a glass capsule
+
+The Key Row is now one full-width strip on every device. It sits flush on
+top of the software keyboard, and at the bottom of the Terminal Screen while
+the keyboard is down. It has the system keyboard's own colour, light or
+dark, so it reads as the keyboard's top row. Its colour also fills the space
+under it, so the keyboard's rounded top corners show the strip and not the
+Surface. A hardware keyboard hides it.
+
+The glass capsule floated over the Surface, and on iPad it docked as a strip
+with the same glass. Two looks for one row was more to keep correct, and the
+glass on the keyboard looked out of place. The keyboard's colours are
+measured on iOS 27 and written in the row; iOS does not give them to an app.
+
 ## The iPad shortcut bar is hidden too
 
 On iPad, iOS shows a second bar over the keyboard: the shortcut bar, with

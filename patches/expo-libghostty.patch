@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d27ec7e84 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6f710392d 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -15,7 +15,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d
  };
  export type TerminalViewRef = {
      /** Feed base64-encoded PTY output into the terminal grid. */
-@@ -18,7 +24,39 @@ export type TerminalViewRef = {
+@@ -18,7 +24,45 @@ export type TerminalViewRef = {
      writeText(text: string): Promise<void>;
      /** Mark the underlying PTY as exited. */
      finish(exitCode: number): Promise<void>;
@@ -34,6 +34,12 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d
 +    showSelection(rows: TerminalSelectionRow[], top: number, press: TerminalPoint | null): Promise<void>;
 +    /** Close the selection and let its rows go. */
 +    endSelection(): Promise<void>;
++    /**
++     * A long press that a view of the caller's timed over this one moved, or
++     * lifted. The selection that press started follows it, by whole words, as
++     * it follows the Surface's own press.
++     */
++    followSelectionPress(x: number, y: number, lifted: boolean): Promise<void>;
 +};
 +/** One row of terminal text for the Selection Layer. */
 +export type TerminalSelectionRow = {
@@ -55,7 +61,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +90,77 @@ export type TerminalViewProps = {
+@@ -52,10 +96,77 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -134,10 +140,10 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7612beb42a9a010550c0e67058d0fc0d
      onResize?: (event: {
          nativeEvent: TerminalResizeEvent;
 diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
-index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..d47f7712a28552327ea59b1c96ccad1f16ab87ca 100644
+index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..54523f6a9a0ec055a4c9c6da9d30a679fa090c4d 100644
 --- a/build/ExpoLibghosttyView.js
 +++ b/build/ExpoLibghosttyView.js
-@@ -22,6 +22,11 @@ export default function TerminalView({ ref, onResize, ...props }) {
+@@ -22,6 +22,12 @@ export default function TerminalView({ ref, onResize, ...props }) {
              write: whenReady((base64) => native.current.write(base64)),
              writeText: whenReady((text) => native.current.writeText(text)),
              finish: whenReady((exitCode) => native.current.finish(exitCode)),
@@ -146,6 +152,7 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..d47f7712a28552327ea59b1c96ccad1f
 +            isFocused: whenReady(() => native.current.isFocused()),
 +            showSelection: whenReady((rows, top, press) => native.current.showSelection(rows, top, press)),
 +            endSelection: whenReady(() => native.current.endSelection()),
++            followSelectionPress: whenReady((x, y, lifted) => native.current.followSelectionPress(x, y, lifted)),
          };
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
@@ -198,7 +205,7 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd73e9491e 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af788ef1780 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
 @@ -1,11 +1,21 @@
@@ -224,7 +231,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +46,50 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +46,56 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -255,6 +262,12 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd
 +        view.endSelection()
 +      }.runOnQueue(.main)
 +
++      // A long press timed by a view of the caller's over this one moved or
++      // lifted. The selection it started follows it.
++      AsyncFunction("followSelectionPress") { (view: ExpoLibghosttyView, x: Double, y: Double, lifted: Bool) in
++        view.followSelectionPress(x: x, y: y, lifted: lifted)
++      }.runOnQueue(.main)
++
 +      // The accessory bar of ctrl/esc/tab/arrows above the keyboard. Defaults
 +      // to visible, which is the library's own behaviour.
 +      Prop("accessoryBar") { (view: ExpoLibghosttyView, visible: Bool?) in
@@ -275,7 +288,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd
      }
    }
  }
-@@ -46,6 +100,24 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +106,24 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -301,7 +314,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..330637956112abdd0aac95f82bf6d3cd
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc63a1d90c 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd837522d0d 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -361,7 +374,20 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -44,6 +89,50 @@ class ExpoLibghosttyView: ExpoView {
+@@ -26,7 +71,12 @@ class ExpoLibghosttyView: ExpoView {
+   /// unlike Android's per-view application. Colors accept ghostty config
+   /// syntax; nil clears back to the defaults.
+   func applyTheme(_ theme: TerminalThemeRecord?) {
++    // No padding, so the grid starts at the view's top left. The Selection
++    // Layer and every caller that turns a touch into a cell count from there;
++    // ghostty's default of 2 pt drew each glyph 2 pt past the cell they meant.
+     var config = TerminalConfiguration()
++      .appending(.windowPaddingX(0))
++      .appending(.windowPaddingY(0))
+     if let theme {
+       if let value = theme.background { config = config.background(value) }
+       if let value = theme.foreground { config = config.foreground(value) }
+@@ -44,6 +94,50 @@ class ExpoLibghosttyView: ExpoView {
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -412,7 +438,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +145,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +150,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -434,7 +460,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc
        }
      )
      self.session = session
-@@ -66,21 +166,265 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +171,269 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -495,6 +521,10 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc
 +
 +  func endSelection() {
 +    selectionLayer.end()
++  }
++
++  func followSelectionPress(x: Double, y: Double, lifted: Bool) {
++    selectionLayer.followHostPress(to: CGPoint(x: x, y: y), lifted: lifted)
 +  }
 +
 +  /// Reads the pasteboard for a Paste the user chose in the edit menu or
@@ -703,10 +733,10 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..fd83ef33286f2029be0038d24b0f78fc
  }
 diff --git a/ios/TerminalSelectionLayer.swift b/ios/TerminalSelectionLayer.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542e1ffaea5
+index 0000000000000000000000000000000000000000..81273c61d0759c2b4d25b9301fe25a61f0bd980c
 --- /dev/null
 +++ b/ios/TerminalSelectionLayer.swift
-@@ -0,0 +1,788 @@
+@@ -0,0 +1,874 @@
 +import UIKit
 +import UIKit.UIGestureRecognizerSubclass
 +
@@ -891,6 +921,12 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +  /// one from before the scroll, and this one takes its place.
 +  private var edgeRange: TerminalSelectionRange?
 +  private var edgeTimer: Timer?
++  /// The word the long press selected, while its finger is still down.
++  private var pressWord: TerminalSelectionRange?
++  /// Whether that finger has moved the selection since.
++  private var pressMoved = false
++  /// Where the host's own press is, while it is down. See followHostPress.
++  private var hostFinger: CGPoint?
 +
 +  override init(frame: CGRect) {
 +    super.init(frame: frame)
@@ -901,7 +937,9 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +    addInteraction(textInteraction)
 +    addInteraction(menu)
 +
-+    press.minimumPressDuration = 0.5
++    // Shorter than the 0.5 s iOS uses: the rows are a round trip away, and
++    // the selection was slow to come. Muxify's mouse layer times the same.
++    press.minimumPressDuration = 0.35
 +    press.addTarget(self, action: #selector(pressed(_:)))
 +    addGestureRecognizer(press)
 +
@@ -1000,13 +1038,87 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +  // MARK: - Starting
 +
 +  @objc private func pressed(_ recognizer: UILongPressGestureRecognizer) {
-+    guard recognizer.state == .began else { return }
 +    let point = recognizer.location(in: self)
-+    if hasRows {
-+      begin(at: point)
-+    } else {
-+      onPress?(point)
++    switch recognizer.state {
++    case .began:
++      pressWord = nil
++      if hasRows {
++        begin(at: point)
++      } else {
++        onPress?(point)
++      }
++    case .changed:
++      extendPress(to: point)
++    case .ended:
++      finishPress(at: point)
++    default:
++      pressWord = nil
++      pressMoved = false
 +    }
++  }
++
++  /// A long press that the host timed on a view of its own over this one —
++  /// its mouse layer — moved, or lifted. The selection follows it as it
++  /// follows this view's own press.
++  func followHostPress(to point: CGPoint, lifted: Bool) {
++    if lifted {
++      hostFinger = nil
++      finishPress(at: point)
++      return
++    }
++    hostFinger = point
++    extendPress(to: point)
++    startEdgeScrollIfNeeded()
++  }
++
++  /// The press is over. The menu went away while the finger moved the
++  /// selection, and comes back.
++  private func finishPress(at point: CGPoint) {
++    if pressMoved, isOpen {
++      menu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
++    }
++    pressWord = nil
++    pressMoved = false
++    edgeRange = nil
++  }
++
++  /// The finger that holds the selection's moving end: the host's press while
++  /// it has one, else the touch on this view.
++  private var fingerDown: Bool { hostFinger != nil || tracker.isDown }
++  private var fingerLocation: CGPoint { hostFinger ?? tracker.location }
++  /// Tells one touch from the next. The host's press is never a touch here.
++  private var fingerTouch: Int { hostFinger != nil ? -1 : tracker.touch }
++
++  /// The finger that made the selection moved without lifting. As in a text
++  /// view, the selection runs by whole words from the word first pressed to
++  /// the word under the finger.
++  private func extendPress(to point: CGPoint) {
++    guard let anchor = pressWord, isOpen else { return }
++    let reached: TerminalSelectionRange
++    if let hit = character(at: point) {
++      reached = word(at: hit)
++    } else if let position = closestPosition(to: point) as? TerminalSelectionPosition {
++      reached = TerminalSelectionRange(position, position)
++    } else {
++      return
++    }
++    let range = TerminalSelectionRange(
++      reached.from < anchor.from ? reached.from : anchor.from,
++      anchor.to < reached.to ? reached.to : anchor.to
++    )
++    // Past the top or bottom edge the edge scroll moves this end, as it does
++    // for a handle.
++    handleTouch = fingerTouch
++    fixedEnd = reached.from < anchor.from ? anchor.to : anchor.from
++    if let current = selection, current.from == range.from, current.to == range.to { return }
++    if !pressMoved {
++      pressMoved = true
++      menu.dismissMenu()
++    }
++    inputDelegate?.selectionWillChange(self)
++    selection = range
++    inputDelegate?.selectionDidChange(self)
++    refreshDisplay()
 +  }
 +
 +  /// Selects the word at a point, or offers Paste where there is no text.
@@ -1030,6 +1142,10 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +    inputDelegate?.selectionDidChange(self)
 +    refreshDisplay()
 +    menu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
++    // The rows can arrive after the finger has moved on: catch up with it.
++    let held = press.state == .began || press.state == .changed || hostFinger != nil
++    pressWord = held ? range : nil
++    if held { extendPress(to: hostFinger ?? press.location(in: self)) }
 +  }
 +
 +  /// The word a character is in, as iOS divides a line into words, or the
@@ -1125,12 +1241,12 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +
 +  /// -1 with the finger at the top edge, 1 at the bottom edge, 0 between.
 +  private var edgeUnderFinger: Int {
-+    guard tracker.isDown, handleTouch == tracker.touch else { return 0 }
++    guard fingerDown, handleTouch == fingerTouch else { return 0 }
 +    // Half a row and no more: a handle's knob hangs outside its row, and a
 +    // drag along the first or the last row must not be a scroll.
 +    let visible = visibleBounds
-+    if tracker.location.y < visible.minY + cell.height * 0.5 { return -1 }
-+    if tracker.location.y > visible.maxY - cell.height * 0.5 { return 1 }
++    if fingerLocation.y < visible.minY + cell.height * 0.5 { return -1 }
++    if fingerLocation.y > visible.maxY - cell.height * 0.5 { return 1 }
 +    return 0
 +  }
 +
@@ -1142,7 +1258,7 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +      guard self.isOpen, edge != 0 else {
 +        // Back between the edges with the finger down, the handle is
 +        // UIKit's alone again. Lifted, UIKit has still to set its range.
-+        if self.tracker.isDown { self.edgeRange = nil }
++        if self.fingerDown { self.edgeRange = nil }
 +        self.stopEdgeScroll()
 +        return
 +      }
@@ -1163,7 +1279,7 @@ index 0000000000000000000000000000000000000000..fbe0d5aa5d50c80c19da6cc588783542
 +  /// end the handle is on goes to the row now under the finger.
 +  private func followEdgeDrag() {
 +    guard edgeTimer != nil, let fixedEnd,
-+      let moved = closestPosition(to: tracker.location) as? TerminalSelectionPosition
++      let moved = closestPosition(to: fingerLocation) as? TerminalSelectionPosition
 +    else { return }
 +    let range = TerminalSelectionRange(fixedEnd, moved)
 +    guard !range.isEmpty else { return }
@@ -2085,7 +2201,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c933647431dc90f2 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355dad4dbf7e 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2101,7 +2217,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c9336474
  };
  
  export type TerminalViewRef = {
-@@ -21,8 +27,43 @@ export type TerminalViewRef = {
+@@ -21,8 +27,49 @@ export type TerminalViewRef = {
    writeText(text: string): Promise<void>;
    /** Mark the underlying PTY as exited. */
    finish(exitCode: number): Promise<void>;
@@ -2120,6 +2236,12 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c9336474
 +  showSelection(rows: TerminalSelectionRow[], top: number, press: TerminalPoint | null): Promise<void>;
 +  /** Close the selection and let its rows go. */
 +  endSelection(): Promise<void>;
++  /**
++   * A long press that a view of the caller's timed over this one moved, or
++   * lifted. The selection that press started follows it, by whole words, as
++   * it follows the Surface's own press.
++   */
++  followSelectionPress(x: number, y: number, lifted: boolean): Promise<void>;
 +};
 +
 +/** One row of terminal text for the Selection Layer. */
@@ -2145,7 +2267,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c9336474
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -59,6 +100,63 @@ export type TerminalViewProps = {
+@@ -59,6 +106,63 @@ export type TerminalViewProps = {
    theme?: TerminalTheme;
    /** User keyboard/IME input to forward to the PTY. */
    onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;
@@ -2210,7 +2332,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..8f621a321f7f66cf5f505825c9336474
    onResize?: (event: { nativeEvent: TerminalResizeEvent }) => void;
    ref?: Ref<TerminalViewRef>;
 diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
-index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..6cefc990c5c116ec9c8f7e4df49d22a7c2bb3da7 100644
+index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..0e6e0ef7f692427f4d3473b5f57a5579c6ca43b6 100644
 --- a/src/ExpoLibghosttyView.tsx
 +++ b/src/ExpoLibghosttyView.tsx
 @@ -2,7 +2,12 @@ import { requireNativeView } from 'expo';
@@ -2227,7 +2349,7 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..6cefc990c5c116ec9c8f7e4df49d22a7
  
  const NativeView: React.ComponentType<TerminalViewProps> = requireNativeView('ExpoLibghostty');
  
-@@ -28,6 +33,13 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
+@@ -28,6 +33,16 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
        write: whenReady((base64: string) => native.current!.write(base64)),
        writeText: whenReady((text: string) => native.current!.writeText(text)),
        finish: whenReady((exitCode: number) => native.current!.finish(exitCode)),
@@ -2238,6 +2360,9 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..6cefc990c5c116ec9c8f7e4df49d22a7
 +        native.current!.showSelection(rows, top, press),
 +      ),
 +      endSelection: whenReady(() => native.current!.endSelection()),
++      followSelectionPress: whenReady((x: number, y: number, lifted: boolean) =>
++        native.current!.followSelectionPress(x, y, lifted),
++      ),
      };
    }, []);
  

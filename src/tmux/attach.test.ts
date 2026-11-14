@@ -288,6 +288,7 @@ function fakeSurface(): PaneSurface & { written: Uint8Array[] } {
     isFocused: () => Promise.resolve(focused),
     showSelection: () => {},
     endSelection: () => {},
+    followSelectionPress: () => {},
   };
 }
 

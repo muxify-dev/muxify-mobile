@@ -56,6 +56,11 @@ export interface PaneSurface {
   showSelection(rows: SelectionRows, press: SurfacePoint | null): void;
   /** Closes the Selection Layer's selection. */
   endSelection(): void;
+  /**
+   * The long press that started the Selection, timed over the Surface by the
+   * mouse layer, moved or lifted. The selection follows it by whole words.
+   */
+  followSelectionPress(point: SurfacePoint, lifted: boolean): void;
 }
 
 /** A place on the Surface, in points from its top left. */
@@ -205,6 +210,8 @@ export interface PaneView {
    * and for one that a Selection holds already.
    */
   beginSelection(press: SurfacePoint): boolean;
+  /** The finger that began the Selection, held over the mouse layer, moved or lifted. */
+  followSelectionPress(point: SurfacePoint, lifted: boolean): void;
   /** The Selection is over: the Layer closes, and the Pane is live again. */
   endSelection(): void;
   /** Nothing more is wanted from this view. Releases the Surface. */
@@ -848,6 +855,11 @@ export function createPaneView(
     },
 
     endSelection,
+
+    followSelectionPress(point: SurfacePoint, lifted: boolean): void {
+      if (disposed || !selection) return;
+      surface?.followSelectionPress(point, lifted);
+    },
 
     scroll(lines: number, size: Grid): void {
       if (disposed || lines === 0) return;

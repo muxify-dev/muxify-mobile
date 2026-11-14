@@ -197,12 +197,12 @@ describe('a resize the Host refused', () => {
 });
 
 describe('a split, where no Surface spans the Window', () => {
-  it('sizes the Client from the container and the remembered cell metric', async () => {
+  it('sizes the Client from the container and the cell a Surface reported', async () => {
     const { module, sent, clock, land } = sizing();
     module.attached();
     module.containerLaidOut(PHONE);
-    // While a single Pane was up, which is what measures the cell.
     module.windowGridReported(REAL, PHONE);
+    module.cellReported({ width: 7.9, height: 18.6 });
     clock.advance(GRID_SETTLE_MS * 2);
     await land();
     sent.length = 0;
@@ -212,8 +212,23 @@ describe('a split, where no Surface spans the Window', () => {
     module.spanningSurface(false);
     module.containerLaidOut({ width: 390, height: 400 });
 
-    // 390/(390/49) wide, 400/(780/41) tall.
+    // 390/7.9 wide, 400/18.6 tall.
     expect(sent).toEqual([{ cols: 49, rows: 21 }]);
+  });
+
+  it('resizes a split when the font size gives a new cell', async () => {
+    const { module, sent, land } = sizing();
+    module.attached();
+    module.containerLaidOut(PHONE);
+    module.cellReported({ width: 7.9, height: 18.6 });
+    module.spanningSurface(false);
+    await land();
+    sent.length = 0;
+
+    module.cellReported({ width: 9.75, height: 19.5 });
+
+    // 390/9.75 wide, 780/19.5 tall.
+    expect(sent).toEqual([{ cols: 40, rows: 40 }]);
   });
 
   it('says nothing when it has never seen a cell to measure', () => {

@@ -123,6 +123,8 @@ function fakeSurface() {
   const keyboard: string[] = [];
   /** What the Selection Layer was given, and each time it was closed. */
   const selections: ({ rows: SelectionRows; press: SurfacePoint | null } | 'ended')[] = [];
+  /** Where the press that began a Selection went after the Layer had it. */
+  const follows: { point: SurfacePoint; lifted: boolean }[] = [];
   let focused = false;
 
   const surface: PaneSurface = {
@@ -138,12 +140,14 @@ function fakeSurface() {
     isFocused: () => Promise.resolve(focused),
     showSelection: (rows, press) => selections.push({ rows, press }),
     endSelection: () => selections.push('ended'),
+    followSelectionPress: (point, lifted) => follows.push({ point, lifted }),
   };
 
   return {
     surface,
     written,
     selections,
+    follows,
     keyboard,
     focused: () => focused,
     /** The keyboard moving to some other Surface, as far as this one can tell. */
@@ -1160,6 +1164,22 @@ describe('a Selection on a Pane', () => {
           ],
         },
       },
+    ]);
+  });
+
+  it('passes the press that began a Selection on to the Layer, and nothing without one', async () => {
+    const kit = viewOn(shellWithHistory());
+    await paints(kit, SMALL);
+
+    kit.view.followSelectionPress({ x: 1, y: 2 }, false);
+    expect(kit.screen.follows).toEqual([]);
+
+    kit.view.beginSelection(PRESS);
+    kit.view.followSelectionPress({ x: 60, y: 12 }, false);
+    kit.view.followSelectionPress({ x: 70, y: 12 }, true);
+    expect(kit.screen.follows).toEqual([
+      { point: { x: 60, y: 12 }, lifted: false },
+      { point: { x: 70, y: 12 }, lifted: true },
     ]);
   });
 
