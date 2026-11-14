@@ -264,6 +264,74 @@ describe('running commands', () => {
   });
 });
 
+describe('running a chain', () => {
+  let host: ReturnType<typeof fakeHost>;
+  let connection: ControlConnection;
+  const chain = [['if-shell', '-F', '1', 'send-keys a ; set-option @x 1'], ['display-message', '-p', 'mark']];
+  const texts = (replies: { ok: boolean; text: string[] }[]) => replies.map((reply) => [reply.ok, ...reply.text]);
+
+  beforeEach(async () => {
+    host = fakeHost();
+    ({ connection } = await connected(host));
+  });
+
+  it('writes the commands as one line, with the end marker behind it', async () => {
+    void connection.runChain(chain);
+    expect(host.lastCommand()).toBe(
+      "'if-shell' '-F' '1' 'send-keys a ; set-option @x 1' ; 'display-message' '-p' 'mark'\n" +
+        "'display-message' '-p' 'muxify-chain-end-1'",
+    );
+  });
+
+  it('resolves with every block up to the end marker, however many there are', async () => {
+    const asked = connection.runChain(chain);
+    host.reply(2);
+    host.reply(3);
+    host.reply(4);
+    host.reply(5, ['7\t100\t200\tcat']);
+    host.reply(6, ['muxify-chain-end-1']);
+    expect(texts(await asked)).toEqual([[true], [true], [true], [true, '7\t100\t200\tcat']]);
+  });
+
+  it('keeps an %error from inside the line and the blocks after it', async () => {
+    const asked = connection.runChain(chain);
+    host.reply(2);
+    host.refuse(3, "can't find pane: %9");
+    host.reply(4, ['\t100\t\t']);
+    host.reply(5, ['muxify-chain-end-1']);
+    expect(texts(await asked)).toEqual([[true], [false, "can't find pane: %9"], [true, '\t100\t\t']]);
+  });
+
+  it('resolves a line that tmux could not parse with its one %error', async () => {
+    const asked = connection.runChain(chain);
+    host.refuse(2, 'yacc stack overflow');
+    host.reply(3, ['muxify-chain-end-1']);
+    expect(texts(await asked)).toEqual([[false, 'yacc stack overflow']]);
+  });
+
+  it('leaves the next command in step', async () => {
+    const first = connection.runChain(chain);
+    const second = connection.run(['list-sessions']);
+    const third = connection.runChain(chain);
+    host.reply(2);
+    host.reply(3, ['mark']);
+    host.reply(4, ['muxify-chain-end-1']);
+    host.reply(5, ['work']);
+    host.reply(6, ['other mark']);
+    host.reply(7, ['muxify-chain-end-2']);
+    expect(texts(await first)).toEqual([[true], [true, 'mark']]);
+    expect((await second).text).toEqual(['work']);
+    expect(texts(await third)).toEqual([[true, 'other mark']]);
+  });
+
+  it('rejects a chain that the Connection ended in the middle of', async () => {
+    const asked = connection.runChain(chain);
+    host.reply(2);
+    host.drop();
+    await expect(asked).rejects.toThrow(TmuxError);
+  });
+});
+
 describe('what tmux pushes while commands are in flight', () => {
   it('hands Pane output straight through, keyed by Pane', async () => {
     const host = fakeHost();

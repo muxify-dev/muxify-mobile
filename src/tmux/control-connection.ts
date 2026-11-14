@@ -48,6 +48,20 @@ export interface CommandRunner {
    * picker that opens and a picker that loads.
    */
   runAll(commands: TmuxArgv[]): Promise<CommandReply[]>;
+
+  /**
+   * Runs several commands as one line, joined with ` ; `, and resolves with
+   * every reply block the line produced, in order.
+   *
+   * For a line whose commands must run back to back or not at all. The count
+   * of blocks is not the count of commands. Measured on tmux 3.8
+   * (`e2e/probe-input-guard.mjs`): a command that `if-shell` starts answers
+   * with a block of its own, an `%error` from one of those does not stop the
+   * rest of the line, and an `%error` from a command of the line itself does.
+   * So the end of the line's replies is marked, not counted: a second line
+   * that prints a marker goes in the same write, and tmux always runs it.
+   */
+  runChain(commands: TmuxArgv[]): Promise<CommandReply[]>;
 }
 
 /**
@@ -94,7 +108,8 @@ interface Pending {
   line: string;
   /** The command as the Log names it, so its reply can be matched to it. */
   what: string;
-  settle: (reply: CommandReply) => void;
+  /** Takes the next reply block. Answers true when it was this command's last. */
+  take: (reply: CommandReply) => boolean;
   fail: (error: Error) => void;
 }
 
@@ -125,6 +140,9 @@ export async function openControlConnection(
   const pending: Pending[] = [];
   /** Built, but not written: the attach has not answered yet. */
   const waiting: Pending[] = [];
+
+  /** How many chains were written, which numbers each one's end marker. */
+  let chains = 0;
 
   let ready = false;
   let closed: string | null = null;
@@ -217,17 +235,12 @@ export async function openControlConnection(
       // A reply nobody asked for is tmux talking to itself; dropping it is the
       // only safe thing, because handing it to the next command would put
       // every later reply one out of step.
-      const entry = pending.shift();
+      const entry = pending[0];
       if (!entry) {
         say(`← a reply nobody asked for (${reply.lines.length} lines), dropped`);
         return;
       }
-      say(
-        reply.ok
-          ? `← ${entry.what}: ok, ${reply.lines.length} lines`
-          : `← ${entry.what}: error: ${reply.text.join(' ').trim()}`,
-      );
-      entry.settle(reply);
+      if (entry.take(reply)) pending.shift();
       return;
     }
 
@@ -249,6 +262,39 @@ export async function openControlConnection(
     runAll(commands: TmuxArgv[]): Promise<CommandReply[]> {
       if (commands.length === 0) return Promise.resolve([]);
       return runLines(commands.map(renderControlCommand), commands.map(describeCommand));
+    },
+
+    runChain(commands: TmuxArgv[]): Promise<CommandReply[]> {
+      const what = commands.map(describeCommand).join(' ; ');
+      if (closed !== null) {
+        say(`refused ${what}: the Connection is closed`);
+        return Promise.reject(new TmuxError(closed));
+      }
+      chains += 1;
+      const end = `muxify-chain-end-${chains}`;
+      const line = commands.map(renderControlCommand).join(' ; ');
+      const got: CommandReply[] = [];
+      return new Promise<CommandReply[]>((resolve, reject) => {
+        waiting.push({
+          line: `${line}\n${renderControlCommand(['display-message', '-p', end])}`,
+          what,
+          take: (reply) => {
+            if (!(reply.ok && reply.text.length === 1 && reply.text[0] === end)) {
+              got.push(reply);
+              return false;
+            }
+            const errors = got.filter((each) => !each.ok);
+            say(
+              `← ${what}: ${got.length} replies` +
+                (errors.length > 0 ? `, error: ${errors.map((each) => each.text.join(' ').trim()).join('; ')}` : ''),
+            );
+            resolve(got);
+            return true;
+          },
+          fail: reject,
+        });
+        flush();
+      });
     },
 
     async command(argv: TmuxArgv): Promise<Uint8Array[]> {
@@ -285,7 +331,21 @@ export async function openControlConnection(
     const replies = lines.map(
       (line, at) =>
         new Promise<CommandReply>((resolve, reject) => {
-          waiting.push({ line, what: described[at], settle: resolve, fail: reject });
+          const what = described[at];
+          waiting.push({
+            line,
+            what,
+            take: (reply) => {
+              say(
+                reply.ok
+                  ? `← ${what}: ok, ${reply.lines.length} lines`
+                  : `← ${what}: error: ${reply.text.join(' ').trim()}`,
+              );
+              resolve(reply);
+              return true;
+            },
+            fail: reject,
+          });
         }),
     );
     flush();

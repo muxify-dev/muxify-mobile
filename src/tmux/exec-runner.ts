@@ -44,5 +44,8 @@ export function execCommandRunner(
       for (const argv of commands) replies.push(await run(argv));
       return replies;
     },
+    // A shell hands back one stream, so the replies of a line cannot be told
+    // apart here. Only typed input needs a chain, and it has a Control Connection.
+    runChain: () => Promise.reject(new Error('an exec channel does not run a chain')),
   };
 }

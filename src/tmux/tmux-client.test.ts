@@ -23,6 +23,7 @@ function fakeTmux(answers: Record<string, string[] | { error: string[] }>) {
   const runner: CommandRunner = {
     run: (argv) => Promise.resolve(reply(argv)),
     runAll: (commands) => Promise.resolve(commands.map(reply)),
+    runChain: (commands) => Promise.resolve(commands.map(reply)),
   };
 
   return { runner, asked, client: new TmuxClient(runner) };
@@ -361,6 +362,7 @@ describe('previews', () => {
     const runner: CommandRunner = {
       run: () => Promise.reject(new Error('gone')),
       runAll: () => Promise.reject(new Error('gone')),
+      runChain: () => Promise.reject(new Error('gone')),
     };
     expect(await new TmuxClient(runner).capturePanes(['work:0'])).toEqual(new Map());
   });
