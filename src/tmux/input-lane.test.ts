@@ -209,10 +209,32 @@ describe('a Lane across a break', () => {
   it('never uses a Seq again after a discard', () => {
     const run = live();
     run.send(typed(text('a')), answered(mark({ ack: seq(1) })), typed(text('b')), { kind: 'lost' }, { kind: 'connected' });
-    run.send(answered(mark({ panePid: 999, ack: seq(2) })));
+    run.send(answered(mark({ panePid: 999, ack: seq(1) })));
     expect(noticeOf(run.lane)).toMatchObject({ kind: 'discarded', reason: 'pane-replaced', preview: 'b' });
     run.send(typed(text('c')));
     expect(run.delivered()).toEqual(['1:a', '2:b', '3:c']);
+  });
+
+  it.each([
+    ['the Pane was started again', { panePid: 999, ack: null }, 'pane-replaced'],
+    ['the server started again', { serverPid: 101, ack: null }, 'server-restarted'],
+  ] as [string, Partial<PaneMark>, string][])('bars the late line of keys it discarded because %s', (_, read, reason) => {
+    const run = live();
+    run.send(typed(text('a')), { kind: 'lost' }, { kind: 'connected' });
+    run.effects.length = 0;
+    run.send(answered(mark(read)));
+    expect(noticeOf(run.lane)).toMatchObject({ kind: 'discarded', reason, preview: 'a' });
+    expect(run.effects).toEqual([{ kind: 'burn', seq: 1 }]);
+  });
+
+  it('confirms a Batch that a started-again Pane took, and does not call it discarded', () => {
+    const run = live();
+    run.send(typed(text('a')), { kind: 'lost' }, { kind: 'connected' });
+    run.effects.length = 0;
+    run.send(answered(mark({ panePid: 999, ack: seq(1) })));
+    expect(noticeOf(run.lane)).toBeNull();
+    expect(run.lane.delivered).toBe(1);
+    expect(run.effects).toEqual([]);
   });
 
   it('keeps a discarded notice until it is dismissed', () => {
@@ -278,6 +300,12 @@ describe('the verdict on a new Connection', () => {
       'another Pane has the id',
       { waiting: waiting(text('a')), read: mark({ panePid: 201, ack: seq(4) }) },
       false,
+      { kind: 'discard', reason: 'pane-replaced' },
+    ],
+    [
+      'another Pane has the id, and took the unconfirmed Batch',
+      { unconfirmed: batch, read: mark({ panePid: 201, ack: seq(5) }) },
+      true,
       { kind: 'discard', reason: 'pane-replaced' },
     ],
     ['the Pane has the unconfirmed Batch', { unconfirmed: batch, read: mark({ ack: seq(5) }) }, true, { kind: 'send' }],

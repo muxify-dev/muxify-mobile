@@ -67,6 +67,11 @@ function fakeServer() {
       panes.clear();
       panes.set('%0', { pid: 300, ack: 0, typed: [] });
     },
+    /** `respawn-pane -k`: another process in the same Pane, which keeps its options. */
+    respawn(paneId = '%0'): void {
+      const pane = panes.get(paneId);
+      if (pane) pane.pid += 1;
+    },
     runs: (next: string) => {
       program = next;
     },
@@ -2184,6 +2189,19 @@ describe('typed keys and a Connection that breaks', () => {
     type(kit, 'x');
     await settle();
     expect(server.typed()).toBe('x');
+  });
+
+  it('does not type a late line with keys it called discarded when the Pane was started again', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    type(kit, 'abc');
+    await settle();
+    server.respawn();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'discarded', preview: 'abc', reason: 'pane-replaced' }]);
+
+    hosts[0].release();
+    expect(server.typed()).toBe('');
   });
 
   it('never replays a scroll of a full-screen program', async () => {

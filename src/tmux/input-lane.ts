@@ -221,6 +221,8 @@ function resume(lane: Lane, ctx: LaneContext): { lane: Lane; effects: Effect[] }
   return pump(live, ctx);
 }
 
+const burnOf = (seq: Seq): Effect => ({ kind: 'burn', seq });
+
 export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
   switch (event.kind) {
     case 'typed': {
@@ -261,7 +263,10 @@ export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: La
       const confirmed: Lane =
         acked && lane.unconfirmed ? { ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null } : lane;
       if (verdict.kind === 'discard') {
-        return { lane: discard(confirmed, verdict.reason, result === 'gone' ? null : result), effects: [] };
+        // A Pane that is gone takes no late line. Any other Pane can, and it
+        // must not type keys that the card says were discarded.
+        const bar = result !== 'gone' && confirmed.unconfirmed ? [burnOf(confirmed.unconfirmed.seq)] : [];
+        return { lane: discard(confirmed, verdict.reason, result === 'gone' ? null : result), effects: bar };
       }
       const witnessed: Lane = { ...confirmed, witness: result === 'gone' ? null : result };
       if (verdict.kind === 'hold') {
@@ -277,7 +282,7 @@ export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: La
       if (lane.phase.kind !== 'held') return { lane, effects: [] };
       return {
         lane: { ...lane, phase: { kind: 'live' }, unconfirmed: null, waiting: [] },
-        effects: lane.unconfirmed ? [{ kind: 'burn', seq: lane.unconfirmed.seq }] : [],
+        effects: lane.unconfirmed ? [burnOf(lane.unconfirmed.seq)] : [],
       };
     }
 
@@ -316,15 +321,17 @@ export function judge(input: {
   const { unconfirmed, waiting, witness, read } = input;
   if (read === 'gone') return { acked: false, verdict: { kind: 'discard', reason: 'pane-gone' } };
   if (!input.crossed) return { acked: false, verdict: { kind: 'send' } };
-  if (witness && read.serverPid !== witness.serverPid) {
-    return { acked: false, verdict: { kind: 'discard', reason: 'server-restarted' } };
-  }
-  if (witness && read.panePid !== witness.panePid) {
-    return { acked: false, verdict: { kind: 'discard', reason: 'pane-replaced' } };
-  }
-
+  // Before the identity checks: the option outlives `respawn-pane -k`, so a
+  // Pane started again can still show that the Batch arrived before it.
   const ack = read.ack ?? NO_SEQ;
   const acked = unconfirmed !== null && ack >= unconfirmed.seq;
+  if (witness && read.serverPid !== witness.serverPid) {
+    return { acked, verdict: { kind: 'discard', reason: 'server-restarted' } };
+  }
+  if (witness && read.panePid !== witness.panePid) {
+    return { acked, verdict: { kind: 'discard', reason: 'pane-replaced' } };
+  }
+
   const pending: Typed[] = [
     ...(unconfirmed && !acked ? [{ ...unconfirmed.key, typedAt: unconfirmed.typedAt }] : []),
     ...waiting,
