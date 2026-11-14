@@ -55,11 +55,18 @@ describe('homeSection', () => {
     expect(names(shown.rows)).toEqual(['a', 'b']);
   });
 
-  it('says the first read is in flight while the Host has not answered', () => {
+  it('shows no Session while the first read is in flight', () => {
     const shown = section(UNASKED, [remembered('a')]);
 
     expect(shown.connection).toBe('checking');
-    expect(names(shown.rows)).toEqual(['a', 'checking']);
+    expect(shown.rows).toEqual([{ kind: 'checking', text: 'Reading Dev Host…' }]);
+  });
+
+  it('waits for the Topics before it shows a Session, so a Session does not jump into its Topic', () => {
+    const shown = section(answered(sessions('main')), [remembered('main')], ['topics', 'recent', 'sessions']);
+
+    expect(shown.connection).toBe('answered');
+    expect(shown.rows).toEqual([{ kind: 'checking', text: 'Reading Dev Host…' }]);
   });
 
   it('says the Host answered, and keeps saying so while it is asked again', () => {
@@ -84,7 +91,7 @@ describe('homeSection', () => {
       rows.flatMap((row) => (row.kind === 'topic' && row.id ? [row.id] : []));
 
     it('shows every Pinned, In Play and Guest Topic, with no cut at 5', () => {
-      const shown = section(UNASKED, [], ['topics'], listed);
+      const shown = section(answered([]), [], ['topics'], listed);
 
       expect(shownTopics(shown.rows)).toEqual(
         topicIds([...mac.pinned, ...places, ...guests]),
@@ -93,7 +100,7 @@ describe('homeSection', () => {
     });
 
     it('hides Open Places and the Bench', () => {
-      const shown = section(UNASKED, [], ['topics'], listed);
+      const shown = section(answered([]), [], ['topics'], listed);
 
       expect(shown.rows.some((row) => row.kind === 'open-place' || row.kind === 'bench')).toBe(false);
       expect(shownTopics(shown.rows)).not.toContain(topicIds(bench)[0]);

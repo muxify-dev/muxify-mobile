@@ -1,5 +1,5 @@
 import { lastAnswer } from '@/domain/host-listing';
-import { homeRows, type HostScreenInput, type HostScreenRow } from '@/domain/host-screen';
+import { firstReadAnswered, homeRows, type HostScreenInput, type HostScreenRow } from '@/domain/host-screen';
 import type { Host } from '@/storage/records';
 
 /** How many rows Home shows of a Host that is not in In Play, before All opens its Host Screen. */
@@ -24,6 +24,10 @@ export interface HomeSection {
  * and the order Settings gives. A Host in In Play shows all its live Topics
  * instead, as `homeRows` says.
  *
+ * Until the Host has answered its first read, the section has one Reading row
+ * and no Session: the remembered Sessions cannot yet say which a Topic holds,
+ * and drawn early they jump into their Topic cards. See firstReadAnswered.
+ *
  * A Host that refused has its error and nothing else. Its Host Screen would
  * offer the Sessions it remembered, but a Home that opens with a row per
  * Session of a Host that is down reads as a Host that is up.
@@ -36,6 +40,8 @@ export function homeSection(host: Host, input: HostScreenInput): HomeSection {
   return {
     host,
     connection: lastAnswer(listing) === undefined ? 'checking' : 'answered',
-    rows: homeRows(input, HOME_ROWS),
+    rows: firstReadAnswered(input)
+      ? homeRows(input, HOME_ROWS)
+      : [{ kind: 'checking', text: `Reading ${host.displayName}…` }],
   };
 }

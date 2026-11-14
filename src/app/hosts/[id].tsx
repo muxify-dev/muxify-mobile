@@ -38,6 +38,7 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
 import {
+  firstReadAnswered,
   hostScreen,
   type HostScreenRow,
   type HostScreenSection,
@@ -347,7 +348,11 @@ export default function HostScreen() {
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
-          {sections.map((section) => (
+          {!firstReadAnswered(input) ? (
+            <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+              {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
+            </Section>
+          ) : sections.map((section) => (
             <Section
               key={section.id}
               header={

@@ -91,10 +91,11 @@ export interface HostScreenInput {
  * Sessions list off, the Topics list ends with a No Topic row in its place, and
  * the same rule holds for the Sessions under it.
  *
- * Until the Host has answered, every remembered Session is shown (fail open).
- * A Host that is unreachable, slow, or has no tmux server yet must not look
- * like a Host you have never used. The moment a real answer arrives the list
- * narrows to it.
+ * Home draws these before the Host has answered, and then every remembered
+ * Session is shown (fail open). The Host Screen does not: it waits for
+ * firstReadAnswered. A refusal is an answer, and under it the remembered
+ * Sessions show, because a Host that is unreachable or has no tmux server yet
+ * must not look like a Host you have never used.
  *
  * A remembered Session the Host no longer has is dropped from the lists, but
  * never from the records: kill it from a laptop and make it again tomorrow
@@ -134,6 +135,26 @@ export function hostScreen({
         return [sessionsList(outOfTopics, listingOutOfTopics, recentOn)];
     }
   });
+}
+
+/**
+ * Whether the Host Screen has its first answer from the Host.
+ *
+ * Until then the screen draws none of the Host's rows. The Recent Sessions are
+ * the phone's own records and cannot yet say which of them a Topic holds, so a
+ * Session drawn before the Topics land jumps from Recent Sessions into its
+ * Topic. A later read carries the last answer, so only the first read waits.
+ * A refusal counts as an answer, whatever the Topics are doing: a Host that is
+ * no longer saved never gets its Topics read.
+ */
+export function firstReadAnswered({
+  settings,
+  listing,
+  topics,
+}: Pick<HostScreenInput, 'settings' | 'listing' | 'topics'>): boolean {
+  if (listing.phase === 'failed') return true;
+  if (listing.sessions === undefined) return false;
+  return !(settings.hostScreenLists.includes('topics') && topics.kind === 'loading' && topics.last === null);
 }
 
 /**

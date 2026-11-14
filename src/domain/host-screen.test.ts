@@ -1,5 +1,6 @@
 import { answered, asking, refused, UNASKED, type Listing } from './host-listing';
 import {
+  firstReadAnswered,
   homeRows,
   hostScreen,
   topicSections,
@@ -24,6 +25,7 @@ import { parseEnvironment } from '@/topics/environment';
 import type { HostCliOutcome, HostCliState } from '@/topics/host-cli-install';
 import {
   listedSessions,
+  loadingTopics,
   settled,
   TOPICS_UNASKED,
   withHostCli,
@@ -930,5 +932,22 @@ describe('homeRows of a Host that is not in In Play', () => {
   it('keeps the first rows across the sections', () => {
     expect(homeRows(input, 3).map(rowName)).toEqual(['a', 'b', 'c']);
     expect(homeRows(input, 9).map(rowName)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
+  const sessionsOnly = { hostScreenLists: ['recent', 'sessions'] as HostScreenLists };
+  const withTopics = { hostScreenLists: ['topics', 'recent', 'sessions'] as HostScreenLists };
+  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) });
+
+  it.each<{ name: string; settings: { hostScreenLists: HostScreenLists }; listing: Listing; topics: HostTopics; answered: boolean }>([
+    { name: 'waits while the first read is in flight', settings: sessionsOnly, listing: UNASKED, topics: TOPICS_UNASKED, answered: false },
+    { name: 'waits for the Topics when the Topics list is on', settings: withTopics, listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: false },
+    { name: 'does not wait for Topics it does not show', settings: sessionsOnly, listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: true },
+    { name: 'draws once both have answered', settings: withTopics, listing: answered([running('main')]), topics: listed, answered: true },
+    { name: 'does not wait again on a later read', settings: withTopics, listing: asking(answered([running('main')])), topics: loadingTopics(listed), answered: true },
+    { name: 'takes a refusal as the answer', settings: withTopics, listing: refused('This Host is no longer saved.'), topics: TOPICS_UNASKED, answered: true },
+  ])('$name', ({ settings, listing, topics, answered: expected }) => {
+    expect(firstReadAnswered({ settings, listing, topics })).toBe(expected);
   });
 });
