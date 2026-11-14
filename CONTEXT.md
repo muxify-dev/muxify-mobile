@@ -83,15 +83,22 @@ Pane Swipe, which carries it in the command instead. `select-pane -Z` has tmux k
 putting the zoom back afterwards would work too, and costs two round trips of
 drawing the split it is about to throw away.
 
+**Appearance**:
+Whether the app is light or dark: System, Light or Dark, set in Settings.
+System follows the phone's own light or dark setting. The app chrome and the
+Surface are always the same kind, because a light terminal in a dark app reads
+as two apps. See ADR 0018.
+_Avoid_: mode, colour scheme (which is the phone's own setting)
+
 **Theme**:
-The colours the Surface paints with, chosen in Settings: Default (Ghostty's
-own), Dracula and Solarized Light. It decides the app's appearance too —
-Solarized is the light one — so the picker is the light/dark
-switch as well; there is no separate setting, because a light terminal in a
-dark app reads as two apps. Applied to the Surface from the next Attach, not to
-a Session already on screen; the chrome follows immediately.
-_Avoid_: colour scheme (which is the phone's setting, and Muxify ignores it),
-skin
+The colours the Surface paints with. Each Theme is light or dark. The user
+chooses a Light theme (Solarized Light, Gruvbox Light) and a Dark theme
+(Ghostty Default, Dracula, Gruvbox Dark Hard), and the Appearance decides
+which one is in use. A change, in Settings or on the phone, repaints the
+Surface at once and is reported to tmux for every Pane of the Session, so a
+program such as NeoVim that asks for the background gets the Theme's. See
+ADR 0018.
+_Avoid_: colour scheme, skin
 
 **Scrollback**:
 The lines a Pane has scrolled off the top, kept by tmux and bounded by its
@@ -581,8 +588,8 @@ under the Header, the way iOS delivers a notification over whatever is on
 screen. It says what the Attach is doing while that is anything other than
 connected — Connecting, Reconnecting, a disconnect reason with Reconnect where
 retrying could work — and it is where the changed-host-key warning is shown.
-Drawn in the Theme's appearance, not the phone's, so a light phone never puts a
-white card over a Dracula terminal. Not a toast: it stays while the thing it
+Drawn in the Appearance of the Theme in use, so a light card never sits over
+a Dracula terminal. Not a toast: it stays while the thing it
 reports is true and leaves when it stops, rather than timing out.
 _Avoid_: toast, notification, snackbar, alert (that is the system's modal)
 
