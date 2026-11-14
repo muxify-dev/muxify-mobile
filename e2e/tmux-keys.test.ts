@@ -198,7 +198,7 @@ function broken(sent: string | null, got: string): boolean {
   return got === '' || (sent !== null && sent.length > 1 && got.includes(sent)) || /[CMS]-/.test(got);
 }
 
-describe.each(TARGETS)('tmux on %s', (name) => {
+describe.each<string>(TARGETS)('tmux on %s', (name) => {
   let target: Target;
   beforeAll(() => {
     target = name === 'local' ? localTarget() : dockerTarget(name);
