@@ -43,6 +43,14 @@ export function AttachProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // The Theme reaches tmux from here rather than from the Terminal Screen:
+  // the Attach outlives the screen, and the phone can turn dark while Home or
+  // Settings is showing.
+  const { terminal } = useSettings();
+  useEffect(() => {
+    holder.coloursChanged({ foreground: terminal.foreground, background: terminal.background });
+  }, [holder, terminal.foreground, terminal.background]);
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (status: AppStateStatus) => {
       appConnections().lifecycleChanged(lifecycleOf(status));

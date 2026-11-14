@@ -3,6 +3,7 @@ import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
 import type { Attach, LifecyclePhase, SessionDestination } from './attach';
+import type { PaneColours } from './commands';
 
 export interface AttachOrigin {
   attach: Attach | null;
@@ -39,6 +40,8 @@ export interface AttachHolder {
   subscribe(listener: (attach: Attach | null) => void): () => void;
   /** React Native's app-state, forwarded as a fact. The Attach decides. */
   lifecycleChanged(phase: LifecyclePhase): void;
+  /** The Theme in use, given to the Attach held now and to every one opened after. */
+  coloursChanged(colours: PaneColours): void;
 }
 
 /**
@@ -59,7 +62,7 @@ export interface AttachHolder {
  * which Attach to tell.
  */
 export function createAttachHolder(
-  open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed'>) => Attach,
+  open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed'> & { colours: PaneColours | null }) => Attach,
   lastPlace: Pick<HostStore, 'forgetLastPlace'>,
   log: Log = silentLog,
 ): AttachHolder {
@@ -68,6 +71,7 @@ export function createAttachHolder(
   let revision = 0;
   let pendingClose: Promise<void> | null = null;
   let disconnecting: Promise<void> | null = null;
+  let colours: PaneColours | null = null;
   const listeners = new Set<(attach: Attach | null) => void>();
   const say = speakingAs(log, 'holder');
 
@@ -113,7 +117,7 @@ export function createAttachHolder(
 
         if (mine !== revision) throw new Error('The Attach was disconnected before the Session opened.');
         if (request.isCurrent && !request.isCurrent()) throw new Error('This Session request is no longer current.');
-        const next = open({ host: request.host, destination: request.destination, zoomed: request.zoomed });
+        const next = open({ host: request.host, destination: request.destination, zoomed: request.zoomed, colours });
         current = next;
         publish();
         return next;
@@ -151,6 +155,11 @@ export function createAttachHolder(
     lifecycleChanged(phase: LifecyclePhase): void {
       say(`app ${phase}${current ? '' : ', nothing attached'}`);
       current?.lifecycleChanged(phase);
+    },
+
+    coloursChanged(next: PaneColours): void {
+      colours = next;
+      current?.coloursChanged(next);
     },
   };
 }

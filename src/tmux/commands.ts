@@ -281,6 +281,41 @@ export function resizeClientCommand(cols: number, rows: number): TmuxArgv {
   return ['refresh-client', '-C', `${size(cols)}x${size(rows)}`];
 }
 
+/** The colours a Pane reports to the programs in it, as `#rrggbb`. */
+export interface PaneColours {
+  foreground: string;
+  background: string;
+}
+
+/**
+ * Tells tmux the colours this Client paints a Pane with.
+ *
+ * A program such as NeoVim asks the terminal for its background (OSC 11) to
+ * choose between its light and dark look. tmux answers for the Pane, and a
+ * control client that reports nothing gets black. `refresh-client -r` gives
+ * tmux the answer as `<pane>:<OSC reply>`, one reply per command. Measured on
+ * tmux 3.8: after it, OSC 10 and OSC 11 queries in the Pane get these
+ * colours, and a program that turned on mode 2031 gets `ESC[?997;1n` (dark)
+ * or `ESC[?997;2n` (light) when they change.
+ */
+export function reportPaneColoursCommands(paneId: string, colours: PaneColours): TmuxArgv[] {
+  return [
+    ['refresh-client', '-r', `${paneId}:\x1b]10;${oscColour(colours.foreground)}\x1b\\`],
+    ['refresh-client', '-r', `${paneId}:\x1b]11;${oscColour(colours.background)}\x1b\\`],
+  ];
+}
+
+/** `#fdf6e3` as an OSC colour reply writes it: `rgb:fdfd/f6f6/e3e3`. */
+function oscColour(hex: string): string {
+  const channels = [1, 3, 5].map((at) => hex.slice(at, at + 2).toLowerCase());
+  return `rgb:${channels.map((channel) => channel + channel).join('/')}`;
+}
+
+/** Every Pane of a Session, in every Window: the Panes to report colours to. */
+export function listSessionPanesCommand(sessionName: string): TmuxArgv {
+  return ['list-panes', '-s', '-t', currentPaneTarget(sessionName), '-F', '#{pane_id}'];
+}
+
 /**
  * Makes this Client the latest one on its Window, so the size it asks for next
  * is the size the Window takes.

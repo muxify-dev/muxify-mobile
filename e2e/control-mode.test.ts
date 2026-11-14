@@ -26,8 +26,12 @@
  * `e2e/regressions.sh` cover that half by driving the app on a simulator.
  */
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 import { openAttach, type Attach, type AttachPhase, type HostConnection } from '@/tmux/attach';
+import type { PaneColours } from '@/tmux/commands';
 import type { PaneSurface } from '@/tmux/pane-view';
 import type { SelectionRows } from '@/tmux/selection-rows';
 import type { Host, Records } from '@/storage/records';
@@ -158,7 +162,7 @@ function recordingSurface() {
   };
 }
 
-function attachTo(options: { sessionName?: string; record?: Host } = {}) {
+function attachTo(options: { sessionName?: string; record?: Host; colours?: PaneColours } = {}) {
   const children: ChildProcess[] = [];
   const { store, wrote } = memoryStore();
   const phases: AttachPhase[] = [];
@@ -168,6 +172,7 @@ function attachTo(options: { sessionName?: string; record?: Host } = {}) {
     host: record,
     destination: { sessionName: options.sessionName ?? SESSION, topic: null },
     zoomed: true,
+    colours: options.colours,
     store,
     openConnection: (): Promise<HostConnection> =>
       Promise.resolve({
@@ -511,5 +516,42 @@ describe('the Attach, against a real tmux', () => {
     expect(children.length).toBe(1);
 
     await attach.close();
+  }, 30000);
+
+  it('answers a program in any Window of the Session with the Theme’s colours', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muxify-colours-'));
+    const asker = join(dir, 'asker.py');
+    const heard = join(dir, 'heard');
+    // A program like NeoVim: it turns on mode 2031 and asks for the
+    // background, and here it writes down every answer the terminal gives.
+    writeFileSync(asker, [
+      'import os, sys, tty, time, select',
+      'tty.setraw(0)',
+      "os.write(1, b'\\x1b[?2031h')",
+      'while True:',
+      "    os.write(1, b'\\x1b]11;?\\x1b\\\\')",
+      '    end = time.time() + 0.3',
+      '    while time.time() < end:',
+      '        if select.select([0], [], [], 0.05)[0]:',
+      "            open(sys.argv[1], 'a').write(repr(os.read(0, 4096)) + '\\n')",
+    ].join('\n'));
+    tmux(['new-window', '-d', '-t', `${SESSION}:`, `python3 ${asker} ${heard}`]);
+    const answers = () => {
+      try { return readFileSync(heard, 'utf8'); } catch { return ''; }
+    };
+
+    const { attach } = attachTo({ colours: { foreground: '#657b83', background: '#fdf6e3' } });
+    await reaches(attach, 'connected');
+    await wait(1500);
+    expect(answers()).toContain('rgb:fdfd/f6f6/e3e3');
+
+    attach.coloursChanged({ foreground: '#ebdbb2', background: '#1d2021' });
+    await wait(1500);
+    expect(answers()).toContain('rgb:1d1d/2020/2121');
+    // tmux tells a program that asked for mode 2031 that the Theme went dark.
+    expect(answers()).toContain('\\x1b[?997;1n');
+
+    await attach.close();
+    rmSync(dir, { recursive: true, force: true });
   }, 30000);
 });

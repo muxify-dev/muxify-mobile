@@ -3,6 +3,7 @@ import { createComposer } from '@/composer/composer';
 
 import type { Attach, AttachState, LifecyclePhase } from './attach';
 import { createAttachHolder, type AttachRequest } from './attach-holder';
+import type { PaneColours } from './commands';
 import { EMPTY_TOPOLOGY } from './topology';
 
 const host = (id: string): Host => ({
@@ -14,7 +15,7 @@ const host = (id: string): Host => ({
 });
 
 /** An Attach that records what was done to it and nothing else. */
-function fakeAttach(options: AttachRequest, log: string[]): Attach {
+function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, log: string[]): Attach {
   let phase: AttachState['phase'] = { kind: 'connecting' };
   let destination = options.destination;
   log.push(`open ${options.host.id}:${options.destination.sessionName}`);
@@ -66,6 +67,7 @@ function fakeAttach(options: AttachRequest, log: string[]): Attach {
     spanningSurface: () => {},
     cellReported: () => {},
     sheetPresented: () => {},
+    coloursChanged: (colours) => log.push(`colours ${options.destination.sessionName} ${colours.background}`),
     lifecycleChanged: (next: LifecyclePhase) =>
       log.push(`lifecycle ${options.destination.sessionName} ${next}`),
     close: () => {
@@ -89,6 +91,23 @@ function holderOn() {
   holder.subscribe((attach) => seen.push(attach ? attach.state().sessionName : null));
   return { holder, log, seen };
 }
+
+describe('the Theme’s colours', () => {
+  it('gives them to the Attach held now and to every one opened after', async () => {
+    const log: string[] = [];
+    const holder = createAttachHolder((options) => {
+      log.push(`open ${options.destination.sessionName} with ${options.colours?.background ?? 'none'}`);
+      return fakeAttach(options, log);
+    }, { forgetLastPlace: () => Promise.resolve() });
+    await holder.open({ host: host('a'), destination: { sessionName: 'work', topic: null }, zoomed: true });
+    holder.coloursChanged({ foreground: '#657b83', background: '#fdf6e3' });
+    await holder.open({ host: host('b'), destination: { sessionName: 'play', topic: null }, zoomed: true });
+
+    expect(log.filter((line) => line.includes('#') || line.includes('none'))).toEqual([
+      'open work with none', 'colours work #fdf6e3', 'open play with #fdf6e3',
+    ]);
+  });
+});
 
 describe('the one Attach the app holds', () => {
   it('opens a Session when nothing is attached', async () => {
@@ -292,9 +311,9 @@ it('accepts a form from a plain Session and refuses it after that Session change
 });
 
 it('does not retain delivery guards in the new Attach', async () => {
-  const create = jest.fn((request: AttachRequest) => fakeAttach(request, []));
+  const create = jest.fn((request: AttachRequest & { colours: PaneColours | null }) => fakeAttach(request, []));
   const holder = createAttachHolder(create, { forgetLastPlace: async () => {} });
   const request = { host: host('a'), destination: { sessionName: 'work', topic: null }, zoomed: true };
   await holder.open({ ...request, origin: { attach: null, sessionName: null, topicId: null }, isCurrent: () => true });
-  expect(create).toHaveBeenCalledWith(request);
+  expect(create).toHaveBeenCalledWith({ ...request, colours: null });
 });

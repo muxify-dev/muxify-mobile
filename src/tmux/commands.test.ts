@@ -12,6 +12,8 @@ import {
   paneStateCommand,
   renderControlCommand,
   renderExecCommand,
+  listSessionPanesCommand,
+  reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -158,6 +160,22 @@ describe('sizing the Client', () => {
   it('never asks for a size tmux would refuse', () => {
     expect(resizeClientCommand(0, -3)).toEqual(['refresh-client', '-C', '1x1']);
     expect(resizeClientCommand(40.7, 20.2)).toEqual(['refresh-client', '-C', '40x20']);
+  });
+});
+
+describe('reporting a Pane’s colours', () => {
+  it('writes each colour as the OSC reply tmux answers the Pane with', () => {
+    // These two lines, sent down a control client on tmux 3.8, made tmux
+    // answer the Pane's OSC 10 and OSC 11 queries with these colours.
+    expect(reportPaneColoursCommands('%0', { foreground: '#657B83', background: '#fdf6e3' })
+      .map(renderControlCommand)).toEqual([
+      `'refresh-client' '-r' "%0:\\033]10;rgb:6565/7b7b/8383\\033\\\\"`,
+      `'refresh-client' '-r' "%0:\\033]11;rgb:fdfd/f6f6/e3e3\\033\\\\"`,
+    ]);
+  });
+
+  it('lists the Panes of every Window of the Session, read as a Session', () => {
+    expect(listSessionPanesCommand('0')).toEqual(['list-panes', '-s', '-t', '0:', '-F', '#{pane_id}']);
   });
 });
 

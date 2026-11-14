@@ -31,7 +31,7 @@ jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () =>
 jest.mock('@/storage/device-store', () => ({
   deviceHostStore: () => ({ load: mockLoad, recentSessionsFor: async () => [], forgetLastPlace: async () => {} }),
 }));
-jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings: { zoomMultipaneWindows: true } }) }));
+jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings: { zoomMultipaneWindows: true }, terminal: { foreground: '#e6e6e6', background: '#11131a' } }) }));
 jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpenAttach(...args) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ openConnection: jest.fn(), lifecycleChanged: jest.fn() }) }));
 jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => mockReadTopic(...args) }));

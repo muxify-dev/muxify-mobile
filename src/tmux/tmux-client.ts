@@ -7,11 +7,13 @@ import {
   capturePanesCommand,
   createSessionCommand,
   listPanesCommand,
+  listSessionPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
   newWindowCommand,
   paneStateCommand,
   claimWindowCommand,
+  reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
@@ -20,6 +22,7 @@ import {
   splitWindowCommand,
   switchSessionCommand,
   zoomPaneCommand,
+  type PaneColours,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
 import { keyNamingFor, renderPress, type KeyNaming, type KeyPress } from './key-press';
@@ -302,6 +305,23 @@ export class TmuxClient {
       this.mustRun('claim the Window', claimWindowCommand()),
       this.mustRun('resize the Client', resizeClientCommand(grid.cols, grid.rows)),
     ]);
+  }
+
+  /** The ids of every Pane in a Session, in every Window. */
+  async sessionPaneIds(sessionName: string): Promise<string[]> {
+    const reply = await this.runner.run(listSessionPanesCommand(sessionName));
+    return reply.ok ? reply.text.map((line) => line.trim()).filter((id) => id.length > 0) : [];
+  }
+
+  /**
+   * Tells tmux the colours these Panes are painted with, so that a program
+   * asking for them gets the Theme's. See reportPaneColoursCommands.
+   *
+   * A refusal is not an error: a tmux older than `refresh-client -r` cannot
+   * answer for the Pane, and the Session works the same without it.
+   */
+  async reportPaneColours(paneIds: readonly string[], colours: PaneColours): Promise<void> {
+    await this.runner.runAll(paneIds.flatMap((id) => reportPaneColoursCommands(id, colours)));
   }
 
   /**

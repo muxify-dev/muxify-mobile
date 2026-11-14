@@ -19,7 +19,7 @@ export interface SessionDestination {
 export interface AttachedTopic { id: TopicId; view: TopicView }
 
 import { createClientSizing, type ClientSizing } from './client-sizing';
-import { shellQuote } from './commands';
+import { shellQuote, type PaneColours } from './commands';
 import {
   openControlConnection,
   type ClosedCause,
@@ -222,6 +222,8 @@ export interface Attach {
   cellReported(cell: Extent): void;
   sheetPresented(open: boolean): void;
   lifecycleChanged(phase: LifecyclePhase): void;
+  /** The Theme in use changed. Every Pane of the Session is told its new colours. */
+  coloursChanged(colours: PaneColours): void;
 
   /** Ends it on purpose. Nothing fires afterwards. */
   close(): Promise<void>;
@@ -233,6 +235,8 @@ export interface AttachOptions {
   readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
+  /** The Theme's colours, for the Panes to report. Null reports nothing until coloursChanged. */
+  colours?: PaneColours | null;
   openConnection: OpenConnection;
   store: HostStore;
   clock?: Clock;
@@ -662,6 +666,38 @@ export function openAttach(options: AttachOptions): Attach {
     change({ topic: { id: topic.id, view: settledTopic(state.topic.view, read) } });
   }
 
+  // ------------------------------------------------------------- Pane colours
+
+  let colours: PaneColours | null = options.colours ?? null;
+  /** The Panes the current Client has told tmux the current colours for. */
+  let coloured = new Set<string>();
+
+  /**
+   * Tells tmux the Theme's colours for each Pane of the Session that has not
+   * had them from this Client yet. Safe to call at any time: a Pane is told
+   * once per Client and per colours, and nothing goes on the wire while the
+   * app is in the background.
+   *
+   * The whole Session and not only the Window on screen, because a program
+   * in another Window reads the colours when it starts, not when it is shown.
+   */
+  function reportColours(): void {
+    const mine = generation;
+    const current = client;
+    const wanted = colours;
+    const reported = coloured;
+    if (!current || !wanted || suspended) return;
+    background(mine, async () => {
+      const ids = await current.sessionPaneIds(currentSessionTarget());
+      if (stale(mine) || wanted !== colours || reported !== coloured) return;
+      const fresh = ids.filter((id) => !reported.has(id));
+      if (fresh.length === 0) return;
+      for (const id of fresh) reported.add(id);
+      say(`reporting the Theme's colours to ${fresh.join(' ')}`);
+      await current.reportPaneColours(fresh, wanted);
+    });
+  }
+
   // ------------------------------------------------------------------- Attach
 
   async function connect(): Promise<void> {
@@ -798,6 +834,7 @@ export function openAttach(options: AttachOptions): Attach {
         if (stale(mine)) return;
         pruneViews(next);
         keepZoom(next);
+        if (next.panes.some((pane) => !coloured.has(pane.id))) reportColours();
         const activeId = next.activePane?.id;
         change({
           topology: next,
@@ -839,6 +876,7 @@ export function openAttach(options: AttachOptions): Attach {
       await topology.refresh();
       if (stale(mine)) return;
       refreshSessions();
+      reportColours();
     } catch (error) {
       if (stale(mine)) return;
       say(`connect failed: ${describeError(error)}`);
@@ -887,6 +925,7 @@ export function openAttach(options: AttachOptions): Attach {
     const closingConnection = connection;
     control = null;
     client = null;
+    coloured = new Set();
     currentSessionId = null;
     topology?.dispose();
     topology = null;
@@ -1305,6 +1344,7 @@ export function openAttach(options: AttachOptions): Attach {
       // nothing, and only the thing underneath can say which.
       if (control?.isOpen() ?? false) {
         say('the link survived the background');
+        reportColours();
         return;
       }
       ended(
@@ -1312,6 +1352,13 @@ export function openAttach(options: AttachOptions): Attach {
         { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
         'foreground',
       );
+    },
+
+    coloursChanged(next: PaneColours): void {
+      if (colours?.foreground === next.foreground && colours.background === next.background) return;
+      colours = next;
+      coloured = new Set();
+      reportColours();
     },
 
     async close(): Promise<void> {

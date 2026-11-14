@@ -16,6 +16,7 @@ import {
   type HostConnection,
 } from './attach';
 import { GRID_SETTLE_MS } from './client-sizing';
+import type { PaneColours } from './commands';
 import type { PaneSurface } from './pane-view';
 import type { ControlChannel, ControlChannelEvents, TmuxTransport } from './transport';
 import type { Grid } from './tmux-client';
@@ -54,7 +55,9 @@ function fakeHost() {
       'list-windows',
       ['@0\t0\t1\t2\t0\tshell\tzsh'],
     ],
-    ['list-panes', ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']],
+    ['list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5']
+      : ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']],
     ['list-sessions', ['work\t1']],
     ['display-message', ['0\t0\t0\t100\t49\t41\t0\t1\t1']],
   ]);
@@ -196,6 +199,7 @@ function attachOn(
     readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
     zoomed?: boolean;
     upload?: Upload;
+    colours?: PaneColours;
   } = {},
 ) {
   const hosts = options.hosts ?? [fakeHost()];
@@ -214,6 +218,7 @@ function attachOn(
     host: HOST,
     destination: { sessionName: options.sessionName ?? 'work', topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null },
     zoomed: options.zoomed ?? true,
+    colours: options.colours,
     readTopic: options.readTopic,
     store,
     clock,
@@ -573,6 +578,93 @@ describe('a Window changed on the tmux side', () => {
     await settle();
 
     expect(split.verbs()).not.toContain('resize-pane');
+  });
+});
+
+describe('the Theme’s colours', () => {
+  const SOLARIZED: PaneColours = { foreground: '#657b83', background: '#fdf6e3' };
+  const GRUVBOX: PaneColours = { foreground: '#ebdbb2', background: '#1d2021' };
+
+  /** The colour reports sent, as `<pane> <OSC>` for each. */
+  function reports(host: ReturnType<typeof fakeHost>): string[] {
+    return host.commands
+      .filter((line) => line.startsWith("'refresh-client' '-r' "))
+      .map((line) => {
+        const [, pane, osc] = /^'refresh-client' '-r' "(%\d+):\\033\](1[01]);/.exec(line) ?? [];
+        return `${pane} ${osc}`;
+      });
+  }
+
+  it('tells tmux the colours of every Pane in the Session once attached', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+
+    expect(kit.hosts[0].commands).toContain(
+      `'refresh-client' '-r' "%0:\\033]11;rgb:fdfd/f6f6/e3e3\\033\\\\"`,
+    );
+    expect(kit.hosts[0].commands).toContain(
+      `'refresh-client' '-r' "%5:\\033]10;rgb:6565/7b7b/8383\\033\\\\"`,
+    );
+    expect(reports(kit.hosts[0]).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+  });
+
+  it('tells only a Pane that appears later, such as a split', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.commands.length = 0;
+    const TWO = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,7]';
+    host.answering('list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5', '%7']
+      : [`0\t%0\tzsh\t1\t/home/user\t${TWO}`, `1\t%7\tzsh\t0\t/home/user\t${TWO}`]);
+    host.answering('list-windows', ['@0\t0\t1\t2\t0\tshell\tzsh']);
+
+    host.notify(`%layout-change @0 ${TWO} ${TWO} *`);
+    await settle();
+
+    expect(reports(host)).toEqual(['%7 10', '%7 11']);
+  });
+
+  it('tells every Pane again when the Theme changes, and nothing when it does not', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.commands.length = 0;
+
+    kit.attach.coloursChanged({ ...SOLARIZED });
+    await settle();
+    expect(reports(host)).toEqual([]);
+
+    kit.attach.coloursChanged(GRUVBOX);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+    expect(host.commands).toContain(`'refresh-client' '-r' "%5:\\033]11;rgb:1d1d/2020/2121\\033\\\\"`);
+  });
+
+  it('waits for the app to come back before it tells tmux of a change made in the background', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.commands.length = 0;
+
+    kit.attach.lifecycleChanged('background');
+    kit.attach.coloursChanged(GRUVBOX);
+    await settle();
+    expect(host.commands).toEqual([]);
+
+    kit.attach.lifecycleChanged('active');
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+  });
+
+  it('carries on attached when tmux is too old to take a report', async () => {
+    const host = fakeHost();
+    host.refuseCommand('refresh-client');
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+
+    expect(reports(host)).toHaveLength(4);
+    expect(kit.attach.state()).toMatchObject({ phase: { kind: 'connected' }, trouble: null });
   });
 });
 
