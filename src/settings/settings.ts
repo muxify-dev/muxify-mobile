@@ -1,4 +1,11 @@
-import type { ThemeId } from '@/constants/app-theme';
+import {
+  isDarkThemeId,
+  isLightThemeId,
+  type DarkThemeId,
+  type LightThemeId,
+  type ThemeId,
+  type ThemeKind,
+} from '@/constants/app-theme';
 
 /**
  * What the user can change about the terminal and the Host Screen.
@@ -14,7 +21,14 @@ export interface Settings {
    * "ten", and it survives the user changing phones.
    */
   fontSize: number | null;
-  theme: ThemeId;
+  /**
+   * Whether the app is light, dark, or follows the phone. The app and the
+   * Surface are always the same kind: resolveTheme picks lightTheme or
+   * darkTheme from this.
+   */
+  appearance: AppearanceSetting;
+  lightTheme: LightThemeId;
+  darkTheme: DarkThemeId;
   /**
    * Whether a Session with several Panes arrives with its active Pane filling
    * the Window. A phone is too narrow to read two Panes side by side, so this
@@ -37,6 +51,22 @@ export interface Settings {
    */
   reconnectOnStart: boolean;
   chooserListPreferences?: Readonly<Record<string, ChooserLists>>;
+}
+
+export const APPEARANCE_SETTINGS = ['system', 'light', 'dark'] as const;
+export type AppearanceSetting = (typeof APPEARANCE_SETTINGS)[number];
+
+/**
+ * The Theme in use: the user's light or dark Theme, chosen by the appearance
+ * setting, or by the phone's when the setting is System. The app chrome, the
+ * Surface and the colours reported to tmux all come from this one answer.
+ */
+export function resolveTheme(
+  settings: Pick<Settings, 'appearance' | 'lightTheme' | 'darkTheme'>,
+  phoneScheme: ThemeKind,
+): ThemeId {
+  const kind = settings.appearance === 'system' ? phoneScheme : settings.appearance;
+  return kind === 'light' ? settings.lightTheme : settings.darkTheme;
 }
 
 /** Every list the Host Screen can show, in the order Settings offers the ones that are off. */
@@ -109,7 +139,9 @@ export const DEFAULT_FONT_SIZE = 13;
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: null,
-  theme: 'default',
+  appearance: 'system',
+  lightTheme: 'solarized-light',
+  darkTheme: 'ghostty',
   zoomMultipaneWindows: true,
   hostScreenLists: ['recent', 'sessions'],
   reconnectOnStart: false,
@@ -126,28 +158,48 @@ export function fontSizeInForce(fontSize: number | null): number {
   return fontSize ?? DEFAULT_FONT_SIZE;
 }
 
+type ThemeChoice = Pick<Settings, 'appearance' | 'lightTheme' | 'darkTheme'>;
+
 /**
- * The Theme a saved value names, or the default for one it does not know.
+ * The appearance and the two Themes a saved value names, each defaulted on
+ * its own when it is not one this version knows.
  *
- * Mocha and Latte are the Catppuccin pair this app shipped with before Dracula
- * and Solarized replaced them. A phone that chose one of those chose a dark or
- * a light terminal, and that choice is kept: the replacement of the same
- * appearance, rather than a fall back to the default that would turn a light
- * app dark on update.
+ * Settings saved before the appearance setting have one `theme` instead, and
+ * that Theme decided the app's appearance. It is carried over as a fixed
+ * appearance of its kind with that Theme in its slot, so an update does not
+ * change how the app looks. Mocha and Latte are the Catppuccin pair the app
+ * had before Dracula and Solarized, and go to the Theme of the same kind.
  */
-function parseTheme(theme: unknown): ThemeId {
-  switch (theme) {
-    case 'dracula':
-    case 'solarized':
-      return theme;
-    case 'mocha':
-      return 'dracula';
-    case 'latte':
-      return 'solarized';
-    default:
-      return 'default';
+function parseThemeChoice(record: Record<string, unknown>): ThemeChoice {
+  const { appearance, lightTheme, darkTheme, theme } = record;
+  if (appearance === undefined && lightTheme === undefined && darkTheme === undefined) {
+    switch (theme) {
+      case 'solarized':
+      case 'latte':
+        return { ...DEFAULT_THEME_CHOICE, appearance: 'light', lightTheme: 'solarized-light' };
+      case 'default':
+        return { ...DEFAULT_THEME_CHOICE, appearance: 'dark', darkTheme: 'ghostty' };
+      case 'dracula':
+      case 'mocha':
+        return { ...DEFAULT_THEME_CHOICE, appearance: 'dark', darkTheme: 'dracula' };
+      default:
+        return DEFAULT_THEME_CHOICE;
+    }
   }
+  return {
+    appearance: (APPEARANCE_SETTINGS as readonly unknown[]).includes(appearance)
+      ? (appearance as AppearanceSetting)
+      : DEFAULT_SETTINGS.appearance,
+    lightTheme: isLightThemeId(lightTheme) ? lightTheme : DEFAULT_SETTINGS.lightTheme,
+    darkTheme: isDarkThemeId(darkTheme) ? darkTheme : DEFAULT_SETTINGS.darkTheme,
+  };
 }
+
+const DEFAULT_THEME_CHOICE: ThemeChoice = {
+  appearance: DEFAULT_SETTINGS.appearance,
+  lightTheme: DEFAULT_SETTINGS.lightTheme,
+  darkTheme: DEFAULT_SETTINGS.darkTheme,
+};
 
 /**
  * The lists that reach every Session of a Host. Recent Sessions is not one: on
@@ -239,7 +291,6 @@ export function parseSettings(raw: unknown): Settings {
   const record = raw as Record<string, unknown>;
 
   const fontSize = record.fontSize;
-  const theme = record.theme;
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
 
@@ -259,7 +310,7 @@ export function parseSettings(raw: unknown): Settings {
     ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
     ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
-    theme: parseTheme(theme),
+    ...parseThemeChoice(record),
     zoomMultipaneWindows:
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
     hostScreenLists: parseHostScreenLists(record.hostScreenLists, record.recentSessionsFirst),

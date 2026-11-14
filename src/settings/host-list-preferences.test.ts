@@ -19,7 +19,7 @@ it('migrates the legacy order to existing Hosts and gives later Hosts defaults',
   expect(value().hostListPreferences.version).toBe(1);
   const afterRestart = await createSettingsStore(file).load(['first', 'second', 'new']);
   expect(hostListsFor(afterRestart, 'new')).toEqual(DEFAULT_SETTINGS.hostScreenLists);
-  expect(afterRestart.theme).toBe('dracula');
+  expect(afterRestart.darkTheme).toBe('dracula');
 });
 
 it('keeps one Host change independent after restart', async () => {
@@ -64,7 +64,7 @@ it('serializes slow writes so the last edit survives', async () => {
     await write(contents);
   };
   const store = createSettingsStore(file);
-  const one: Settings = { ...DEFAULT_SETTINGS, theme: 'dracula' };
+  const one: Settings = { ...DEFAULT_SETTINGS, darkTheme: 'dracula' };
   const two: Settings = { ...one, fontSize: 16 };
   const a = store.save(one);
   const b = store.save(two);
@@ -94,7 +94,7 @@ it('does not migrate after a failed read and keeps the choice on retry', async (
   expect(value()).toEqual({ hostScreenLists: ['topics'], theme: 'dracula' });
   const retried = await store.load(['first']);
   expect(hostListsFor(retried, 'first')).toEqual(['topics']);
-  expect(retried.theme).toBe('dracula');
+  expect(retried.darkTheme).toBe('dracula');
 });
 
 it.each(['{ invalid json', 'null', '[]'])('does not overwrite an unreadable migration source %s', async (contents) => {

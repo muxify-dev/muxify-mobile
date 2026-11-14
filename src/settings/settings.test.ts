@@ -7,6 +7,7 @@ import {
   moveHostScreenLists,
   mustStayOn,
   parseSettings,
+  resolveTheme,
   switchHostScreenList,
   type HostScreenLists,
 } from './settings';
@@ -35,14 +36,18 @@ describe('parseSettings', () => {
     expect(
       parseSettings({
         fontSize: 14,
-        theme: 'dracula',
+        appearance: 'light',
+        lightTheme: 'gruvbox-light',
+        darkTheme: 'gruvbox-dark-hard',
         zoomMultipaneWindows: false,
         hostScreenLists: ['topics', 'recent', 'sessions'],
         reconnectOnStart: true,
       }),
     ).toEqual({
       fontSize: 14,
-      theme: 'dracula',
+      appearance: 'light',
+      lightTheme: 'gruvbox-light',
+      darkTheme: 'gruvbox-dark-hard',
       zoomMultipaneWindows: false,
       hostScreenLists: ['topics', 'recent', 'sessions'],
       reconnectOnStart: true,
@@ -65,30 +70,53 @@ describe('parseSettings', () => {
     expect(parseSettings({ fontSize: 400 }).fontSize).toBe(MAX_FONT_SIZE);
   });
 
-  it('falls back to the default Theme for one it does not know', () => {
-    expect(parseSettings({ theme: 'nord' }).theme).toBe('default');
+  it('follows the phone on a fresh install', () => {
+    expect(parseSettings({})).toMatchObject({
+      appearance: 'system', lightTheme: 'solarized-light', darkTheme: 'ghostty',
+    });
   });
 
-  it('carries a Catppuccin choice over to the Theme of the same appearance', () => {
+  it.each<[unknown, object]>([
+    ['solarized', { appearance: 'light', lightTheme: 'solarized-light' }],
+    ['default', { appearance: 'dark', darkTheme: 'ghostty' }],
+    ['dracula', { appearance: 'dark', darkTheme: 'dracula' }],
     // Mocha and Latte were the dark and light Themes before Dracula and
-    // Solarized; a phone that picked the light one should not turn dark on
-    // update.
-    expect(parseSettings({ theme: 'mocha' }).theme).toBe('dracula');
-    expect(parseSettings({ theme: 'latte' }).theme).toBe('solarized');
+    // Solarized.
+    ['mocha', { appearance: 'dark', darkTheme: 'dracula' }],
+    ['latte', { appearance: 'light', lightTheme: 'solarized-light' }],
+    ['nord', { appearance: 'system', lightTheme: 'solarized-light', darkTheme: 'ghostty' }],
+  ])('keeps the look of a phone whose settings say theme %p', (theme, choice) => {
+    const parsed = parseSettings({ theme });
+    expect(parsed).toMatchObject(choice);
+    expect(parsed).not.toHaveProperty('theme');
+  });
+
+  it('reads the appearance setting over a theme from before it', () => {
+    expect(parseSettings({ theme: 'solarized', appearance: 'dark', darkTheme: 'dracula' }))
+      .toMatchObject({ appearance: 'dark', lightTheme: 'solarized-light', darkTheme: 'dracula' });
+  });
+
+  it('refuses a Theme of the wrong kind for its slot', () => {
+    expect(parseSettings({ appearance: 'light', lightTheme: 'dracula', darkTheme: 'gruvbox-light' }))
+      .toMatchObject({ appearance: 'light', lightTheme: 'solarized-light', darkTheme: 'ghostty' });
   });
 
   it('keeps each field independent, so one bad value loses only itself', () => {
     expect(
       parseSettings({
         fontSize: 13,
-        theme: 42,
+        appearance: 'dusk',
+        lightTheme: 42,
+        darkTheme: 'dracula',
         zoomMultipaneWindows: 'yes',
         hostScreenLists: 7,
         reconnectOnStart: 'yes',
       }),
     ).toEqual({
       fontSize: 13,
-      theme: 'default',
+      appearance: 'system',
+      lightTheme: 'solarized-light',
+      darkTheme: 'dracula',
       zoomMultipaneWindows: true,
       hostScreenLists: ['recent', 'sessions'],
       reconnectOnStart: false,
@@ -207,5 +235,18 @@ describe('Host Screen lists in Settings', () => {
 
   it('leaves a single list where it is', () => {
     expect(moveHostScreenLists(['sessions'], [0], 1)).toEqual(['sessions']);
+  });
+});
+
+describe('resolveTheme', () => {
+  const choice = { lightTheme: 'gruvbox-light', darkTheme: 'dracula' } as const;
+
+  it.each([
+    ['system', 'light', 'gruvbox-light'],
+    ['system', 'dark', 'dracula'],
+    ['light', 'dark', 'gruvbox-light'],
+    ['dark', 'light', 'dracula'],
+  ] as const)('with appearance %s on a %s phone, uses %s', (appearance, phone, theme) => {
+    expect(resolveTheme({ ...choice, appearance }, phone)).toBe(theme);
   });
 });

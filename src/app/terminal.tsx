@@ -33,8 +33,6 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { TitleSheet, type TitlePick } from '@/components/title-sheet';
 import {
-  paletteFor,
-  sheetPaletteFor,
   type Appearance,
   type TerminalPalette,
 } from '@/constants/app-theme';
@@ -168,7 +166,7 @@ export default function TerminalScreen() {
     reconnect?: string;
   }>();
   const insets = useSafeAreaInsets();
-  const { settings, update, terminal, ansi, appearance } = useSettings();
+  const { settings, update, terminal, ansi, appearance, palette: chrome, sheetPalette } = useSettings();
 
   const bootstrap = useRef({ hostId: routeHostId, session: sessionParam, topicId: routeTopicId, reconnect });
   const bootstrapAttempt = useRef(-1);
@@ -326,16 +324,6 @@ export default function TerminalScreen() {
     setTitleSheet({ open: false });
   }, []);
 
-  /**
-   * The Theme this Session was opened with.
-   *
-   * Frozen on arrival rather than followed: a Theme changed under a live
-   * Surface would repaint it in colours the Host never sent. It applies from
-   * the next Attach, a step away. The font size is not frozen: the Options
-   * menu changes it live, the Surfaces reflow and report new grids, and the
-   * sizing path resizes the Client to them.
-   */
-  const [opened] = useState(() => ({ terminal, ansi }));
   const fontSize = fontSizeInForce(settings.fontSize);
 
   const topology = state?.topology;
@@ -962,7 +950,6 @@ export default function TerminalScreen() {
   );
 
   /** The Theme's chrome colours: the Key Row's labels and the Banners. */
-  const chrome = useMemo(() => paletteFor(settings.theme), [settings.theme]);
 
   /**
    * Escape, tab or an arrow from the Key Row, into the Pane that has the
@@ -1278,7 +1265,7 @@ export default function TerminalScreen() {
       })}
       style={[
         styles.container,
-        { backgroundColor: opened.terminal.background },
+        { backgroundColor: terminal.background },
       ]}>
       {/* The Theme decides this, not the phone: white glyphs over Solarized's
           near-white terminal are a status bar nobody can read. */}
@@ -1286,14 +1273,14 @@ export default function TerminalScreen() {
 
       <TerminalHeader
         title={headerTitle}
-        terminal={opened.terminal}
+        terminal={terminal}
         chrome={reconnectShown ? chrome : null}
         onTitle={openTitleSheet}
         options={options}
       />
 
       <View
-        style={[styles.surfaceArea, { backgroundColor: opened.terminal.background }]}
+        style={[styles.surfaceArea, { backgroundColor: terminal.background }]}
         testID="surface-area"
         onLayout={({ nativeEvent }) => {
           const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
@@ -1317,10 +1304,10 @@ export default function TerminalScreen() {
             accessoryBar={false}
             shortcutBar={false}
             theme={{
-              background: opened.terminal.background,
-              foreground: opened.terminal.foreground,
-              cursorColor: opened.terminal.cursor,
-              palette: opened.ansi ? [...opened.ansi] : undefined,
+              background: terminal.background,
+              foreground: terminal.foreground,
+              cursorColor: terminal.cursor,
+              palette: ansi ? [...ansi] : undefined,
             }}
             onResize={(event) => {
               say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
@@ -1344,8 +1331,8 @@ export default function TerminalScreen() {
               key={slot.pane.id}
               slot={slot}
               font={fontSize}
-              terminal={opened.terminal}
-              ansi={opened.ansi}
+              terminal={terminal}
+              ansi={ansi}
               onRef={adoptPaneSurface}
               onPaneResize={reportPaneGrid}
               onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
@@ -1404,11 +1391,11 @@ export default function TerminalScreen() {
             <ScrollRail
               position={state.scrolled}
               rows={visibleGrid?.rows ?? 0}
-              palette={opened.terminal}
+              palette={terminal}
             />
             <ScrollBackIndicator
               position={state.scrolled}
-              palette={opened.terminal}
+              palette={terminal}
               appearance={appearance}
               onPress={jumpToLatest}
             />
@@ -1418,7 +1405,7 @@ export default function TerminalScreen() {
         {clippedRow > 0 ? (
           <View
             pointerEvents="none"
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: opened.terminal.background }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: terminal.background }}
           />
         ) : null}
 
@@ -1427,7 +1414,7 @@ export default function TerminalScreen() {
           <LayoutMap
             panes={state?.topology.panes ?? []}
             appearance={appearance}
-            palette={sheetPaletteFor(settings.theme)}
+            palette={sheetPalette}
             onPress={openPanes}
           />
         ) : null}

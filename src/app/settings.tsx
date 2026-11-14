@@ -37,9 +37,17 @@ import {
 
 import { HostsSection } from '@/components/hosts-section';
 import { SectionHeader } from '@/components/section-header';
-import { Themes, THEME_IDS, type Appearance, type ThemeId } from '@/constants/app-theme';
+import { DARK_THEME_IDS, LIGHT_THEME_IDS, Themes, type Appearance, type ThemeId } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
-import { DEFAULT_EXPLICIT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE } from '@/settings/settings';
+import {
+  APPEARANCE_SETTINGS,
+  DEFAULT_EXPLICIT_FONT_SIZE,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+  type AppearanceSetting,
+} from '@/settings/settings';
+
+const APPEARANCE_NAMES: Record<AppearanceSetting, string> = { system: 'System', light: 'Light', dark: 'Dark' };
 
 /** The few lines of code the Theme preview shows. */
 const PREVIEW_LINES: { number: string; text: string }[] = [
@@ -65,7 +73,6 @@ export default function SettingsScreen() {
   const { settings: value, update, appearance, palette } = useSettings();
   const usesDefaultSize = value.fontSize === null;
   const shownSize = value.fontSize ?? DEFAULT_EXPLICIT_FONT_SIZE;
-  const theme = Themes[value.theme];
 
   return (
     <View style={styles.fill}>
@@ -132,22 +139,44 @@ export default function SettingsScreen() {
           </Section>
 
           <Section
-            header={<SectionHeader palette={palette}>Theme</SectionHeader>}
+            header={<SectionHeader palette={palette}>Appearance</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                System follows the phone. The app and the terminal use the Light theme or the
+                Dark theme below.
+              </Text>
+            }
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <Picker
               label=""
-              selection={value.theme}
-              onSelectionChange={(next) => update({ theme: next as ThemeId })}
+              selection={value.appearance}
+              onSelectionChange={(next) => {
+                const appearance = APPEARANCE_SETTINGS.find((each) => each === next);
+                if (appearance) update({ appearance });
+              }}
               modifiers={[pickerStyle('segmented')]}>
-              {THEME_IDS.map((id) => (
-                <Text key={id} modifiers={[tag(id)]}>
-                  {Themes[id].name}
+              {APPEARANCE_SETTINGS.map((each) => (
+                <Text key={each} modifiers={[tag(each)]}>
+                  {APPEARANCE_NAMES[each]}
                 </Text>
               ))}
             </Picker>
-
-            <ThemePreview themeId={value.theme} displayName={theme.displayName} palette={palette} />
           </Section>
+
+          <ThemeSection
+            title="Light theme"
+            ids={LIGHT_THEME_IDS}
+            selection={value.lightTheme}
+            onChange={(lightTheme) => update({ lightTheme })}
+            palette={palette}
+          />
+          <ThemeSection
+            title="Dark theme"
+            ids={DARK_THEME_IDS}
+            selection={value.darkTheme}
+            onChange={(darkTheme) => update({ darkTheme })}
+            palette={palette}
+          />
 
           <Section
             header={<SectionHeader palette={palette}>Windows &amp; Panes</SectionHeader>}
@@ -187,20 +216,50 @@ export default function SettingsScreen() {
   );
 }
 
+/** A picker over the Themes of one kind, and a preview of the chosen one. */
+function ThemeSection<Id extends ThemeId>({
+  title,
+  ids,
+  selection,
+  onChange,
+  palette,
+}: {
+  title: string;
+  ids: readonly Id[];
+  selection: Id;
+  onChange: (id: Id) => void;
+  palette: Appearance;
+}) {
+  return (
+    <Section
+      header={<SectionHeader palette={palette}>{title}</SectionHeader>}
+      modifiers={[listRowBackground(palette.rowSurface)]}>
+      <Picker
+        label=""
+        selection={selection}
+        onSelectionChange={(next) => {
+          const id = ids.find((each) => each === next);
+          if (id) onChange(id);
+        }}
+        modifiers={[pickerStyle('segmented')]}>
+        {ids.map((id) => (
+          <Text key={id} modifiers={[tag(id)]}>
+            {Themes[id].name}
+          </Text>
+        ))}
+      </Picker>
+
+      <ThemePreview themeId={selection} palette={palette} />
+    </Section>
+  );
+}
+
 /**
  * What the chosen Theme looks like: the same five lines remux shows, in the
  * Theme's own colours, down to the editor status line along the bottom.
  */
-function ThemePreview({
-  themeId,
-  displayName,
-  palette,
-}: {
-  themeId: ThemeId;
-  displayName: string;
-  palette: Appearance;
-}) {
-  const colours = Themes[themeId].palette;
+function ThemePreview({ themeId, palette }: { themeId: ThemeId; palette: Appearance }) {
+  const { displayName, palette: colours } = Themes[themeId];
 
   /** One line of the sample, as coloured runs. */
   const lines: { number: string; runs: { text: string; color: string }[] }[] = [

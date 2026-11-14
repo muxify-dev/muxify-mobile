@@ -9,12 +9,13 @@ import {
   type Appearance,
   type SheetPalette,
   type TerminalPalette,
+  type ThemeId,
 } from '@/constants/app-theme';
 import { deviceSettingsStore } from './device-settings';
-import { DEFAULT_SETTINGS, hostListsFor, chooserListsFor, type ChooserLists, type HostScreenLists, type Settings } from './settings';
+import { DEFAULT_SETTINGS, hostListsFor, resolveTheme, chooserListsFor, type ChooserLists, type HostScreenLists, type Settings } from './settings';
 import { deviceHostStore } from '@/storage/device-store';
 import { describeError } from '@/lib/describe-error';
-import { Alert } from 'react-native';
+import { Alert, useColorScheme } from 'react-native';
 
 interface SettingsContextValue {
   settings: Settings;
@@ -22,7 +23,9 @@ interface SettingsContextValue {
   update: (change: Partial<Settings>) => void;
   updateChooserLists: (hostId: string, lists: ChooserLists) => void;
   updateHostLists: (hostId: string, lists: HostScreenLists) => void;
-  /** Whether the app is drawn light or dark, which the Theme decides. */
+  /** The Theme in use, from the appearance setting and the phone's. See resolveTheme. */
+  theme: ThemeId;
+  /** Whether the app is drawn light or dark, which the Theme in use decides. */
   appearance: 'light' | 'dark';
   /** The chrome colours for that appearance. */
   palette: Appearance;
@@ -41,11 +44,15 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
  *
  * Shared rather than read per screen because the Theme is not only the
  * terminal's: it decides whether the app is light or dark, so changing it in
- * Settings has to repaint the list behind it and the navigation bar above it in
- * the same frame. A screen that loaded its own copy would keep the old one.
+ * Settings, or the phone changing its appearance, has to repaint the list
+ * behind it and the navigation bar above it in the same frame. A screen that
+ * loaded its own copy would keep the old one.
  */
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  // iOS reports light or dark once the app has a window; anything else is the
+  // system default, which is light.
+  const phoneScheme = useColorScheme() === 'dark' ? 'dark' : 'light';
 
   const current = useRef(settings);
   const [ready, setReady] = useState(false);
@@ -92,19 +99,21 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     } }));
   }, [change]);
 
+  const theme = resolveTheme(settings, phoneScheme);
   const value = useMemo<SettingsContextValue>(
     () => ({
       settings,
       update,
       updateHostLists,
       updateChooserLists,
-      appearance: appearanceFor(settings.theme),
-      palette: paletteFor(settings.theme),
-      sheetPalette: sheetPaletteFor(settings.theme),
-      terminal: Themes[settings.theme].palette,
-      ansi: Themes[settings.theme].ansi,
+      theme,
+      appearance: appearanceFor(theme),
+      palette: paletteFor(theme),
+      sheetPalette: sheetPaletteFor(theme),
+      terminal: Themes[theme].palette,
+      ansi: Themes[theme].ansi,
     }),
-    [settings, update, updateHostLists, updateChooserLists],
+    [settings, theme, update, updateHostLists, updateChooserLists],
   );
 
   if (!ready) return null;

@@ -17,7 +17,7 @@ jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, {
 }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({
   appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark,
-  sheetPalette: require('@/constants/app-theme').sheetPaletteFor('default'),
+  sheetPalette: require('@/constants/app-theme').sheetPaletteFor('ghostty'),
 }) }));
 
 let renderer: ReactTestRenderer;

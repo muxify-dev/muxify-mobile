@@ -2,10 +2,9 @@
  * The app's chrome colours, and the terminal Themes the user can pick between.
  *
  * Taken from remux, whose screens these copy. Both appearances are here because
- * the chosen Theme decides which one is used: Solarized is a light terminal, and a
- * dark list wrapped around a light terminal reads as two apps stitched
- * together. The phone's own light/dark setting does not come into it — the
- * Theme is the setting.
+ * the Theme in use decides which one is used: a dark list wrapped around a
+ * light terminal reads as two apps stitched together. Which Theme is in use is
+ * resolveTheme's decision, from the user's appearance setting and the phone's.
  */
 export interface Appearance {
   /** Behind a grouped list. */
@@ -114,11 +113,6 @@ export const SheetPalettes: Record<'light' | 'dark', SheetPalette> = {
   },
 };
 
-/** The picker colours a Theme is drawn with. */
-export function sheetPaletteFor(theme: ThemeId): SheetPalette {
-  return SheetPalettes[appearanceFor(theme)];
-}
-
 /** What the Surface is painted with. One of these per Theme. */
 export interface TerminalPalette {
   background: string;
@@ -140,8 +134,6 @@ export interface TerminalPalette {
   white: string;
 }
 
-export type ThemeId = 'default' | 'dracula' | 'solarized';
-
 /**
  * The sixteen colours a terminal application actually paints with.
  *
@@ -150,68 +142,38 @@ export type ThemeId = 'default' | 'dracula' | 'solarized';
  * and picking Dracula changes almost nothing. Ordered as ANSI has them: the
  * eight normal colours, then the eight bright ones.
  *
- * Omitted for the Default Theme, whose whole point is ghostty's own palette.
+ * Omitted for Ghostty Default, whose whole point is ghostty's own palette.
  */
 export type AnsiPalette = readonly [
   string, string, string, string, string, string, string, string,
   string, string, string, string, string, string, string, string,
 ];
 
-/**
- * The Themes, in the order the picker shows them.
- *
- * `name` is what the picker segment says; `displayName` is the full name shown
- * beside the preview, because "Solarized" alone does not say which half of it.
- */
-export const Themes: Record<ThemeId, {
+/** Whether a Theme is a light terminal or a dark one. */
+export type ThemeKind = 'light' | 'dark';
+
+export interface Theme {
+  /** What the picker segment says. */
   name: string;
+  /** The full name beside the preview, because "Gruvbox" alone does not say which half of it. */
   displayName: string;
+  kind: ThemeKind;
   palette: TerminalPalette;
   ansi?: AnsiPalette;
-}> = {
-  default: {
-    name: 'Default',
-    displayName: 'Ghostty Default',
-    palette: {
-      background: '#11131a',
-      foreground: '#e6e6e6',
-      cursor: '#5aa9ff',
-      dim: '#5a6072',
-      blue: '#81a2be',
-      green: '#b5bd68',
-      yellow: '#f0c674',
-      grey: '#666666',
-      black: '#1d1f21',
-      white: '#c5c8c6',
-    },
-  },
-  dracula: {
-    name: 'Dracula',
-    displayName: 'Dracula',
-    // The official terminal spec: draculatheme.com. Dracula's "blue" is its
-    // purple, and the cursor is the foreground, as the spec has them.
-    palette: {
-      background: '#282a36',
-      foreground: '#f8f8f2',
-      cursor: '#f8f8f2',
-      dim: '#6272a4',
-      blue: '#bd93f9',
-      green: '#50fa7b',
-      yellow: '#f1fa8c',
-      grey: '#6272a4',
-      black: '#21222c',
-      white: '#f8f8f2',
-    },
-    ansi: [
-      '#21222c', '#ff5555', '#50fa7b', '#f1fa8c',
-      '#bd93f9', '#ff79c6', '#8be9fd', '#f8f8f2',
-      '#6272a4', '#ff6e6e', '#69ff94', '#ffffa5',
-      '#d6acff', '#ff92df', '#a4ffff', '#ffffff',
-    ],
-  },
-  solarized: {
+}
+
+/**
+ * The Themes, light ones first, each in the order its picker shows them.
+ *
+ * Each Theme says its own kind, and the Light and Dark pickers each list only
+ * their own: a light Theme chosen for the dark appearance is not a choice the
+ * settings can hold. See LightThemeId.
+ */
+const THEME_TABLE = {
+  'solarized-light': {
     name: 'Solarized',
     displayName: 'Solarized Light',
+    kind: 'light',
     // Ethan Schoonover's palette with its standard ANSI mapping, which puts the
     // base tones in the bright slots: bright black is base03, the darkest of
     // them, so line numbers come out near-black on the cream ground. That is
@@ -235,26 +197,137 @@ export const Themes: Record<ThemeId, {
       '#839496', '#6c71c4', '#93a1a1', '#fdf6e3',
     ],
   },
-};
+  'gruvbox-light': {
+    name: 'Gruvbox',
+    displayName: 'Gruvbox Light',
+    kind: 'light',
+    // Ghostty's own "Gruvbox Light" theme file, colour for colour.
+    palette: {
+      background: '#fbf1c7',
+      foreground: '#3c3836',
+      cursor: '#3c3836',
+      dim: '#928374',
+      blue: '#458588',
+      green: '#98971a',
+      yellow: '#d79921',
+      grey: '#928374',
+      black: '#fbf1c7',
+      white: '#7c6f64',
+    },
+    ansi: [
+      '#fbf1c7', '#cc241d', '#98971a', '#d79921',
+      '#458588', '#b16286', '#689d6a', '#7c6f64',
+      '#928374', '#9d0006', '#79740e', '#b57614',
+      '#076678', '#8f3f71', '#427b58', '#3c3836',
+    ],
+  },
+  ghostty: {
+    name: 'Ghostty',
+    displayName: 'Ghostty Default',
+    kind: 'dark',
+    palette: {
+      background: '#11131a',
+      foreground: '#e6e6e6',
+      cursor: '#5aa9ff',
+      dim: '#5a6072',
+      blue: '#81a2be',
+      green: '#b5bd68',
+      yellow: '#f0c674',
+      grey: '#666666',
+      black: '#1d1f21',
+      white: '#c5c8c6',
+    },
+  },
+  dracula: {
+    name: 'Dracula',
+    displayName: 'Dracula',
+    kind: 'dark',
+    // The official terminal spec: draculatheme.com. Dracula's "blue" is its
+    // purple, and the cursor is the foreground, as the spec has them.
+    palette: {
+      background: '#282a36',
+      foreground: '#f8f8f2',
+      cursor: '#f8f8f2',
+      dim: '#6272a4',
+      blue: '#bd93f9',
+      green: '#50fa7b',
+      yellow: '#f1fa8c',
+      grey: '#6272a4',
+      black: '#21222c',
+      white: '#f8f8f2',
+    },
+    ansi: [
+      '#21222c', '#ff5555', '#50fa7b', '#f1fa8c',
+      '#bd93f9', '#ff79c6', '#8be9fd', '#f8f8f2',
+      '#6272a4', '#ff6e6e', '#69ff94', '#ffffa5',
+      '#d6acff', '#ff92df', '#a4ffff', '#ffffff',
+    ],
+  },
+  'gruvbox-dark-hard': {
+    name: 'Gruvbox',
+    displayName: 'Gruvbox Dark Hard',
+    kind: 'dark',
+    // Ghostty's own "Gruvbox Dark Hard" theme file, colour for colour.
+    palette: {
+      background: '#1d2021',
+      foreground: '#ebdbb2',
+      cursor: '#ebdbb2',
+      dim: '#928374',
+      blue: '#458588',
+      green: '#98971a',
+      yellow: '#d79921',
+      grey: '#928374',
+      black: '#1d2021',
+      white: '#a89984',
+    },
+    ansi: [
+      '#1d2021', '#cc241d', '#98971a', '#d79921',
+      '#458588', '#b16286', '#689d6a', '#a89984',
+      '#928374', '#fb4934', '#b8bb26', '#fabd2f',
+      '#83a598', '#d3869b', '#8ec07c', '#ebdbb2',
+    ],
+  },
+} as const satisfies Record<string, Theme>;
 
-/** The Themes in picker order. */
-export const THEME_IDS: ThemeId[] = ['default', 'dracula', 'solarized'];
+export type ThemeId = keyof typeof THEME_TABLE;
+type ThemeIdOf<K extends ThemeKind> = { [Id in ThemeId]: (typeof THEME_TABLE)[Id]['kind'] extends K ? Id : never }[ThemeId];
+
+export const Themes: Readonly<Record<ThemeId, Theme>> = THEME_TABLE;
+export type LightThemeId = ThemeIdOf<'light'>;
+export type DarkThemeId = ThemeIdOf<'dark'>;
+
+/** The Light picker's Themes, in its order. */
+export const LIGHT_THEME_IDS: readonly LightThemeId[] = ['solarized-light', 'gruvbox-light'];
+/** The Dark picker's Themes, in its order. */
+export const DARK_THEME_IDS: readonly DarkThemeId[] = ['ghostty', 'dracula', 'gruvbox-dark-hard'];
+
+/** Every Theme, light ones first. */
+export const THEME_IDS: readonly ThemeId[] = [...LIGHT_THEME_IDS, ...DARK_THEME_IDS];
+
+export function isLightThemeId(value: unknown): value is LightThemeId {
+  return (LIGHT_THEME_IDS as readonly unknown[]).includes(value);
+}
+
+export function isDarkThemeId(value: unknown): value is DarkThemeId {
+  return (DARK_THEME_IDS as readonly unknown[]).includes(value);
+}
 
 /**
- * Which appearance a Theme wants the app drawn in.
- *
- * Solarized is the one light terminal, so it is the one light app. This is what
- * makes the Theme picker a light/dark switch as well: there is no separate
- * setting for it, because there is no sensible pairing of a light terminal with
- * dark chrome.
+ * Which appearance a Theme wants the app drawn in: its own kind. There is no
+ * sensible pairing of a light terminal with dark chrome.
  */
-export function appearanceFor(theme: ThemeId): 'light' | 'dark' {
-  return theme === 'solarized' ? 'light' : 'dark';
+export function appearanceFor(theme: ThemeId): ThemeKind {
+  return Themes[theme].kind;
 }
 
 /** The chrome colours a Theme is drawn with. */
 export function paletteFor(theme: ThemeId): Appearance {
   return AppPalettes[appearanceFor(theme)];
+}
+
+/** The picker colours a Theme is drawn with. */
+export function sheetPaletteFor(theme: ThemeId): SheetPalette {
+  return SheetPalettes[appearanceFor(theme)];
 }
 
 /**

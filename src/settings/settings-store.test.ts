@@ -16,7 +16,9 @@ function fakeFile(initial: string | null = null) {
 
 const CHANGED: Settings = {
   fontSize: 14,
-  theme: 'dracula',
+  appearance: 'dark',
+  lightTheme: 'gruvbox-light',
+  darkTheme: 'dracula',
   zoomMultipaneWindows: false,
   hostScreenLists: ['topics', 'sessions'],
   reconnectOnStart: true,
