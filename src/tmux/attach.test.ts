@@ -1434,6 +1434,73 @@ describe('the Panes on screen', () => {
     expect(text).toContain('alive again');
   });
 
+  it('shows no line of trouble for a read while the Connection is gone, nor after it reconnects', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    kit.hosts[0].exit('server exited unexpectedly');
+    await settle();
+    kit.attach.view('%0').scroll(3, GRID);
+    kit.clock.advance(5000);
+    await settle();
+    expect(kit.attach.state().trouble).toBeNull();
+
+    kit.attach.reconnect();
+    await connected(kit, 1);
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
+  it('starts a new Connection with no line of trouble from the one before', async () => {
+    const split = fakeHost();
+    const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+    split.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
+      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
+    ]);
+    const kit = attachOn({ hosts: [split, fakeHost()] });
+    await connected(kit);
+    split.refuseCommand('select-pane');
+    kit.attach.selectPane('%2');
+    await settle();
+    expect(kit.attach.state().trouble).toContain('select Pane');
+
+    kit.hosts[0].drop();
+    await connected(kit, 1);
+    await settle();
+
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
+  it('shows no line of trouble from a read made while it was reconnecting', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface());
+    kit.attach.paneGridReported('%0', GRID);
+    kit.clock.advance(1000);
+    await settle();
+    kit.hosts[0].drop();
+    await settle();
+    expect(kit.attach.state().phase.kind).toBe('reconnecting');
+    kit.attach.view('%0').scroll(3, GRID);
+    kit.clock.advance(5000);
+    await settle();
+    expect(kit.attach.state().trouble).toBeNull();
+
+    await connected(kit, 1);
+    kit.clock.advance(1000);
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
   it('takes a Surface together with the grid it reported before this Attach existed', async () => {
     // A Surface says its grid once per size. An Attach introduced to one that
     // has been on screen a while — the one this screen belonged to was

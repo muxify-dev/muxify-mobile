@@ -88,6 +88,16 @@ export type OpenConnection = (host: Host, progress?: (step: ConnectStep) => void
 /** What the app is doing, as React Native reports it. */
 export type LifecyclePhase = 'active' | 'inactive' | 'background';
 
+/**
+ * A Pane view's read while no Connection is there. The status Banner already
+ * says that, so it is not a line of trouble.
+ */
+class NoConnection extends Error {
+  constructor() {
+    super('the Connection has gone');
+  }
+}
+
 export type AttachPhase =
   | { kind: 'connecting' }
   | { kind: 'connected' }
@@ -603,7 +613,7 @@ export function openAttach(options: AttachOptions): Attach {
      * handler, and React Native ended the app.
      */
     const reading = async () => {
-      if (stale(mine) || !client) throw new Error('the Connection has gone');
+      if (stale(mine) || !client) throw new NoConnection();
       return client;
     };
     const lane = outbox.lane(paneId);
@@ -639,7 +649,7 @@ export function openAttach(options: AttachOptions): Attach {
           if (!stale(mine)) change({ trouble: null, ...paintedChange(paneId, true) });
         },
         onError: (error) => {
-          if (!stale(mine)) change({ trouble: describeError(error) });
+          if (!stale(mine) && !(error instanceof NoConnection)) change({ trouble: describeError(error) });
         },
       },
       { clock, log },
@@ -956,7 +966,8 @@ export function openAttach(options: AttachOptions): Attach {
         windowSize = size;
       });
 
-      change({ phase: { kind: 'connected' } });
+      // A line of trouble is about a command on this Connection, and none has failed yet.
+      change({ phase: { kind: 'connected' }, trouble: null });
       // A Connection that reached here has cleared whatever ended the last
       // one, so both automatic sources get their attempt again.
       attempted.clear();
