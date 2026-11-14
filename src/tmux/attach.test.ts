@@ -2118,7 +2118,7 @@ describe('typed keys and a Connection that breaks', () => {
     await reconnected(kit, 1);
     expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎' }]);
 
-    kit.attach.heldInput('%0', 'compose');
+    expect(kit.attach.heldInput('%0', 'compose')).toBe(true);
     await settle();
     expect(kit.attach.composer.draft('%0').text).toBe('echo hi\n');
     expect(kit.attach.state().input).toEqual([]);
@@ -2145,6 +2145,25 @@ describe('typed keys and a Connection that breaks', () => {
     hosts[0].release();
     hosts[1].release();
     await settle();
+    expect(server.typed()).toBe('');
+  });
+
+  it('keeps held keys on the card and says so when the Draft is on its way to the Pane', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    type(kit, 'hi\r');
+    kit.hosts[1].accept();
+    await settle();
+    kit.attach.composer.edit('%0', 'echo');
+    hosts[1].hold('set-buffer');
+    void kit.attach.composer.send('%0');
+    await settle();
+    expect(kit.attach.composer.draft('%0').phase).toBe('sending');
+
+    expect(kit.attach.heldInput('%0', 'compose')).toBe(false);
+    expect(kit.attach.composer.draft('%0').text).toBe('echo');
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎' }]);
     expect(server.typed()).toBe('');
   });
 

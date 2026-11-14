@@ -1035,8 +1035,7 @@ export default function TerminalScreen() {
               label: copy.compose,
               prominent: false,
               onPress: () => {
-                attach.heldInput(paneId, 'compose');
-                if (paneId !== activePaneId) return;
+                if (!attach.heldInput(paneId, 'compose') || paneId !== activePaneId) return;
                 setArmed(NO_MODIFIERS);
                 setComposerOpen(true);
               },

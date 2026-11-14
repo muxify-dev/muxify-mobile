@@ -64,7 +64,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     refreshTopic: async () => {},
     reconnect: () => {},
     acceptHostKey: () => Promise.resolve(),
-    heldInput: () => {},
+    heldInput: () => false,
     dismissInput: () => {},
     view: () => {
       throw new Error('no views here');

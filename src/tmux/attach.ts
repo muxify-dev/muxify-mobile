@@ -244,9 +244,10 @@ export interface Attach {
   acceptHostKey(): Promise<void>;
   /**
    * What the user decided about a Pane's held keys: send them, move their
-   * text to the Pane's Draft, or throw them away.
+   * text to the Pane's Draft, or throw them away. False when nothing was
+   * done: the Pane holds no keys, or its Draft is on its way to the Pane.
    */
-  heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): void;
+  heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean;
   /** The user has read that a Pane's keys were discarded. */
   dismissInput(paneId: string): void;
 
@@ -1387,21 +1388,18 @@ export function openAttach(options: AttachOptions): Attach {
       if (state.fingerprint === fingerprint) change({ keyChanged: false });
     },
 
-    heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): void {
-      if (closed) return;
-      if (action === 'send') {
-        outbox.release(paneId);
-        return;
-      }
-      if (action === 'discard') {
-        outbox.take(paneId);
-        return;
-      }
+    heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean {
+      if (closed) return false;
+      if (action === 'send') return outbox.release(paneId);
+      if (action === 'discard') return outbox.take(paneId).length > 0;
       // A Draft that is on its way to the Pane takes no edit, and the keys
       // must not go where the user cannot see them.
       const draft = composer.draft(paneId);
-      if (busy(draft)) return;
-      composer.edit(paneId, draft.text + toDraftText(outbox.take(paneId)).text);
+      if (busy(draft)) return false;
+      const keys = outbox.take(paneId);
+      if (keys.length === 0) return false;
+      composer.edit(paneId, draft.text + toDraftText(keys).text);
+      return true;
     },
 
     dismissInput(paneId: string): void {

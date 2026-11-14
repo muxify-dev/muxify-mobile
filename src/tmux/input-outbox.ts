@@ -46,8 +46,8 @@ export interface Outbox {
   lane(paneId: string): PaneInput;
   connected(link: OutboxLink): void;
   lost(): void;
-  /** Send on a held Lane. */
-  release(paneId: string): void;
+  /** Send on a held Lane. False when the Lane is not held. */
+  release(paneId: string): boolean;
   /** Empties a held Lane and answers with its keys. Move to Composer and Discard. */
   take(paneId: string): Key[];
   /** Removes a discarded notice. */
@@ -191,7 +191,11 @@ export function createOutbox(options: OutboxOptions): Outbox {
       everyLane({ kind: 'lost' });
     },
 
-    release: (paneId) => apply(paneId, { kind: 'released' }),
+    release(paneId: string): boolean {
+      if (closed || lanes.get(paneId)?.phase.kind !== 'held') return false;
+      apply(paneId, { kind: 'released' });
+      return true;
+    },
 
     take(paneId: string): Key[] {
       const lane = lanes.get(paneId);
