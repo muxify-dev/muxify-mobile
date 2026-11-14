@@ -258,6 +258,19 @@ export function selectPaneCommand(
   return ['select-pane', '-Z', '-t', `${sessionName}:${windowIndex}.${paneIndex}`];
 }
 
+export type PaneDirection = 'left' | 'down' | 'up' | 'right';
+
+const DIRECTION_FLAGS: Record<PaneDirection, string> = { left: '-L', down: '-D', up: '-U', right: '-R' };
+
+/**
+ * Moves the Client to the Pane beside the current one. tmux finds the
+ * neighbour from the Layout, which is the honest one even while zoomed, and
+ * `-Z` keeps the Zoom as selectPaneCommand does.
+ */
+export function selectPaneTowardCommand(sessionName: string, direction: PaneDirection): TmuxArgv {
+  return ['select-pane', '-Z', DIRECTION_FLAGS[direction], '-t', currentPaneTarget(sessionName)];
+}
+
 /**
  * Points the Client at a different Session.
  *

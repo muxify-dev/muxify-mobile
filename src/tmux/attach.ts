@@ -23,7 +23,7 @@ export interface SessionDestination {
 export interface AttachedTopic { id: TopicId; view: TopicView }
 
 import { createClientSizing, type ClientSizing } from './client-sizing';
-import { shellQuote, type PaneColours } from './commands';
+import { shellQuote, type PaneColours, type PaneDirection } from './commands';
 import {
   openControlConnection,
   type ClosedCause,
@@ -223,6 +223,8 @@ export interface Attach {
    * Answers whether it moved.
    */
   selectPane(paneId: string): boolean;
+  /** The Pane beside the active one. tmux finds it, and wraps at the edge. */
+  selectPaneToward(direction: PaneDirection): void;
   split(direction: 'right' | 'down'): Promise<void>;
   newWindow(): Promise<void>;
   setZoom(on: boolean): void;
@@ -1283,6 +1285,16 @@ export function openAttach(options: AttachOptions): Attach {
         }
       })();
       return true;
+    },
+
+    selectPaneToward(direction: PaneDirection): void {
+      const mine = generation;
+      const current = client;
+      if (!current) return;
+      say(`selecting the Pane ${direction}`);
+      // Settles nothing, as selectPane does not: tmux's notifications carry
+      // the new active Pane.
+      background(mine, () => current.selectPaneToward(currentSessionTarget(), direction));
     },
 
     async split(direction: 'right' | 'down'): Promise<void> {

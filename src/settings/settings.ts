@@ -6,6 +6,7 @@ import {
   type ThemeId,
   type ThemeKind,
 } from '@/constants/app-theme';
+import { parseKeyboardShortcuts, type KeyboardShortcuts } from '@/keyboard/keyboard-shortcuts';
 
 /**
  * What the user can change about the terminal and the Host Screen.
@@ -51,6 +52,8 @@ export interface Settings {
    */
   reconnectOnStart: boolean;
   chooserListPreferences?: Readonly<Record<string, ChooserLists>>;
+  /** The Keyboard Shortcuts the user changed. The rest keep their defaults. */
+  keyboardShortcuts?: KeyboardShortcuts;
 }
 
 export const APPEARANCE_SETTINGS = ['system', 'light', 'dark'] as const;
@@ -306,8 +309,11 @@ export function parseSettings(raw: unknown): Settings {
     ? Object.fromEntries(Object.entries(chooser).map(([id, lists]) => [id, parseChooserLists(lists)]))
     : undefined;
 
+  const keyboardShortcuts = parseKeyboardShortcuts(record.keyboardShortcuts);
+
   return {
     ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
+    ...(keyboardShortcuts === undefined ? {} : { keyboardShortcuts }),
     ...(byHost === null ? {} : { hostListPreferences: { version: 1 as const, byHost } }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,
     ...parseThemeChoice(record),

@@ -83,6 +83,7 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
+import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
@@ -1221,6 +1222,15 @@ export default function TerminalScreen() {
   const runVerb = useCallback((label: string, verb: () => Promise<void>) => {
     void verb().catch((error: unknown) => Alert.alert(`Could not ${label}`, describeError(error)));
   }, []);
+
+  useScreenKeyboardShortcuts(useMemo(() => attach ? {
+    'split-right': () => runVerb('split the Pane', () => attach.split('right')),
+    'split-down': () => runVerb('split the Pane', () => attach.split('down')),
+    'pane-left': () => attach.selectPaneToward('left'),
+    'pane-down': () => attach.selectPaneToward('down'),
+    'pane-up': () => attach.selectPaneToward('up'),
+    'pane-right': () => attach.selectPaneToward('right'),
+  } : {}, [attach, runVerb]));
 
   /**
    * The ⋯ menu, in the spec's order. Each entry is said to the Log as it is

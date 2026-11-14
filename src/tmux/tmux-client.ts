@@ -22,6 +22,7 @@ import {
   reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
+  selectPaneTowardCommand,
   selectWindowCommand,
   sendKeyCommand,
   splitWindowCommand,
@@ -29,6 +30,7 @@ import {
   zoomPaneCommand,
   type PaneColours,
   type OutboxToken,
+  type PaneDirection,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
 import type { Batch, DeliverResult, Seq } from './input-lane';
@@ -283,6 +285,11 @@ export class TmuxClient {
   /** Moves the Client to another Pane. */
   async selectPane(sessionName: string, windowIndex: number, paneIndex: number): Promise<void> {
     await this.mustRun('select Pane', selectPaneCommand(sessionName, windowIndex, paneIndex));
+  }
+
+  /** Moves the Client to the Pane beside the current one. */
+  async selectPaneToward(sessionName: string, direction: PaneDirection): Promise<void> {
+    await this.mustRun('select Pane', selectPaneTowardCommand(sessionName, direction));
   }
 
   /**

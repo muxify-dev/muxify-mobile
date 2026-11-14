@@ -1,8 +1,9 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 
 import { chromeHeaderColors } from '@/constants/app-theme';
+import { KeyCommandsProvider, useKeyboardShortcuts } from '@/keyboard/key-commands';
 import { SettingsProvider, useSettings } from '@/settings/settings-context';
 import { AttachProvider } from '@/tmux/attach-context';
 
@@ -15,11 +16,17 @@ export default function RootLayout() {
           screen, so the thing that holds it cannot be inside one. Going Home
           changes what is on top and nothing else. See ADR 0007. */}
       <AttachProvider>
-        <AppStack />
+        <KeyCommandsProvider>
+          <AppStack />
+        </KeyCommandsProvider>
       </AttachProvider>
     </SettingsProvider>
   );
 }
+
+// Navigate, not push: from Settings it stays put, and from a screen above
+// Settings it goes back to it.
+const OPEN_SETTINGS = { 'open-settings': () => router.navigate('/settings') };
 
 /**
  * The navigation chrome, painted in whatever the chosen Theme wants.
@@ -30,6 +37,7 @@ export default function RootLayout() {
  */
 function AppStack() {
   const { appearance, palette } = useSettings();
+  useKeyboardShortcuts(OPEN_SETTINGS);
 
   const theme = useMemo(() => {
     const base = appearance === 'dark' ? DarkTheme : DefaultTheme;
@@ -65,6 +73,7 @@ function AppStack() {
         }}>
         <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="keyboard-shortcuts" options={{ title: 'Keyboard Shortcuts' }} />
         <Stack.Screen
           name="host-form"
           options={{

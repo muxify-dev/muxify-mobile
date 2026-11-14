@@ -20,6 +20,7 @@ import {
   reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
+  selectPaneTowardCommand,
   selectWindowCommand,
   sendKeyCommand,
   sendKeysCommand,
@@ -137,6 +138,7 @@ describe('moving around', () => {
     // and the phone then draws the split for the two round trips it takes to
     // put the zoom back. See selectPaneCommand.
     expect(selectPaneCommand('work', 2, 1)).toEqual(['select-pane', '-Z', '-t', 'work:2.1']);
+    expect(selectPaneTowardCommand('0', 'left')).toEqual(['select-pane', '-Z', '-L', '-t', '0:']);
   });
 
   it('switches the Client rather than reconnecting', () => {

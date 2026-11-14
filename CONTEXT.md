@@ -564,6 +564,17 @@ Pane: the program in it draws its screen again and the Scrollback goes. ⌘ and
 any other key is that key.
 _Avoid_: hotkey, command (on its own)
 
+**Keyboard Shortcut**:
+A ⌘ chord on a hardware keyboard that does something in Muxify: ⌘, opens
+Settings, ⌘D and ⇧⌘D split the active Pane right and down, and ⇧⌘H, ⇧⌘J,
+⇧⌘K and ⇧⌘L go to the Pane on that side. tmux finds that Pane, wraps at the
+edge, and keeps the Zoom. Settings > Keyboard Shortcuts changes the key of
+each one. Every one holds ⌘, because tmux has no ⌘ to give a Pane, and no two
+share a key. Only those the screen on top can do are offered, so a chord
+nothing handles still reaches the Pane. Not a Shortcut, which is ⌘ and a
+letter typed through the Key Row.
+_Avoid_: hotkey, key binding
+
 **Composer**:
 The place to prepare a message for a Pane before sending it: multiline text,
 images pasted or chosen from Photos, and files chosen from Files. Opened from

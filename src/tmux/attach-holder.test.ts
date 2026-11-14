@@ -52,6 +52,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     switchSession: async (next) => { destination = next; phase = { kind: 'connected' }; },
     selectWindow: () => Promise.resolve(),
     selectPane: () => false,
+    selectPaneToward: () => {},
     split: () => Promise.resolve(),
     newWindow: () => Promise.resolve(),
     setZoom: () => {},

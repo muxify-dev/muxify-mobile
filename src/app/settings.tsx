@@ -196,6 +196,17 @@ export default function SettingsScreen() {
           </Section>
 
           <Section
+            header={<SectionHeader palette={palette}>Keyboard</SectionHeader>}
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Button
+              label="Keyboard Shortcuts"
+              systemImage="keyboard"
+              onPress={() => router.push('/keyboard-shortcuts')}
+              modifiers={[accessibilityLabel('Keyboard Shortcuts')]}
+            />
+          </Section>
+
+          <Section
             header={<SectionHeader palette={palette}>Startup</SectionHeader>}
             footer={
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
