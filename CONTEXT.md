@@ -536,8 +536,10 @@ screen. The arrow key is one key for the four arrows: a
 touch sends nothing, a drag of 12 pt sends the arrow it points at, a hold
 repeats that arrow until the finger lifts, and moving the finger to another
 side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘ are *sticky*: armed by a tap,
-and spent on the next key from either the row or the system keyboard. ⌥ is
-tmux's `M-`. ⌘ makes the next letter a Shortcut. While the Composer is open,
+and spent on the next key from either the row or the system keyboard. The
+Surface presses that key with the modifier held, as a hardware keyboard does,
+so ⌘ and delete removes the line and ⌥ and an arrow goes one word. See ADR
+0003. ⌘ and a letter can be a Shortcut. While the Composer is open,
 or while Typing is not open, the keys are disabled. The strip and key frames stay
 fixed during touch. A physical keyboard hides the row. iOS supplies its
 initial state, connection changes, and a fresh state on foreground entry.
@@ -562,7 +564,7 @@ program that did not ask, the phone asks first, because that program runs
 each line as the line arrives. ⌘k clears the active
 Pane: the program in it draws its screen again and the Scrollback goes. A
 Keyboard Shortcut's key comes first, so ⌘ and K is Pane above. ⌘ and any
-other key is that key.
+other key does what it does on a hardware keyboard.
 _Avoid_: hotkey, command (on its own)
 
 **Keyboard Shortcut**:

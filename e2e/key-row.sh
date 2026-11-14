@@ -9,13 +9,16 @@
 #   2  a touch dragged down types the alternate symbol, and a sideways drag
 #      scrolls the pairs and types nothing
 #   3  ⌃ and then c on the system keyboard interrupts the program
-#   4  ⌥ and then b reaches the Pane as Meta-b
+#   4  ⌥ and then b reaches the Pane as Meta-b, and ⌥ and then ~ as Meta-tilde
 #   5  the arrow key: a drag up is Up once and recalls the last command, an
 #      armed ⌃ goes with the first arrow only, and a hold repeats the arrow
 #   6  ⌘ and then c puts the Pane's text on the clipboard
 #   7  ⌘ and then v pastes the clipboard and runs nothing, two lines too. For
 #      a program that runs each line of a paste, the phone asks first
 #   8  ⌘ and then k leaves the prompt and no Scrollback
+#   9  ⌘ and ⌥ edit the line as they do on a hardware keyboard: ⌘ and delete
+#      removes the line, ⌘ and an arrow goes to its start or end, ⌥ and an
+#      arrow goes one word, and ⌥ and delete removes one word
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Each check reads the Host instead: the Pane with
@@ -100,7 +103,7 @@ attach() {
     || fail "the header never showed a program, so the Attach never connected"
 }
 
-echo "0/8  a Session with one Window, the Pane at a prompt, the keyboard up"
+echo "0/9  a Session with one Window, the Pane at a prompt, the keyboard up"
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; true"
 fresh_prompt
 attach
@@ -111,13 +114,13 @@ for _ in 1 2 3; do
 done
 keyboard_up || fail "the Keyboard button did not raise the keyboard"
 
-echo "1/8  a tap on a pair types its main symbol"
+echo "1/9  a tap on a pair types its main symbol"
 agent-device press 'label="minus underscore"' >/dev/null 2>&1
 sleep 1
 [ "$(typed_line)" = '$ -' ] || fail "a tap on - _ typed: $(typed_line)"
 echo "     - is on the prompt"
 
-echo "2/8  a drag down types the alternate symbol, and a sideways drag scrolls"
+echo "2/9  a drag down types the alternate symbol, and a sideways drag scrolls"
 read -r X Y W H <<<"$(frame_of 'minus underscore')"
 [ -n "${X:-}" ] || fail "no - _ pair on screen"
 agent-device gesture pan "$((X + W / 2))" "$((Y + H / 2))" 0 30 600 >/dev/null 2>&1
@@ -132,7 +135,7 @@ read -r _ _ SHOWN _ <<<"$(frame_of 'tilde quote')"
 [ "$(typed_line)" = '$ -_' ] || fail "a sideways drag on the pairs typed: $(typed_line)"
 echo "     the pairs scrolled, and nothing was typed"
 
-echo "3/8  ⌃ then c interrupts the program"
+echo "3/9  ⌃ then c interrupts the program"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'sleep 30' Enter"
 sleep 1
@@ -143,7 +146,7 @@ sleep 2
 [ "$(typed_line)" = '$' ] || fail "no new prompt after ⌃c: $(typed_line)"
 echo "     sleep is gone, and the prompt is back"
 
-echo "4/8  ⌥ then b reaches the Pane as Meta-b"
+echo "4/9  ⌥ then b reaches the Pane as Meta-b"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'cat -v' Enter"
 sleep 1
@@ -151,8 +154,15 @@ chord option b
 sleep 2
 typed_line | grep -qi '^\^\[b$' || fail "⌥b reached cat as: $(typed_line)"
 echo "     cat -v read $(typed_line)"
+# A symbol that needs shift on a hardware keyboard is one key on the Key Row.
+agent-device press 'label="option"' >/dev/null 2>&1
+sleep 0.5
+agent-device press 'label="tilde quote"' >/dev/null 2>&1
+sleep 2
+[ "$(typed_line)" = '^[b^[~' ] || fail "⌥b and ⌥~ reached cat as: $(typed_line)"
+echo "     and ⌥ then ~ is Meta-tilde: cat -v read $(typed_line)"
 
-echo "5/8  the arrow key sends the arrow it is dragged towards"
+echo "5/9  the arrow key sends the arrow it is dragged towards"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'true key-row-recall' Enter; tmux send-keys -t '$PANE' 'clear' Enter"
 sleep 1
@@ -184,7 +194,7 @@ LEFTS=$(typed_line | grep -o '\^\[\[D' | wc -l | tr -d ' ')
 [ "$(typed_line | tr -d '^[D')" = '' ] || fail "a held drag left sent more than Left: $(typed_line)"
 echo "     a held drag left repeated Left $LEFTS times"
 
-echo "6/8  ⌘ then c copies the Pane's text"
+echo "6/9  ⌘ then c copies the Pane's text"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'echo key-row-copy' Enter"
 sleep 1
@@ -195,7 +205,7 @@ sleep 1
 xcrun simctl pbpaste "${MUXIFY_E2E_DEVICE:-booted}" | grep -q '^key-row-copy$' || fail "the clipboard does not hold the Pane's text"
 echo "     the Pane's text is on the clipboard"
 
-echo "7/8  ⌘ then v pastes the clipboard and runs nothing"
+echo "7/9  ⌘ then v pastes the clipboard and runs nothing"
 fresh_prompt
 agent-device clipboard write 'echo key-row-paste' >/dev/null 2>&1
 chord command v
@@ -232,7 +242,7 @@ sleep 2
 on_host "tmux send-keys -t '$PANE' \"bind 'set enable-bracketed-paste on'\" Enter"
 echo "     with bracketed paste off the phone asked, and Cancel pasted nothing"
 
-echo "8/8  ⌘ then k leaves the prompt and no Scrollback"
+echo "8/9  ⌘ then k leaves the prompt and no Scrollback"
 fresh_prompt
 on_host "tmux send-keys -t '$PANE' 'seq 1 200' Enter"
 sleep 1
@@ -242,11 +252,38 @@ sleep 3
 [ "$(pane '-S -')" = '$' ] || fail "after ⌘k the Pane and its Scrollback hold: $(pane '-S -' | head -5)"
 echo "     the prompt, and nothing above it"
 
+echo "9/9  ⌘ and ⌥ edit the line as they do on a hardware keyboard"
+fresh_prompt
+on_host "tmux send-keys -t '$PANE' -l 'echo one two'"
+sleep 1
+chord option delete
+sleep 2
+[ "$(typed_line)" = '$ echo one' ] || fail "⌥ and delete left: $(typed_line)"
+echo "     ⌥ and delete removed one word"
+chord command delete
+sleep 2
+[ "$(typed_line)" = '$' ] || fail "⌘ and delete left: $(typed_line)"
+echo "     ⌘ and delete removed the line"
+on_host "tmux send-keys -t '$PANE' 'cat -v' Enter"
+sleep 1
+for modifier in command option; do
+  for way in "-30 0" "30 0"; do
+    agent-device press "label=\"$modifier\"" >/dev/null 2>&1
+    sleep 0.5
+    # shellcheck disable=SC2086
+    stick $way 250
+    sleep 1
+  done
+done
+[ "$(typed_line)" = '^A^E^[b^[f' ] || fail "⌘←, ⌘→, ⌥← and ⌥→ reached cat as: $(typed_line)"
+echo "     ⌘←, ⌘→, ⌥← and ⌥→ reached cat -v as $(typed_line)"
+
 agent-device close >/dev/null 2>&1
 fresh_prompt
 echo
 echo "PASS: a pair types its main symbol on a tap and its alternate one on a drag"
 echo "      down, the pairs scroll sideways, ⌃ and ⌥ apply to the next key of"
 echo "      the system keyboard, the arrow key sends the arrow it is dragged"
-echo "      towards and repeats it while held, and ⌘ c, v and k copy, paste"
-echo "      without running, one line or two, and clear."
+echo "      towards and repeats it while held, ⌘ c, v and k copy, paste"
+echo "      without running, one line or two, and clear, and ⌘ and ⌥ edit the"
+echo "      line with delete and the arrows."

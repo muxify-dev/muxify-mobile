@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6f710392d 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..18ac450c3f0a88f9874da412cfcab43cfe9724b0 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -15,7 +15,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6
  };
  export type TerminalViewRef = {
      /** Feed base64-encoded PTY output into the terminal grid. */
-@@ -18,7 +24,45 @@ export type TerminalViewRef = {
+@@ -18,7 +24,55 @@ export type TerminalViewRef = {
      writeText(text: string): Promise<void>;
      /** Mark the underlying PTY as exited. */
      finish(exitCode: number): Promise<void>;
@@ -40,7 +40,17 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6
 +     * it follows the Surface's own press.
 +     */
 +    followSelectionPress(x: number, y: number, lifted: boolean): Promise<void>;
-+};
++    /**
++     * Press one key with these modifiers held, as a hardware keyboard does.
++     * ghostty applies its keybinds and encodes the key, and what it writes
++     * arrives in `onInput`. `key` is `Escape`, `Tab`, `Enter`, `Backspace`,
++     * `Up`, `Down`, `Left`, `Right`, or the one character that the key types.
++     * Any other name rejects. iOS only.
++     */
++    pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
+ };
++/** The modifiers held with a key. `cmd` is ghostty's `super`. */
++export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +/** One row of terminal text for the Selection Layer. */
 +export type TerminalSelectionRow = {
 +    /** The caller's number for the row. Rows are told apart and ordered by it. */
@@ -53,7 +63,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6
 +    cells?: number[];
 +    /** Whether the row runs on into the next one, so a copy joins the two. */
 +    wraps: boolean;
- };
++};
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +/** What the user chose to paste: text, or an image saved to a file. */
@@ -61,7 +71,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +96,77 @@ export type TerminalViewProps = {
+@@ -52,10 +106,77 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -140,10 +150,10 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..8d4eacb7f9f1e60504130517e61965b6
      onResize?: (event: {
          nativeEvent: TerminalResizeEvent;
 diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
-index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..54523f6a9a0ec055a4c9c6da9d30a679fa090c4d 100644
+index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..d371062907e9e73c185a1c2282daf240916fde41 100644
 --- a/build/ExpoLibghosttyView.js
 +++ b/build/ExpoLibghosttyView.js
-@@ -22,6 +22,12 @@ export default function TerminalView({ ref, onResize, ...props }) {
+@@ -22,6 +22,13 @@ export default function TerminalView({ ref, onResize, ...props }) {
              write: whenReady((base64) => native.current.write(base64)),
              writeText: whenReady((text) => native.current.writeText(text)),
              finish: whenReady((exitCode) => native.current.finish(exitCode)),
@@ -153,59 +163,30 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..54523f6a9a0ec055a4c9c6da9d30a679
 +            showSelection: whenReady((rows, top, press) => native.current.showSelection(rows, top, press)),
 +            endSelection: whenReady(() => native.current.endSelection()),
 +            followSelectionPress: whenReady((x, y, lifted) => native.current.followSelectionPress(x, y, lifted)),
++            pressKey: whenReady((key, modifiers) => native.current.pressKey(key, modifiers)),
          };
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
 diff --git a/build/index.d.ts b/build/index.d.ts
-index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..599f8319179fd59d53dd317e2bb7c9670cf39fdb 100644
+index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..6192f3dd6437031f0364930898d16ca93bf7d16a 100644
 --- a/build/index.d.ts
 +++ b/build/index.d.ts
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,4 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
-+export { setKeybinds } from './keybinds';
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/build/index.js b/build/index.js
-index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..e225a97ec71eea91f4c5949133c547bd95d0900b 100644
+index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..7da4f92e26bf07f1407b7e3626befbf9e6d99c4e 100644
 --- a/build/index.js
 +++ b/build/index.js
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,4 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
-+export { setKeybinds } from './keybinds';
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
-diff --git a/build/keybinds.d.ts b/build/keybinds.d.ts
-new file mode 100644
-index 0000000000000000000000000000000000000000..9ba220472ad3b581866db1d903f0441bebe6a9b6
---- /dev/null
-+++ b/build/keybinds.d.ts
-@@ -0,0 +1,6 @@
-+/**
-+ * Keybinds for every terminal view, in ghostty config syntax:
-+ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
-+ * keybind for a chord ghostty already binds replaces it. iOS only.
-+ */
-+export declare function setKeybinds(keybinds: string[]): void;
-diff --git a/build/keybinds.js b/build/keybinds.js
-new file mode 100644
-index 0000000000000000000000000000000000000000..5b08845e2ae711076bb14faeb9c9a78ebde4c3f5
---- /dev/null
-+++ b/build/keybinds.js
-@@ -0,0 +1,10 @@
-+import { requireOptionalNativeModule } from 'expo';
-+const native = requireOptionalNativeModule('ExpoLibghostty');
-+/**
-+ * Keybinds for every terminal view, in ghostty config syntax:
-+ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
-+ * keybind for a chord ghostty already binds replaces it. iOS only.
-+ */
-+export function setKeybinds(keybinds) {
-+    void native?.setKeybinds?.(keybinds);
-+}
 diff --git a/build/swipeTick.d.ts b/build/swipeTick.d.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..e0326a71ff927b5c4f3cb99266d68693670933b5
@@ -235,10 +216,10 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338bd4eba5b 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..7504a449096d2d1ec409df9196a8b8953897a039 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -1,11 +1,27 @@
+@@ -1,11 +1,21 @@
  import ExpoModulesCore
 +import GhosttyTerminal
  
@@ -252,12 +233,6 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338
 +      MainActor.assumeIsolated { TerminalSwipeFeedback.tick() }
 +    }.runOnQueue(.main)
 +
-+    // Keybinds in ghostty config syntax, such as `super+backspace=text:\x15`.
-+    // App-wide on iOS, like the theme, and kept with it in one config.
-+    AsyncFunction("setKeybinds") { (keybinds: [String]) in
-+      MainActor.assumeIsolated { ExpoLibghosttyView.setKeybinds(keybinds) }
-+    }.runOnQueue(.main)
-+
      View(ExpoLibghosttyView.self) {
 -      Events("onInput", "onResize")
 +      Events(
@@ -267,7 +242,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +52,56 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +46,62 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -304,6 +279,12 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338
 +        view.followSelectionPress(x: x, y: y, lifted: lifted)
 +      }.runOnQueue(.main)
 +
++      // One key with modifiers, pressed as a hardware keyboard presses it.
++      // What ghostty writes for it arrives in `onInput`.
++      AsyncFunction("pressKey") { (view: ExpoLibghosttyView, key: String, modifiers: KeyModifiersRecord) in
++        try view.pressKey(key, modifiers: modifiers)
++      }.runOnQueue(.main)
++
 +      // The accessory bar of ctrl/esc/tab/arrows above the keyboard. Defaults
 +      // to visible, which is the library's own behaviour.
 +      Prop("accessoryBar") { (view: ExpoLibghosttyView, visible: Bool?) in
@@ -324,10 +305,23 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338
      }
    }
  }
-@@ -46,6 +112,24 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +112,37 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
++internal final class UnknownKeyException: GenericException<String> {
++  override var reason: String {
++    "'\(param)' is not a key the terminal can press"
++  }
++}
++
++/// The modifiers held with a pressed key.
++internal struct KeyModifiersRecord: Record {
++  @Field var ctrl: Bool = false
++  @Field var alt: Bool = false
++  @Field var cmd: Bool = false
++}
++
 +/// One row of terminal text for the Selection Layer.
 +internal struct SelectionRowRecord: Record {
 +  /// The host's number for the row. Rows are told apart and ordered by it.
@@ -350,7 +344,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6e7cc60d8 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..caa69d072c9af96e74ae12443c482c4235f432bf 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -410,44 +404,24 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -26,7 +71,28 @@ class ExpoLibghosttyView: ExpoView {
+@@ -26,7 +71,16 @@ class ExpoLibghosttyView: ExpoView {
    /// unlike Android's per-view application. Colors accept ghostty config
    /// syntax; nil clears back to the defaults.
    func applyTheme(_ theme: TerminalThemeRecord?) {
-+    Self.theme = theme
-+    Self.applyConfig()
-+  }
-+
-+  /// The config is the shared controller's, so the theme and the keybinds
-+  /// are too, and setting either one rebuilds it from both.
-+  private static var theme: TerminalThemeRecord?
-+  private static var keybinds: [String] = []
-+
-+  static func setKeybinds(_ keybinds: [String]) {
-+    guard keybinds != Self.keybinds else { return }
-+    Self.keybinds = keybinds
-+    applyConfig()
-+  }
-+
-+  private static func applyConfig() {
 +    // No padding, so the grid starts at the view's top left. The Selection
 +    // Layer and every caller that turns a touch into a cell count from there;
 +    // ghostty's default of 2 pt drew each glyph 2 pt past the cell they meant.
++    //
++    // Option is alt, so option and a letter is Meta and not the letter's
++    // option character. The terminal view reads this when it sends a key.
      var config = TerminalConfiguration()
 +      .appending(.windowPaddingX(0))
 +      .appending(.windowPaddingY(0))
++      .appending(.custom(key: "macos-option-as-alt", value: "true"))
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -39,11 +105,58 @@ class ExpoLibghosttyView: ExpoView {
-         }
-       }
-     }
-+    for keybind in keybinds {
-+      config = config.appending(.custom(key: "keybind", value: keybind))
-+    }
-     _ = TerminalController.shared.setTheme(TerminalTheme(light: config, dark: config))
-   }
+@@ -44,6 +98,50 @@ class ExpoLibghosttyView: ExpoView {
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -498,7 +472,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +169,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +154,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -520,7 +494,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6
        }
      )
      self.session = session
-@@ -66,21 +190,269 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +175,280 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -727,6 +701,17 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6
 +    pendingOutput.removeAll()
 +    pendingOutputBytes = 0
 +    for data in held { session.receive(data) }
++  }
++
++  /// Presses one key with modifiers held, the way a hardware key goes in.
++  func pressKey(_ key: String, modifiers: KeyModifiersRecord) throws {
++    var held: UIKeyModifierFlags = []
++    if modifiers.ctrl { held.insert(.control) }
++    if modifiers.alt { held.insert(.alternate) }
++    if modifiers.cmd { held.insert(.command) }
++    guard terminalView.pressKey(key, modifiers: held) else {
++      throw UnknownKeyException(key)
++    }
    }
  
    /// Mark the underlying PTY as exited (terminal.exit on the wire).
@@ -1671,6 +1656,44 @@ index 0000000000000000000000000000000000000000..81273c61d0759c2b4d25b9301fe25a61
 +  func insertText(_ text: String) {}
 +  func deleteBackward() {}
 +}
+diff --git a/ios/vendor/GhosttyTerminal/Platform/Shared/TerminalHardwareKeyRouter.swift b/ios/vendor/GhosttyTerminal/Platform/Shared/TerminalHardwareKeyRouter.swift
+index 727f71041296a83fa2edcdd2a1f75b4841e6f200..f15edc080936e1fffab7a3db430cdc477a04aed8 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/Shared/TerminalHardwareKeyRouter.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/Shared/TerminalHardwareKeyRouter.swift
+@@ -163,6 +163,20 @@ enum TerminalHardwareKeyRouter {
+         return appKitKeyCode(for: ghosttyKey)
+     }
+ 
++    /// The UIKit (USB HID) usage of the physical key that a Ghostty key
++    /// names, for a key event that does not come from a UIKey.
++    static func uiKitUsage(for ghosttyKey: ghostty_input_key_e) -> UInt16? {
++        ghosttyKeyToUIKitUsage[ghosttyKey.rawValue]
++    }
++
++    private static let ghosttyKeyToUIKitUsage: [UInt32: UInt16] = {
++        var result: [UInt32: UInt16] = [:]
++        for (usage, key) in uiKitMap {
++            result[key.rawValue] = usage
++        }
++        return result
++    }()
++
+     private static let ghosttyKeyToAppKitCode: [UInt32: UInt16] = {
+         var result: [UInt32: UInt16] = [:]
+         for (code, key) in appKitMap {
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift
+index 809e7dd6f1887dc5c2b0267e4c786587c49aec57..2f06e769170b60bf8c676417b758fd1aa437c98e 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift
+@@ -231,7 +231,7 @@
+             return ghosttyKey
+         }
+ 
+-        private func keyMapping(
++        func keyMapping(
+             for text: String
+         ) -> (key: ghostty_input_key_e, extraModifiers: TerminalInputModifiers)? {
+             guard text.count == 1, let char = text.first else { return nil }
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 index 3f3eeb202351f474526690dc27937df833bdd7e3..eb3cce62bcda6e8c6527f991846e949d906445e0 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
@@ -1901,7 +1924,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..eb3cce62bcda6e8c6527f991846e949d
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-index 427aa9c21db8f930bd9e3246f5900b9d31377b02..305972da4662b1cae0664b7ef5be7006fcd681ca 100644
+index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a327700e0 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 @@ -12,18 +12,39 @@
@@ -1946,29 +1969,220 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..305972da4662b1cae0664b7ef5be7006
              for press in presses {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
-@@ -106,6 +127,12 @@
+@@ -48,6 +69,97 @@
+                 return
+             }
+ 
++            if action == GHOSTTY_ACTION_PRESS,
++               shouldSuppressUIKeyInput(
++                   for: key,
++                   isCommandModified: key.modifierFlags.contains(.command)
++               )
++            {
++                hardwareKeyHandled = true
++            }
++
++            sendKeyStroke(TerminalKeyStroke(key), action: action, to: surface)
++        }
++
++        #if !targetEnvironment(macCatalyst)
++            /// Presses and releases one key with modifiers held, for a key
++            /// that the app draws. The key goes the way a hardware key goes,
++            /// so ghostty gives both the same keybinds and the same encoding.
++            ///
++            /// `key` is `Escape`, `Tab`, `Enter`, `Backspace`, `Up`, `Down`,
++            /// `Left`, `Right`, or the one character that the key types.
++            /// Returns false for any other name.
++            @discardableResult
++            public func pressKey(_ key: String, modifiers: UIKeyModifierFlags) -> Bool {
++                guard let stroke = keyStroke(for: key, modifiers: modifiers) else { return false }
++                guard let surface else { return true }
++
++                // ghostty encodes nothing for a key during composition, and
++                // UIKit does not know about a key it did not send.
++                if inputHandler.hasMarkedText {
++                    inputHandler.unmarkText()
++                }
++                sendKeyStroke(stroke, action: GHOSTTY_ACTION_PRESS, to: surface)
++                sendKeyStroke(stroke, action: GHOSTTY_ACTION_RELEASE, to: surface)
++                return true
++            }
++
++            private static let namedKeyStrokes: [String: (usage: UInt16, characters: String)] = [
++                "Escape": (0x29, UIKeyCommand.inputEscape),
++                "Tab": (0x2B, "\t"),
++                "Enter": (0x28, "\r"),
++                "Backspace": (0x2A, "\u{8}"),
++                "Up": (0x52, UIKeyCommand.inputUpArrow),
++                "Down": (0x51, UIKeyCommand.inputDownArrow),
++                "Left": (0x50, UIKeyCommand.inputLeftArrow),
++                "Right": (0x4F, UIKeyCommand.inputRightArrow),
++            ]
++
++            private func keyStroke(
++                for key: String,
++                modifiers: UIKeyModifierFlags
++            ) -> TerminalKeyStroke? {
++                if let named = Self.namedKeyStrokes[key] {
++                    return TerminalKeyStroke(
++                        usage: named.usage,
++                        modifierFlags: modifiers,
++                        characters: named.characters,
++                        charactersIgnoringModifiers: named.characters
++                    )
++                }
++                guard key.count == 1, let character = key.first else { return nil }
++
++                // A capital letter is its letter key with shift, as on a
++                // hardware keyboard. Any other character that a US keyboard
++                // needs shift for is a key by itself, as it is on the
++                // keyboard that typed it. So option and `<` is Meta-<, and
++                // not Meta-comma with shift.
++                if let mapping = keyMapping(for: key),
++                   mapping.extraModifiers.isEmpty || character.isLetter,
++                   let usage = TerminalHardwareKeyRouter.uiKitUsage(for: mapping.key)
++                {
++                    return TerminalKeyStroke(
++                        usage: usage,
++                        modifierFlags: mapping.extraModifiers.contains(.shift)
++                            ? modifiers.union(.shift) : modifiers,
++                        characters: key,
++                        charactersIgnoringModifiers: key.lowercased()
++                    )
++                }
++                return TerminalKeyStroke(
++                    usage: 0,
++                    modifierFlags: modifiers,
++                    characters: key,
++                    charactersIgnoringModifiers: key
++                )
++            }
++        #endif
++
++        private func sendKeyStroke(
++            _ key: TerminalKeyStroke,
++            action: ghostty_input_action_e,
++            to surface: TerminalSurface
++        ) {
+             let filteredModifierFlags = filteredModifierFlags(for: key)
+             let isCommandModified = filteredModifierFlags.contains(.command)
+             let mods = TerminalInputModifiers(from: filteredModifierFlags)
+@@ -57,21 +169,15 @@
+                 filteredModifierFlags: filteredModifierFlags
+             )
+ 
+-            if action == GHOSTTY_ACTION_PRESS,
+-               shouldSuppressUIKeyInput(for: key, isCommandModified: isCommandModified)
+-            {
+-                hardwareKeyHandled = true
+-            }
+-
+             let delivery = TerminalHardwareKeyRouter.routeUIKit(
+-                usage: UInt16(key.keyCode.rawValue),
++                usage: key.usage,
+                 backend: configuration.backend,
+                 modifiers: mods
+             )
+ 
+             TerminalDebugLog.log(
+                 .input,
+-                "uikit key action=\(TerminalDebugLog.describe(action)) code=\(key.keyCode.rawValue) chars=\(TerminalDebugLog.describe(key.characters)) ignoring=\(TerminalDebugLog.describe(key.charactersIgnoringModifiers)) mods=0x\(String(filteredModifierFlags.rawValue, radix: 16)) delivery=\(delivery.debugSummary) marked=\(inputHandler.hasMarkedText)"
++                "uikit key action=\(TerminalDebugLog.describe(action)) code=\(key.usage) chars=\(TerminalDebugLog.describe(key.characters)) ignoring=\(TerminalDebugLog.describe(key.charactersIgnoringModifiers)) mods=0x\(String(filteredModifierFlags.rawValue, radix: 16)) delivery=\(delivery.debugSummary) marked=\(inputHandler.hasMarkedText)"
+             )
+ 
+             if action == GHOSTTY_ACTION_RELEASE, delivery.isDirectInput {
+@@ -99,13 +205,30 @@
+             // translate the documented HID usage value from UIKey into the
+             // corresponding AppKit keycode here.
+             keyEvent.keycode = TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
+-                usage: UInt16(key.keyCode.rawValue)
++                usage: key.usage
+             )
+             keyEvent.composing = inputHandler.hasMarkedText
+ 
++            // ghostty says if option is alt (`macos-option-as-alt`). On iOS
++            // its encoder does not read that setting, so the key says it:
++            // option is not spent on the text, and the text is the key's own.
++            // Then option and f is Meta-f, and not the character ƒ.
++            let optionIsAlt = mods.contains(.alt) && surface.rawValue.map {
++                ghostty_surface_key_translation_mods($0, mods.ghosttyMods).rawValue
++                    & GHOSTTY_MODS_ALT.rawValue == 0
++            } == true
++
              var consumedFlags = filteredModifierFlags
              consumedFlags.remove(.control)
              consumedFlags.remove(.command)
++            if optionIsAlt { consumedFlags.remove(.alternate) }
 +            // A modifier on Return, Tab, Backspace or Escape changes no text,
 +            // so it is never consumed and the key carries no text. Otherwise
 +            // shift counts as spent and the text "\r" goes out: shift-Return
 +            // was a bare Return, where kitty encoding sends CSI 13;2u.
-+            let modifiedControlKey = !mods.isEmpty && Self.controlKeyCodes.contains(key.keyCode)
++            let modifiedControlKey = !mods.isEmpty
++                && Self.controlKeyCodes.contains { UInt16($0.rawValue) == key.usage }
 +            if modifiedControlKey { consumedFlags = [] }
              keyEvent.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
  
              guard action == GHOSTTY_ACTION_PRESS || action == GHOSTTY_ACTION_REPEAT else {
-@@ -129,7 +156,8 @@
+@@ -129,7 +252,10 @@
                  return
              }
  
 -            guard let text = TerminalInputText.filteredFunctionKeyText(key.characters),
 +            guard !modifiedControlKey,
-+                  let text = TerminalInputText.filteredFunctionKeyText(key.characters),
++                  let text = TerminalInputText.filteredFunctionKeyText(
++                      optionIsAlt ? key.charactersIgnoringModifiers : key.characters
++                  ),
                    !text.isEmpty
              else {
                  _ = surface.sendKeyEvent(keyEvent)
+@@ -179,7 +305,7 @@
+             return true
+         }
+ 
+-        private func filteredModifierFlags(for key: UIKey) -> UIKeyModifierFlags {
++        private func filteredModifierFlags(for key: TerminalKeyStroke) -> UIKeyModifierFlags {
+             var flags = key.modifierFlags
+             let isFunctionKey =
+                 TerminalInputText.filteredFunctionKeyText(key.characters) == nil ||
+@@ -191,7 +317,7 @@
+         }
+ 
+         private func commandZoomDirection(
+-            for key: UIKey,
++            for key: TerminalKeyStroke,
+             action: ghostty_input_action_e,
+             filteredModifierFlags: UIKeyModifierFlags
+         ) -> KeyboardZoomDirection? {
+@@ -243,4 +369,29 @@
+             case decrease
+         }
+     }
++
++    /// One key press as ghostty needs it. A hardware key gives one from its
++    /// UIKey. `pressKey` makes one for a key that the app draws.
++    struct TerminalKeyStroke {
++        /// The HID usage of the physical key, or zero for a key that a US
++        /// keyboard does not have.
++        var usage: UInt16
++        var modifierFlags: UIKeyModifierFlags
++        /// The text that the key types with its modifiers, or UIKit's name
++        /// for a key that types none.
++        var characters: String
++        var charactersIgnoringModifiers: String
++    }
++
++    extension TerminalKeyStroke {
++        @MainActor
++        init(_ key: UIKey) {
++            self.init(
++                usage: UInt16(key.keyCode.rawValue),
++                modifierFlags: key.modifierFlags,
++                characters: key.characters,
++                charactersIgnoringModifiers: key.charactersIgnoringModifiers
++            )
++        }
++    }
+ #endif
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
 index e56733f4c5cbc9d9871e3933c511c64c855cf07e..284f82c7c5e0721485e2dc14519dd474a9c84154 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
@@ -2261,7 +2475,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355dad4dbf7e 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..531e8a1db2ab9feb75d47301e8e01f48d789f400 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2277,7 +2491,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355d
  };
  
  export type TerminalViewRef = {
-@@ -21,8 +27,49 @@ export type TerminalViewRef = {
+@@ -21,8 +27,60 @@ export type TerminalViewRef = {
    writeText(text: string): Promise<void>;
    /** Mark the underlying PTY as exited. */
    finish(exitCode: number): Promise<void>;
@@ -2302,7 +2516,18 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355d
 +   * it follows the Surface's own press.
 +   */
 +  followSelectionPress(x: number, y: number, lifted: boolean): Promise<void>;
-+};
++  /**
++   * Press one key with these modifiers held, as a hardware keyboard does.
++   * ghostty applies its keybinds and encodes the key, and what it writes
++   * arrives in `onInput`. `key` is `Escape`, `Tab`, `Enter`, `Backspace`,
++   * `Up`, `Down`, `Left`, `Right`, or the one character that the key types.
++   * Any other name rejects. iOS only.
++   */
++  pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
+ };
+ 
++/** The modifiers held with a key. `cmd` is ghostty's `super`. */
++export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +
 +/** One row of terminal text for the Selection Layer. */
 +export type TerminalSelectionRow = {
@@ -2316,8 +2541,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355d
 +  cells?: number[];
 +  /** Whether the row runs on into the next one, so a copy joins the two. */
 +  wraps: boolean;
- };
- 
++};
++
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +
@@ -2327,7 +2552,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355d
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -59,6 +106,63 @@ export type TerminalViewProps = {
+@@ -59,6 +117,63 @@ export type TerminalViewProps = {
    theme?: TerminalTheme;
    /** User keyboard/IME input to forward to the PTY. */
    onInput?: (event: { nativeEvent: TerminalInputEvent }) => void;
@@ -2392,15 +2617,16 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..7621e539d1a7076561c8d09d0ace355d
    onResize?: (event: { nativeEvent: TerminalResizeEvent }) => void;
    ref?: Ref<TerminalViewRef>;
 diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
-index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..0e6e0ef7f692427f4d3473b5f57a5579c6ca43b6 100644
+index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..1613bc1d0a83bb5fb582aa103f652c90e6a49e8c 100644
 --- a/src/ExpoLibghosttyView.tsx
 +++ b/src/ExpoLibghosttyView.tsx
-@@ -2,7 +2,12 @@ import { requireNativeView } from 'expo';
+@@ -2,7 +2,13 @@ import { requireNativeView } from 'expo';
  import * as React from 'react';
  import { useImperativeHandle, useRef } from 'react';
  
 -import type { TerminalViewProps, TerminalViewRef } from './ExpoLibghostty.types';
 +import type {
++  TerminalKeyModifiers,
 +  TerminalPoint,
 +  TerminalSelectionRow,
 +  TerminalViewProps,
@@ -2409,7 +2635,7 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..0e6e0ef7f692427f4d3473b5f57a5579
  
  const NativeView: React.ComponentType<TerminalViewProps> = requireNativeView('ExpoLibghostty');
  
-@@ -28,6 +33,16 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
+@@ -28,6 +34,17 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
        write: whenReady((base64: string) => native.current!.write(base64)),
        writeText: whenReady((text: string) => native.current!.writeText(text)),
        finish: whenReady((exitCode: number) => native.current!.finish(exitCode)),
@@ -2423,36 +2649,18 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..0e6e0ef7f692427f4d3473b5f57a5579
 +      followSelectionPress: whenReady((x: number, y: number, lifted: boolean) =>
 +        native.current!.followSelectionPress(x, y, lifted),
 +      ),
++      pressKey: whenReady((key: string, modifiers: TerminalKeyModifiers) => native.current!.pressKey(key, modifiers)),
      };
    }, []);
  
 diff --git a/src/index.ts b/src/index.ts
-index d79c69b25d82e796253a904cd2572d6ce8d4f40d..10ea37e1233e6cb34b24408bca6257e33641c798 100644
+index d79c69b25d82e796253a904cd2572d6ce8d4f40d..d52aa96a80810dcd97f3744fcaf19b6103c4c63b 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -1,2 +1,4 @@
+@@ -1,2 +1,3 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
-+export { setKeybinds } from './keybinds';
-diff --git a/src/keybinds.ts b/src/keybinds.ts
-new file mode 100644
-index 0000000000000000000000000000000000000000..f02bac0423bee3f8aa5e99c716005e4cad5a7116
---- /dev/null
-+++ b/src/keybinds.ts
-@@ -0,0 +1,12 @@
-+import { requireOptionalNativeModule } from 'expo';
-+
-+const native = requireOptionalNativeModule<{ setKeybinds?: (keybinds: string[]) => Promise<void> }>('ExpoLibghostty');
-+
-+/**
-+ * Keybinds for every terminal view, in ghostty config syntax:
-+ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
-+ * keybind for a chord ghostty already binds replaces it. iOS only.
-+ */
-+export function setKeybinds(keybinds: string[]): void {
-+  void native?.setKeybinds?.(keybinds);
-+}
 diff --git a/src/swipeTick.ts b/src/swipeTick.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..ec95f3fda278479e693142d8b37ae2d822d20957

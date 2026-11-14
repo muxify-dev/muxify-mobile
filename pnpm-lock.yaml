@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  expo-libghostty: 319a3ab39b3f2a62ca6590ca4bf519279cc05eab6340f17096df6c1a9b865f84
+  expo-libghostty: 156b643145bc1cf68954ff91f0824bf214e359061380d1c21de69ad65b955e83
 
 importers:
 
@@ -52,7 +52,7 @@ importers:
         version: 57.0.19(expo@57.0.23)
       expo-libghostty:
         specifier: 0.8.1
-        version: 0.8.1(patch_hash=319a3ab39b3f2a62ca6590ca4bf519279cc05eab6340f17096df6c1a9b865f84)(expo@57.0.23)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+        version: 0.8.1(patch_hash=156b643145bc1cf68954ff91f0824bf214e359061380d1c21de69ad65b955e83)(expo@57.0.23)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       expo-linking:
         specifier: 57.0.10
         version: 57.0.10(expo@57.0.23)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)
@@ -7682,7 +7682,7 @@ snapshots:
       expo: 57.0.23(ac18df9b2e3a12f0a634e3f2b317f8eb)
       react: 19.2.3
 
-  expo-libghostty@0.8.1(patch_hash=319a3ab39b3f2a62ca6590ca4bf519279cc05eab6340f17096df6c1a9b865f84)(expo@57.0.23)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+  expo-libghostty@0.8.1(patch_hash=156b643145bc1cf68954ff91f0824bf214e359061380d1c21de69ad65b955e83)(expo@57.0.23)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/jest-preset@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
     dependencies:
       expo: 57.0.23(ac18df9b2e3a12f0a634e3f2b317f8eb)
       react: 19.2.3

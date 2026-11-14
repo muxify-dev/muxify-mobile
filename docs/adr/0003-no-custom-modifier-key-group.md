@@ -187,24 +187,63 @@ Measured on tmux 3.0a, 3.2a, 3.3a, 3.4, 3.5a and 3.8: 511 presses, every
 key was typed as text or lost. On tmux before 3.5, Claude Code cannot get
 shift-Return. alt-Return works on every version.
 
-## ⌘ and ⌥ edit the line as they do on a Mac
+## The Key Row presses keys into ghostty, as a hardware keyboard does
 
 On a hardware keyboard, ⌘⌫ deletes the line, ⌘← and ⌘→ go to its start
 and end, and ⌥← and ⌥→ go one word back and forward. ghostty does this
-with keybinds it sets by default on macOS and iOS. It types ctrl-U,
-ctrl-A, ctrl-E, ESC b and ESC f, and tmux gets those bytes. The same
-chords from the Key Row did not do this. ⌘ and ⌫ typed a plain delete,
-⌘ and ← sent `Left`, and ⌥ and ← sent `M-Left`. Measured on tmux 3.8,
-bash moves a word back for `M-Left`, but zsh types `;3D`.
+with keybinds that it sets by default on macOS and iOS. The same chords
+from the Key Row did not do this. ⌘ and ⌫ typed a plain delete, ⌘ and ←
+sent `Left`, and ⌥ and ← sent `M-Left`. Measured on tmux 3.8, bash moves
+a word back for `M-Left`, but zsh types `;3D`.
 
-One table in the app now holds these chords. The app gives the table to
-ghostty as its keybinds, and the Key Row reads the same table. So a
-chord on either keyboard types the same bytes. These chords are bytes
-and not tmux names, because the bytes are what a hardware keyboard
-sends. The rule above, that a key goes to tmux by its name, still holds
-for every other key.
+The cause was two paths. A hardware key went through ghostty, and a Key
+Row key went to tmux by a name that the app made. Each chord that ghostty
+knows had to be written a second time in the app, and the two lists did
+not agree.
 
-⌥⌫ is not in the table. On both keyboards it is `M-BSpace`, and on
-tmux 3.8 bash and zsh delete a word for it. ⌘↑ and ⌘↓ are not in the
-table either. ghostty binds them to jump between prompts, which is not
-a key for the Pane. From the Key Row, they still send `Up` and `Down`.
+So the Key Row does not make names now. The Surface has one function,
+`pressKey`, that takes a key and the modifiers held with it. It builds
+the same key event that a hardware key builds, and the two share that
+code. Every Key Row key goes through it with the armed modifiers. A key
+of the system keyboard that comes while a modifier is armed goes through
+it too. ghostty applies its keybinds and encodes the key. What ghostty
+writes comes back as typed input, and the rule above for hardware keys
+names it for tmux.
+
+This replaces, for the Key Row, the sections above that say a Key Row
+key goes to tmux by name. These facts are different now:
+
+- **⌘ reaches ghostty**, when the key is not a Keyboard Shortcut and not
+  a Shortcut. Those two stay in the app, as UIKit takes a key command
+  from a hardware keyboard before the Surface gets the key. Measured in
+  the simulator: ⌘ and x types nothing, and ⌘ and ↑ types nothing,
+  because ghostty binds it to a jump between prompts.
+- **Option is alt on both keyboards.** The config sets
+  `macos-option-as-alt`. ghostty 1.2.3 reads that setting in its key
+  encoder on macOS only, so on iOS the terminal view asks ghostty for the
+  translation modifiers and does not mark option as spent on the text.
+  On a hardware keyboard, ⌥ and f was the character ƒ. It is Meta-f now.
+  Not measured on a hardware keyboard. A layout that types symbols with
+  option cannot type them now, which is also not measured.
+- **A symbol is one key.** `|` and `<` need shift on a US hardware
+  keyboard, but each is one key on the Key Row and on the system
+  keyboard. The press says so, and ⌥ and `<` is `M-<`. A capital letter
+  is its letter key with shift. tmux gets `M-F` for it and not `M-S-f`,
+  which tmux 3.8 sends to a shell as `ESC f`.
+- **An arrow is bytes, as it is from a hardware keyboard.** The Surface
+  stays on kitty flag 1, and there ghostty writes `ESC [ A` for Up in
+  each cursor-key mode. Measured in the simulator with DECCKM on: the
+  Key Row's Up reaches the Pane as `ESC [ A`, where tmux sends `ESC O A`
+  for the name `Up`. A program that reads only `ESC O A` in that mode
+  does not see the arrow from either keyboard. Which programs these are
+  is not measured.
+- **A modifier is spent on each key.** ⌃ and Escape, or ⌃ and a symbol
+  without a control code, clear ⌃. The key goes out without it, because
+  the naming rule for hardware keys drops it.
+
+Measured in the simulator on tmux 3.8, from the Key Row and the system
+keyboard: ⌃ and c stops a program. `cat -v` reads ⌥ and b as `^[b`, ⌥
+and ~ as `^[~`, ⌥ and F as `^[F`, ⌃ and ↑ as `^[[1;5A`, and ⌘←, ⌘→, ⌥←
+and ⌥→ as `^A`, `^E`, `^[b` and `^[f`. In bash, ⌥ and ⌫ deletes a word
+and ⌘ and ⌫ deletes the line. The simulator gives no hardware chord, so
+a hardware keyboard is measured for plain letters only.

@@ -1,4 +1,4 @@
-import { setKeybinds, TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
+import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
 import { File } from 'expo-file-system';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
@@ -37,8 +37,7 @@ import {
   type Appearance,
   type TerminalPalette,
 } from '@/constants/app-theme';
-import { namedKeyName, type NamedKey } from '@/constants/row-keys';
-import { editingSequence, ghosttyKeybinds } from '@/keyboard/editing-keys';
+import type { NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
@@ -77,10 +76,10 @@ import { directoryName } from '@/lib/paths';
 import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
 import { panAxis, swipeOf, type PanAxis } from '@/lib/pan-axis';
 import {
-  applyModifiers,
-  armedAfter,
+  anyArmed,
   NO_MODIFIERS,
-  type ModifiedInput,
+  phoneCommand,
+  typedKeys,
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
@@ -105,9 +104,6 @@ import type { Grid, Pane } from '@/tmux/tmux-client';
  * it was told, and this one says what was drawn.
  */
 const say = speakingAs(deviceLog(), 'screen');
-
-// A hardware keyboard's ⌘⌫, ⌘← and the rest, from the table the Key Row reads.
-setKeybinds(ghosttyKeybinds());
 
 /**
  * How much Scrollback a finger moves, against how far it travels.
@@ -311,7 +307,11 @@ export default function TerminalScreen() {
    * system keyboard. See modifier-keys.
    */
   const [armed, setArmed] = useState<Modifiers>(NO_MODIFIERS);
-  /** The same, where the Surface's input callback can read it without rebuilding. */
+  /**
+   * The same, for a key to read and spend at once. What ghostty writes for a
+   * pressed key comes back as input, and can come before the next render. It
+   * must find nothing armed, or the modifiers would go with it a second time.
+   */
   const armedRef = useRef<Modifiers>(NO_MODIFIERS);
   armedRef.current = physicalKeyboard ? NO_MODIFIERS : armed;
   useLayoutEffect(() => {
@@ -662,9 +662,9 @@ export default function TerminalScreen() {
   /**
    * Each Pane's Surface, as the Pane view sees it. Kept here as well, because
    * the keyboard rule below must reach the Surface after a lost Connection
-   * has released its view.
+   * has released its view, and because a key is pressed into it.
    */
-  const surfaces = useRef(new Map<string, PaneSurface>());
+  const surfaces = useRef(new Map<string, ScreenSurface>());
   /** Whether the active Surface had the keyboard when typing last stopped. */
   const keyboardRemembered = useRef(false);
   const inputElsewhere = composerOpen || selecting || sheetOpen || !screenFocused;
@@ -828,19 +828,31 @@ export default function TerminalScreen() {
   const runKeyboardShortcut = useRunKeyboardShortcut();
   const chords = useMemo(() => chordsInForce(settings.keyboardShortcuts), [settings.keyboardShortcuts]);
 
-  /** What typing or a pair key turned into, on its way to a Pane or to the phone. */
-  const deliverInput = useCallback(
-    (view: PaneView, input: ModifiedInput) => {
+  /**
+   * Keys from the Key Row or the system keyboard, for one Pane. The first
+   * carries whatever is armed, and spends it.
+   *
+   * With command, a key can be the phone's own: a Keyboard Shortcut or a
+   * Shortcut. Every other key is pressed into the Pane's Surface, as a
+   * hardware keyboard presses it, so ghostty does for it what it does for a
+   * hardware key. What ghostty writes comes back through handlePaneInput.
+   */
+  const pressKeys = useCallback(
+    (paneId: string, keys: readonly string[]) => {
       // A key is for the live Pane, not for the still picture of it.
       endSelection();
-      if (input.kind === 'key') view.press(input.key);
-      else if (input.kind === 'sequence') view.type(input.bytes);
-      else if (input.kind === 'shortcut') {
-        ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[input.shortcut]();
-      } else if (input.kind === 'keyboard-shortcut') runKeyboardShortcut(input.action);
-      if (input.rest.length > 0) view.type(input.rest);
+      const held = armedRef.current;
+      armedRef.current = NO_MODIFIERS;
+      if (anyArmed(held)) setArmed(NO_MODIFIERS);
+      keys.forEach((key, index) => {
+        const modifiers = index === 0 ? held : NO_MODIFIERS;
+        const command = phoneCommand(key, modifiers, chords);
+        if (command === undefined) surfaces.current.get(paneId)?.pressKey(key, modifiers);
+        else if (command.kind === 'keyboard-shortcut') runKeyboardShortcut(command.action);
+        else ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[command.shortcut]();
+      });
     },
-    [copyPaneText, pasteClipboard, clearPane, endSelection, runKeyboardShortcut],
+    [chords, copyPaneText, pasteClipboard, clearPane, endSelection, runKeyboardShortcut],
   );
 
   /**
@@ -864,22 +876,22 @@ export default function TerminalScreen() {
       const typed = toShellInput(withoutTerminalReplies(base64ToBytes(data)));
       if (typed.length === 0) return;
 
-      // Whatever the Key Row is holding down applies to the first key of this
-      // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
-      // of a fast typist's burst behind it as ordinary input.
-      const held = armedRef.current;
-      let left = held;
+      // A key is for the live Pane, not for the still picture of it.
+      endSelection();
       for (const part of toTypedParts(typed)) {
-        // A hardware key carries its own modifiers, and spends the Key Row's.
-        const input: ModifiedInput = part.kind === 'press'
-          ? { kind: 'key', key: part.press, rest: new Uint8Array() }
-          : applyModifiers(part.bytes, left, chords);
-        deliverInput(view, input);
-        left = armedAfter(input, left);
+        if (part.kind === 'press') {
+          view.press(part.press);
+          continue;
+        }
+        // The system keyboard typed with a modifier armed. Its keys go back
+        // into the Surface as key presses, the first with the modifier, so
+        // they stay in the order they were typed.
+        const keys = anyArmed(armedRef.current) ? typedKeys(part.bytes) : undefined;
+        if (keys === undefined) view.type(part.bytes);
+        else pressKeys(paneId, keys);
       }
-      if (left !== held) setArmed(left);
     },
-    [attach, chords, deliverInput],
+    [attach, endSelection, pressKeys],
   );
 
   /**
@@ -1069,35 +1081,11 @@ export default function TerminalScreen() {
     );
   }, [inputNotice, attach, activePaneId, open, appearance, chrome]);
 
-  /**
-   * Escape, tab or an arrow from the Key Row, into the Pane that has the
-   * keyboard.
-   *
-   * Carries whatever is armed with it, so ctrl and then the left arrow is
-   * `C-Left` — one key, named, for tmux to encode. The modifiers are spent
-   * either way: a key that cannot take them still clears them, or ctrl tapped
-   * by mistake would stay on until something happened to use it.
-   */
-  const pressKey = useCallback(
-    (key: NamedKey) => {
-      endSelection();
-      const sequence = editingSequence(key.key, armed);
-      if (sequence !== undefined) activeView()?.type(sequence);
-      else activeView()?.press(namedKeyName(key, armed));
-      setArmed(NO_MODIFIERS);
-    },
-    [activeView, armed, endSelection],
-  );
+  /** One symbol of a pair key, into the active Pane with whatever is armed. */
+  const pressSymbol = useCallback((symbol: string) => pressKeys(activePaneId, [symbol]), [activePaneId, pressKeys]);
 
-  /** One symbol of a pair key: typed as the system keyboard would type it. */
-  const pressSymbol = useCallback(
-    (symbol: string) => {
-      const view = activeView();
-      if (view) deliverInput(view, applyModifiers(new TextEncoder().encode(symbol), armed, chords));
-      setArmed(NO_MODIFIERS);
-    },
-    [activeView, armed, chords, deliverInput],
-  );
+  /** Escape, tab or an arrow from the Key Row, the same way. */
+  const pressKey = useCallback((key: NamedKey) => pressSymbol(key.key), [pressSymbol]);
 
   /** A modifier tapped: on if it was off, and off if it was on. */
   const armModifier = useCallback((modifier: Modifier) => {
@@ -1721,6 +1709,12 @@ export default function TerminalScreen() {
   );
 }
 
+/** A Pane's Surface as the screen has it: the Pane view's, with a key to press into it. */
+interface ScreenSurface extends PaneSurface {
+  /** Presses one key with these modifiers held, as a hardware keyboard does. */
+  pressKey(key: string, modifiers: Modifiers): void;
+}
+
 /**
  * The `expo-libghostty` view, as the Pane view wants it.
  *
@@ -1730,7 +1724,7 @@ export default function TerminalScreen() {
  * character split across two reads survives byte handling and does not survive
  * text decoding.
  */
-function surfaceFor(ref: TerminalViewRef): PaneSurface {
+function surfaceFor(ref: TerminalViewRef): ScreenSurface {
   return {
     write: (bytes) => void ref.write(bytesToBase64(bytes)),
     focus: () => void ref.focus(),
@@ -1739,6 +1733,7 @@ function surfaceFor(ref: TerminalViewRef): PaneSurface {
     showSelection: (rows, press) => void ref.showSelection(rows.rows, rows.top, press),
     endSelection: () => void ref.endSelection(),
     followSelectionPress: (point, lifted) => void ref.followSelectionPress(point.x, point.y, lifted),
+    pressKey: (key, modifiers) => void ref.pressKey(key, modifiers),
   };
 }
 

@@ -38,7 +38,7 @@ describe('renderPress', () => {
     ['shift+Tab', 'BTab', 'BTab'],
     ['ctrl+shift+Tab', 'C-BTab', 'Tab'],
     ['ctrl+shift+r', 'C-S-r', 'C-r'],
-    ['alt+shift+a', 'M-S-a', 'M-A'],
+    ['alt+shift+a', 'M-A', 'M-A'],
     ['ctrl+BSpace', 'BSpace', 'BSpace'],
     ['ctrl+Escape', 'Escape', 'Escape'],
     ['ctrl+/', 'C-/', 'bytes 1f'],

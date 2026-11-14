@@ -1,208 +1,91 @@
-import {
-  applyModifiers,
-  armedAfter,
-  modifierPrefix,
-  NO_MODIFIERS,
-  type Modifiers,
-} from './modifier-keys';
+import { NO_MODIFIERS, phoneCommand, typedKeys, type Modifiers } from './modifier-keys';
 import { chordsInForce } from '@/keyboard/keyboard-shortcuts';
-import { renderPress, type KeyNaming } from '@/tmux/key-press';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
-const text = (data: Uint8Array) => new TextDecoder().decode(data);
 const armed = (over: Partial<Modifiers>): Modifiers => ({ ...NO_MODIFIERS, ...over });
-/** What tmux gets for the first typed key, if it became a key: its name, or the bytes for it. */
-const keyOf = (typed: Uint8Array, modifiers: Modifiers, naming: KeyNaming = 'extended') => {
-  const out = applyModifiers(typed, modifiers);
-  if (out.kind !== 'key') return undefined;
-  const rendered = renderPress(out.key, naming);
-  return 'key' in rendered ? rendered.key : rendered.bytes;
-};
 
-describe('what the armed modifiers are called', () => {
-  it('names them the way tmux does', () => {
-    expect(modifierPrefix(armed({ ctrl: true }))).toBe('C-');
-    expect(modifierPrefix(armed({ alt: true }))).toBe('M-');
-    expect(modifierPrefix(armed({ ctrl: true, alt: true }))).toBe('C-M-');
-    expect(modifierPrefix(NO_MODIFIERS)).toBe('');
+describe('the keys the system keyboard typed', () => {
+  it('gives a character as its own key', () => {
+    expect(typedKeys(bytes('f'))).toEqual(['f']);
+    expect(typedKeys(bytes('F'))).toEqual(['F']);
+    expect(typedKeys(bytes(' '))).toEqual([' ']);
+    expect(typedKeys(bytes('é'))).toEqual(['é']);
+    expect(typedKeys(bytes('🙂'))).toEqual(['🙂']);
   });
 
-  it('leaves command out, which tmux has no name for', () => {
-    expect(modifierPrefix(armed({ cmd: true }))).toBe('');
-    expect(modifierPrefix(armed({ cmd: true, ctrl: true }))).toBe('C-');
-  });
-});
-
-describe('typing while a modifier is armed', () => {
-  it('leaves ordinary typing alone', () => {
-    const out = applyModifiers(bytes('hello'), NO_MODIFIERS);
-    expect(out.kind).toBe('typed');
-    expect(text(out.rest)).toBe('hello');
+  it('names the keys that are not characters', () => {
+    // Return reaches this as CR because toShellInput has already made it one.
+    expect(typedKeys(bytes('\r'))).toEqual(['Enter']);
+    expect(typedKeys(bytes('\t'))).toEqual(['Tab']);
+    expect(typedKeys(new Uint8Array([0x7f]))).toEqual(['Backspace']);
+    expect(typedKeys(new Uint8Array([0x08]))).toEqual(['Backspace']);
   });
 
-  it('turns the next letter into a modified key', () => {
-    const out = applyModifiers(bytes('f'), armed({ ctrl: true }));
-    expect(keyOf(bytes('f'), armed({ ctrl: true }))).toBe('C-f');
-    expect(out.rest).toHaveLength(0);
+  it('gives every key of a swiped word, in order', () => {
+    expect(typedKeys(bytes('grep '))).toEqual(['g', 'r', 'e', 'p', ' ']);
   });
 
-  it('modifies only the first key of a burst', () => {
-    // The Surface batches, so a fast typist's ctrl-r can arrive with the
-    // search term already behind it. Only the key the modifier was armed for
-    // is modified; the rest is ordinary typing.
-    const out = applyModifiers(bytes('rgrep'), armed({ ctrl: true }));
-    expect(keyOf(bytes('rgrep'), armed({ ctrl: true }))).toBe('C-r');
-    expect(text(out.rest)).toBe('grep');
+  it('is nothing for what the Surface wrote by itself', () => {
+    // An arrow or a focus report is not typing, and a modifier must not go
+    // with its first byte.
+    expect(typedKeys(bytes('\x1b[A'))).toBeUndefined();
+    expect(typedKeys(bytes('\x1b[I'))).toBeUndefined();
+    expect(typedKeys(new Uint8Array())).toBeUndefined();
   });
 
-  it('folds a capital letter for ctrl, where case means nothing', () => {
-    // Ctrl-F and Ctrl-Shift-F are the same control code; tmux would read C-F
-    // as a key nobody pressed.
-    expect(keyOf(bytes('F'), armed({ ctrl: true }))).toBe('C-f');
-  });
-
-  it('keeps the case for alt, where it means something', () => {
-    expect(keyOf(bytes('F'), armed({ alt: true }))).toBe('M-F');
-    expect(keyOf(bytes('f'), armed({ alt: true }))).toBe('M-f');
-  });
-
-  it('carries both at once', () => {
-    expect(keyOf(bytes('x'), armed({ ctrl: true, alt: true }))).toBe('C-M-x');
-  });
-
-  it('modifies a digit', () => {
-    expect(keyOf(bytes('1'), armed({ alt: true }))).toBe('M-1');
-  });
-
-  it('names the space bar, which has no printable form', () => {
-    expect(keyOf(bytes(' '), armed({ ctrl: true }))).toBe('C-Space');
-  });
-
-  it('names Return, so alt-Return is a newline and not a run', () => {
-    // Measured on tmux 3.6: `send-keys M-Enter` comes out as ESC CR, which is
-    // what Claude Code and readline read as a newline inside the line. Return
-    // reaches this as CR because toShellInput has already made it one.
-    const out = applyModifiers(bytes('\r'), armed({ alt: true }));
-    expect(keyOf(bytes('\r'), armed({ alt: true }))).toBe('M-Enter');
-    expect(out.rest).toHaveLength(0);
-  });
-
-  it('names the other keys the system keyboard has but cannot spell', () => {
-    expect(keyOf(bytes('\t'), armed({ alt: true }))).toBe('M-Tab');
-    expect(keyOf(new Uint8Array([0x7f]), armed({ alt: true }))).toBe('M-BSpace');
-  });
-
-  it('spends ctrl on Backspace, which tmux cannot send with ctrl', () => {
-    // `send-keys C-BSpace` types the eight characters of the name, on every
-    // tmux. See renderPress.
-    expect(keyOf(new Uint8Array([0x7f]), armed({ ctrl: true }))).toBe('BSpace');
-    expect(keyOf(new Uint8Array([0x08]), armed({ ctrl: true }))).toBe('BSpace');
-  });
-
-  it('is named for the tmux on the Host, as a hardware key is', () => {
-    expect(keyOf(bytes('/'), armed({ ctrl: true }))).toBe('C-/');
-    expect(keyOf(bytes('/'), armed({ ctrl: true }), 'classic')).toEqual(Uint8Array.from([0x1f]));
-  });
-
-  it('sends a key it cannot name as ordinary typing', () => {
-    // An emoji, a pasted accent, an arrow the Surface sent as bytes. There is
-    // no honest `C-` name for any of them, and inventing one would send
-    // something the user did not press.
-    const out = applyModifiers(bytes('é'), armed({ ctrl: true }));
-    expect(out.kind).toBe('typed');
-    expect(text(out.rest)).toBe('é');
-  });
-
-  it('has nothing to say about nothing typed', () => {
-    const out = applyModifiers(new Uint8Array(), armed({ ctrl: true }));
-    expect(out.kind).toBe('typed');
-    expect(out.rest).toHaveLength(0);
+  it('is nothing for a character cut in two', () => {
+    expect(typedKeys(bytes('é').subarray(0, 1))).toBeUndefined();
   });
 });
 
-describe('a Key Row symbol while a modifier is armed', () => {
-  it('takes option, whatever the symbol', () => {
-    expect(keyOf(bytes('-'), armed({ alt: true }))).toBe('M--');
-    expect(keyOf(bytes('#'), armed({ alt: true }))).toBe('M-#');
-  });
-
-  it('takes ctrl where the symbol has a control code', () => {
-    expect(keyOf(bytes('['), armed({ ctrl: true }))).toBe('C-[');
-    expect(keyOf(bytes('_'), armed({ ctrl: true }))).toBe('C-_');
-  });
-
-  it('drops ctrl where it has none, and types the symbol', () => {
-    // Measured on tmux 3.8: `C-:` reaches the Pane as `;` and `C-*` as the
-    // three characters of its own name.
-    const out = applyModifiers(bytes(':'), armed({ ctrl: true }));
-    expect(out.kind).toBe('typed');
-    expect(text(out.rest)).toBe(':');
-    expect(keyOf(bytes('*'), armed({ ctrl: true, alt: true }))).toBe('M-*');
-  });
-});
-
-describe('typing while command is armed', () => {
+describe('a key while command is armed', () => {
   it.each([
     ['c', 'copy'],
     ['v', 'paste'],
     ['k', 'clear'],
-  ])('turns %s into the %s Shortcut', (letter, shortcut) => {
-    const out = applyModifiers(bytes(letter), armed({ cmd: true }));
-    expect(out).toMatchObject({ kind: 'shortcut', shortcut });
-    expect(out.rest).toHaveLength(0);
+  ])('makes %s the %s Shortcut', (letter, shortcut) => {
+    expect(phoneCommand(letter, armed({ cmd: true }))).toEqual({ kind: 'shortcut', shortcut });
   });
 
-  it('is a Shortcut with ctrl and option armed too, and they go with it', () => {
-    const all = armed({ cmd: true, ctrl: true, alt: true });
-    const out = applyModifiers(bytes('c'), all);
-    expect(out.kind).toBe('shortcut');
-    expect(armedAfter(out, all)).toEqual(NO_MODIFIERS);
+  it('is a Shortcut with ctrl and option armed too', () => {
+    expect(phoneCommand('c', armed({ cmd: true, ctrl: true, alt: true }))).toEqual({ kind: 'shortcut', shortcut: 'copy' });
   });
 
   it.each([
-    [',', armed({ cmd: true }), 'open-settings'],
-    ['d', armed({ cmd: true }), 'split-right'],
-    ['D', armed({ cmd: true }), 'split-down'],
-    ['K', armed({ cmd: true }), 'pane-up'],
-  ])('turns %s into a Keyboard Shortcut, as a hardware keyboard would', (key, held, action) => {
-    const out = applyModifiers(bytes(`${key}ls`), held);
-    expect(out).toEqual({ kind: 'keyboard-shortcut', action, rest: bytes('ls') });
-    expect(armedAfter(out, held)).toEqual(NO_MODIFIERS);
+    [',', 'open-settings'],
+    ['d', 'split-right'],
+    ['D', 'split-down'],
+    ['K', 'pane-up'],
+  ])('makes %s a Keyboard Shortcut, as a hardware keyboard would', (key, action) => {
+    expect(phoneCommand(key, armed({ cmd: true }))).toEqual({ kind: 'keyboard-shortcut', action });
   });
 
   it('runs the key the user gave a Keyboard Shortcut, and not its default', () => {
     const chords = chordsInForce({ 'pane-left': { key: 'h', shift: false, option: true, control: false } });
-    expect(applyModifiers(bytes('h'), armed({ cmd: true, alt: true }), chords))
-      .toMatchObject({ kind: 'keyboard-shortcut', action: 'pane-left' });
-    expect(applyModifiers(bytes('H'), armed({ cmd: true }), chords).kind).toBe('typed');
+    expect(phoneCommand('h', armed({ cmd: true, alt: true }), chords))
+      .toEqual({ kind: 'keyboard-shortcut', action: 'pane-left' });
+    expect(phoneCommand('H', armed({ cmd: true }), chords)).toBeUndefined();
   });
 
-  it('types any other key as if command were not armed', () => {
-    const out = applyModifiers(bytes('x'), armed({ cmd: true }));
-    expect(out.kind).toBe('typed');
-    expect(text(out.rest)).toBe('x');
-    expect(keyOf(bytes('x'), armed({ cmd: true, ctrl: true }))).toBe('C-x');
+  it('runs a Keyboard Shortcut that the user gave an arrow', () => {
+    const chords = chordsInForce({ 'pane-left': { key: 'UIKeyInputLeftArrow', shift: false, option: false, control: false } });
+    expect(phoneCommand('Left', armed({ cmd: true }), chords))
+      .toEqual({ kind: 'keyboard-shortcut', action: 'pane-left' });
+  });
+
+  it('leaves every other key to the Pane', () => {
+    // ghostty has these: command and delete removes the line, and command
+    // and an arrow goes to the start or the end of it.
+    for (const key of ['x', 'Backspace', 'Left', 'Right', 'Up', 'Enter']) {
+      expect(phoneCommand(key, armed({ cmd: true }))).toBeUndefined();
+    }
   });
 });
 
-describe('what stays armed after typing', () => {
-  it('spends everything on a modified key', () => {
-    const held = armed({ ctrl: true, cmd: true });
-    expect(armedAfter(applyModifiers(bytes('x'), held), held)).toEqual(NO_MODIFIERS);
-  });
-
-  it('spends command on a key that is not a Shortcut', () => {
-    const held = armed({ cmd: true });
-    expect(armedAfter(applyModifiers(bytes('x'), held), held)).toEqual(NO_MODIFIERS);
-  });
-
-  it('keeps ctrl for the next key when this one has no ctrl form', () => {
-    const held = armed({ ctrl: true, cmd: true });
-    expect(armedAfter(applyModifiers(bytes('é'), held), held)).toEqual(armed({ ctrl: true }));
-  });
-
-  it('keeps everything when nothing was typed', () => {
-    const held = armed({ cmd: true });
-    expect(armedAfter(applyModifiers(new Uint8Array(), held), held)).toEqual(held);
+describe('a key without command', () => {
+  it('is never the phone\'s own', () => {
+    for (const held of [NO_MODIFIERS, armed({ ctrl: true }), armed({ alt: true }), armed({ ctrl: true, alt: true })]) {
+      for (const key of ['c', 'v', 'k', 'd', ',']) expect(phoneCommand(key, held)).toBeUndefined();
+    }
   });
 });

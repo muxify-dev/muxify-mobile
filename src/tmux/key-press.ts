@@ -1,5 +1,3 @@
-import { CTRL_SYMBOLS } from '@/lib/modifier-keys';
-
 import { tmuxAtLeast } from './tmux-version';
 
 /**
@@ -49,6 +47,16 @@ const CONTROL_BYTES: Record<string, number> = {
   '?': 0x7f, '8': 0x7f,
 };
 
+/**
+ * The symbols that have a control code: `C-[` is Escape, `C-_` is 0x1f.
+ *
+ * Measured on tmux 3.8 for every symbol on the Key Row. tmux refuses none of
+ * the others, and sends something nobody pressed for each: `C-:` arrives as
+ * `;`, `C-(` as `9`, and `C-*` as the three characters `C-*`. So ctrl is
+ * dropped for a symbol outside this set.
+ */
+const CTRL_SYMBOLS = new Set('-_/|\\~[]{}`');
+
 /** Keys that take no ctrl in tmux, on any version: C-BSpace and C-Escape are typed as text. */
 const NO_CTRL = new Set(['BSpace', 'Escape']);
 
@@ -64,6 +72,10 @@ export function renderPress(press: KeyPress, naming: KeyNaming): RenderedPress {
     const ctrl = press.ctrl && !NO_CTRL.has(key) && (!isSymbol(key) || CTRL_SYMBOLS.has(key));
     // Shift-Tab is its own key to tmux: `ESC [ Z` to a shell, where S-Tab is a plain Tab.
     if (key === 'Tab' && press.shift) return { key: `${prefix(ctrl, false)}BTab` };
+    // Shift and a letter is the capital letter. Measured on tmux 3.8, `M-S-f`
+    // reaches a shell as `ESC f`, and `M-F` as `ESC F`. With ctrl the case
+    // means nothing, and `C-S-r` stays.
+    if (press.shift && !ctrl && isLetter(key)) return { key: `${prefix(false, false)}${key.toUpperCase()}` };
     return { key: `${prefix(ctrl, press.shift && !isSymbol(key))}${key}` };
   }
 

@@ -7,17 +7,13 @@
  * typed. Which is why these are *sticky* — armed, then spent — rather than
  * held.
  *
- * What comes out for ctrl and option is a KeyPress, not bytes: ctrl and `f`
- * rather than `0x06`, for the same reason the rest of the app sends names:
- * tmux knows what the Pane is running and this does not. It is the same
- * KeyPress a hardware keyboard gives, so TmuxClient names both for the Host's
- * tmux in one place — see renderPress. Command never reaches tmux: it turns
- * the next key into something the phone does: a Keyboard Shortcut, as the
- * same chord on a hardware keyboard would, or else a Shortcut. With delete,
- * command is a line-editing chord, and so is option with an arrow: see
- * editing-keys.
+ * The armed modifiers and the next key go into the Surface as one key press,
+ * the way a hardware keyboard's go in. ghostty applies its keybinds and
+ * encodes the key, so nothing here knows what a chord types. This file
+ * answers the two questions that come before the press: which keys were
+ * typed, and whether command makes the key the phone's own.
  *
- * Pure: bytes and flags in, a KeyPress or a Shortcut and the leftover bytes out.
+ * Pure: bytes and flags in, keys or a command out.
  */
 
 import {
@@ -27,8 +23,7 @@ import {
   type KeyboardAction,
   type KeyChord,
 } from '@/keyboard/keyboard-shortcuts';
-import { editingSequence } from '@/keyboard/editing-keys';
-import type { KeyPress } from '@/tmux/key-press';
+import { bytesToUtf8 } from '@/lib/utf8';
 
 export type Modifier = 'ctrl' | 'alt' | 'cmd';
 
@@ -37,12 +32,8 @@ export type Modifiers = Record<Modifier, boolean>;
 
 export const NO_MODIFIERS: Modifiers = { ctrl: false, alt: false, cmd: false };
 
-/**
- * What tmux calls this combination, ready to put in front of a key name.
- * Command has no part in it: tmux has no such modifier to give a Pane.
- */
-export function modifierPrefix(modifiers: Modifiers): string {
-  return `${modifiers.ctrl ? 'C-' : ''}${modifiers.alt ? 'M-' : ''}`;
+export function anyArmed(modifiers: Modifiers): boolean {
+  return modifiers.ctrl || modifiers.alt || modifiers.cmd;
 }
 
 /** What command and a letter do on the phone. */
@@ -50,122 +41,73 @@ export type Shortcut = 'copy' | 'paste' | 'clear';
 
 const SHORTCUTS: Record<string, Shortcut> = { c: 'copy', v: 'paste', k: 'clear' };
 
-/** What typing turned into. `rest` is typed as it arrived, after the rest. */
-export type ModifiedInput =
-  | { kind: 'typed'; rest: Uint8Array }
-  /** One key with ctrl and option applied to it, for tmux to name. */
-  | { kind: 'key'; key: KeyPress; rest: Uint8Array }
-  /** A line-editing chord, such as ⌘⌫, as the bytes a hardware keyboard types for it. */
-  | { kind: 'sequence'; bytes: Uint8Array; rest: Uint8Array }
-  | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array }
-  | { kind: 'keyboard-shortcut'; action: KeyboardAction; rest: Uint8Array };
+/** What a key with command does in Muxify, where it is not a key for the Pane. */
+export type PhoneCommand =
+  | { kind: 'keyboard-shortcut'; action: KeyboardAction }
+  | { kind: 'shortcut'; shortcut: Shortcut };
+
+/** The named keys as a Keyboard Shortcut's chord has them, which is UIKit's way. */
+const CHORD_KEYS: Record<string, string> = {
+  Escape: 'UIKeyInputEscape',
+  Tab: '\t',
+  Enter: '\r',
+  Backspace: '\b',
+  Up: 'UIKeyInputUpArrow',
+  Down: 'UIKeyInputDownArrow',
+  Left: 'UIKeyInputLeftArrow',
+  Right: 'UIKeyInputRightArrow',
+};
 
 /**
- * Applies the armed modifiers to the first key of what was typed.
+ * What this key does on the phone with these modifiers armed, or undefined
+ * when the key is for the Pane.
  *
- * Only the first, because a modifier is spent on one key. The Surface batches
- * input, so a fast typist's ctrl-r can arrive with the search term already
- * behind it — modifying the whole batch would send a line of control codes.
- *
- * Command and a letter that is not a Shortcut is that letter, with ctrl and
- * option applied as if command were not armed.
- *
- * A key with no honest tmux name is left alone and typed as it arrived. There
- * is no `C-` form of an emoji, and inventing one would send something the user
- * never pressed.
+ * Only with command. A Keyboard Shortcut comes first, as UIKit takes its
+ * chord from a hardware keyboard before the Surface gets the key. Then a
+ * Shortcut, with ctrl and option armed or not.
  */
-export function applyModifiers(
-  bytes: Uint8Array,
+export function phoneCommand(
+  key: string,
   modifiers: Modifiers,
   chords: Readonly<Record<KeyboardAction, KeyChord>> = DEFAULT_CHORDS,
-): ModifiedInput {
-  if (bytes.length === 0) return { kind: 'typed', rest: bytes };
-
-  if (modifiers.cmd) {
+): PhoneCommand | undefined {
+  if (!modifiers.cmd) return undefined;
+  const pressed: KeyChord = {
+    key: CHORD_KEYS[key] ?? key.toLowerCase(),
     // A capital letter is the software keyboard's shift.
-    const character = String.fromCharCode(bytes[0]);
-    const pressed: KeyChord = {
-      key: character.toLowerCase(),
-      shift: /^[A-Z]$/.test(character),
-      option: modifiers.alt,
-      control: modifiers.ctrl,
-    };
-    const action = KEYBOARD_ACTIONS.find((each) => sameChord(chords[each], pressed));
-    if (action !== undefined) return { kind: 'keyboard-shortcut', action, rest: bytes.subarray(1) };
-    const shortcut = SHORTCUTS[String.fromCharCode(bytes[0]).toLowerCase()];
-    if (shortcut !== undefined) return { kind: 'shortcut', shortcut, rest: bytes.subarray(1) };
-  }
-
-  const named = NAMED_KEYS[bytes[0]];
-  const sequence = named === undefined ? undefined : editingSequence(named, modifiers);
-  if (sequence !== undefined) return { kind: 'sequence', bytes: sequence, rest: bytes.subarray(1) };
-
-  const key = modifiedPress(bytes[0], modifiers);
-  if (key === undefined) return { kind: 'typed', rest: bytes };
-  return { kind: 'key', key, rest: bytes.subarray(1) };
-}
-
-/**
- * What stays armed after typed input.
- *
- * A Keyboard Shortcut, a Shortcut, a line-editing chord or a modified key
- * spends everything. Input that the modifiers could not apply to spends
- * command only: command is for the next key whatever it is, while ctrl waits
- * for a key it has a form of.
- */
-export function armedAfter(input: ModifiedInput, armed: Modifiers): Modifiers {
-  if (input.kind !== 'typed') return NO_MODIFIERS;
-  return input.rest.length > 0 && armed.cmd ? { ...armed, cmd: false } : armed;
+    shift: /^[A-Z]$/.test(key),
+    option: modifiers.alt,
+    control: modifiers.ctrl,
+  };
+  const action = KEYBOARD_ACTIONS.find((each) => sameChord(chords[each], pressed));
+  if (action !== undefined) return { kind: 'keyboard-shortcut', action };
+  const shortcut = SHORTCUTS[key.toLowerCase()];
+  return shortcut === undefined ? undefined : { kind: 'shortcut', shortcut };
 }
 
 /**
  * The keys the system keyboard has that are not characters, by the byte the
- * Surface sends for each and the name tmux knows it by.
- *
- * Return is the one that was missed first: alt-Return is how Claude Code, and
- * most line editors, take a newline without running the line, and a Return
- * with alt armed used to go out as a plain Return with alt still lit. Return
- * arrives as CR because toShellInput has already turned the Surface's LF into
- * one; delete arrives as DEL from ghostty, with BS kept for a keyboard that
- * sends that instead.
+ * Surface sends for each. Return arrives as CR because toShellInput has
+ * already turned the Surface's LF into one. Delete arrives as DEL from
+ * ghostty, with BS kept for a keyboard that sends that instead.
  */
-const NAMED_KEYS: Record<number, string> = {
-  0x20: 'Space',
-  0x0d: 'Enter',
-  0x09: 'Tab',
-  0x7f: 'BSpace',
-  0x08: 'BSpace',
+const NAMED_KEYS: Record<string, string> = {
+  '\r': 'Enter',
+  '\t': 'Tab',
+  '\x7f': 'Backspace',
+  '\b': 'Backspace',
 };
 
-/** The Key Row's symbols. Option applies to each: `M--` is `ESC -`. */
-const SYMBOLS = new Set('-_:|/\\~\'[]{}<>()"`=+*&$#');
-
 /**
- * The symbols that have a control code: `C-[` is Escape, `C-_` is 0x1f.
+ * The keys that the system keyboard typed for these bytes, each by the name
+ * the Surface presses it by: a named key, or the character itself.
  *
- * Measured on tmux 3.8 for every symbol in SYMBOLS. tmux refuses none of the
- * others, and sends something nobody pressed for each: `C-:` arrives as `;`,
- * `C-(` as `9`, and `C-*` as the three characters `C-*`. So ctrl is dropped
- * for a symbol outside this set.
+ * More than one, because the keyboard gives a swiped word or a dictated
+ * phrase as one piece. Undefined when the bytes are not typing: an escape
+ * sequence that the Surface wrote by itself, or a character cut in two.
  */
-export const CTRL_SYMBOLS = new Set('-_/|\\~[]{}`');
-
-/** The first typed byte as a KeyPress with ctrl and option applied. */
-function modifiedPress(byte: number, modifiers: Modifiers): KeyPress | undefined {
-  const named = NAMED_KEYS[byte];
-  const character = String.fromCharCode(byte);
-  let ctrl = modifiers.ctrl;
-  let key: string;
-  if (named !== undefined) key = named;
-  else if (/^[0-9]$/.test(character)) key = character;
-  // Ctrl folds case and alt does not, because ctrl-F and ctrl-shift-F are the
-  // same control code while M-F and M-f are two different keys.
-  else if (/^[A-Za-z]$/.test(character)) key = ctrl ? character.toLowerCase() : character;
-  else if (SYMBOLS.has(character)) {
-    key = character;
-    ctrl = ctrl && CTRL_SYMBOLS.has(character);
-  } else return undefined;
-
-  if (!ctrl && !modifiers.alt) return undefined;
-  return { key, ctrl, alt: modifiers.alt, shift: false };
+export function typedKeys(bytes: Uint8Array): string[] | undefined {
+  const keys = Array.from(bytesToUtf8(bytes), (character) => NAMED_KEYS[character] ?? character);
+  const typing = keys.every((key) => key.length > 1 || (key >= ' ' && key !== '�'));
+  return typing && keys.length > 0 ? keys : undefined;
 }
