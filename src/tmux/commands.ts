@@ -22,6 +22,7 @@
 
 import type { MarkRead, PaneMark, Seq } from './input-lane';
 import type { RenderedPress } from './key-press';
+import { tmuxAtLeast } from './tmux-version';
 
 /** One tmux command: the verb and its arguments, unquoted. */
 export type TmuxArgv = string[];
@@ -439,10 +440,7 @@ function belowSeq(option: string, seq: Seq): string {
  * comparisons for formats"); `if-shell -F` is from 2.0.
  */
 export function guardsLateLines(version: string): boolean {
-  const match = /(\d+)\.(\d+)/.exec(version);
-  if (match === null) return /master|next/.test(version);
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > 3 || (major === 3 && minor >= 2);
+  return tmuxAtLeast(version, 3, 2);
 }
 
 /**

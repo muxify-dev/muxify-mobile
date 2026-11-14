@@ -302,12 +302,14 @@ describe('the mark of a Pane', () => {
 
 describe('a Host tmux that can refuse a late line', () => {
   it.each([
-    ['3.8', true],
-    ['3.2a', true],
+    ['3.0a', false],
     ['3.1c', false],
-    ['2.9', false],
-    ['next-3.6', true],
+    ['3.2a', true],
+    ['3.5a', true],
+    ['3.8', true],
+    ['next-3.9', true],
     ['master', true],
+    ['openbsd-6.8', false],
     ['', false],
   ])('%j: %s', (version, guarded) => {
     expect(guardsLateLines(version)).toBe(guarded);

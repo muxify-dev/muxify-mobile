@@ -14,11 +14,13 @@ function rendered(spec: string, naming: KeyNaming): string {
 describe('keyNamingFor', () => {
   it.each([
     ['3.0a', 'classic'],
+    ['3.2a', 'classic'],
     ['3.4', 'classic'],
     ['3.5a', 'extended'],
     ['3.8', 'extended'],
     ['next-3.9', 'extended'],
     ['master', 'extended'],
+    ['openbsd-6.8', 'classic'],
     ['', 'classic'],
   ])('reads tmux %p as %s', (version, naming) => {
     expect(keyNamingFor(version)).toBe(naming);

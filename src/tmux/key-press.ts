@@ -1,5 +1,7 @@
 import { CTRL_SYMBOLS } from '@/lib/modifier-keys';
 
+import { tmuxAtLeast } from './tmux-version';
+
 /**
  * One key from a hardware keyboard, as the Surface reported it: the key and
  * the modifiers held. `key` is a tmux key name without modifiers (`Enter`,
@@ -27,10 +29,7 @@ export type KeyNaming = 'extended' | 'classic';
 
 /** Reads `#{version}`: `3.4`, `3.5a`, `next-3.6`, `master`. */
 export function keyNamingFor(version: string): KeyNaming {
-  const match = /(\d+)\.(\d+)/.exec(version);
-  if (match === null) return /master|next/.test(version) ? 'extended' : 'classic';
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > 3 || (major === 3 && minor >= 5) ? 'extended' : 'classic';
+  return tmuxAtLeast(version, 3, 5) ? 'extended' : 'classic';
 }
 
 /** What goes to `send-keys`: a key name, or bytes for `-H`. */
