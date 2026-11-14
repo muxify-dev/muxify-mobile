@@ -83,7 +83,8 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
-import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
+import { useRunKeyboardShortcut, useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
+import { chordsInForce } from '@/keyboard/keyboard-shortcuts';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
@@ -820,6 +821,9 @@ export default function TerminalScreen() {
       .catch((error: unknown) => Alert.alert('Could not clear the Pane', describeError(error)));
   }, [attach]);
 
+  const runKeyboardShortcut = useRunKeyboardShortcut();
+  const chords = useMemo(() => chordsInForce(settings.keyboardShortcuts), [settings.keyboardShortcuts]);
+
   /** What typing or a pair key turned into, on its way to a Pane or to the phone. */
   const deliverInput = useCallback(
     (view: PaneView, input: ModifiedInput) => {
@@ -828,10 +832,10 @@ export default function TerminalScreen() {
       if (input.kind === 'key') view.press(input.key);
       else if (input.kind === 'shortcut') {
         ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[input.shortcut]();
-      }
+      } else if (input.kind === 'keyboard-shortcut') runKeyboardShortcut(input.action);
       if (input.rest.length > 0) view.type(input.rest);
     },
-    [copyPaneText, pasteClipboard, clearPane, endSelection],
+    [copyPaneText, pasteClipboard, clearPane, endSelection, runKeyboardShortcut],
   );
 
   /**
@@ -864,13 +868,13 @@ export default function TerminalScreen() {
         // A hardware key carries its own modifiers, and spends the Key Row's.
         const input: ModifiedInput = part.kind === 'press'
           ? { kind: 'key', key: part.press, rest: new Uint8Array() }
-          : applyModifiers(part.bytes, left);
+          : applyModifiers(part.bytes, left, chords);
         deliverInput(view, input);
         left = armedAfter(input, left);
       }
       if (left !== held) setArmed(left);
     },
-    [attach, deliverInput],
+    [attach, chords, deliverInput],
   );
 
   /**
@@ -1082,10 +1086,10 @@ export default function TerminalScreen() {
   const pressSymbol = useCallback(
     (symbol: string) => {
       const view = activeView();
-      if (view) deliverInput(view, applyModifiers(new TextEncoder().encode(symbol), armed));
+      if (view) deliverInput(view, applyModifiers(new TextEncoder().encode(symbol), armed, chords));
       setArmed(NO_MODIFIERS);
     },
-    [activeView, armed, deliverInput],
+    [activeView, armed, chords, deliverInput],
   );
 
   /** A modifier tapped: on if it was off, and off if it was on. */

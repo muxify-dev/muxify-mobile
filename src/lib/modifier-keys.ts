@@ -12,11 +12,19 @@
  * tmux knows what the Pane is running and this does not. It is the same
  * KeyPress a hardware keyboard gives, so TmuxClient names both for the Host's
  * tmux in one place — see renderPress. Command never reaches tmux: it turns
- * the next key into something the phone does.
+ * the next key into something the phone does: a Keyboard Shortcut, as the
+ * same chord on a hardware keyboard would, or else a Shortcut.
  *
  * Pure: bytes and flags in, a KeyPress or a Shortcut and the leftover bytes out.
  */
 
+import {
+  DEFAULT_CHORDS,
+  KEYBOARD_ACTIONS,
+  sameChord,
+  type KeyboardAction,
+  type KeyChord,
+} from '@/keyboard/keyboard-shortcuts';
 import type { KeyPress } from '@/tmux/key-press';
 
 export type Modifier = 'ctrl' | 'alt' | 'cmd';
@@ -44,7 +52,8 @@ export type ModifiedInput =
   | { kind: 'typed'; rest: Uint8Array }
   /** One key with ctrl and option applied to it, for tmux to name. */
   | { kind: 'key'; key: KeyPress; rest: Uint8Array }
-  | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array };
+  | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array }
+  | { kind: 'keyboard-shortcut'; action: KeyboardAction; rest: Uint8Array };
 
 /**
  * Applies the armed modifiers to the first key of what was typed.
@@ -60,10 +69,24 @@ export type ModifiedInput =
  * is no `C-` form of an emoji, and inventing one would send something the user
  * never pressed.
  */
-export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): ModifiedInput {
+export function applyModifiers(
+  bytes: Uint8Array,
+  modifiers: Modifiers,
+  chords: Readonly<Record<KeyboardAction, KeyChord>> = DEFAULT_CHORDS,
+): ModifiedInput {
   if (bytes.length === 0) return { kind: 'typed', rest: bytes };
 
   if (modifiers.cmd) {
+    // A capital letter is the software keyboard's shift.
+    const character = String.fromCharCode(bytes[0]);
+    const pressed: KeyChord = {
+      key: character.toLowerCase(),
+      shift: /^[A-Z]$/.test(character),
+      option: modifiers.alt,
+      control: modifiers.ctrl,
+    };
+    const action = KEYBOARD_ACTIONS.find((each) => sameChord(chords[each], pressed));
+    if (action !== undefined) return { kind: 'keyboard-shortcut', action, rest: bytes.subarray(1) };
     const shortcut = SHORTCUTS[String.fromCharCode(bytes[0]).toLowerCase()];
     if (shortcut !== undefined) return { kind: 'shortcut', shortcut, rest: bytes.subarray(1) };
   }
@@ -76,7 +99,7 @@ export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): Modifie
 /**
  * What stays armed after typed input.
  *
- * A Shortcut or a modified key spends everything. Input that the modifiers
+ * A Keyboard Shortcut, a Shortcut or a modified key spends everything. Input that the modifiers
  * could not apply to spends command only: command is for the next key whatever
  * it is, while ctrl waits for a key it has a form of.
  */

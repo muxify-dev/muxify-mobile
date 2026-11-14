@@ -43,7 +43,7 @@ interface Registration {
 
 interface KeyCommandsContextValue {
   register: (registration: Registration) => () => void;
-  /** Runs an action as its key would. */
+  /** Runs an action as its key would, for the Key Row's ⌘. */
   run: (action: KeyboardAction) => void;
 }
 
@@ -117,6 +117,11 @@ function useKeyCommands(): KeyCommandsContextValue {
   const value = useContext(KeyCommandsContext);
   if (!value) throw new Error('Keyboard Shortcuts need a KeyCommandsProvider above them');
   return value;
+}
+
+/** Runs a Keyboard Shortcut's action on whichever screen handles it. */
+export function useRunKeyboardShortcut(): (action: KeyboardAction) => void {
+  return useKeyCommands().run;
 }
 
 /** Handles Keyboard Shortcuts for as long as the caller is mounted. */

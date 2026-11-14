@@ -58,6 +58,11 @@ export function chordFor(shortcuts: KeyboardShortcuts | undefined, action: Keybo
   return shortcuts?.[action] ?? DEFAULT_CHORDS[action];
 }
 
+/** Every action's chord, the user's where there is one. */
+export function chordsInForce(shortcuts: KeyboardShortcuts | undefined): Record<KeyboardAction, KeyChord> {
+  return { ...DEFAULT_CHORDS, ...shortcuts };
+}
+
 export function sameChord(a: KeyChord, b: KeyChord): boolean {
   return a.key === b.key && a.shift === b.shift && a.option === b.option && a.control === b.control;
 }

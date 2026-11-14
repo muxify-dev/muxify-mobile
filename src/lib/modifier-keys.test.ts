@@ -5,6 +5,7 @@ import {
   NO_MODIFIERS,
   type Modifiers,
 } from './modifier-keys';
+import { chordsInForce } from '@/keyboard/keyboard-shortcuts';
 import { renderPress, type KeyNaming } from '@/tmux/key-press';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
@@ -145,7 +146,6 @@ describe('typing while command is armed', () => {
     ['c', 'copy'],
     ['v', 'paste'],
     ['k', 'clear'],
-    ['K', 'clear'],
   ])('turns %s into the %s Shortcut', (letter, shortcut) => {
     const out = applyModifiers(bytes(letter), armed({ cmd: true }));
     expect(out).toMatchObject({ kind: 'shortcut', shortcut });
@@ -157,6 +157,24 @@ describe('typing while command is armed', () => {
     const out = applyModifiers(bytes('c'), all);
     expect(out.kind).toBe('shortcut');
     expect(armedAfter(out, all)).toEqual(NO_MODIFIERS);
+  });
+
+  it.each([
+    [',', armed({ cmd: true }), 'open-settings'],
+    ['d', armed({ cmd: true }), 'split-right'],
+    ['D', armed({ cmd: true }), 'split-down'],
+    ['K', armed({ cmd: true }), 'pane-up'],
+  ])('turns %s into a Keyboard Shortcut, as a hardware keyboard would', (key, held, action) => {
+    const out = applyModifiers(bytes(`${key}ls`), held);
+    expect(out).toEqual({ kind: 'keyboard-shortcut', action, rest: bytes('ls') });
+    expect(armedAfter(out, held)).toEqual(NO_MODIFIERS);
+  });
+
+  it('runs the key the user gave a Keyboard Shortcut, and not its default', () => {
+    const chords = chordsInForce({ 'pane-left': { key: 'h', shift: false, option: true, control: false } });
+    expect(applyModifiers(bytes('h'), armed({ cmd: true, alt: true }), chords))
+      .toMatchObject({ kind: 'keyboard-shortcut', action: 'pane-left' });
+    expect(applyModifiers(bytes('H'), armed({ cmd: true }), chords).kind).toBe('typed');
   });
 
   it('types any other key as if command were not armed', () => {
