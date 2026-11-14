@@ -182,15 +182,27 @@ function pump(lane: Lane, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
   const [head, ...rest] = lane.waiting;
   if (head === undefined) return { lane, effects: [] };
   const key = untimed(head);
-  const long = key.kind === 'text' && key.bytes.length > ctx.maxBatchBytes;
+  const cut =
+    key.kind === 'text' && key.bytes.length > ctx.maxBatchBytes ? characterStart(key.bytes, ctx.maxBatchBytes) : null;
   const batch: Batch = {
     seq: ctx.nextSeq,
-    key: long ? { ...key, bytes: key.bytes.slice(0, ctx.maxBatchBytes) } : key,
+    key: cut !== null && key.kind === 'text' ? { ...key, bytes: key.bytes.slice(0, cut) } : key,
     typedAt: head.typedAt,
   };
   const waiting =
-    long && head.kind === 'text' ? [{ ...head, bytes: head.bytes.slice(ctx.maxBatchBytes) }, ...rest] : rest;
+    cut !== null && head.kind === 'text' ? [{ ...head, bytes: head.bytes.slice(cut) }, ...rest] : rest;
   return { lane: { ...lane, unconfirmed: batch, waiting }, effects: [{ kind: 'deliver', batch }] };
+}
+
+/**
+ * The last place at or before `at` where a UTF-8 character starts, so that a
+ * split Batch previews and moves to the Composer as the characters typed. A
+ * continuation byte is `10xxxxxx`. Bytes with no start in reach split at `at`.
+ */
+function characterStart(bytes: readonly number[], at: number): number {
+  let start = at;
+  while (start > 0 && (bytes[start] & 0xc0) === 0x80) start -= 1;
+  return start === 0 ? at : start;
 }
 
 /** Throws the gesture bytes away. They are of the moment they were made in. */

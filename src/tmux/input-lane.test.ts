@@ -106,6 +106,13 @@ describe('a live Lane', () => {
     expect(run.delivered()).toEqual(['1:x', '2:abcd', '3:efgh', '4:ij']);
   });
 
+  it('splits long text between characters, never inside one', () => {
+    const run = driver(true, { maxBatchBytes: 4 });
+    run.send(answered(mark()), typed(text('x')), typed(text('aé漢b')));
+    for (const ack of [1, 2, 3]) run.send(answered(mark({ ack: seq(ack) })));
+    expect(run.delivered()).toEqual(['1:x', '2:aé', '3:漢b']);
+  });
+
   it('removes a Batch only when the mark covers its Seq', () => {
     const run = live();
     run.send(typed(text('a')), answered(mark({ ack: null })));
