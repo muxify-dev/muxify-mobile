@@ -328,10 +328,10 @@ describe('typing a Batch', () => {
     expect(asked).toEqual([MARK]);
   });
 
-  it('raises the Seq of a Pane without typing', async () => {
-    const { client, asked } = chained('3.8', [[]]);
-    await client.burn('%4', 7 as Seq, token);
-    expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'"`);
+  it('raises the Seq of a Pane without typing, and reads the mark', async () => {
+    const { client, asked } = chained('3.8', [[], [], ['7:100:200:zsh']]);
+    expect(await client.burn('%4', 7 as Seq, token)).toEqual({ serverPid: 100, panePid: 200, program: 'zsh', ack: 7 });
+    expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`);
   });
 });
 

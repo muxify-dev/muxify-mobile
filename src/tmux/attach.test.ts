@@ -2130,6 +2130,24 @@ describe('typed keys and a Connection that breaks', () => {
     expect(server.typed()).toBe('x');
   });
 
+  it('does not type a late line with discarded keys when the burn was lost with its Connection', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    kit.attach.view('%0').press('Enter');
+    await settle();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: '⏎' }]);
+
+    hosts[1].hold('if-shell');
+    kit.attach.heldInput('%0', 'discard');
+    await settle();
+    await reconnected(kit, 2);
+    hosts[0].release();
+    hosts[1].release();
+    await settle();
+    expect(server.typed()).toBe('');
+  });
+
   it('throws held keys away when the user says Discard', async () => {
     const { kit, server, hosts } = await typing();
     hosts[0].drop();

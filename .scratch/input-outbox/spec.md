@@ -123,6 +123,16 @@ deviation below follows from a measurement or closes a gap the spec left.
     `1_274_291_cat` and no Batch was confirmed. `PANE_MARK_FORMAT` is
     `#{@muxify-in-T}:#{pid}:#{pane_pid}:#{pane_current_command}`.
 12. **`maxBatchBytes` and the TTL are constants of the Outbox and the Attach**, not options.
+13. **A discard for `pane-replaced` or `server-restarted` burns the unconfirmed Seq too** (review
+    finding). The option survives `respawn-pane -k`, so a late line could type keys that the card
+    called discarded. On a restarted server the burn writes a fresh Pane's option to a Seq that no
+    later Batch reuses, so it is harmless; a line of the dead server cannot arrive. `pane-gone`
+    burns nothing: tmux does not reuse a Pane id on one server. `judge` computes `acked` before the
+    identity checks, so a Batch the respawned Pane took is confirmed, not called discarded.
+14. **A burn stays owed on the Lane (`owedBurn`) until a mark shows `ack >= seq`** (review
+    finding). Any mark counts, whichever line wrote it, because a higher Seq bars the late line as
+    well. `connected` writes the owed burn before the read. `burn` now answers with the Pane's
+    mark (`runChain` of the burn and the mark read), fed back as a `burned` event.
 
 Older tmux, measured with the same probe in Docker (`PROBE_CONTAINER=<id>`) and with
 `pnpm e2e:tmux-keys`, which now sends each press as a Batch and checks its mark: tmux 3.2a

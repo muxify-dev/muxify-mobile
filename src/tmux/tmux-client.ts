@@ -393,9 +393,12 @@ export class TmuxClient {
   }
 
   /** Makes the Pane refuse a Batch that a lost Connection may still deliver. */
-  async burn(paneId: string, seq: Seq, token: OutboxToken): Promise<void> {
+  async burn(paneId: string, seq: Seq, token: OutboxToken): Promise<DeliverResult> {
     const { guarded } = await this.host();
-    await this.runner.run(burnSeqCommand(paneId, seq, inputOption(token), guarded));
+    const option = inputOption(token);
+    return deliveryOf(
+      await this.runner.runChain([burnSeqCommand(paneId, seq, option, guarded), paneMarkCommand(paneId, option)]),
+    );
   }
 
   /** Whether this Host's tmux refuses a late line by itself; see guardsLateLines. */

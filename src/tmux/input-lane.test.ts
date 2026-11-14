@@ -206,6 +206,28 @@ describe('a Lane across a break', () => {
     expect(run.delivered()).toEqual(['2:y']);
   });
 
+  it('writes the Seq of taken keys first on each Connection until a mark shows it', () => {
+    const run = live();
+    run.send(typed(named('Enter')), { kind: 'lost' }, { kind: 'connected' }, answered(mark()), { kind: 'taken' });
+    run.send({ kind: 'lost' });
+    run.effects.length = 0;
+    run.send({ kind: 'connected' });
+    expect(run.effects).toEqual([{ kind: 'burn', seq: 1 }, { kind: 'read' }]);
+    run.send(answered(mark({ ack: seq(1) })), { kind: 'lost' });
+    run.effects.length = 0;
+    run.send({ kind: 'connected' });
+    expect(run.effects).toEqual([{ kind: 'read' }]);
+  });
+
+  it('owes nothing once the answer to its burn shows the Seq', () => {
+    const run = live();
+    run.send(typed(named('Enter')), { kind: 'lost' }, { kind: 'connected' }, answered(mark()), { kind: 'taken' });
+    run.send({ kind: 'burned', result: mark({ ack: seq(1) }) }, { kind: 'lost' });
+    run.effects.length = 0;
+    run.send({ kind: 'connected' });
+    expect(run.effects).toEqual([{ kind: 'read' }]);
+  });
+
   it('never uses a Seq again after a discard', () => {
     const run = live();
     run.send(typed(text('a')), answered(mark({ ack: seq(1) })), typed(text('b')), { kind: 'lost' }, { kind: 'connected' });

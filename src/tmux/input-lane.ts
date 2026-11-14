@@ -98,6 +98,12 @@ export interface Lane {
   readonly unconfirmed: Batch | null;
   /** Typed and never written. */
   readonly waiting: readonly Typed[];
+  /**
+   * A Seq that a late line of a lost Connection must find on the Pane, after
+   * the user took back or the Lane discarded the Batch with that Seq. Written
+   * first on each Connection until a mark shows it.
+   */
+  readonly owedBurn: Seq | null;
   /** Keys that were thrown away, kept until the user dismisses the notice. */
   readonly dropped: { readonly keys: readonly Key[]; readonly reason: DiscardReason } | null;
 }
@@ -108,6 +114,8 @@ export type LaneEvent =
   | { readonly kind: 'lost' }
   /** The answer to a `deliver` or a `read` effect. */
   | { readonly kind: 'answered'; readonly result: DeliverResult }
+  /** The answer to a `burn` effect. */
+  | { readonly kind: 'burned'; readonly result: DeliverResult }
   /** Send on a held Lane. */
   | { readonly kind: 'released' }
   /** Move to Composer or Discard on a held Lane. The caller reads `pendingKeys` first. */
@@ -144,6 +152,7 @@ export function newLane(paneId: string, connected: boolean): Lane {
     delivered: NO_SEQ,
     unconfirmed: null,
     waiting: [],
+    owedBurn: null,
     dropped: null,
   };
 }
@@ -221,7 +230,52 @@ function resume(lane: Lane, ctx: LaneContext): { lane: Lane; effects: Effect[] }
   return pump(live, ctx);
 }
 
-const burnOf = (seq: Seq): Effect => ({ kind: 'burn', seq });
+/** Bars a late line that carries this Seq, until a mark shows that the Pane has it. */
+function owe(lane: Lane, seq: Seq): { lane: Lane; effects: Effect[] } {
+  const owedBurn = Math.max(lane.owedBurn ?? NO_SEQ, seq) as Seq;
+  return { lane: { ...lane, owedBurn }, effects: [{ kind: 'burn', seq: owedBurn }] };
+}
+
+/** Any mark at or above the owed Seq bars the late line, whichever line wrote it. */
+function settleBurn(lane: Lane, result: DeliverResult): Lane {
+  if (lane.owedBurn === null) return lane;
+  const paid = result === 'gone' || (!('refused' in result) && result.ack !== null && result.ack >= lane.owedBurn);
+  return paid ? { ...lane, owedBurn: null } : lane;
+}
+
+/** A `deliver` or `read` answer: the Batch in flight is confirmed, or the Lane is judged. */
+function answer(lane: Lane, result: DeliverResult, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
+  if (lane.phase.kind === 'live') {
+    if (lane.unconfirmed === null) return { lane, effects: [] };
+    if (result === 'gone') return { lane: discard(lane, 'pane-gone', null), effects: [] };
+    if ('refused' in result) return hold(lane, 'refused', ctx);
+    if (result.ack === null || result.ack < lane.unconfirmed.seq) return hold(lane, 'unsure-delivered', ctx);
+    return pump({ ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null, witness: result }, ctx);
+  }
+  if (lane.phase.kind !== 'checking') return { lane, effects: [] };
+
+  if (result !== 'gone' && 'refused' in result) {
+    return lane.phase.crossed
+      ? { lane: { ...lane, phase: { kind: 'held', reasons: ['refused'] } }, effects: [] }
+      : resume(lane, ctx);
+  }
+  const { acked, verdict } = judge({ ...lane, crossed: lane.phase.crossed, read: result, now: ctx.now, ttlMs: ctx.ttlMs });
+  const confirmed: Lane =
+    acked && lane.unconfirmed ? { ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null } : lane;
+  if (verdict.kind === 'discard') {
+    // A Pane that is gone takes no late line. Any other Pane can, and it
+    // must not type keys that the card says were discarded.
+    const discarded = discard(confirmed, verdict.reason, result === 'gone' ? null : result);
+    return result !== 'gone' && confirmed.unconfirmed
+      ? owe(discarded, confirmed.unconfirmed.seq)
+      : { lane: discarded, effects: [] };
+  }
+  const witnessed: Lane = { ...confirmed, witness: result === 'gone' ? null : result };
+  if (verdict.kind === 'hold') {
+    return { lane: { ...witnessed, phase: { kind: 'held', reasons: verdict.reasons } }, effects: [] };
+  }
+  return resume(witnessed, ctx);
+}
 
 export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
   switch (event.kind) {
@@ -235,55 +289,28 @@ export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: La
 
     case 'connected': {
       const crossed = lane.unconfirmed !== null || lane.waiting.length > 0;
-      return { lane: { ...lane, phase: { kind: 'checking', crossed } }, effects: [{ kind: 'read' }] };
+      const burn: Effect[] = lane.owedBurn === null ? [] : [{ kind: 'burn', seq: lane.owedBurn }];
+      return { lane: { ...lane, phase: { kind: 'checking', crossed } }, effects: [...burn, { kind: 'read' }] };
     }
+
+    case 'burned':
+      return { lane: settleBurn(lane, event.result), effects: [] };
 
     case 'lost': {
       const next = withoutGestures(lane);
       return { lane: { ...next.lane, phase: { kind: 'adrift' } }, effects: next.effects };
     }
 
-    case 'answered': {
-      const { result } = event;
-      if (lane.phase.kind === 'live') {
-        if (lane.unconfirmed === null) return { lane, effects: [] };
-        if (result === 'gone') return { lane: discard(lane, 'pane-gone', null), effects: [] };
-        if ('refused' in result) return hold(lane, 'refused', ctx);
-        if (result.ack === null || result.ack < lane.unconfirmed.seq) return hold(lane, 'unsure-delivered', ctx);
-        return pump({ ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null, witness: result }, ctx);
-      }
-      if (lane.phase.kind !== 'checking') return { lane, effects: [] };
-
-      if (result !== 'gone' && 'refused' in result) {
-        return lane.phase.crossed
-          ? { lane: { ...lane, phase: { kind: 'held', reasons: ['refused'] } }, effects: [] }
-          : resume(lane, ctx);
-      }
-      const { acked, verdict } = judge({ ...lane, crossed: lane.phase.crossed, read: result, now: ctx.now, ttlMs: ctx.ttlMs });
-      const confirmed: Lane =
-        acked && lane.unconfirmed ? { ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null } : lane;
-      if (verdict.kind === 'discard') {
-        // A Pane that is gone takes no late line. Any other Pane can, and it
-        // must not type keys that the card says were discarded.
-        const bar = result !== 'gone' && confirmed.unconfirmed ? [burnOf(confirmed.unconfirmed.seq)] : [];
-        return { lane: discard(confirmed, verdict.reason, result === 'gone' ? null : result), effects: bar };
-      }
-      const witnessed: Lane = { ...confirmed, witness: result === 'gone' ? null : result };
-      if (verdict.kind === 'hold') {
-        return { lane: { ...witnessed, phase: { kind: 'held', reasons: verdict.reasons } }, effects: [] };
-      }
-      return resume(witnessed, ctx);
-    }
+    case 'answered':
+      return answer(settleBurn(lane, event.result), event.result, ctx);
 
     case 'released':
       return lane.phase.kind === 'held' ? resume(lane, ctx) : { lane, effects: [] };
 
     case 'taken': {
       if (lane.phase.kind !== 'held') return { lane, effects: [] };
-      return {
-        lane: { ...lane, phase: { kind: 'live' }, unconfirmed: null, waiting: [] },
-        effects: lane.unconfirmed ? [burnOf(lane.unconfirmed.seq)] : [],
-      };
+      const emptied: Lane = { ...lane, phase: { kind: 'live' }, unconfirmed: null, waiting: [] };
+      return lane.unconfirmed ? owe(emptied, lane.unconfirmed.seq) : { lane: emptied, effects: [] };
     }
 
     case 'dismissed':

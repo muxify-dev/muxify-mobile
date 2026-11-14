@@ -21,7 +21,8 @@ import type { KeyPress } from './key-press';
 export interface OutboxLink {
   deliver(paneId: string, batch: Batch, token: OutboxToken): Promise<DeliverResult>;
   readMark(paneId: string, token: OutboxToken): Promise<DeliverResult>;
-  burn(paneId: string, seq: Seq, token: OutboxToken): Promise<void>;
+  /** Answers with the Pane's mark after the burn. */
+  burn(paneId: string, seq: Seq, token: OutboxToken): Promise<DeliverResult>;
 }
 
 /** The way into one Pane, which is all a Pane view knows of the Outbox. */
@@ -132,7 +133,13 @@ export function createOutbox(options: OutboxOptions): Outbox {
     if (!current) return;
     const mine = epoch;
     if (effect.kind === 'burn') {
-      void current.burn(paneId, effect.seq, token).catch(() => {});
+      // A burn that fails stays owed on the Lane, and the next Connection writes it again.
+      current.burn(paneId, effect.seq, token).then(
+        (result) => {
+          if (mine === epoch) apply(paneId, { kind: 'burned', result });
+        },
+        () => {},
+      );
       return;
     }
     const asked = effect.kind === 'deliver' ? current.deliver(paneId, effect.batch, token) : current.readMark(paneId, token);
