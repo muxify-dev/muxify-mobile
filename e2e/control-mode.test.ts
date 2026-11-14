@@ -26,7 +26,7 @@
  * `e2e/regressions.sh` cover that half by driving the app on a simulator.
  */
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -97,17 +97,32 @@ function memoryStore() {
  * is the ordinary `tmux`, so a Host record with a wrong executable path still
  * fails the way it would on a real machine.
  */
-function localTransport(children: ChildProcess[]): TmuxTransport {
+/**
+ * A hand on the link, for the checks that break it: what was written down it,
+ * whether tmux's answers still come back, and a wait before the next link.
+ */
+interface LinkTap {
+  /** Every line written to tmux, on every link. */
+  lines: string[];
+  /** While true, what tmux says is dropped: the link took a line and died before the reply. */
+  deaf: boolean;
+  /** The next Connection opens when this resolves. */
+  gate: Promise<void>;
+}
+
+function localTransport(children: ChildProcess[], tap?: LinkTap): TmuxTransport {
   return {
     exec: () => Promise.reject(new Error('not used by this check')),
     async openControl(command: string, events: ControlChannelEvents): Promise<ControlChannel> {
       const child = spawn('/bin/sh', ['-c', command.replace(/^tmux /, `tmux -L ${SOCKET} `)]);
       children.push(child);
       let open = true;
-      const forward = (chunk: Buffer) =>
+      const forward = (chunk: Buffer) => {
+        if (tap?.deaf) return;
         events.onData(
           chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
         );
+      };
       // A killed child's stdin throws EPIPE on the next write. An SSH channel
       // does not — it drops the bytes — so this is swallowed here rather than
       // guarded above the seam, where nothing would be guarding anything real.
@@ -122,6 +137,7 @@ function localTransport(children: ChildProcess[]): TmuxTransport {
       });
       return {
         write: (bytes) => {
+          tap?.lines.push(...Buffer.from(bytes).toString('utf8').split('\n').filter((line) => line !== ''));
           if (open) child.stdin.write(Buffer.from(bytes));
         },
         // What the foreground check asks. A dead child is a dead channel, and
@@ -162,7 +178,7 @@ function recordingSurface() {
   };
 }
 
-function attachTo(options: { sessionName?: string; record?: Host; colours?: PaneColours } = {}) {
+function attachTo(options: { sessionName?: string; record?: Host; colours?: PaneColours; tap?: LinkTap } = {}) {
   const children: ChildProcess[] = [];
   const { store, wrote } = memoryStore();
   const phases: AttachPhase[] = [];
@@ -174,13 +190,16 @@ function attachTo(options: { sessionName?: string; record?: Host; colours?: Pane
     zoomed: true,
     colours: options.colours,
     store,
-    openConnection: (): Promise<HostConnection> =>
-      Promise.resolve({
-        transport: localTransport(children),
+    openConnection: async (): Promise<HostConnection> => {
+      await options.tap?.gate;
+      if (options.tap) options.tap.deaf = false;
+      return {
+        transport: localTransport(children, options.tap),
         fingerprint: 'SHA256:local',
         verdict: { kind: 'known' },
         close: () => Promise.resolve(),
-      }),
+      };
+    },
   });
 
   attach.subscribe((state) => {
@@ -553,5 +572,153 @@ describe('the Attach, against a real tmux', () => {
 
     await attach.close();
     rmSync(dir, { recursive: true, force: true });
+  }, 30000);
+});
+
+describe('typed keys, against a real tmux and a link that breaks', () => {
+  const TYPED = 'e2e-typed';
+  const encode = (text: string) => new TextEncoder().encode(text);
+
+  /** Refuses to go on unless the server is this suite's own, in its own folder. */
+  function ownServer(): void {
+    const folder = process.env.TMUX_TMPDIR;
+    if (!folder || process.env.TMUX) throw new Error('run this through e2e/sandbox.sh');
+    const socket = tmux(['display-message', '-p', '#{socket_path}']).trim();
+    if (!socket.startsWith(`${realpathSync(folder)}/`)) throw new Error(`${socket} is not this run's server`);
+  }
+
+  /** A Session whose one Pane runs `cat`: the terminal shows each typed character once. */
+  const startServer = () => tmux(['new-session', '-d', '-s', TYPED, '-x', '80', '-y', '24', 'cat']);
+
+  async function until(what: string, done: () => boolean, within = 8000): Promise<void> {
+    const end = Date.now() + within;
+    while (!done()) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+      await wait(50);
+    }
+  }
+
+  /** The Topology is read after the phase says connected. */
+  async function activePane(attach: Attach): Promise<string> {
+    await reaches(attach, 'connected');
+    await until('the Topology', () => attach.state().topology.activePane !== undefined);
+    return attach.state().topology.activePane?.id as string;
+  }
+
+  beforeAll(() => {
+    try {
+      tmux(['kill-server']);
+    } catch {
+      // No server to kill.
+    }
+    startServer();
+    ownServer();
+  });
+
+  afterAll(() => {
+    try {
+      ownServer();
+      tmux(['kill-server']);
+    } catch {
+      // Already gone.
+    }
+  });
+
+  it('types each key once, holds the risky ones, and tells of the ones it threw away', async () => {
+    const tap: LinkTap = { lines: [], deaf: false, gate: Promise.resolve() };
+    const { attach, children } = attachTo({ sessionName: TYPED, tap });
+    const paneId = await activePane(attach);
+    const screen = () => tmux(['capture-pane', '-p', '-t', paneId]).trimEnd();
+    const type = (text: string) => attach.view(paneId).type(encode(text));
+    /** Kills the link and keeps the next one closed until the returned function is called. */
+    const breakLink = async () => {
+      let open!: () => void;
+      tap.gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      children[children.length - 1].kill('SIGKILL');
+      await reaches(attach, 'reconnecting');
+      return open;
+    };
+
+    // The Pane on screen, as it is before the user types: its mark is read.
+    attach.view(paneId);
+    await wait(400);
+
+    // tmux takes the line and the link dies before the reply.
+    tap.deaf = true;
+    type('abc');
+    await until('abc in the Pane', () => screen() === 'abc');
+    let reopen = await breakLink();
+    type('def');
+    reopen();
+    await reaches(attach, 'connected');
+    await until('def in the Pane', () => screen().endsWith('def'));
+    await wait(700);
+    expect(screen()).toBe('abcdef');
+    expect(attach.state().input).toEqual([]);
+
+    // The line of the dead link arrives again, late, as it was written.
+    const batchLines = tap.lines.filter((line) => line.startsWith("'if-shell'"));
+    expect(batchLines.length).toBeGreaterThanOrEqual(2);
+    const late = spawn('tmux', ['-L', SOCKET, '-C', 'attach-session', '-t', TYPED]);
+    late.stdin.write(`${batchLines.join('\n')}\n`);
+    await wait(700);
+    late.kill();
+    expect(screen()).toBe('abcdef');
+
+    // Enter typed while the link is down waits for the user.
+    reopen = await breakLink();
+    type('x');
+    attach.view(paneId).press('Enter');
+    reopen();
+    await reaches(attach, 'connected');
+    await until('a held notice', () => attach.state().input.length > 0);
+    expect(attach.state().input).toMatchObject([
+      { kind: 'held', paneId, preview: 'x⏎', reasons: ['risky-keys'] },
+    ]);
+    expect(screen()).toBe('abcdef');
+    attach.heldInput(paneId, 'send');
+    // The terminal shows the line as typed, and `cat` prints it once more.
+    await until('the held keys in the Pane', () => screen() === 'abcdefx\nabcdefx');
+    await wait(700);
+    expect(screen()).toBe('abcdefx\nabcdefx');
+    expect(attach.state().input).toEqual([]);
+
+    // The server goes, and another starts with a new Pane under the same id.
+    ownServer();
+    tmux(['kill-server']);
+    await reaches(attach, 'disconnected');
+    type('zzz');
+    startServer();
+    expect(tmux(['display-message', '-p', '-t', TYPED, '#{pane_id}']).trim()).toBe(paneId);
+    attach.reconnect();
+    await reaches(attach, 'connected');
+    await until('a discarded notice', () => attach.state().input.length > 0);
+    expect(attach.state().input).toEqual([
+      { kind: 'discarded', paneId, preview: 'zzz', reason: 'server-restarted' },
+    ]);
+    await wait(700);
+    expect(screen()).toBe('');
+
+    await attach.close();
+  }, 60000);
+
+  it('types a key whose name needs every kind of quoting, once, through the guard', async () => {
+    const { attach } = attachTo({ sessionName: TYPED });
+    const paneId = await activePane(attach);
+    tmux(['respawn-pane', '-k', '-t', paneId, 'cat -v']);
+    await wait(500);
+
+    const names = ['M-;', "M-'", 'M-"', 'M-\\', 'M-$', 'M-#', 'M-{', ';', "'", '#{pid}', '$HOME'];
+    for (const name of names) attach.view(paneId).press(name);
+    const typed = '^[;^[\'^["^[\\^[$^[#^[{;\'#{pid}$HOME';
+    const screen = () => tmux(['capture-pane', '-p', '-t', paneId]).trimEnd();
+    await until('every key in the Pane', () => screen().length >= typed.length);
+    await wait(500);
+    expect(screen()).toBe(typed);
+    expect(attach.state().input).toEqual([]);
+
+    await attach.close();
   }, 30000);
 });
