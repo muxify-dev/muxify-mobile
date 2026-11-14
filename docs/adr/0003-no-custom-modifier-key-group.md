@@ -144,3 +144,31 @@ the bar would come back during a selection.
 The bar took about 55 pt over the keyboard for three commands, and the Key
 Row sits there now. Paste stays available: in the Selection menu, as ⌘ v from
 the Key Row, and as ⌘ v on a hardware keyboard.
+
+## Hardware keys go to tmux by name too
+
+A hardware keyboard on iPad reaches the Surface through ghostty's key
+encoder, not as typed text. A program in a Pane can ask its terminal for
+kitty key codes, and Claude Code does (`CSI > 5 u`). tmux 3.8 ignores the
+request, but it passes it on in `%output`, so the Surface obeyed it. The app
+then sent ctrl-r as the raw bytes `ESC [ 114 ; 5 u`. When zsh was back in the
+Pane, it printed the tail of them.
+
+The decision above now covers these keys too:
+
+- The Surface stays on kitty flag 1. The app sets it again after any output
+  that can move it. Flag 1 keeps shift-Return apart from Return.
+- Each kitty code becomes a `KeyPress`, and `TmuxClient` sends it by name.
+  tmux encodes it for the program that is running. A key typed on the
+  software keyboard with ⌃ or ⌥ armed becomes the same `KeyPress`, so both
+  keyboards are named the same way for each tmux.
+- How much naming a Host's tmux can take depends on its version, which is
+  read once for each Connection. On tmux 3.5 and later every name arrives.
+  Before 3.5, a name tmux cannot encode for the Pane is typed as text or lost
+  (`S-Enter` into zsh on 3.4 types `S-Enter`). So only the names those
+  versions deliver are sent, and a ctrl symbol goes as its control byte.
+
+Measured on tmux 3.0a, 3.2a, 3.3a, 3.4, 3.5a and 3.8: 511 presses, every
+`extended-keys` setting and format, and every mode a program can ask for. No
+key was typed as text or lost. On tmux before 3.5, Claude Code cannot get
+shift-Return. alt-Return works on every version.

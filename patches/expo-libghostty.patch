@@ -1725,10 +1725,10 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..eb3cce62bcda6e8c6527f991846e949d
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-index 427aa9c21db8f930bd9e3246f5900b9d31377b02..a3b0bb0b5ebf6d6ea08a7f3ec63f88a46b8b4dfd 100644
+index 427aa9c21db8f930bd9e3246f5900b9d31377b02..305972da4662b1cae0664b7ef5be7006fcd681ca 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-@@ -12,18 +12,34 @@
+@@ -12,18 +12,39 @@
      extension UITerminalView {
          override open func pressesBegan(
              _ presses: Set<UIPress>,
@@ -1747,6 +1747,11 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..a3b0bb0b5ebf6d6ea08a7f3ec63f88a4
              }
          }
  
++        static let controlKeyCodes: Set<UIKeyboardHIDUsage> = [
++            .keyboardReturnOrEnter, .keypadEnter, .keyboardTab,
++            .keyboardDeleteOrBackspace, .keyboardEscape,
++        ]
++
 +        func isPasteCommand(_ key: UIKey?) -> Bool {
 +            guard let key, key.keyCode == .keyboardV else { return false }
 +            let held = key.modifierFlags.intersection([.command, .control, .alternate, .shift])
@@ -1765,6 +1770,29 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..a3b0bb0b5ebf6d6ea08a7f3ec63f88a4
              for press in presses {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
+@@ -106,6 +127,12 @@
+             var consumedFlags = filteredModifierFlags
+             consumedFlags.remove(.control)
+             consumedFlags.remove(.command)
++            // A modifier on Return, Tab, Backspace or Escape changes no text,
++            // so it is never consumed and the key carries no text. Otherwise
++            // shift counts as spent and the text "\r" goes out: shift-Return
++            // was a bare Return, where kitty encoding sends CSI 13;2u.
++            let modifiedControlKey = !mods.isEmpty && Self.controlKeyCodes.contains(key.keyCode)
++            if modifiedControlKey { consumedFlags = [] }
+             keyEvent.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
+ 
+             guard action == GHOSTTY_ACTION_PRESS || action == GHOSTTY_ACTION_REPEAT else {
+@@ -129,7 +156,8 @@
+                 return
+             }
+ 
+-            guard let text = TerminalInputText.filteredFunctionKeyText(key.characters),
++            guard !modifiedControlKey,
++                  let text = TerminalInputText.filteredFunctionKeyText(key.characters),
+                   !text.isEmpty
+             else {
+                 _ = surface.sendKeyEvent(keyEvent)
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift
 index e56733f4c5cbc9d9871e3933c511c64c855cf07e..284f82c7c5e0721485e2dc14519dd474a9c84154 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Lifecycle.swift

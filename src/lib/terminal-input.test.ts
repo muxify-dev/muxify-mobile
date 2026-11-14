@@ -1,4 +1,4 @@
-import { withoutTerminalReplies, toShellInput } from './terminal-input';
+import { movesKeyboardFlags, toShellInput, toTypedParts, withoutTerminalReplies } from './terminal-input';
 
 const PASTE_START = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e];
 const PASTE_END = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e];
@@ -130,5 +130,72 @@ describe('withoutTerminalReplies', () => {
   it('keeps shell input conversion after reply removal', () => {
     const input = bytes('\x1b[?62;22;52c\x1b[200~ls\n\x1b[201~');
     expect(toShellInput(withoutTerminalReplies(input))).toEqual(bytes('ls\r'));
+  });
+});
+
+describe('toTypedParts', () => {
+  const parts = (text: string) => toTypedParts(bytes(text)).map((part) =>
+    part.kind === 'press'
+      ? [part.press.ctrl && 'ctrl', part.press.alt && 'alt', part.press.shift && 'shift', part.press.key].filter(Boolean).join('+')
+      : Buffer.from(part.bytes).toString('utf8'));
+
+  it.each([
+    ['ctrl-r', '\x1b[114;5u', 'ctrl+r'],
+    ['shift-Return', '\x1b[13;2u', 'shift+Enter'],
+    ['alt-Return', '\x1b[13;3u', 'alt+Enter'],
+    ['Escape', '\x1b[27u', 'Escape'],
+    ['ctrl-shift-Tab', '\x1b[9;6u', 'ctrl+shift+Tab'],
+    ['ctrl-Backspace', '\x1b[127;5u', 'ctrl+BSpace'],
+    ['ctrl-;', '\x1b[59;5u', 'ctrl+;'],
+    ['ctrl-r with caps lock on', '\x1b[114;69u', 'ctrl+r'],
+  ])('reads %s as a key press', (_name, input, press) => {
+    expect(parts(input)).toEqual([press]);
+  });
+
+  it('keeps typed text around a key, in order', () => {
+    expect(parts('ls\x1b[114;5uabc')).toEqual(['ls', 'ctrl+r', 'abc']);
+  });
+
+  it('drops a key with a modifier tmux cannot name', () => {
+    expect(parts('a\x1b[114;9ub')).toEqual(['a', 'b']);
+  });
+
+  it.each([
+    ['legacy control byte', '\x12'],
+    ['arrow', '\x1b[A'],
+    ['modified arrow', '\x1b[1;5A'],
+    ['bracketed paste', '\x1b[200~x\x1b[201~'],
+    ['lone Escape', '\x1b'],
+    ['Unicode', 'é你好🙂'],
+  ])('passes %s through as bytes', (_name, input) => {
+    expect(parts(input)).toEqual([input]);
+  });
+});
+
+describe('movesKeyboardFlags', () => {
+  it.each([
+    ['kitty push from Claude Code', '\x1b[>5u'],
+    ['kitty pop', '\x1b[<u'],
+    ['kitty set', '\x1b[=0;1u'],
+    ['full reset', 'x\x1bc'],
+    ['alternate screen', '\x1b[?1049h'],
+    ['main screen', '\x1b[?1049l'],
+  ])('is true for %s', (_name, output) => {
+    expect(movesKeyboardFlags(bytes(output))).toBe(true);
+  });
+
+  it.each([
+    ['text', 'hello'],
+    ['kitty query', '\x1b[?u'],
+    ['cursor', '\x1b[?25l'],
+  ])('is false for %s', (_name, output) => {
+    expect(movesKeyboardFlags(bytes(output))).toBe(false);
+  });
+
+  it('reads output longer than one call can spread', () => {
+    const paint = new Uint8Array(500_000).fill(0x78);
+    expect(movesKeyboardFlags(paint)).toBe(false);
+    paint.set(bytes('\x1b[?1049h'), paint.length - 8);
+    expect(movesKeyboardFlags(paint)).toBe(true);
   });
 });

@@ -1013,6 +1013,19 @@ describe('which Pane draws a cursor', () => {
     expect(shown(kit.written)).toBe('<ESC>[?25hhello<ESC>[?25l');
   });
 
+  it('takes the keyboard flags back when the application in the Pane asks for kitty keys', async () => {
+    // tmux encodes keys for the Pane; a Surface in the Pane's kitty mode sent
+    // ctrl-r as `ESC [ 114 ; 5 u`, which a shell printed.
+    const host = fakePane();
+    const kit = viewOn(host);
+    await paints(kit);
+    kit.written.length = 0;
+
+    kit.view.receive(bytes('\u001b[>5u'));
+
+    expect(shown(kit.written)).toBe('<ESC>[>5u<ESC>[=1;1u');
+  });
+
   it('leaves the output of the Pane that has the keyboard alone', async () => {
     const host = fakePane();
     const kit = viewOn(host);

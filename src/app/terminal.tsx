@@ -82,7 +82,7 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
-import { toShellInput, withoutTerminalReplies } from '@/lib/terminal-input';
+import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, AttachPhase, AttachState, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import { phaseLabel } from '@/tmux/attach-labels';
@@ -825,9 +825,15 @@ export default function TerminalScreen() {
       // and nothing after it, so ctrl and then `r` is one `C-r` with the rest
       // of a fast typist's burst behind it as ordinary input.
       const held = armedRef.current;
-      const input = applyModifiers(typed, held);
-      deliverInput(view, input);
-      const left = armedAfter(input, held);
+      let left = held;
+      for (const part of toTypedParts(typed)) {
+        // A hardware key carries its own modifiers, and spends the Key Row's.
+        const input: ModifiedInput = part.kind === 'press'
+          ? { kind: 'key', key: part.press, rest: new Uint8Array() }
+          : applyModifiers(part.bytes, left);
+        deliverInput(view, input);
+        left = armedAfter(input, left);
+      }
       if (left !== held) setArmed(left);
     },
     [attach, deliverInput],

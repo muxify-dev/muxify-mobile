@@ -4,6 +4,8 @@ import { systemClock } from '@/lib/clock';
 import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
 
 import { asciiBytes, clampBack, paintScreen, scrollbackRange } from './pane-screen';
+import { KEYBOARD_PIN, movesKeyboardFlags } from '@/lib/terminal-input';
+import type { KeyPress } from './key-press';
 import type { SelectionRows } from './selection-rows';
 import type { Grid, PaneState, SelectionCapture } from './tmux-client';
 
@@ -19,7 +21,7 @@ export interface PaneReader {
   captureScrollback(paneId: string, startLine: number, endLine: number): Promise<Uint8Array[]>;
   captureSelection(paneId: string, startLine: number, endLine: number): Promise<SelectionCapture>;
   sendKeys(paneId: string, bytes: Uint8Array): Promise<void>;
-  sendKey(paneId: string, key: string): Promise<void>;
+  sendKey(paneId: string, key: string | KeyPress): Promise<void>;
 }
 
 /**
@@ -152,7 +154,7 @@ export interface PaneView {
    * The Key Row's path. A name rather than the bytes for it, because which
    * bytes are right depends on what the Pane is running — see sendKeyCommand.
    */
-  press(key: string): void;
+  press(key: string | KeyPress): void;
   /**
    * A scroll gesture, in whole lines. Positive is back into the past. The grid
    * is only for the coordinates a wheel event has to carry.
@@ -334,7 +336,7 @@ export function createPaneView(
    * of it. One queue rather than two, so a key pressed mid-burst still arrives
    * where it was pressed.
    */
-  type Outgoing = { bytes: number[] } | { key: string };
+  type Outgoing = { bytes: number[] } | { key: string | KeyPress };
   let outgoing: Outgoing[] = [];
   let sending = false;
 
@@ -370,6 +372,7 @@ export function createPaneView(
       return;
     }
     surface.write(bytes);
+    if (movesKeyboardFlags(bytes)) surface.write(KEYBOARD_PIN);
   }
 
   /**
@@ -683,7 +686,7 @@ export function createPaneView(
    * pressed. Same rule as typing about the Scrollback: a key pressed while
    * looking at the past spends itself getting back to the present.
    */
-  function press(key: string): void {
+  function press(key: string | KeyPress): void {
     if (disposed) return;
     if (back > 0) {
       jumpToLatest();

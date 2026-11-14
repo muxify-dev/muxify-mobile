@@ -5,14 +5,17 @@ import {
   NO_MODIFIERS,
   type Modifiers,
 } from './modifier-keys';
+import { renderPress, type KeyNaming } from '@/tmux/key-press';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const text = (data: Uint8Array) => new TextDecoder().decode(data);
 const armed = (over: Partial<Modifiers>): Modifiers => ({ ...NO_MODIFIERS, ...over });
-/** The tmux key name the first typed key became, if it became one. */
-const keyOf = (typed: Uint8Array, modifiers: Modifiers) => {
+/** What tmux gets for the first typed key, if it became a key: its name, or the bytes for it. */
+const keyOf = (typed: Uint8Array, modifiers: Modifiers, naming: KeyNaming = 'extended') => {
   const out = applyModifiers(typed, modifiers);
-  return out.kind === 'key' ? out.key : undefined;
+  if (out.kind !== 'key') return undefined;
+  const rendered = renderPress(out.key, naming);
+  return 'key' in rendered ? rendered.key : rendered.bytes;
 };
 
 describe('what the armed modifiers are called', () => {
@@ -38,7 +41,7 @@ describe('typing while a modifier is armed', () => {
 
   it('turns the next letter into a modified key', () => {
     const out = applyModifiers(bytes('f'), armed({ ctrl: true }));
-    expect(out).toMatchObject({ kind: 'key', key: 'C-f' });
+    expect(keyOf(bytes('f'), armed({ ctrl: true }))).toBe('C-f');
     expect(out.rest).toHaveLength(0);
   });
 
@@ -47,7 +50,7 @@ describe('typing while a modifier is armed', () => {
     // search term already behind it. Only the key the modifier was armed for
     // is modified; the rest is ordinary typing.
     const out = applyModifiers(bytes('rgrep'), armed({ ctrl: true }));
-    expect(out).toMatchObject({ kind: 'key', key: 'C-r' });
+    expect(keyOf(bytes('rgrep'), armed({ ctrl: true }))).toBe('C-r');
     expect(text(out.rest)).toBe('grep');
   });
 
@@ -79,14 +82,25 @@ describe('typing while a modifier is armed', () => {
     // what Claude Code and readline read as a newline inside the line. Return
     // reaches this as CR because toShellInput has already made it one.
     const out = applyModifiers(bytes('\r'), armed({ alt: true }));
-    expect(out).toMatchObject({ kind: 'key', key: 'M-Enter' });
+    expect(keyOf(bytes('\r'), armed({ alt: true }))).toBe('M-Enter');
     expect(out.rest).toHaveLength(0);
   });
 
   it('names the other keys the system keyboard has but cannot spell', () => {
     expect(keyOf(bytes('\t'), armed({ alt: true }))).toBe('M-Tab');
     expect(keyOf(new Uint8Array([0x7f]), armed({ alt: true }))).toBe('M-BSpace');
-    expect(keyOf(new Uint8Array([0x08]), armed({ ctrl: true }))).toBe('C-BSpace');
+  });
+
+  it('spends ctrl on Backspace, which tmux cannot send with ctrl', () => {
+    // `send-keys C-BSpace` types the eight characters of the name, on every
+    // tmux. See renderPress.
+    expect(keyOf(new Uint8Array([0x7f]), armed({ ctrl: true }))).toBe('BSpace');
+    expect(keyOf(new Uint8Array([0x08]), armed({ ctrl: true }))).toBe('BSpace');
+  });
+
+  it('is named for the tmux on the Host, as a hardware key is', () => {
+    expect(keyOf(bytes('/'), armed({ ctrl: true }))).toBe('C-/');
+    expect(keyOf(bytes('/'), armed({ ctrl: true }), 'classic')).toEqual(Uint8Array.from([0x1f]));
   });
 
   it('sends a key it cannot name as ordinary typing', () => {

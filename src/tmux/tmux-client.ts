@@ -22,6 +22,7 @@ import {
   zoomPaneCommand,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
+import { keyNamingFor, renderPress, type KeyNaming, type KeyPress } from './key-press';
 import { paneNumber, parseWindowLayout, type PaneRect } from './layout';
 import { selectionRows, type SelectionRow } from './selection-rows';
 import { TmuxError } from './tmux-error';
@@ -349,8 +350,28 @@ export class TmuxClient {
    * bytes are right depends on what the Pane is running and tmux is the only
    * one here that knows — see sendKeyCommand.
    */
-  async sendKey(paneId: string, key: string): Promise<void> {
-    await this.mustRun('send key', sendKeyCommand(paneId, key));
+  async sendKey(paneId: string, key: string | KeyPress): Promise<void> {
+    if (typeof key === 'string') {
+      await this.mustRun('send key', sendKeyCommand(paneId, key));
+      return;
+    }
+    const rendered = renderPress(key, await this.keyNaming());
+    if ('key' in rendered) await this.mustRun('send key', sendKeyCommand(paneId, rendered.key));
+    else await this.sendKeys(paneId, rendered.bytes);
+  }
+
+  /** Read once per Connection: a Host's tmux does not change under it. */
+  private naming: Promise<KeyNaming> | null = null;
+
+  private keyNaming(): Promise<KeyNaming> {
+    this.naming ??= this.runner
+      .run(['display-message', '-p', '#{version}'])
+      .then((reply) => keyNamingFor(reply.ok ? reply.text.join('').trim() : ''))
+      .catch(() => {
+        this.naming = null;
+        return 'classic' as const;
+      });
+    return this.naming;
   }
 
   /**

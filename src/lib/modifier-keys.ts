@@ -7,15 +7,17 @@
  * typed. Which is why these are *sticky* — armed, then spent — rather than
  * held.
  *
- * What comes out for ctrl and option is a tmux key name, not bytes. `C-f`
+ * What comes out for ctrl and option is a KeyPress, not bytes: ctrl and `f`
  * rather than `0x06`, for the same reason the rest of the app sends names:
- * tmux knows what the Pane is running and this does not. It also means one
- * path for every key, whether it came from the Key Row or from the system
- * keyboard with a modifier armed. Command never reaches tmux: it turns the
- * next key into something the phone does.
+ * tmux knows what the Pane is running and this does not. It is the same
+ * KeyPress a hardware keyboard gives, so TmuxClient names both for the Host's
+ * tmux in one place — see renderPress. Command never reaches tmux: it turns
+ * the next key into something the phone does.
  *
- * Pure: bytes and flags in, a name or a Shortcut and the leftover bytes out.
+ * Pure: bytes and flags in, a KeyPress or a Shortcut and the leftover bytes out.
  */
+
+import type { KeyPress } from '@/tmux/key-press';
 
 export type Modifier = 'ctrl' | 'alt' | 'cmd';
 
@@ -40,8 +42,8 @@ const SHORTCUTS: Record<string, Shortcut> = { c: 'copy', v: 'paste', k: 'clear' 
 /** What typing turned into. `rest` is typed as it arrived, after the rest. */
 export type ModifiedInput =
   | { kind: 'typed'; rest: Uint8Array }
-  /** One key by its tmux name, with ctrl and option applied to it. */
-  | { kind: 'key'; key: string; rest: Uint8Array }
+  /** One key with ctrl and option applied to it, for tmux to name. */
+  | { kind: 'key'; key: KeyPress; rest: Uint8Array }
   | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array };
 
 /**
@@ -66,7 +68,7 @@ export function applyModifiers(bytes: Uint8Array, modifiers: Modifiers): Modifie
     if (shortcut !== undefined) return { kind: 'shortcut', shortcut, rest: bytes.subarray(1) };
   }
 
-  const key = modifiedKeyName(bytes[0], modifiers);
+  const key = modifiedPress(bytes[0], modifiers);
   if (key === undefined) return { kind: 'typed', rest: bytes };
   return { kind: 'key', key, rest: bytes.subarray(1) };
 }
@@ -113,24 +115,24 @@ const SYMBOLS = new Set('-_:|/\\~\'[]{}<>()"`=+*&$#');
  * `C-(` as `9`, and `C-*` as the three characters `C-*`. So ctrl is dropped
  * for a symbol outside this set.
  */
-const CTRL_SYMBOLS = new Set('-_/|\\~[]{}`');
+export const CTRL_SYMBOLS = new Set('-_/|\\~[]{}`');
 
-/** The first typed byte as a tmux key name with ctrl and option applied. */
-function modifiedKeyName(byte: number, modifiers: Modifiers): string | undefined {
+/** The first typed byte as a KeyPress with ctrl and option applied. */
+function modifiedPress(byte: number, modifiers: Modifiers): KeyPress | undefined {
   const named = NAMED_KEYS[byte];
   const character = String.fromCharCode(byte);
   let ctrl = modifiers.ctrl;
-  let name: string;
-  if (named !== undefined) name = named;
-  else if (/^[0-9]$/.test(character)) name = character;
+  let key: string;
+  if (named !== undefined) key = named;
+  else if (/^[0-9]$/.test(character)) key = character;
   // Ctrl folds case and alt does not, because ctrl-F and ctrl-shift-F are the
   // same control code while M-F and M-f are two different keys.
-  else if (/^[A-Za-z]$/.test(character)) name = ctrl ? character.toLowerCase() : character;
+  else if (/^[A-Za-z]$/.test(character)) key = ctrl ? character.toLowerCase() : character;
   else if (SYMBOLS.has(character)) {
-    name = character;
+    key = character;
     ctrl = ctrl && CTRL_SYMBOLS.has(character);
   } else return undefined;
 
-  const prefix = modifierPrefix({ ...modifiers, ctrl });
-  return prefix === '' ? undefined : `${prefix}${name}`;
+  if (!ctrl && !modifiers.alt) return undefined;
+  return { key, ctrl, alt: modifiers.alt, shift: false };
 }
