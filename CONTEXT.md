@@ -620,6 +620,33 @@ the Title Sheet shows it. No Surface shows before its Pane is painted, so an
 empty Surface is never on screen.
 _Avoid_: overlay, loading screen, error screen, Reconnect Screen (the old name)
 
+**Outbox**:
+Every key on its way into a Pane, kept by the Attach until tmux confirms it or
+the user has seen what became of it. One per Attach. It outlives each
+Connection, so a key typed just before or during a break is not lost. Composer
+Send and paste do not go through it. Keys do not survive an app restart, and
+closing the Attach discards them with a count in the Log. See ADR 0019.
+_Avoid_: queue, buffer, pending input
+
+**Lane**:
+One Pane's part of the Outbox: its keys in the order typed, and what tmux last
+said about the Pane. The keys of a Lane go one Batch at a time.
+
+**Batch**:
+One key, or one run of typed text, written to tmux under a number (its Seq).
+The Outbox has one count of Seqs, which only grows. The Pane keeps the highest
+Seq it took, so the Outbox can ask if a Batch arrived, and tmux refuses a Batch
+that arrives twice.
+_Avoid_: packet, message (which is the Composer's)
+
+**Held keys**:
+Keys from before a reconnect that the Outbox does not send by itself: Enter, a
+control key, keys older than 30 seconds, or keys for a Pane that runs another
+program now. A card above the Key Row shows them as typed, with Send, Move to
+Composer and Discard. Plain text and arrows are sent again without a question.
+Keys for a Pane that is gone are discarded, and the card says so until it is
+dismissed.
+
 ### Diagnosing
 
 **Log**:
