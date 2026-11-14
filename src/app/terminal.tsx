@@ -11,13 +11,14 @@ import { StatusBar } from 'expo-status-bar';
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Banner, Presence } from '@/components/banner';
+import { Banner, Presence, type BannerAction } from '@/components/banner';
 import { TrackpadScroll } from '@/components/trackpad-scroll';
 import type { TrackpadTarget } from '@/lib/trackpad-gesture';
 import { ConnectionScreen } from '@/components/connection-screen';
 import { KeyRow, KEY_ROW_HEIGHT } from '@/components/key-row';
 import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
 import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
+import { inputNoticeCopy, shownInputNotice } from '@/lib/input-notice-copy';
 import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
@@ -1015,6 +1016,51 @@ export default function TerminalScreen() {
   /** The Theme's chrome colours: the Key Row's labels and the Banners. */
 
   /**
+   * Typed keys that did not reach their Pane after a break, for the user to
+   * decide about or to read. The Composer covers the place of the card, so
+   * the card waits until the Composer closes.
+   */
+  const inputNotice = state && attach && !composerOpen ? shownInputNotice(state.input, activePaneId) : null;
+  const inputCard = useMemo(() => {
+    if (!inputNotice || !attach) return null;
+    const { paneId } = inputNotice;
+    const copy = inputNoticeCopy(inputNotice, activePaneId);
+    const actions: BannerAction[] =
+      inputNotice.kind === 'discarded'
+        ? [{ id: 'dismiss', label: 'Dismiss', onPress: () => attach.dismissInput(paneId), testID: 'input-dismiss' }]
+        : [
+            { id: 'discard', label: 'Discard', prominent: false, onPress: () => attach.heldInput(paneId, 'discard'), testID: 'input-discard' },
+            {
+              id: 'compose',
+              label: copy.compose,
+              prominent: false,
+              onPress: () => {
+                attach.heldInput(paneId, 'compose');
+                if (paneId !== activePaneId) return;
+                setArmed(NO_MODIFIERS);
+                setComposerOpen(true);
+              },
+              testID: 'input-compose',
+            },
+            { id: 'send', label: 'Send', disabled: !open, onPress: () => attach.heldInput(paneId, 'send'), testID: 'input-send' },
+          ];
+    return (
+      <Banner
+        title={copy.preview}
+        code
+        body={copy.reason}
+        leading={{ symbol: inputNotice.kind === 'discarded' ? 'trash' : 'pause.circle' }}
+        tone={inputNotice.kind === 'discarded' ? 'warning' : 'neutral'}
+        actions={actions}
+        appearance={appearance}
+        palette={chrome}
+        accessibilityLabel={inputNotice.kind === 'discarded' ? 'Typed keys were discarded' : 'Typed keys were not sent'}
+        testID={inputNotice.kind === 'discarded' ? 'input-discarded' : 'input-held'}
+      />
+    );
+  }, [inputNotice, attach, activePaneId, open, appearance, chrome]);
+
+  /**
    * Escape, tab or an arrow from the Key Row, into the Pane that has the
    * keyboard.
    *
@@ -1603,6 +1649,14 @@ export default function TerminalScreen() {
         panesDisabled={!open}
         below={clearance.bottom}
       /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
+
+      {inputCard && cover.kind !== 'connection-screen' ? (
+        <View
+          style={[styles.top, { bottom: (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) + clearance.bottom + 8 }]}
+          pointerEvents="box-none">
+          {inputCard}
+        </View>
+      ) : null}
 
       {/* The native Header ends where this content area begins. */}
       <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">

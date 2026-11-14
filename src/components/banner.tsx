@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Appearance } from '@/constants/app-theme';
+import { Fonts } from '@/constants/theme';
 
 export interface BannerAction {
   id: string;
@@ -12,11 +13,15 @@ export interface BannerAction {
   onPress: () => void;
   /** The one action the Banner is really asking for; drawn in the accent. */
   prominent?: boolean;
+  /** Shown and not pressable: the action exists, and cannot be done now. */
+  disabled?: boolean;
   testID?: string;
 }
 
 export interface BannerProps {
   title: string;
+  /** The title is text from a terminal, and is set in the terminal's kind of type. */
+  code?: boolean;
   body?: string;
   /**
    * What leads the text. A spinner while something is being waited on, a
@@ -50,6 +55,7 @@ export interface BannerProps {
  */
 export function Banner({
   title,
+  code = false,
   body,
   leading,
   tone,
@@ -74,7 +80,7 @@ export function Banner({
           )}
         </View>
         <View style={styles.text}>
-          <Text style={[styles.title, { color: palette.toolbarTint }]} numberOfLines={2}>
+          <Text style={[styles.title, code && styles.code, { color: palette.toolbarTint }]} numberOfLines={2}>
             {title}
           </Text>
           {body ? (
@@ -130,10 +136,12 @@ function ActionButton({ action, palette }: { action: BannerAction; palette: Appe
   return (
     <Pressable
       onPress={action.onPress}
+      disabled={action.disabled}
       accessibilityRole="button"
       accessibilityLabel={action.label}
+      accessibilityState={{ disabled: action.disabled ?? false }}
       hitSlop={8}
-      style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
+      style={({ pressed }) => [styles.action, (pressed || action.disabled) && styles.pressed]}>
       <Text
         style={[
           styles.actionLabel,
@@ -244,14 +252,21 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '600',
   },
+  code: {
+    fontFamily: Fonts.mono,
+    fontSize: 13,
+    fontWeight: '500',
+  },
   body: {
     fontSize: 13,
     lineHeight: 18,
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
-    gap: 20,
+    columnGap: 20,
+    rowGap: 6,
     // Lined up with the text, past the leading glyph.
     paddingLeft: 36,
   },
