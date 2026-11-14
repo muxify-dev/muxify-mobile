@@ -288,18 +288,18 @@ describe('running a chain', () => {
     host.reply(2);
     host.reply(3);
     host.reply(4);
-    host.reply(5, ['7\t100\t200\tcat']);
+    host.reply(5, ['7:100:200:cat']);
     host.reply(6, ['muxify-chain-end-1']);
-    expect(texts(await asked)).toEqual([[true], [true], [true], [true, '7\t100\t200\tcat']]);
+    expect(texts(await asked)).toEqual([[true], [true], [true], [true, '7:100:200:cat']]);
   });
 
   it('keeps an %error from inside the line and the blocks after it', async () => {
     const asked = connection.runChain(chain);
     host.reply(2);
     host.refuse(3, "can't find pane: %9");
-    host.reply(4, ['\t100\t\t']);
+    host.reply(4, [':100::']);
     host.reply(5, ['muxify-chain-end-1']);
-    expect(texts(await asked)).toEqual([[true], [false, "can't find pane: %9"], [true, '\t100\t\t']]);
+    expect(texts(await asked)).toEqual([[true], [false, "can't find pane: %9"], [true, ':100::']]);
   });
 
   it('resolves a line that tmux could not parse with its one %error', async () => {

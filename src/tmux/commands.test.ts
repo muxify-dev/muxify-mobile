@@ -286,12 +286,12 @@ describe('capturePaneTextCommand', () => {
 
 describe('the mark of a Pane', () => {
   it.each([
-    ['7\t100\t200\tzsh', { ack: 7, serverPid: 100, panePid: 200, program: 'zsh' }],
-    ['\t100\t200\tzsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
-    ['k7f2:7\t100\t200\tzsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
-    ['12\t100\t200\tmy\tprogram', { ack: 12, serverPid: 100, panePid: 200, program: 'my\tprogram' }],
-    ['7\t100\t200\t', { ack: 7, serverPid: 100, panePid: 200, program: '' }],
-    ['\t100\t\t', 'gone'],
+    ['7:100:200:zsh', { ack: 7, serverPid: 100, panePid: 200, program: 'zsh' }],
+    [':100:200:zsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
+    ['k7f2-7:100:200:zsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
+    ['12:100:200:my:program', { ack: 12, serverPid: 100, panePid: 200, program: 'my:program' }],
+    ['7:100:200:', { ack: 7, serverPid: 100, panePid: 200, program: '' }],
+    [':100::', 'gone'],
     ['', null],
     [undefined, null],
     ["can't find pane: %4", null],

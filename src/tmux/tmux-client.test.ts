@@ -245,9 +245,7 @@ describe('sizing the Client', () => {
 
 describe('typing a Batch', () => {
   const token = 'k7f2' as OutboxToken;
-  const MARK =
-    "'display-message' '-p' '-t' '%4' " +
-    '"#{@muxify-in-k7f2}\\011#{pid}\\011#{pane_pid}\\011#{pane_current_command}"';
+  const MARK = "'display-message' '-p' '-t' '%4' '#{@muxify-in-k7f2}:#{pid}:#{pane_pid}:#{pane_current_command}'";
   const VERSION = "'display-message' '-p' '#{version}'";
   const GUARD = "'if-shell' '-F' '-t' '%4' '#{e|<:#{e|+:0,#{@muxify-in-k7f2}},7}'";
   const batch = (key: Key): Batch => ({ seq: 7 as Seq, key, typedAt: 0 });
@@ -273,7 +271,7 @@ describe('typing a Batch', () => {
   }
 
   it('types the key and its Seq only when the Pane does not have that Seq, and reads the mark', async () => {
-    const { client, asked } = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    const { client, asked } = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
     expect(await client.deliver('%4', batch(text('hi')), token)).toEqual({
       serverPid: 100,
       panePid: 200,
@@ -287,7 +285,7 @@ describe('typing a Batch', () => {
   });
 
   it('sends a named key by its name, also one that tmux quoting must protect', async () => {
-    const { client, asked } = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    const { client, asked } = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
     await client.deliver('%4', batch({ kind: 'key', key: "M-'" }), token);
     expect(asked[1]).toBe(
       `${GUARD} "'send-keys' '-t' '%4' \\"M-'\\" ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`,
@@ -296,16 +294,16 @@ describe('typing a Batch', () => {
 
   it('sends a hardware key as this tmux can deliver it', async () => {
     const press = { key: 'r', ctrl: true, alt: false, shift: false };
-    const modern = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    const modern = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
     await modern.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
     expect(modern.asked[1]).toContain("'send-keys' '-t' '%4' 'C-/'");
-    const classic = chained('3.4', [[], [], [], ['7\t100\t200\tzsh']]);
+    const classic = chained('3.4', [[], [], [], ['7:100:200:zsh']]);
     await classic.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
     expect(classic.asked[1]).toContain("'send-keys' '-t' '%4' '-H' '1f'");
   });
 
   it('sends the plain chain to a tmux that cannot compare numbers', async () => {
-    const { client, asked } = chained('3.1c', [[], [], ['7\t100\t200\tzsh']]);
+    const { client, asked } = chained('3.1c', [[], [], ['7:100:200:zsh']]);
     await client.deliver('%4', batch(text('hi')), token);
     expect(asked[1]).toBe(
       `'send-keys' '-t' '%4' '-H' '68' '69' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
@@ -314,18 +312,18 @@ describe('typing a Batch', () => {
   });
 
   it.each([
-    ['a Pane that is gone', [[], { error: ["can't find pane: %4"] }, ['\t100\t\t']], 'gone'],
+    ['a Pane that is gone', [[], { error: ["can't find pane: %4"] }, [':100::']], 'gone'],
     ['a line that an old tmux stopped at a missing Pane', [{ error: ["can't find pane: %4"] }], 'gone'],
-    ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['6\t100\t200\tzsh']], { refused: 'repeat count invalid' }],
+    ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['6:100:200:zsh']], { refused: 'repeat count invalid' }],
     ['a line that tmux could not parse', [{ error: ['yacc stack overflow'] }], { refused: 'yacc stack overflow' }],
-    ['a line that was a copy', [[], ['9\t100\t200\tvim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9 }],
+    ['a line that was a copy', [[], ['9:100:200:vim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9 }],
   ] as [string, (string[] | { error: string[] })[], unknown][])('reads %s', async (_, replies, result) => {
     const { client } = chained('3.8', replies);
     expect(await client.deliver('%4', batch(text('hi')), token)).toEqual(result);
   });
 
   it('reads the mark alone', async () => {
-    const { client, asked } = chained('3.8', [['\t100\t200\tnode']]);
+    const { client, asked } = chained('3.8', [[':100:200:node']]);
     expect(await client.readMark('%4', token)).toEqual({ serverPid: 100, panePid: 200, program: 'node', ack: null });
     expect(asked).toEqual([MARK]);
   });

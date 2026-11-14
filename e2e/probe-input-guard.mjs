@@ -4,6 +4,10 @@
  *
  *   bash e2e/sandbox.sh node e2e/probe-input-guard.mjs
  *
+ * For another tmux, in a container that has it and nothing else:
+ *
+ *   PROBE_CONTAINER=<id> node e2e/probe-input-guard.mjs
+ *
  * It prints, for each line it writes down a control mode client, the reply
  * blocks that came back and what the Pane shows. `src/tmux/commands.ts` and
  * `runChain` in `src/tmux/control-connection.ts` encode what this printed on
@@ -12,23 +16,29 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
-if (!process.env.MUXIFY_E2E_ROOT || process.env.TMUX) {
-  console.error('run this through e2e/sandbox.sh');
-  process.exit(1);
-}
+const container = process.env.PROBE_CONTAINER;
+const command = container ? ['docker', 'exec', '-i', container, 'tmux'] : ['tmux'];
+const tmux = (...args) => execFileSync(command[0], [...command.slice(1), ...args], { encoding: 'utf8' }).trim();
 
-const tmux = (...args) => execFileSync('tmux', args, { encoding: 'utf8' }).trim();
-const socket = tmux('display', '-p', '#{socket_path}');
-if (!socket.startsWith(`${realpathSync(process.env.MUXIFY_E2E_ROOT)}/`)) {
-  console.error(`refusing to probe ${socket}`);
-  process.exit(1);
+if (container) {
+  tmux('-f', '/dev/null', 'new-session', '-d', '-s', '0');
+} else {
+  if (!process.env.MUXIFY_E2E_ROOT || process.env.TMUX) {
+    console.error('run this through e2e/sandbox.sh');
+    process.exit(1);
+  }
+  const socket = tmux('display', '-p', '#{socket_path}');
+  if (!socket.startsWith(`${realpathSync(process.env.MUXIFY_E2E_ROOT)}/`)) {
+    console.error(`refusing to probe ${socket}`);
+    process.exit(1);
+  }
 }
 
 console.log(`tmux ${tmux('-V')}`);
 const pane = tmux('new-window', '-d', '-P', '-F', '#{pane_id}', '-t', '0:', 'cat -v');
 const option = '@muxify-in-probe';
 
-const child = spawn('tmux', ['-C', 'attach', '-t', '0']);
+const child = spawn(command[0], [...command.slice(1), '-C', 'attach', '-t', '0']);
 let buffered = '';
 let blocks = [];
 let open = null;
@@ -73,7 +83,7 @@ const hex = (text) => [...Buffer.from(text)].map((b) => b.toString(16).padStart(
 const quote = (value) =>
   value.includes("'") ? `"${value.replace(/[\\"$]/g, (c) => `\\${c}`)}"` : `'${value}'`;
 
-const mark = `display-message -p -t ${pane} '#{${option}}\t#{pid}\t#{pane_pid}\t#{pane_current_command}'`;
+const mark = `display-message -p -t ${pane} '#{${option}}:#{pid}:#{pane_pid}:#{pane_current_command}'`;
 const pad = 'display-message -p muxify-dup ; display-message -p muxify-dup';
 const guarded = (seq, inner, target = pane) =>
   `if-shell -F -t ${target} '#{e|<:#{e|+:0,#{${option}}},${seq}}' ${quote(inner)} ${quote(pad)} ; ${mark.replaceAll(pane, target)}`;

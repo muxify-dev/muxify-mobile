@@ -393,8 +393,13 @@ export function inputOption(token: OutboxToken): string {
  * Reads a Pane's mark: the Seq it took, the server, the Pane's process and
  * its program. The program is last, because it is the one free text.
  *
- * Measured on tmux 3.8: for a Pane that is gone this does not fail. It prints
- * the server's pid and leaves the Pane's fields empty.
+ * Colons between them, not the tabs of the other reads. Measured in a
+ * container with no locale: tmux 3.0a and 3.2a print a tab as `_` to a client
+ * that is not UTF-8, and a mark that cannot be read holds every key.
+ *
+ * Measured on tmux 3.2a and 3.8: for a Pane that is gone this does not fail.
+ * It prints the server's pid and leaves the Pane's fields empty. On 3.0a it
+ * fails with `can't find pane`.
  */
 export function paneMarkCommand(paneId: string, option: string): TmuxArgv {
   return [
@@ -402,19 +407,19 @@ export function paneMarkCommand(paneId: string, option: string): TmuxArgv {
     '-p',
     '-t',
     paneId,
-    `#{${option}}\t#{pid}\t#{pane_pid}\t#{pane_current_command}`,
+    `#{${option}}:#{pid}:#{pane_pid}:#{pane_current_command}`,
   ];
 }
 
 /** The reply of paneMarkCommand. Null when it is not a mark at all. */
 export function parsePaneMark(line: string | undefined): MarkRead | null {
-  const [ack, serverPid, panePid, ...program] = (line ?? '').split('\t');
+  const [ack, serverPid, panePid, ...program] = (line ?? '').split(':');
   if (program.length === 0 || !/^\d+$/.test(serverPid)) return null;
   if (!/^\d+$/.test(panePid)) return 'gone';
   const mark: PaneMark = {
     serverPid: Number(serverPid),
     panePid: Number(panePid),
-    program: program.join('\t'),
+    program: program.join(':'),
     ack: /^\d+$/.test(ack) ? (Number(ack) as Seq) : null,
   };
   return mark;

@@ -51,7 +51,7 @@ function fakeServer() {
   const panes = new Map([['%0', { pid: 200, ack: 0, typed: [] as string[] }]]);
   const mark = (paneId: string): string => {
     const pane = panes.get(paneId);
-    return pane ? `${pane.ack || ''}\t${pid}\t${pane.pid}\t${program}` : `\t${pid}\t\t`;
+    return pane ? `${pane.ack || ''}:${pid}:${pane.pid}:${program}` : `:${pid}::`;
   };
   const keyOf = (send: string): string => {
     const words = send.replace(/'/g, '').split(' ').slice(3);
@@ -75,7 +75,7 @@ function fakeServer() {
       const end = /^'display-message' '-p' '(muxify-chain-end-\d+)'$/.exec(line);
       if (end) return [[end[1]]];
       if (line.includes('#{version}')) return [['3.8']];
-      const read = /^'display-message' '-p' '-t' '(%\d+)' "#\{@muxify-in-/.exec(line);
+      const read = /^'display-message' '-p' '-t' '(%\d+)' '#\{@muxify-in-/.exec(line);
       if (read) return [[mark(read[1])]];
       const guard = /^'if-shell' '-F' '-t' '(%\d+)' '#\{e\|<:#\{e\|\+:0,#\{@muxify-in-\w+\}\},(\d+)\}' "(.*?)"(?: ; |$)/.exec(line);
       if (!guard) return null;
