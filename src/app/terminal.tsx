@@ -1,4 +1,4 @@
-import { TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
+import { setKeybinds, TerminalView, type TerminalPasteEvent, type TerminalViewRef } from 'expo-libghostty';
 import { File } from 'expo-file-system';
 import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter, type NativeStackNavigationProp } from 'expo-router';
@@ -38,6 +38,7 @@ import {
   type TerminalPalette,
 } from '@/constants/app-theme';
 import { namedKeyName, type NamedKey } from '@/constants/row-keys';
+import { editingSequence, ghosttyKeybinds } from '@/keyboard/editing-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
@@ -104,6 +105,9 @@ import type { Grid, Pane } from '@/tmux/tmux-client';
  * it was told, and this one says what was drawn.
  */
 const say = speakingAs(deviceLog(), 'screen');
+
+// A hardware keyboard's ⌘⌫, ⌘← and the rest, from the table the Key Row reads.
+setKeybinds(ghosttyKeybinds());
 
 /**
  * How much Scrollback a finger moves, against how far it travels.
@@ -830,6 +834,7 @@ export default function TerminalScreen() {
       // A key is for the live Pane, not for the still picture of it.
       endSelection();
       if (input.kind === 'key') view.press(input.key);
+      else if (input.kind === 'sequence') view.type(input.bytes);
       else if (input.kind === 'shortcut') {
         ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[input.shortcut]();
       } else if (input.kind === 'keyboard-shortcut') runKeyboardShortcut(input.action);
@@ -1076,7 +1081,9 @@ export default function TerminalScreen() {
   const pressKey = useCallback(
     (key: NamedKey) => {
       endSelection();
-      activeView()?.press(namedKeyName(key, armed));
+      const sequence = editingSequence(key.key, armed);
+      if (sequence !== undefined) activeView()?.type(sequence);
+      else activeView()?.press(namedKeyName(key, armed));
       setArmed(NO_MODIFIERS);
     },
     [activeView, armed, endSelection],

@@ -186,3 +186,25 @@ Measured on tmux 3.0a, 3.2a, 3.3a, 3.4, 3.5a and 3.8: 511 presses, every
 `extended-keys` setting and format, and every mode a program can ask for. No
 key was typed as text or lost. On tmux before 3.5, Claude Code cannot get
 shift-Return. alt-Return works on every version.
+
+## ⌘ and ⌥ edit the line as they do on a Mac
+
+On a hardware keyboard, ⌘⌫ deletes the line, ⌘← and ⌘→ go to its start
+and end, and ⌥← and ⌥→ go one word back and forward. ghostty does this
+with keybinds it sets by default on macOS and iOS. It types ctrl-U,
+ctrl-A, ctrl-E, ESC b and ESC f, and tmux gets those bytes. The same
+chords from the Key Row did not do this. ⌘ and ⌫ typed a plain delete,
+⌘ and ← sent `Left`, and ⌥ and ← sent `M-Left`. Measured on tmux 3.8,
+bash moves a word back for `M-Left`, but zsh types `;3D`.
+
+One table in the app now holds these chords. The app gives the table to
+ghostty as its keybinds, and the Key Row reads the same table. So a
+chord on either keyboard types the same bytes. These chords are bytes
+and not tmux names, because the bytes are what a hardware keyboard
+sends. The rule above, that a key goes to tmux by its name, still holds
+for every other key.
+
+⌥⌫ is not in the table. On both keyboards it is `M-BSpace`, and on
+tmux 3.8 bash and zsh delete a word for it. ⌘↑ and ⌘↓ are not in the
+table either. ghostty binds them to jump between prompts, which is not
+a key for the Pane. From the Key Row, they still send `Up` and `Down`.

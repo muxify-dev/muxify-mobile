@@ -157,25 +157,55 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..54523f6a9a0ec055a4c9c6da9d30a679
      }, []);
      return (<NativeView {...props} ref={native} onResize={(event) => {
 diff --git a/build/index.d.ts b/build/index.d.ts
-index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..6192f3dd6437031f0364930898d16ca93bf7d16a 100644
+index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..599f8319179fd59d53dd317e2bb7c9670cf39fdb 100644
 --- a/build/index.d.ts
 +++ b/build/index.d.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
++export { setKeybinds } from './keybinds';
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/build/index.js b/build/index.js
-index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..7da4f92e26bf07f1407b7e3626befbf9e6d99c4e 100644
+index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..e225a97ec71eea91f4c5949133c547bd95d0900b 100644
 --- a/build/index.js
 +++ b/build/index.js
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
++export { setKeybinds } from './keybinds';
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/build/keybinds.d.ts b/build/keybinds.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ba220472ad3b581866db1d903f0441bebe6a9b6
+--- /dev/null
++++ b/build/keybinds.d.ts
+@@ -0,0 +1,6 @@
++/**
++ * Keybinds for every terminal view, in ghostty config syntax:
++ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
++ * keybind for a chord ghostty already binds replaces it. iOS only.
++ */
++export declare function setKeybinds(keybinds: string[]): void;
+diff --git a/build/keybinds.js b/build/keybinds.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b08845e2ae711076bb14faeb9c9a78ebde4c3f5
+--- /dev/null
++++ b/build/keybinds.js
+@@ -0,0 +1,10 @@
++import { requireOptionalNativeModule } from 'expo';
++const native = requireOptionalNativeModule('ExpoLibghostty');
++/**
++ * Keybinds for every terminal view, in ghostty config syntax:
++ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
++ * keybind for a chord ghostty already binds replaces it. iOS only.
++ */
++export function setKeybinds(keybinds) {
++    void native?.setKeybinds?.(keybinds);
++}
 diff --git a/build/swipeTick.d.ts b/build/swipeTick.d.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..e0326a71ff927b5c4f3cb99266d68693670933b5
@@ -205,10 +235,10 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af788ef1780 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ad375c5b7bceb3f61d08a4b836a92338bd4eba5b 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -1,11 +1,21 @@
+@@ -1,11 +1,27 @@
  import ExpoModulesCore
 +import GhosttyTerminal
  
@@ -222,6 +252,12 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af7
 +      MainActor.assumeIsolated { TerminalSwipeFeedback.tick() }
 +    }.runOnQueue(.main)
 +
++    // Keybinds in ghostty config syntax, such as `super+backspace=text:\x15`.
++    // App-wide on iOS, like the theme, and kept with it in one config.
++    AsyncFunction("setKeybinds") { (keybinds: [String]) in
++      MainActor.assumeIsolated { ExpoLibghosttyView.setKeybinds(keybinds) }
++    }.runOnQueue(.main)
++
      View(ExpoLibghosttyView.self) {
 -      Events("onInput", "onResize")
 +      Events(
@@ -231,7 +267,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af7
  
        // Base font size in points (default 14). Changing it after mount
        // rebuilds the surface and resets the grid.
-@@ -36,6 +46,56 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +52,56 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -288,7 +324,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af7
      }
    }
  }
-@@ -46,6 +106,24 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +112,24 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -314,7 +350,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..ca17a13f2a04a34486981a31c7564af7
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd837522d0d 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..13dcff5c7fba9557658984419a53f0e6e7cc60d8 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -374,10 +410,26 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd8
    /// Base font size in points (nil → ghostty's default, 14). Changing it on a
    /// mounted view rebuilds the surface, which resets the grid — set it before
    /// mounting. Pinch-to-zoom steps from this value.
-@@ -26,7 +71,12 @@ class ExpoLibghosttyView: ExpoView {
+@@ -26,7 +71,28 @@ class ExpoLibghosttyView: ExpoView {
    /// unlike Android's per-view application. Colors accept ghostty config
    /// syntax; nil clears back to the defaults.
    func applyTheme(_ theme: TerminalThemeRecord?) {
++    Self.theme = theme
++    Self.applyConfig()
++  }
++
++  /// The config is the shared controller's, so the theme and the keybinds
++  /// are too, and setting either one rebuilds it from both.
++  private static var theme: TerminalThemeRecord?
++  private static var keybinds: [String] = []
++
++  static func setKeybinds(_ keybinds: [String]) {
++    guard keybinds != Self.keybinds else { return }
++    Self.keybinds = keybinds
++    applyConfig()
++  }
++
++  private static func applyConfig() {
 +    // No padding, so the grid starts at the view's top left. The Selection
 +    // Layer and every caller that turns a touch into a cell count from there;
 +    // ghostty's default of 2 pt drew each glyph 2 pt past the cell they meant.
@@ -387,7 +439,15 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd8
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -44,6 +94,50 @@ class ExpoLibghosttyView: ExpoView {
+@@ -39,11 +105,58 @@ class ExpoLibghosttyView: ExpoView {
+         }
+       }
+     }
++    for keybind in keybinds {
++      config = config.appending(.custom(key: "keybind", value: keybind))
++    }
+     _ = TerminalController.shared.setTheme(TerminalTheme(light: config, dark: config))
+   }
  
    let onInput = EventDispatcher()
    let onResize = EventDispatcher()
@@ -438,7 +498,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd8
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +150,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +169,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -460,7 +520,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..e65a4aa756c046502326ded271abbcd8
        }
      )
      self.session = session
-@@ -66,21 +171,269 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +190,269 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -2367,13 +2427,32 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..0e6e0ef7f692427f4d3473b5f57a5579
    }, []);
  
 diff --git a/src/index.ts b/src/index.ts
-index d79c69b25d82e796253a904cd2572d6ce8d4f40d..d52aa96a80810dcd97f3744fcaf19b6103c4c63b 100644
+index d79c69b25d82e796253a904cd2572d6ce8d4f40d..10ea37e1233e6cb34b24408bca6257e33641c798 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -1,2 +1,3 @@
+@@ -1,2 +1,4 @@
  export { default as TerminalView } from './ExpoLibghosttyView';
  export * from './ExpoLibghostty.types';
 +export { swipeTick } from './swipeTick';
++export { setKeybinds } from './keybinds';
+diff --git a/src/keybinds.ts b/src/keybinds.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f02bac0423bee3f8aa5e99c716005e4cad5a7116
+--- /dev/null
++++ b/src/keybinds.ts
+@@ -0,0 +1,12 @@
++import { requireOptionalNativeModule } from 'expo';
++
++const native = requireOptionalNativeModule<{ setKeybinds?: (keybinds: string[]) => Promise<void> }>('ExpoLibghostty');
++
++/**
++ * Keybinds for every terminal view, in ghostty config syntax:
++ * `super+backspace=text:\x15`. Each is added to ghostty's defaults, and a
++ * keybind for a chord ghostty already binds replaces it. iOS only.
++ */
++export function setKeybinds(keybinds: string[]): void {
++  void native?.setKeybinds?.(keybinds);
++}
 diff --git a/src/swipeTick.ts b/src/swipeTick.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..ec95f3fda278479e693142d8b37ae2d822d20957

@@ -13,7 +13,9 @@
  * KeyPress a hardware keyboard gives, so TmuxClient names both for the Host's
  * tmux in one place — see renderPress. Command never reaches tmux: it turns
  * the next key into something the phone does: a Keyboard Shortcut, as the
- * same chord on a hardware keyboard would, or else a Shortcut.
+ * same chord on a hardware keyboard would, or else a Shortcut. With delete,
+ * command is a line-editing chord, and so is option with an arrow: see
+ * editing-keys.
  *
  * Pure: bytes and flags in, a KeyPress or a Shortcut and the leftover bytes out.
  */
@@ -25,6 +27,7 @@ import {
   type KeyboardAction,
   type KeyChord,
 } from '@/keyboard/keyboard-shortcuts';
+import { editingSequence } from '@/keyboard/editing-keys';
 import type { KeyPress } from '@/tmux/key-press';
 
 export type Modifier = 'ctrl' | 'alt' | 'cmd';
@@ -52,6 +55,8 @@ export type ModifiedInput =
   | { kind: 'typed'; rest: Uint8Array }
   /** One key with ctrl and option applied to it, for tmux to name. */
   | { kind: 'key'; key: KeyPress; rest: Uint8Array }
+  /** A line-editing chord, such as ⌘⌫, as the bytes a hardware keyboard types for it. */
+  | { kind: 'sequence'; bytes: Uint8Array; rest: Uint8Array }
   | { kind: 'shortcut'; shortcut: Shortcut; rest: Uint8Array }
   | { kind: 'keyboard-shortcut'; action: KeyboardAction; rest: Uint8Array };
 
@@ -91,6 +96,10 @@ export function applyModifiers(
     if (shortcut !== undefined) return { kind: 'shortcut', shortcut, rest: bytes.subarray(1) };
   }
 
+  const named = NAMED_KEYS[bytes[0]];
+  const sequence = named === undefined ? undefined : editingSequence(named, modifiers);
+  if (sequence !== undefined) return { kind: 'sequence', bytes: sequence, rest: bytes.subarray(1) };
+
   const key = modifiedPress(bytes[0], modifiers);
   if (key === undefined) return { kind: 'typed', rest: bytes };
   return { kind: 'key', key, rest: bytes.subarray(1) };
@@ -99,9 +108,10 @@ export function applyModifiers(
 /**
  * What stays armed after typed input.
  *
- * A Keyboard Shortcut, a Shortcut or a modified key spends everything. Input that the modifiers
- * could not apply to spends command only: command is for the next key whatever
- * it is, while ctrl waits for a key it has a form of.
+ * A Keyboard Shortcut, a Shortcut, a line-editing chord or a modified key
+ * spends everything. Input that the modifiers could not apply to spends
+ * command only: command is for the next key whatever it is, while ctrl waits
+ * for a key it has a form of.
  */
 export function armedAfter(input: ModifiedInput, armed: Modifiers): Modifiers {
   if (input.kind !== 'typed') return NO_MODIFIERS;
