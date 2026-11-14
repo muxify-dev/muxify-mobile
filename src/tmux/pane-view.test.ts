@@ -8,6 +8,7 @@ import {
   type SurfacePoint,
   type ScrollPosition,
 } from './pane-view';
+import type { PaneInput } from './input-outbox';
 import { selectionRows, type SelectionRows } from './selection-rows';
 import type { Grid, PaneState } from './tmux-client';
 
@@ -74,19 +75,26 @@ function fakePane(state: PaneState = paneState()) {
         rows: (cols) => selectionRows(text, text, top, cols),
       };
     },
-    async sendKeys(paneId, data) {
-      asked.push(`keys ${paneId}`);
+  };
+
+  /** The Pane's way in, which records what the view gave it, in order. */
+  const entered: string[] = [];
+  const input: PaneInput = {
+    type(data, gesture = false) {
+      entered.push(`${gesture ? 'gesture' : 'typed'} ${shown([data])}`);
       sent.push(data);
     },
-    async sendKey(paneId, key) {
-      asked.push(`key ${paneId} ${key}`);
+    press(key) {
+      entered.push(`key ${typeof key === 'string' ? key : key.key}`);
     },
   };
 
   return {
     reader,
+    input,
     asked,
     sent,
+    entered,
     set state(next: PaneState) {
       state = next;
     },
@@ -174,6 +182,7 @@ function viewOn(host: ReturnType<typeof fakePane>, paneId = '%0', shown = true) 
   const view = createPaneView(
     paneId,
     host.reader,
+    host.input,
     {
       onScroll: (position) => positions.push(position),
       onError: (error) => errors.push(error),
@@ -476,23 +485,7 @@ describe('typing', () => {
     kit.view.type(bytes('hi'));
     await settle();
 
-    expect(host.sent.map((data) => shown([data]))).toEqual(['hi']);
-    expect(host.asked).toContain('keys %4');
-  });
-
-  it('batches a burst into one command rather than one per keystroke', async () => {
-    const host = fakePane();
-    const kit = viewOn(host);
-    await paints(kit);
-
-    // The first goes at once — a Surface waiting for its own echo feels
-    // broken — and everything typed during that round trip follows as one.
-    kit.view.type(bytes('a'));
-    kit.view.type(bytes('b'));
-    kit.view.type(bytes('c'));
-    await settle();
-
-    expect(host.sent.map((data) => shown([data]))).toEqual(['a', 'bc']);
+    expect(host.entered).toEqual(['typed hi']);
   });
 
   it('carries bytes no keyboard has, unchanged', async () => {
@@ -531,13 +524,10 @@ describe('a key from the Key Row', () => {
     kit.view.press('Up');
     await settle();
 
-    expect(host.asked).toContain('key %4 Up');
+    expect(host.entered).toEqual(['key Up']);
   });
 
   it('arrives where it was pressed, not past what was typed before it', async () => {
-    // A named key cannot be merged into a `send-keys -H` of typed bytes, so
-    // the two share one queue. Sending it straight out would put an arrow
-    // pressed mid-burst *before* the letters typed ahead of it.
     const host = fakePane();
     const kit = viewOn(host);
     await paints(kit);
@@ -548,13 +538,7 @@ describe('a key from the Key Row', () => {
     kit.view.type(bytes('c'));
     await settle();
 
-    expect(host.asked.filter((each) => each.startsWith('key') || each === 'keys %0')).toEqual([
-      'keys %0',
-      'keys %0',
-      'key %0 C-c',
-      'keys %0',
-    ]);
-    expect(host.sent.map((data) => shown([data]))).toEqual(['a', 'b', 'c']);
+    expect(host.entered).toEqual(['typed a', 'typed b', 'key C-c', 'typed c']);
   });
 
   it('spends itself getting back to the bottom, like a keystroke', async () => {
@@ -742,7 +726,7 @@ describe('scrolling a full-screen application', () => {
 
     // Ten lines is two notches of the wheel, aimed at the middle of the
     // Surface.
-    expect(shown(host.sent)).toBe('<ESC>[<64;40;12M<ESC>[<64;40;12M');
+    expect(host.entered).toEqual(['gesture <ESC>[<64;40;12M<ESC>[<64;40;12M']);
     expect(host.asked.filter((each) => each.startsWith('scrollback'))).toHaveLength(0);
   });
 
@@ -756,7 +740,7 @@ describe('scrolling a full-screen application', () => {
     kit.view.scroll(5, GRID);
     await settle();
 
-    expect(shown(host.sent)).toBe('<ESC>[A'.repeat(5));
+    expect(host.entered).toEqual([`gesture ${'<ESC>[A'.repeat(5)}`]);
   });
 
   it('carries a part-notch rather than dropping it', async () => {
@@ -843,7 +827,7 @@ describe('tapping a Pane', () => {
     await settle();
 
     // Press and release together, so nothing is left held down.
-    expect(shown(host.sent)).toBe('<ESC>[<0;12;5M<ESC>[<0;12;5m');
+    expect(host.entered).toEqual(['gesture <ESC>[<0;12;5M<ESC>[<0;12;5m']);
   });
 
   it('sends nothing to a shell, which would only see the escape as text', async () => {

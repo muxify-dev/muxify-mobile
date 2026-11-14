@@ -40,6 +40,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     mouseTracking: false,
     rowInSight: null,
     alternate: false,
+    input: [],
   });
 
   return {
@@ -63,6 +64,8 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     refreshTopic: async () => {},
     reconnect: () => {},
     acceptHostKey: () => Promise.resolve(),
+    heldInput: () => {},
+    dismissInput: () => {},
     view: () => {
       throw new Error('no views here');
     },

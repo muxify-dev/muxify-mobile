@@ -9,7 +9,7 @@
  *   TMUX_KEYS_TARGETS=local,ubuntu:24.04 pnpm e2e:tmux-keys
  *
  * A press starts as the kitty sequence the Surface writes, goes through
- * toTypedParts and TmuxClient.sendKey down a real Control Connection, and is
+ * toTypedParts and TmuxClient.deliver down a real Control Connection, and is
  * read back as bytes by a raw program in the Pane. Each tmux runs with every
  * `extended-keys` and `extended-keys-format` it accepts, and the program asks
  * for each keyboard mode: none (a shell), modifyOtherKeys (Claude Code) and
@@ -21,7 +21,8 @@ import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { shellQuote } from '@/tmux/commands';
+import { shellQuote, type OutboxToken } from '@/tmux/commands';
+import type { Key, Seq } from '@/tmux/input-lane';
 import { openControlConnection } from '@/tmux/control-connection';
 import { keyNamingFor, renderPress, type KeyPress } from '@/tmux/key-press';
 import { TmuxClient } from '@/tmux/tmux-client';
@@ -168,12 +169,19 @@ async function runConfig(target: Target, ext: string, format: string, mode: stri
     const control = await openControlConnection(controlTransport(target), { sessionName: 'p' },
       { onOutput() {}, onNotification() {}, onClosed() {} });
     const client = new TmuxClient(control);
-    for (const { press } of PRESSES) {
-      await client.sendKey(PANE, press);
+    // As the Outbox sends them: one Batch each, numbered, and each must be on
+    // the Pane by its own mark. This is also the Batch line on every tmux.
+    let seq = 0;
+    const deliver = async (key: Key) => {
+      seq += 1;
+      const mark = await client.deliver(PANE, { seq: seq as Seq, key, typedAt: 0 }, 'keys' as OutboxToken);
+      if (mark === 'gone' || 'refused' in mark || mark.ack !== seq) {
+        throw new Error(`Batch ${seq} did not reach the Pane: ${JSON.stringify(mark)}`);
+      }
       await control.run(['send-keys', '-t', PANE, '-l', SEPARATOR]);
-    }
-    await client.sendKeys(PANE, new TextEncoder().encode(RAW));
-    await control.run(['send-keys', '-t', PANE, '-l', SEPARATOR]);
+    };
+    for (const { press } of PRESSES) await deliver({ kind: 'key', key: press });
+    await deliver({ kind: 'text', bytes: [...new TextEncoder().encode(RAW)], gesture: false });
 
     const received = () => (existsSync(out) ? readFileSync(out).toString('latin1') : '');
     await waitFor('every press', () => received().split(SEPARATOR).length > PRESSES.length + 1, 30_000);

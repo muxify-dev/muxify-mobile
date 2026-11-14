@@ -5,6 +5,7 @@ import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib
 
 import { asciiBytes, clampBack, paintScreen, scrollbackRange } from './pane-screen';
 import { KEYBOARD_PIN, movesKeyboardFlags } from '@/lib/terminal-input';
+import type { PaneInput } from './input-outbox';
 import type { KeyPress } from './key-press';
 import type { SelectionRows } from './selection-rows';
 import type { Grid, PaneState, SelectionCapture } from './tmux-client';
@@ -20,8 +21,6 @@ export interface PaneReader {
   capturePane(paneId: string): Promise<Uint8Array[]>;
   captureScrollback(paneId: string, startLine: number, endLine: number): Promise<Uint8Array[]>;
   captureSelection(paneId: string, startLine: number, endLine: number): Promise<SelectionCapture>;
-  sendKeys(paneId: string, bytes: Uint8Array): Promise<void>;
-  sendKey(paneId: string, key: string | KeyPress): Promise<void>;
 }
 
 /**
@@ -288,6 +287,7 @@ export const OUTPUT_SETTLE_MS = 300;
 export function createPaneView(
   paneId: string,
   reader: PaneReader,
+  input: PaneInput,
   events: PaneViewEvents,
   options: { clock?: Clock; log?: Log } = {},
 ): PaneView {
@@ -343,20 +343,6 @@ export function createPaneView(
 
   /** Output arriving mid-repaint, to be written once the repaint lands. */
   let held: Uint8Array[] | null = null;
-
-  /**
-   * What is on its way into the Pane, and whether a send is in flight.
-   *
-   * Two kinds, because there are two ways in. Typed input is bytes, and a
-   * burst of them coalesces into one `send-keys -H`. A Key Row key is a
-   * *name*, which tmux turns into the right bytes for whatever the Pane is
-   * running — and which therefore cannot be merged with the bytes either side
-   * of it. One queue rather than two, so a key pressed mid-burst still arrives
-   * where it was pressed.
-   */
-  type Outgoing = { bytes: number[] } | { key: string | KeyPress };
-  let outgoing: Outgoing[] = [];
-  let sending = false;
 
   /** A repaint in flight, and the position asked for behind it. */
   let painting = false;
@@ -652,24 +638,6 @@ export function createPaneView(
     schedule();
   }
 
-  /** Sends the next thing on its way in, as one command. */
-  function flushTyped(): void {
-    if (sending || outgoing.length === 0) return;
-    const next = outgoing.shift() as Outgoing;
-    sending = true;
-    const sent =
-      'key' in next
-        ? reader.sendKey(paneId, next.key)
-        : reader.sendKeys(paneId, Uint8Array.from(next.bytes));
-    void sent.catch(report).finally(() => {
-      sending = false;
-      // Whatever was typed during the round trip goes in the next one, which
-      // is what turns a burst of keystrokes into one command rather than
-      // thirty.
-      if (!disposed) flushTyped();
-    });
-  }
-
   function endSelection(): void {
     if (!selection) return;
     selection = null;
@@ -693,22 +661,14 @@ export function createPaneView(
       jumpToLatest();
       return;
     }
-    const last = outgoing[outgoing.length - 1];
-    if (last && 'bytes' in last) {
-      for (const byte of bytes) last.bytes.push(byte);
-    } else {
-      outgoing.push({ bytes: Array.from(bytes) });
-    }
-    flushTyped();
+    input.type(bytes);
   }
 
   /**
    * One named key, from the Key Row.
    *
-   * Queued behind anything already typed rather than sent past it, so an
-   * arrow pressed in the middle of a burst of keystrokes arrives where it was
-   * pressed. Same rule as typing about the Scrollback: a key pressed while
-   * looking at the past spends itself getting back to the present.
+   * Same rule as typing about the Scrollback: a key pressed while looking at
+   * the past spends itself getting back to the present.
    */
   function press(key: string | KeyPress): void {
     if (disposed) return;
@@ -716,8 +676,7 @@ export function createPaneView(
       jumpToLatest();
       return;
     }
-    outgoing.push({ key });
-    flushTyped();
+    input.press(key);
   }
 
   return {
@@ -864,7 +823,7 @@ export function createPaneView(
         jumpToLatest();
         return true;
       }
-      type(asciiBytes(clickSequence(column, row)));
+      input.type(asciiBytes(clickSequence(column, row)), true);
       return true;
     },
 
@@ -915,13 +874,13 @@ export function createPaneView(
             Math.max(1, Math.round(size.cols / 2)),
             Math.max(1, Math.round(size.rows / 2)),
           );
-          if (text !== '') type(asciiBytes(text));
+          if (text !== '') input.type(asciiBytes(text), true);
           return;
         }
         // An application that never asked for the mouse would ignore a wheel
         // event entirely, so it gets the keys it does read — one per line.
         const text = cursorKeys(lines > 0 ? 'up' : 'down', Math.abs(lines));
-        if (text !== '') type(asciiBytes(text));
+        if (text !== '') input.type(asciiBytes(text), true);
         return;
       }
 
@@ -943,7 +902,6 @@ export function createPaneView(
       settleTimer = null;
       surface = null;
       selection = null;
-      outgoing = [];
       held = null;
     },
   };

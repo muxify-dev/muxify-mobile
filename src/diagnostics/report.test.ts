@@ -52,6 +52,7 @@ const state = (over: Partial<AttachState> = {}): AttachState => ({
   mouseTracking: false,
   rowInSight: 12,
   alternate: false,
+  input: [],
   ...over,
 });
 

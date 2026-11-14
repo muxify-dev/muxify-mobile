@@ -5,11 +5,15 @@ import {
   capturePanesCommand,
   controlAttachCommand,
   createSessionCommand,
+  deliverCommands,
+  describeCommand,
+  guardsLateLines,
   listPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
   newWindowCommand,
   paneStateCommand,
+  parsePaneMark,
   renderControlCommand,
   renderExecCommand,
   listSessionPanesCommand,
@@ -25,6 +29,7 @@ import {
   tmuxQuote,
   zoomPaneCommand,
 } from './commands';
+import type { Seq } from './input-lane';
 
 describe('quoting for a shell', () => {
   it('wraps a value so no expansion can reach it', () => {
@@ -276,5 +281,48 @@ describe('reading a Pane back', () => {
 describe('capturePaneTextCommand', () => {
   it('reads a Pane as plain text with its wrapped lines joined', () => {
     expect(capturePaneTextCommand('%3')).toEqual(['capture-pane', '-t', '%3', '-p', '-J']);
+  });
+});
+
+describe('the mark of a Pane', () => {
+  it.each([
+    ['7\t100\t200\tzsh', { ack: 7, serverPid: 100, panePid: 200, program: 'zsh' }],
+    ['\t100\t200\tzsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
+    ['k7f2:7\t100\t200\tzsh', { ack: null, serverPid: 100, panePid: 200, program: 'zsh' }],
+    ['12\t100\t200\tmy\tprogram', { ack: 12, serverPid: 100, panePid: 200, program: 'my\tprogram' }],
+    ['7\t100\t200\t', { ack: 7, serverPid: 100, panePid: 200, program: '' }],
+    ['\t100\t\t', 'gone'],
+    ['', null],
+    [undefined, null],
+    ["can't find pane: %4", null],
+  ] as [string | undefined, unknown][])('reads %j', (line, mark) => {
+    expect(parsePaneMark(line)).toEqual(mark);
+  });
+});
+
+describe('a Host tmux that can refuse a late line', () => {
+  it.each([
+    ['3.8', true],
+    ['3.2a', true],
+    ['3.1c', false],
+    ['2.9', false],
+    ['next-3.6', true],
+    ['master', true],
+    ['', false],
+  ])('%j: %s', (version, guarded) => {
+    expect(guardsLateLines(version)).toBe(guarded);
+  });
+});
+
+describe('what the Log says of typed input', () => {
+  const typed = Uint8Array.from(new TextEncoder().encode('hunter2'));
+
+  it.each([true, false])('shows no typed byte of a Batch line (guarded: %s)', (guarded) => {
+    const said = deliverCommands('%3', { bytes: typed }, 7 as Seq, '@muxify-in-k7f2', guarded)
+      .map(describeCommand)
+      .join(' ; ');
+    expect(said).not.toMatch(/68 75|hunter/);
+    expect(said).toContain('%3');
+    expect(said).toContain('7');
   });
 });

@@ -5,27 +5,34 @@ import {
   clearHistoryCommand,
   captureScrollbackCommand,
   capturePanesCommand,
+  burnSeqCommand,
   createSessionCommand,
+  deliverCommands,
+  guardsLateLines,
+  inputOption,
   listPanesCommand,
   listSessionPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
   newWindowCommand,
+  paneMarkCommand,
   paneStateCommand,
+  parsePaneMark,
   claimWindowCommand,
   reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
   selectWindowCommand,
   sendKeyCommand,
-  sendKeysCommand,
   splitWindowCommand,
   switchSessionCommand,
   zoomPaneCommand,
   type PaneColours,
+  type OutboxToken,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
-import { keyNamingFor, renderPress, type KeyNaming, type KeyPress } from './key-press';
+import type { Batch, DeliverResult, Seq } from './input-lane';
+import { keyNamingFor, renderPress, type KeyNaming } from './key-press';
 import { paneNumber, parseWindowLayout, type PaneRect } from './layout';
 import { selectionRows, type SelectionRow } from './selection-rows';
 import { TmuxError } from './tmux-error';
@@ -324,18 +331,6 @@ export class TmuxClient {
     await this.runner.runAll(paneIds.flatMap((id) => reportPaneColoursCommands(id, colours)));
   }
 
-  /**
-   * Types bytes into a Pane.
-   *
-   * Every keystroke, every wheel notch on the alternate screen, every escape
-   * sequence. `send-keys -H` carries them exactly, and because they go into
-   * the Pane rather than through tmux's key table, tmux's prefix never fires.
-   */
-  async sendKeys(paneId: string, bytes: Uint8Array): Promise<void> {
-    if (bytes.length === 0) return;
-    await this.mustRun('send input', sendKeysCommand(paneId, bytes));
-  }
-
   /** tmux supplies bracketed paste only when the destination application asks. */
   async preparePaste(text: string, name: string, check: () => void): Promise<{
     paste(paneId: string): Promise<void>;
@@ -364,34 +359,65 @@ export class TmuxClient {
   }
 
   /**
-   * Sends one named key into a Pane: `Up`, `Escape`, `C-c`, `M-b`.
+   * Presses one named key as part of something the app does: the Enter behind
+   * a Composer Send, the `C-l` of a clear. It fails when the Connection does.
    *
-   * The Key Row's path. Named rather than the bytes for it, because which
-   * bytes are right depends on what the Pane is running and tmux is the only
-   * one here that knows — see sendKeyCommand.
+   * Not for what the user types. Typed keys go through the Outbox, which
+   * numbers them and can send them again; see `deliver`.
    */
-  async sendKey(paneId: string, key: string | KeyPress): Promise<void> {
-    if (typeof key === 'string') {
-      await this.mustRun('send key', sendKeyCommand(paneId, key));
-      return;
-    }
-    const rendered = renderPress(key, await this.keyNaming());
-    if ('key' in rendered) await this.mustRun('send key', sendKeyCommand(paneId, rendered.key));
-    else await this.sendKeys(paneId, rendered.bytes);
+  async pressKey(paneId: string, key: string): Promise<void> {
+    await this.mustRun('send key', sendKeyCommand(paneId, key));
+  }
+
+  /**
+   * Types one Batch into a Pane and answers with the Pane's mark, which says
+   * whether the Batch is there. Rejects only when the Connection ends.
+   */
+  async deliver(paneId: string, batch: Batch, token: OutboxToken): Promise<DeliverResult> {
+    const { naming, guarded } = await this.host();
+    const { key } = batch;
+    const rendered =
+      key.kind === 'text'
+        ? { bytes: Uint8Array.from(key.bytes) }
+        : typeof key.key === 'string'
+          ? { key: key.key }
+          : renderPress(key.key, naming);
+    return deliveryOf(
+      await this.runner.runChain(deliverCommands(paneId, rendered, batch.seq, inputOption(token), guarded)),
+    );
+  }
+
+  /** The Pane's mark alone. Rejects only when the Connection ends. */
+  async readMark(paneId: string, token: OutboxToken): Promise<DeliverResult> {
+    return deliveryOf([await this.runner.run(paneMarkCommand(paneId, inputOption(token)))]);
+  }
+
+  /** Makes the Pane refuse a Batch that a lost Connection may still deliver. */
+  async burn(paneId: string, seq: Seq, token: OutboxToken): Promise<void> {
+    const { guarded } = await this.host();
+    await this.runner.run(burnSeqCommand(paneId, seq, inputOption(token), guarded));
+  }
+
+  /** Whether this Host's tmux refuses a late line by itself; see guardsLateLines. */
+  async guardsLateLines(): Promise<boolean> {
+    return (await this.host()).guarded;
   }
 
   /** Read once per Connection: a Host's tmux does not change under it. */
-  private naming: Promise<KeyNaming> | null = null;
+  private abilities: Promise<{ naming: KeyNaming; guarded: boolean }> | null = null;
 
-  private keyNaming(): Promise<KeyNaming> {
-    this.naming ??= this.runner
+  private host(): Promise<{ naming: KeyNaming; guarded: boolean }> {
+    this.abilities ??= this.runner
       .run(['display-message', '-p', '#{version}'])
-      .then((reply) => keyNamingFor(reply.ok ? reply.text.join('').trim() : ''))
+      .then((reply) => {
+        const version = reply.ok ? reply.text.join('').trim() : '';
+        return { naming: keyNamingFor(version), guarded: guardsLateLines(version) };
+      })
       .catch(() => {
-        this.naming = null;
-        return 'classic' as const;
+        this.abilities = null;
+        return { naming: 'classic' as const, guarded: false };
       });
-    return this.naming;
+    return this.abilities;
   }
 
   /**
@@ -586,6 +612,24 @@ function meansNoServer(reply: CommandReply): boolean {
 /** tmux's way of saying the Session or Window is gone. */
 function meansMissingTarget(reply: CommandReply): boolean {
   return reply.text.join(' ').toLowerCase().includes("can't find");
+}
+
+/**
+ * What the replies of a Batch line, or of a mark read, say about the Pane.
+ *
+ * The mark is the last reply, and tmux prints it even after the key failed. A
+ * line that tmux could not run at all has no mark, only its error.
+ */
+function deliveryOf(replies: CommandReply[]): DeliverResult {
+  const last = replies.at(-1);
+  const mark = last?.ok ? parsePaneMark(last.text[0]) : null;
+  if (mark === 'gone') return 'gone';
+  const refused = replies.find((reply) => !reply.ok);
+  if (refused) {
+    if (mark === null && meansMissingTarget(refused)) return 'gone';
+    return { refused: refused.text.join(' ').trim() || 'tmux refused the key' };
+  }
+  return mark ?? { refused: 'tmux did not say which Pane it typed into' };
 }
 
 function failure(what: string, reply: CommandReply): TmuxError {

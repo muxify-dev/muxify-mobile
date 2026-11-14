@@ -131,7 +131,7 @@ it('round-trips Unicode, multiline text and shell syntax through a private tmux 
   };
   await waitFor(() => existsSync(ready));
   await buffer.paste('composer:0.0');
-  await client.sendKey('composer:0.0', 'Enter');
+  await client.pressKey('composer:0.0', 'Enter');
   const expected = `\x1b[200~${text}\x1b[201~\r`;
   await waitFor(() => existsSync(output) && readFileSync(output).length >= Buffer.byteLength(expected));
   expect(readFileSync(output).toString('utf8')).toBe(expected);

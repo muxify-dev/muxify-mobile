@@ -1,7 +1,8 @@
 import { bytesToUtf8 } from '@/lib/utf8';
 
-import { renderControlCommand, type TmuxArgv } from './commands';
+import { renderControlCommand, type OutboxToken, type TmuxArgv } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
+import type { Batch, Key, Seq } from './input-lane';
 import { TmuxClient, TmuxError } from './tmux-client';
 
 /**
@@ -242,19 +243,106 @@ describe('sizing the Client', () => {
   });
 });
 
-describe('typing', () => {
-  it('sends bytes to the Pane they were typed at', async () => {
-    const { client, asked } = fakeTmux({
-      [renderControlCommand(['send-keys', '-t', '%4', '-H', '68', '69'])]: [],
+describe('typing a Batch', () => {
+  const token = 'k7f2' as OutboxToken;
+  const MARK =
+    "'display-message' '-p' '-t' '%4' " +
+    '"#{@muxify-in-k7f2}\\011#{pid}\\011#{pane_pid}\\011#{pane_current_command}"';
+  const VERSION = "'display-message' '-p' '#{version}'";
+  const GUARD = "'if-shell' '-F' '-t' '%4' '#{e|<:#{e|+:0,#{@muxify-in-k7f2}},7}'";
+  const batch = (key: Key): Batch => ({ seq: 7 as Seq, key, typedAt: 0 });
+  const text = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: false });
+
+  /** A tmux that answers a chain with these replies, whatever the chain is. */
+  function chained(version: string, replies: (string[] | { error: string[] })[]) {
+    const asked: string[] = [];
+    const runner: CommandRunner = {
+      run: (argv) => {
+        asked.push(renderControlCommand(argv));
+        return Promise.resolve(replyOf(true, argv.at(-1) === '#{version}' ? [version] : (replies[0] as string[])));
+      },
+      runAll: () => Promise.reject(new Error('not used')),
+      runChain: (commands) => {
+        asked.push(commands.map(renderControlCommand).join(' ; '));
+        return Promise.resolve(
+          replies.map((reply) => (Array.isArray(reply) ? replyOf(true, reply) : replyOf(false, reply.error))),
+        );
+      },
+    };
+    return { asked, client: new TmuxClient(runner) };
+  }
+
+  it('types the key and its Seq only when the Pane does not have that Seq, and reads the mark', async () => {
+    const { client, asked } = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    expect(await client.deliver('%4', batch(text('hi')), token)).toEqual({
+      serverPid: 100,
+      panePid: 200,
+      program: 'zsh',
+      ack: 7,
     });
-    await client.sendKeys('%4', Uint8Array.of(0x68, 0x69));
-    expect(asked).toEqual(["'send-keys' '-t' '%4' '-H' '68' '69'"]);
+    expect(asked).toEqual([
+      VERSION,
+      `${GUARD} "'send-keys' '-t' '%4' '-H' '68' '69' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`,
+    ]);
   });
 
-  it('does not spend a round trip on nothing', async () => {
-    const { client, asked } = fakeTmux({});
-    await client.sendKeys('%4', new Uint8Array(0));
-    expect(asked).toEqual([]);
+  it('sends a named key by its name, also one that tmux quoting must protect', async () => {
+    const { client, asked } = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    await client.deliver('%4', batch({ kind: 'key', key: "M-'" }), token);
+    expect(asked[1]).toBe(
+      `${GUARD} "'send-keys' '-t' '%4' \\"M-'\\" ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`,
+    );
+  });
+
+  it('sends a hardware key as this tmux can deliver it', async () => {
+    const press = { key: 'r', ctrl: true, alt: false, shift: false };
+    const modern = chained('3.8', [[], [], [], ['7\t100\t200\tzsh']]);
+    await modern.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
+    expect(modern.asked[1]).toContain("'send-keys' '-t' '%4' 'C-/'");
+    const classic = chained('3.4', [[], [], [], ['7\t100\t200\tzsh']]);
+    await classic.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
+    expect(classic.asked[1]).toContain("'send-keys' '-t' '%4' '-H' '1f'");
+  });
+
+  it('sends the plain chain to a tmux that cannot compare numbers', async () => {
+    const { client, asked } = chained('3.1c', [[], [], ['7\t100\t200\tzsh']]);
+    await client.deliver('%4', batch(text('hi')), token);
+    expect(asked[1]).toBe(
+      `'send-keys' '-t' '%4' '-H' '68' '69' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
+    );
+    expect(await client.guardsLateLines()).toBe(false);
+  });
+
+  it.each([
+    ['a Pane that is gone', [[], { error: ["can't find pane: %4"] }, ['\t100\t\t']], 'gone'],
+    ['a line that an old tmux stopped at a missing Pane', [{ error: ["can't find pane: %4"] }], 'gone'],
+    ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['6\t100\t200\tzsh']], { refused: 'repeat count invalid' }],
+    ['a line that tmux could not parse', [{ error: ['yacc stack overflow'] }], { refused: 'yacc stack overflow' }],
+    ['a line that was a copy', [[], ['9\t100\t200\tvim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9 }],
+  ] as [string, (string[] | { error: string[] })[], unknown][])('reads %s', async (_, replies, result) => {
+    const { client } = chained('3.8', replies);
+    expect(await client.deliver('%4', batch(text('hi')), token)).toEqual(result);
+  });
+
+  it('reads the mark alone', async () => {
+    const { client, asked } = chained('3.8', [['\t100\t200\tnode']]);
+    expect(await client.readMark('%4', token)).toEqual({ serverPid: 100, panePid: 200, program: 'node', ack: null });
+    expect(asked).toEqual([MARK]);
+  });
+
+  it('raises the Seq of a Pane without typing', async () => {
+    const { client, asked } = chained('3.8', [[]]);
+    await client.burn('%4', 7 as Seq, token);
+    expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'"`);
+  });
+});
+
+describe('pressing a key for the app', () => {
+  it('sends the name and fails when tmux refuses it', async () => {
+    const { client, asked } = fakeTmux({ [renderControlCommand(['send-keys', '-t', '%4', 'Enter'])]: [] });
+    await client.pressKey('%4', 'Enter');
+    expect(asked).toEqual(["'send-keys' '-t' '%4' 'Enter'"]);
+    await expect(client.pressKey('%9', 'Enter')).rejects.toThrow(TmuxError);
   });
 });
 
@@ -399,12 +487,10 @@ describe('nothing borrows anything', () => {
       [listWindows('work')]: ['@0\t0\t1\t1\t0\tshell\tzsh'],
       [renderControlCommand(['select-window'])]: [],
       [renderControlCommand(['refresh-client', '-C', '40x20'])]: [],
-      [renderControlCommand(['send-keys', '-t', '%0', '-H', '61'])]: [],
     });
     await client.listSessions();
     await client.setZoom('work', true);
     await client.resizeClient({ cols: 40, rows: 20 });
-    await client.sendKeys('%0', Uint8Array.of(0x61));
 
     const everything = asked.join('\n');
     expect(everything).not.toContain('set-option');
