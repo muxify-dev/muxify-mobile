@@ -43,7 +43,9 @@ set -uo pipefail
 
 APP=dev.muxify.app
 
-ROOT=$(mktemp -d /tmp/muxify-e2e.XXXXXX) || exit 1
+# The physical path, because tmux reports its socket under /private/tmp on
+# macOS, and cleanup kills only a server whose socket is inside ROOT.
+ROOT=$(cd "$(mktemp -d /tmp/muxify-e2e.XXXXXX)" && pwd -P) || exit 1
 DOCUMENTS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents" || exit 1
 RECORDS="$DOCUMENTS/muxify-records.json"
 SETTINGS="$DOCUMENTS/muxify-settings.json"
