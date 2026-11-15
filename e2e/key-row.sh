@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # The Terminal Screen's Key Row: the pairs, the sticky modifiers, the arrows
-# and the ⌘ Shortcuts.
+# and ⌘: Copy Pane text and Clear Pane as Keyboard Shortcuts, and Paste.
 #
 # What this proves, against the sandbox's Session 0:
 #
