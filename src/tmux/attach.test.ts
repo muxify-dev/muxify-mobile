@@ -109,6 +109,7 @@ function fakeServer() {
     typed: (paneId = '%0') => panes.get(paneId)?.typed.join('') ?? null,
     /** The names of the buffers that tmux keeps. */
     buffers: () => [...buffers.keys()],
+    pid: () => pid,
     /** The server ends and another starts, with a new Pane under the same id. */
     restart(): void {
       pid += 1;
@@ -126,9 +127,7 @@ function fakeServer() {
     },
     /** The reply blocks of a line that is about typed input, or null for any other line. */
     answer(line: string): Block[] | null {
-      const end = /^'display-message' '-p' '(muxify-chain-end-\d+)'$/.exec(line);
-      if (end) return [[end[1]]];
-      if (line.includes('#{version}')) return [['3.8']];
+      if (line.includes('#{version}')) return [[`3.8 ${pid}`]];
       const read = /^'display-message' '-p' '-t' '(%\d+)' '#\{@muxify-in-/.exec(line);
       if (read) return [[mark(read[1])]];
       const [[verb, ...args], ...rest] = commandsOf(line);
@@ -157,12 +156,65 @@ function fakeServer() {
 }
 
 /**
+ * The Sessions of a server as a split or a New Window meets them: the Op each
+ * keeps, and every verb that ran. Every link to the server shares it.
+ */
+function fakeSessions(serverPid = () => 100) {
+  const ops = new Map<string, number>();
+  const gone = new Set<string>();
+  const ran: string[] = [];
+  let refusing: string | null = null;
+  const nameOf = (target: string) => target.replace(/:$/, '');
+  const read = (target: string): Block =>
+    gone.has(nameOf(target)) ? { error: `can't find session: ${nameOf(target)}` } : [`$1:${serverPid()}:${ops.get(nameOf(target)) ?? ''}`];
+  /** Runs `<verb> ; set-option`, and stops at a verb that fails, as tmux does. */
+  const runVerb = ([verb, ...args]: string[], [, , target, , op]: string[]): Block[] => {
+    if (refusing) return [{ error: refusing }];
+    ran.push(`${verb} ${args.join(' ')}`);
+    ops.set(nameOf(target), Number(op));
+    return [[], []];
+  };
+  return {
+    /** Each verb that ran, as `split-window -h -t work:`. */
+    ran,
+    end: (session: string) => gone.add(session),
+    /** A new server, whose Sessions have no Op. */
+    restart: () => {
+      ops.clear();
+      gone.clear();
+    },
+    refuse: (error: string | null) => {
+      refusing = error;
+    },
+    /** The reply blocks of a line about a Session verb, or null for any other line. */
+    answer(line: string): Block[] | null {
+      const commands = commandsOf(line);
+      const [first] = commands;
+      if (first[0] === 'display-message' && first.at(-1)?.includes('@muxify-op-')) return [read(first[3])];
+      if (first[0] === 'split-window' || first[0] === 'new-window') {
+        const blocks = runVerb(first, commands[1]);
+        // An error of a command of the line itself stops the rest of the line.
+        return refusing ? blocks : [...blocks, read(commands[2][3])];
+      }
+      if (first[0] !== 'if-shell' || !first[3].endsWith(':')) return null;
+      const [, , , target, condition, then] = first;
+      if (gone.has(nameOf(target))) return [{ error: `can't find session: ${nameOf(target)}` }];
+      const op = Number(/,(\d+)\}$/.exec(condition)?.[1]);
+      if ((ops.get(nameOf(target)) ?? 0) >= op) return [[], read(target)];
+      const [verb, record] = commandsOf(then);
+      const blocks = runVerb(verb, record);
+      return [[], ...blocks, read(target)];
+    },
+  };
+}
+
+/**
  * A tmux that answers the control protocol, driven line by line from the test.
  *
  * Below the transport seam, so nothing here is asserted for its own sake: it
  * exists so the Attach can be fed exactly what a real tmux sends.
  */
-function fakeHost(server?: ReturnType<typeof fakeServer>) {
+function fakeHost(server?: ReturnType<typeof fakeServer>, sessions = fakeSessions()) {
   const commands: string[] = [];
   let events: ControlChannelEvents | null = null;
   let channelOpen = false;
@@ -215,7 +267,8 @@ function fakeHost(server?: ReturnType<typeof fakeServer>) {
 
   function answer(line: string): void {
     if (held.has(verbOf(line)) || queued.length > 0) { queued.push(line); return; }
-    const blocks = server?.answer(line);
+    const end = /^'display-message' '-p' '(muxify-chain-end-\d+)'$/.exec(line);
+    const blocks = end ? [[end[1]]] : (sessions.answer(line) ?? server?.answer(line));
     if (blocks) {
       for (const block of mute ? [] : blocks) {
         replies += 1;
@@ -242,6 +295,7 @@ function fakeHost(server?: ReturnType<typeof fakeServer>) {
   return {
     transport,
     commands,
+    sessions,
     hold: (verb: string) => held.add(verb),
     mute: () => {
       mute = true;
@@ -708,8 +762,8 @@ describe('the verbs', () => {
 
     // The Zoom preference is read and re-applied, then the Topology is read
     // again: selecting a Pane drops tmux out of zoom, and moving to another
-    // Window lands on one nobody has zoomed.
-    expect(kit.hosts[0].verbs().slice(1)).toEqual([
+    // Window lands on one nobody has zoomed. The marker that ends a verb's line is left out.
+    expect(kit.hosts[0].verbs().filter((verb) => verb !== 'display-message').slice(1)).toEqual([
       'list-windows',
       'resize-pane',
       'list-windows',
@@ -2531,5 +2585,158 @@ describe('typed keys and a Connection that breaks', () => {
     expect(said).toContain('outbox: %0 holds 2 keys for the user: risky-keys');
     expect(said).not.toContain('hunter2');
     expect(said).not.toContain('68 75 6e');
+  });
+});
+
+describe('a split or New Window across a break', () => {
+  /** Two links to one tmux 3.8 server, so the second Connection sees what the first did. */
+  async function onServer(version: 'guarded' | 'old' = 'guarded') {
+    const server = version === 'guarded' ? fakeServer() : undefined;
+    const sessions = fakeSessions(server?.pid);
+    const kit = attachOn({ hosts: [fakeHost(server, sessions), fakeHost(server, sessions)] });
+    await connected(kit);
+    return { kit, sessions, server };
+  }
+
+  it('splits once when tmux answers', async () => {
+    const { kit, sessions } = await onServer();
+
+    await kit.attach.split('down');
+
+    expect(sessions.ran).toEqual(['split-window -v -t work:']);
+  });
+
+  it('ends without an error when the answer is lost, and does not split again after the reconnect', async () => {
+    const { kit, sessions } = await onServer();
+    kit.hosts[0].mute();
+
+    const split = kit.attach.split('right');
+    await settle();
+    kit.hosts[0].drop();
+    await expect(split).resolves.toBeUndefined();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(sessions.ran).toEqual(['split-window -h -t work:']);
+    expect(kit.said()).toContain('verbs: Op 1 (split right in work) waits for the Connection to learn if tmux ran it');
+    expect(kit.said()).toContain('verbs: Op 1 (split right in work) ran before the break');
+  });
+
+  it.each([
+    ['a split', (attach: Attach) => attach.split('right')],
+    ['a New Window', (attach: Attach) => attach.newWindow()],
+  ])('ends %s that tmux ran without an error when the Connection breaks while the Window is read again', async (_what, run) => {
+    const { kit } = await onServer();
+    kit.hosts[0].hold('list-windows');
+
+    const tapped = run(kit.attach);
+    await settle();
+    kit.hosts[0].drop();
+
+    await expect(tapped).resolves.toBeUndefined();
+    expect(kit.attach.state().trouble).toBeNull();
+  });
+
+  it('ends a split that tmux ran without an error, and shows the trouble, when tmux refuses the read after it', async () => {
+    const { kit, sessions } = await onServer();
+    kit.hosts[0].refuseCommand('list-windows');
+
+    await expect(kit.attach.split('right')).resolves.toBeUndefined();
+
+    expect(sessions.ran).toEqual(['split-window -h -t work:']);
+    expect(kit.attach.state().trouble).toContain('the Host refused list-windows');
+  });
+
+  it('sends a New Window again when tmux never had it, and refuses the late copy', async () => {
+    const { kit, sessions } = await onServer();
+    kit.hosts[0].hold('if-shell');
+
+    const added = kit.attach.newWindow();
+    await settle();
+    kit.hosts[0].drop();
+    await expect(added).resolves.toBeUndefined();
+    kit.hosts[1].accept();
+    await settle();
+    expect(sessions.ran).toEqual(['new-window -a -t work:']);
+
+    // The line of the lost Connection reaches tmux after all.
+    kit.hosts[0].release();
+    await settle();
+
+    expect(sessions.ran).toEqual(['new-window -a -t work:']);
+    expect(kit.said()).toContain('verbs: Op 1 (New Window in work) did not run before the break; sending it again');
+  });
+
+  it('drops a kept split whose Session ended during the break', async () => {
+    const { kit, sessions } = await onServer();
+    kit.hosts[0].hold('if-shell');
+
+    const split = kit.attach.split('right');
+    await settle();
+    kit.hosts[0].drop();
+    await split;
+    sessions.end('work');
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(sessions.ran).toEqual([]);
+    expect(kit.said()).toContain('verbs: Op 1 (split right in work) dropped: the Session is gone');
+  });
+
+  it('drops a kept split when the tmux server started again during the break', async () => {
+    const { kit, sessions, server } = await onServer();
+    kit.hosts[0].hold('if-shell');
+
+    const split = kit.attach.split('right');
+    await settle();
+    kit.hosts[0].drop();
+    await split;
+    server?.restart();
+    sessions.restart();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(sessions.ran).toEqual([]);
+    expect(kit.said()).toContain('verbs: Op 1 (split right in work) dropped: the tmux server started again');
+  });
+
+  it('does not send again on a tmux older than 3.2, which cannot refuse a copy', async () => {
+    const { kit, sessions } = await onServer('old');
+    kit.hosts[0].hold('split-window');
+
+    const split = kit.attach.split('right');
+    await settle();
+    kit.hosts[0].drop();
+    await split;
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(sessions.ran).toEqual([]);
+    expect(kit.said()).toContain(
+      'verbs: Op 1 (split right in work) dropped: tmux is older than 3.2 and cannot refuse a copy, so it is not sent again',
+    );
+  });
+
+  it('rejects with the words of tmux when it refuses the split', async () => {
+    const { kit, sessions } = await onServer();
+    sessions.refuse('no space for new pane');
+
+    await expect(kit.attach.split('down')).rejects.toThrow('no space for new pane');
+    sessions.refuse(null);
+    await kit.attach.split('down');
+
+    expect(sessions.ran).toEqual(['split-window -v -t work:']);
+  });
+
+  it('does nothing with no Connection', async () => {
+    const { kit, sessions } = await onServer();
+    kit.hosts[0].drop();
+    await settle();
+
+    await kit.attach.split('right');
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(sessions.ran).toEqual([]);
   });
 });

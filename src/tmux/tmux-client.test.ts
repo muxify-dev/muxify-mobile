@@ -246,7 +246,7 @@ describe('sizing the Client', () => {
 describe('typing a Batch', () => {
   const token = 'k7f2' as OutboxToken;
   const MARK = "'display-message' '-p' '-t' '%4' '#{@muxify-in-k7f2}:#{pid}:#{pane_pid}:#{pane_current_command}'";
-  const VERSION = "'display-message' '-p' '#{version}'";
+  const VERSION = "'display-message' '-p' '#{version} #{pid}'";
   const GUARD = "'if-shell' '-F' '-t' '%4' '#{e|<:#{e|+:0,#{@muxify-in-k7f2}},7}'";
   const batch = (key: Key): Batch => ({ seq: 7 as Seq, key, typedAt: 0 });
   const text = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: false });
@@ -257,7 +257,7 @@ describe('typing a Batch', () => {
     const runner: CommandRunner = {
       run: (argv) => {
         asked.push(renderControlCommand(argv));
-        return Promise.resolve(replyOf(true, argv.at(-1) === '#{version}' ? [version] : (replies[0] as string[])));
+        return Promise.resolve(replyOf(true, argv.at(-1) === '#{version} #{pid}' ? [`${version} 100`] : (replies[0] as string[])));
       },
       /** `staging`: tmux refuses each `set-buffer` with this error. */
       runAll: (commands) => {

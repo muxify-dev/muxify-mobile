@@ -704,6 +704,14 @@ is gone are discarded, and the card says so until it is dismissed. A discarded
 Composer message stays in its Draft, and Move to Composer brings it to the
 Pane on screen.
 
+**Verb guard**:
+What makes a split or a New Window happen one time across a break. Each verb
+gets a number from one count that only grows (its Op), and the Session keeps
+the highest Op it took. tmux runs a verb only while the Session's Op is below
+the verb's. One verb with no answer is kept through a break and sent again only
+when the Session does not have its Op. See ADR 0023.
+_Avoid_: retry, queue (a verb tapped with no Connection does nothing)
+
 ### Diagnosing
 
 **Log**:

@@ -14,10 +14,11 @@ import {
   listSessionPanesCommand,
   listSessionsCommand,
   listWindowsCommand,
-  newWindowCommand,
   paneMarkCommand,
   paneStateCommand,
   parsePaneMark,
+  parseSessionOp,
+  sessionOpCommand,
   claimWindowCommand,
   reportPaneColoursCommands,
   resizeClientCommand,
@@ -26,8 +27,9 @@ import {
   selectWindowCommand,
   sendKeyCommand,
   stagePasteCommands,
-  splitWindowCommand,
   switchSessionCommand,
+  verbCommands,
+  verbOption,
   zoomPaneCommand,
   type PaneColours,
   type OutboxToken,
@@ -40,6 +42,7 @@ import { keyNamingFor, renderPress, type KeyNaming } from './key-press';
 import { paneNumber, parseWindowLayout, type PaneRect } from './layout';
 import { selectionRows, type SelectionRow } from './selection-rows';
 import { TmuxError } from './tmux-error';
+import type { SentVerb, VerbAnswer, VerbServer } from './verb-guard';
 
 export { TmuxError };
 
@@ -406,19 +409,29 @@ export class TmuxClient {
     return (await this.host()).guarded;
   }
 
-  /** Read once per Connection: a Host's tmux does not change under it. */
-  private abilities: Promise<{ naming: KeyNaming; guarded: boolean }> | null = null;
+  /** The tmux server that a split or New Window tapped now goes to. */
+  async verbServer(): Promise<VerbServer> {
+    const { guarded, serverPid } = await this.host();
+    return { guarded, serverPid };
+  }
 
-  private host(): Promise<{ naming: KeyNaming; guarded: boolean }> {
+  /** Read once per Connection: a Host's tmux does not change under it. */
+  private abilities: Promise<{ naming: KeyNaming } & VerbServer> | null = null;
+
+  private host(): Promise<{ naming: KeyNaming } & VerbServer> {
     this.abilities ??= this.runner
-      .run(['display-message', '-p', '#{version}'])
+      .run(['display-message', '-p', '#{version} #{pid}'])
       .then((reply) => {
-        const version = reply.ok ? reply.text.join('').trim() : '';
-        return { naming: keyNamingFor(version), guarded: guardsLateLines(version) };
+        const [version = '', pid = ''] = reply.ok ? reply.text.join('').trim().split(' ') : [];
+        return {
+          naming: keyNamingFor(version),
+          guarded: guardsLateLines(version),
+          serverPid: /^\d+$/.test(pid) ? Number(pid) : null,
+        };
       })
       .catch(() => {
         this.abilities = null;
-        return { naming: 'classic' as const, guarded: false };
+        return { naming: 'classic' as const, guarded: false, serverPid: null };
       });
     return this.abilities;
   }
@@ -569,14 +582,20 @@ export class TmuxClient {
     await this.mustRun('zoom Pane', zoomPaneCommand(sessionName));
   }
 
-  /** Splits the Session's active Pane. */
-  async splitWindow(sessionName: string, direction: 'right' | 'down'): Promise<void> {
-    await this.mustRun('split Window', splitWindowCommand(sessionName, direction));
+  /**
+   * Runs a split or a New Window and answers with the Session's Op, which
+   * says whether it ran. Rejects only when the Connection ends.
+   */
+  async runVerb(sent: SentVerb, token: OutboxToken): Promise<VerbAnswer> {
+    const { guarded } = await this.host();
+    return verbAnswerOf(
+      await this.runner.runChain(verbCommands(sent.session, sent.verb, sent.op, verbOption(token), guarded && sent.guarded)),
+    );
   }
 
-  /** Adds a Window to the Session, after the current one. */
-  async newWindow(sessionName: string): Promise<void> {
-    await this.mustRun('add a Window', newWindowCommand(sessionName));
+  /** The Session's Op alone. Rejects only when the Connection ends. */
+  async readOp(sessionName: string, token: OutboxToken): Promise<VerbAnswer> {
+    return verbAnswerOf([await this.runner.run(sessionOpCommand(sessionName, verbOption(token)))]);
   }
 
   private async mustRun(what: string, argv: string[]): Promise<void> {
@@ -634,6 +653,17 @@ function deliveryOf(replies: CommandReply[], refusesCopies: boolean): DeliverRes
     return { refused: refused.text.join(' ').trim() || 'tmux refused the key' };
   }
   return mark ?? { refused: 'tmux did not say which Pane it typed into' };
+}
+
+/** What the replies of a verb line, or of an Op read, say. The read is the last reply. */
+function verbAnswerOf(replies: CommandReply[]): VerbAnswer {
+  const last = replies.at(-1);
+  const read = last?.ok ? parseSessionOp(last.text[0]) : null;
+  const refused = replies.find((reply) => !reply.ok);
+  const error = refused ? refused.text.join(' ').trim() || 'tmux refused it' : null;
+  if (read !== null) return { kind: 'read', ...read, error };
+  if (refused && meansMissingTarget(refused)) return { kind: 'gone' };
+  return { kind: 'failed', error: error ?? 'tmux did not say what the Session has' };
 }
 
 function failure(what: string, reply: CommandReply): TmuxError {

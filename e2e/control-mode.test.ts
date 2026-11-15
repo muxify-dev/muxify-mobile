@@ -108,6 +108,8 @@ interface LinkTap {
   deaf: boolean;
   /** The link goes deaf from the first line written that starts with this. */
   deafFrom?: string;
+  /** While true, a line written is kept in `lines` and never reaches tmux: the link died before it left. */
+  unsent?: boolean;
   /** The next Connection opens when this resolves. */
   gate: Promise<void>;
 }
@@ -142,7 +144,7 @@ function localTransport(children: ChildProcess[], tap?: LinkTap): TmuxTransport 
           const lines = Buffer.from(bytes).toString('utf8').split('\n').filter((line) => line !== '');
           tap?.lines.push(...lines);
           if (tap?.deafFrom && lines.some((line) => line.startsWith(tap.deafFrom as string))) tap.deaf = true;
-          if (open) child.stdin.write(Buffer.from(bytes));
+          if (open && !tap?.unsent) child.stdin.write(Buffer.from(bytes));
         },
         // What the foreground check asks. A dead child is a dead channel, and
         // that is the whole of the liveness question on this side of the seam.
@@ -196,7 +198,7 @@ function attachTo(options: { sessionName?: string; record?: Host; colours?: Pane
     store,
     openConnection: async (): Promise<HostConnection> => {
       await options.tap?.gate;
-      if (options.tap) Object.assign(options.tap, { deaf: false, deafFrom: undefined });
+      if (options.tap) Object.assign(options.tap, { deaf: false, deafFrom: undefined, unsent: false });
       return {
         transport: localTransport(children, options.tap),
         fingerprint: 'SHA256:local',
@@ -726,70 +728,154 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
     await attach.close();
   }, 30000);
 
-  describe('a paste and a Composer Send, across a break', () => {
-    /** A stopped server answers nothing, also not the `kill-server` of the clean-up. */
-    let frozen: number | null = null;
-    afterEach(() => {
-      if (frozen !== null) process.kill(frozen, 'SIGCONT');
+  /** A stopped server answers nothing, also not the `kill-server` of the clean-up. */
+  let frozen: number | null = null;
+  afterEach(() => {
+    if (frozen !== null) process.kill(frozen, 'SIGCONT');
+    frozen = null;
+  });
+
+  /** Says each check as it passes, so a run shows what it proved. */
+  function check(what: string, actual: unknown, expected: unknown): void {
+    expect(actual).toEqual(expected);
+    process.stdout.write(`  ok: ${what}\n`);
+  }
+
+  /** An Attach on a Pane that runs `cat` from a clean screen, with its mark read. */
+  async function catPane() {
+    tmux(['respawn-pane', '-k', '-t', TYPED, 'cat']);
+    tmux(['clear-history', '-t', TYPED]);
+    const tap: LinkTap = { lines: [], deaf: false, gate: Promise.resolve() };
+    const kit = attachTo({ sessionName: TYPED, tap });
+    const paneId = await activePane(kit.attach);
+    kit.attach.view(paneId);
+    await wait(400);
+    const screen = () => tmux(['capture-pane', '-p', '-t', paneId]).trimEnd();
+    /** The tmux server stops reading, as a Host does whose network went away mid-line. */
+    const serverPid = Number(tmux(['display-message', '-p', '#{pid}']).trim());
+    const freeze = () => {
+      frozen = serverPid;
+      process.kill(serverPid, 'SIGSTOP');
+    };
+    const thaw = () => {
       frozen = null;
-    });
+      process.kill(serverPid, 'SIGCONT');
+    };
+    /**
+     * Ends the link, and starts a stopped server again. The next link opens
+     * when the returned function is called.
+     *
+     * The server holds the client's stdout, so the link closes only once
+     * the server runs again and reads what the dead client wrote.
+     */
+    const breakLink = async () => {
+      let open!: () => void;
+      tap.gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      kit.children[kit.children.length - 1].kill('SIGKILL');
+      await wait(200);
+      if (frozen !== null) thaw();
+      await reaches(kit.attach, 'reconnecting');
+      return open;
+    };
+    /** Writes every line that started a paste again, as a late copy from a lost link. */
+    const replayLate = async () => {
+      const lines = tap.lines.filter((line) => line.startsWith("'set-buffer'") || line.startsWith("'if-shell'"));
+      const late = spawn('tmux', ['-L', SOCKET, '-C', 'attach-session', '-t', TYPED]);
+      late.stdin.write(`${lines.join('\n')}\n`);
+      await wait(700);
+      late.kill();
+      return lines.length;
+    };
+    return { ...kit, tap, paneId, screen, breakLink, freeze, replayLate };
+  }
 
-    /** Says each check as it passes, so a run shows what it proved. */
-    function check(what: string, actual: unknown, expected: unknown): void {
-      expect(actual).toEqual(expected);
-      process.stdout.write(`  ok: ${what}\n`);
+  describe('a split and a New Window, across a break', () => {
+    const panes = () => tmux(['list-panes', '-t', `${TYPED}:`]).split('\n').filter(Boolean).length;
+    const windows = () => tmux(['list-windows', '-t', TYPED]).split('\n').filter(Boolean).length;
+
+    /** One Window with one Pane, and an Attach on it. */
+    async function oneWindow() {
+      tmux(['kill-window', '-a', '-t', `${TYPED}:`]);
+      tmux(['kill-pane', '-a', '-t', `${TYPED}:`]);
+      return catPane();
     }
 
-    /** An Attach on a Pane that runs `cat` from a clean screen, with its mark read. */
-    async function catPane() {
-      tmux(['respawn-pane', '-k', '-t', TYPED, 'cat']);
-      tmux(['clear-history', '-t', TYPED]);
-      const tap: LinkTap = { lines: [], deaf: false, gate: Promise.resolve() };
-      const kit = attachTo({ sessionName: TYPED, tap });
-      const paneId = await activePane(kit.attach);
-      kit.attach.view(paneId);
-      await wait(400);
-      const screen = () => tmux(['capture-pane', '-p', '-t', paneId]).trimEnd();
-      /** The tmux server stops reading, as a Host does whose network went away mid-line. */
-      const serverPid = Number(tmux(['display-message', '-p', '#{pid}']).trim());
-      const freeze = () => {
-        frozen = serverPid;
-        process.kill(serverPid, 'SIGSTOP');
-      };
-      const thaw = () => {
-        frozen = null;
-        process.kill(serverPid, 'SIGCONT');
-      };
-      /**
-       * Ends the link, and starts a stopped server again. The next link opens
-       * when the returned function is called.
-       *
-       * The server holds the client's stdout, so the link closes only once
-       * the server runs again and reads what the dead client wrote.
-       */
-      const breakLink = async () => {
-        let open!: () => void;
-        tap.gate = new Promise<void>((resolve) => {
-          open = resolve;
-        });
-        kit.children[kit.children.length - 1].kill('SIGKILL');
-        await wait(200);
-        if (frozen !== null) thaw();
-        await reaches(kit.attach, 'reconnecting');
-        return open;
-      };
-      /** Writes every line that started a paste again, as a late copy from a lost link. */
-      const replayLate = async () => {
-        const lines = tap.lines.filter((line) => line.startsWith("'set-buffer'") || line.startsWith("'if-shell'"));
-        const late = spawn('tmux', ['-L', SOCKET, '-C', 'attach-session', '-t', TYPED]);
-        late.stdin.write(`${lines.join('\n')}\n`);
-        await wait(700);
-        late.kill();
-        return lines.length;
-      };
-      return { ...kit, tap, paneId, screen, breakLink, freeze, replayLate };
-    }
+    it.each([
+      ['a split', 'one new Pane', (attach: Attach) => attach.split('right'), panes],
+      ['a New Window', 'one new Window', (attach: Attach) => attach.newWindow(), windows],
+    ])('makes %s once when the reply is lost, and once when the server stops, and not after it starts again', async (what, made, verb, count) => {
+      ownServer();
+      const pane = await oneWindow();
+      const { attach, tap } = pane;
+      const before = count();
+      process.stdout.write(`  ${what}: ${before} before\n`);
 
+      // tmux runs the line, and the link dies before the reply.
+      tap.deafFrom = "'if-shell'";
+      const lost = verb(attach);
+      await until(`${made}`, () => count() === before + 1);
+      let reopen = await pane.breakLink();
+      await lost;
+      check(`${what} whose reply was lost ends without an error`, true, true);
+      reopen();
+      await reaches(attach, 'connected');
+      await wait(900);
+      check(`${what} whose reply was lost makes ${made}`, count(), before + 1);
+
+      // The server stops with the line on its way, and the link ends.
+      pane.freeze();
+      const stopped = verb(attach);
+      await wait(300);
+      reopen = await pane.breakLink();
+      await stopped;
+      reopen();
+      await reaches(attach, 'connected');
+      await until(`${made} after the reconnect`, () => count() === before + 2);
+      await wait(900);
+      check(`${what} sent while the server stopped makes ${made}`, count(), before + 2);
+
+      // The line never leaves the phone, so the next Connection sends it again.
+      tap.unsent = true;
+      const unsent = verb(attach);
+      await wait(300);
+      check(`${what} that did not leave the phone makes nothing yet`, count(), before + 2);
+      reopen = await pane.breakLink();
+      await unsent;
+      reopen();
+      await reaches(attach, 'connected');
+      await until(`${made} sent again`, () => count() === before + 3);
+      await wait(900);
+      check(`${what} sent again after the break makes ${made}`, count(), before + 3);
+
+      const replayed = await pane.replayLate();
+      process.stdout.write(`  (wrote ${replayed} lines of both links again)\n`);
+      check(`late copies of ${what} make nothing`, count(), before + 3);
+      check(`no line of trouble after ${what}`, attach.state().trouble, null);
+
+      // The server starts again during the break, and its new Session has the same id.
+      const sessionId = () => tmux(['display-message', '-p', '-t', TYPED, '#{session_id}']).trim();
+      const idBefore = sessionId();
+      tap.unsent = true;
+      const restarted = verb(attach);
+      await wait(300);
+      reopen = await pane.breakLink();
+      await restarted;
+      ownServer();
+      tmux(['kill-server']);
+      startServer();
+      check(`the new Session has the id of the old one`, sessionId(), idBefore);
+      reopen();
+      await reaches(attach, 'connected');
+      await wait(900);
+      check(`${what} kept across a server restart makes nothing in the new Session`, count(), 1);
+
+      await attach.close();
+    }, 60000);
+  });
+
+  describe('a paste and a Composer Send, across a break', () => {
     it('sends a Composer message once, whether tmux took its line before the break or not', async () => {
       ownServer();
       const pane = await catPane();

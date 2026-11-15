@@ -22,7 +22,8 @@ Pane's input with its own tmux command breaks this rule.
 
 These stay outside the Outbox:
 
-- Split and New Window change a Session, not a Pane's input.
+- Split and New Window change a Session, not a Pane's input. The Verb guard
+  covers them (ADR 0023).
 - A clear still presses `C-l` and drops the Scrollback outside the Outbox.
 - Select a Pane or Window, switch Session, Zoom, resize, theme reports and
   reads set or read state. They are safe to run again, or the Attach applies

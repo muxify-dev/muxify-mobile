@@ -12,6 +12,7 @@ import {
   listSessionsCommand,
   listWindowsCommand,
   newWindowCommand,
+  parseSessionOp,
   paneStateCommand,
   parsePaneMark,
   renderControlCommand,
@@ -26,12 +27,14 @@ import {
   sendKeysCommand,
   shellQuote,
   splitWindowCommand,
+  verbCommands,
   stagePasteCommands,
   switchSessionCommand,
   tmuxQuote,
   zoomPaneCommand,
 } from './commands';
 import type { Seq } from './input-lane';
+import type { Op } from './verb-guard';
 
 describe('quoting for a shell', () => {
   it('wraps a value so no expansion can reach it', () => {
@@ -339,5 +342,42 @@ describe('what the Log says of typed input', () => {
       .join(' ; ');
     expect(said).not.toMatch(/muxify-k-7-r|Enter|sleep/);
     expect(said).toContain('%3');
+  });
+});
+
+describe('a split or New Window that runs one time', () => {
+  it('runs the verb and records its Op only while the Session is below the Op, then reads the Op', () => {
+    const line = verbCommands('$3', { kind: 'split', direction: 'right' }, 4 as Op, '@muxify-op-k7f2', true);
+    expect(line).toEqual([
+      [
+        'if-shell',
+        '-F',
+        '-t',
+        '$3:',
+        '#{e|<:#{e|+:0,#{@muxify-op-k7f2}},4}',
+        "'split-window' '-h' '-t' '$3:' ; 'set-option' '-t' '$3:' '@muxify-op-k7f2' '4'",
+      ],
+      ['display-message', '-p', '-t', '$3:', '#{session_id}:#{pid}:#{@muxify-op-k7f2}'],
+    ]);
+  });
+
+  it('runs the verb with no guard on a tmux below 3.2', () => {
+    expect(verbCommands('0', { kind: 'new-window' }, 1 as Op, '@muxify-op-k7f2', false)).toEqual([
+      ['new-window', '-a', '-t', '0:'],
+      ['set-option', '-t', '0:', '@muxify-op-k7f2', '1'],
+      ['display-message', '-p', '-t', '0:', '#{session_id}:#{pid}:#{@muxify-op-k7f2}'],
+    ]);
+  });
+
+  it.each([
+    ['$3:812:4', { held: 4, serverPid: 812 }],
+    ['$3:812:', { held: 0, serverPid: 812 }],
+    ['$3:4', null],
+    ['$3::4', null],
+    ['4', null],
+    ['', null],
+    [undefined, null],
+  ])('reads %j as %j', (line, op) => {
+    expect(parseSessionOp(line)).toEqual(op);
   });
 });

@@ -13,6 +13,7 @@ import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDet
 
 import { toDraftText, type InputNotice, type Key } from './input-lane';
 import { createOutbox } from './input-outbox';
+import { createVerbGuard, describeVerb, type Verb } from './verb-guard';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
 export interface SessionDestination {
@@ -473,6 +474,13 @@ export function openAttach(options: AttachOptions): Attach {
       composer.settle(paneId, id, fate);
     },
     say: speakingAs(log, 'outbox'),
+  });
+
+  // Splits and New Windows, which change the Session and not the input of a
+  // Pane. Kept across a break as the Outbox keeps keys.
+  const verbs = createVerbGuard({
+    say: speakingAs(log, 'verbs'),
+    onRefused: (error) => change({ trouble: error }),
   });
 
   const sizing: ClientSizing = createClientSizing(async (grid) => {
@@ -974,6 +982,9 @@ export function openAttach(options: AttachOptions): Attach {
       // Each Pane with keys from before this Connection reads its mark now,
       // and sends, holds or discards them on the answer.
       outbox.connected(client);
+      // A split or New Window that the last Connection lost reads the
+      // Session's Op, and is sent again only when tmux did not run it.
+      verbs.connected(client);
       void client.guardsLateLines().then((guarded) => {
         if (!guarded && !stale(mine)) {
           say('this tmux is older than 3.2: a line from a lost Connection that arrives late can type its keys twice');
@@ -1035,6 +1046,7 @@ export function openAttach(options: AttachOptions): Attach {
     // Before the Control Connection closes, so an answer that the close fails
     // is already an answer from a Connection that ended.
     outbox.lost();
+    verbs.lost();
     const closingControl = control;
     const closingConnection = connection;
     control = null;
@@ -1143,6 +1155,21 @@ export function openAttach(options: AttachOptions): Attach {
     await current.setZoom(currentSessionTarget(), state.zoomed);
     if (stale(mine)) return;
     await topology?.refresh();
+  }
+
+  async function runSessionVerb(verb: Verb): Promise<void> {
+    const mine = generation;
+    if (!client) return;
+    say(describeVerb(verb));
+    await verbs.run(verb, currentSessionTarget());
+    const current = client;
+    try {
+      await settleAfterVerb(mine);
+    } catch (error) {
+      // The verb is done. A read after it that fails is not its error, and
+      // a read whose Connection ended has nothing to add to the disconnect.
+      if (client === current) change({ trouble: describeError(error) });
+    }
   }
 
   const attach: Attach = {
@@ -1285,23 +1312,8 @@ export function openAttach(options: AttachOptions): Attach {
       background(mine, () => current.selectPaneToward(currentSessionTarget(), direction));
     },
 
-    async split(direction: 'right' | 'down'): Promise<void> {
-      const mine = generation;
-      const current = client;
-      if (!current) return;
-      say(`splitting ${direction}`);
-      await current.splitWindow(currentSessionTarget(), direction);
-      await settleAfterVerb(mine);
-    },
-
-    async newWindow(): Promise<void> {
-      const mine = generation;
-      const current = client;
-      if (!current) return;
-      say('adding a Window');
-      await current.newWindow(currentSessionTarget());
-      await settleAfterVerb(mine);
-    },
+    split: (direction) => runSessionVerb({ kind: 'split', direction }),
+    newWindow: () => runSessionVerb({ kind: 'new-window' }),
 
     setZoom(on: boolean): void {
       const mine = generation;
@@ -1536,6 +1548,7 @@ export function openAttach(options: AttachOptions): Attach {
       closed = true;
       const unsent = outbox.close();
       if (unsent > 0) say(`${unsent} typed keys had not reached their Pane; discarded with the Attach`);
+      verbs.close();
       composer.dispose();
       generation += 1;
       sizing.dispose();
