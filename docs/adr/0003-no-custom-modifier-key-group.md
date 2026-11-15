@@ -213,9 +213,9 @@ names it for tmux.
 This replaces, for the Key Row, the sections above that say a Key Row
 key goes to tmux by name. These facts are different now:
 
-- **⌘ reaches ghostty**, when the key is not a Keyboard Shortcut and not
-  a Shortcut. Those two stay in the app, as UIKit takes a key command
-  from a hardware keyboard before the Surface gets the key. Measured in
+- **⌘ reaches ghostty**, when the key is not a Keyboard Shortcut. The
+  KeyCommands module decides that for both keyboards; see ADR 0022, which
+  replaces the Shortcut and the reason first given here. Measured in
   the simulator: ⌘ and x types nothing, and ⌘ and ↑ types nothing,
   because ghostty binds it to a jump between prompts.
 - **Option is alt on both keyboards.** The config sets

@@ -384,7 +384,7 @@ removes exactly one character; reporting the size of a cell with the grid,
 without which nothing outside the Surface can turn a touch into a cell; giving
 the one-finger drag to Muxify, locked to one axis when it begins, as a scroll
 or as a Pane Swipe; the Selection Layer, with Paste from the system menu and
-from ⌘V on a hardware keyboard; removing the layer of a surface it frees, which
+from ⌘V on either keyboard; removing the layer of a surface it frees, which
 ghostty leaves in the view with a pointer to the freed renderer, a crash on
 the way back from a screen pushed over the Terminal Screen; and two promises
 about its own readiness — nothing written to it is lost, and every
@@ -570,7 +570,8 @@ side changes the arrow. VoiceOver has an action for each arrow. ⌃, ⌥ and ⌘
 and spent on the next key from either the row or the system keyboard. The
 Surface presses that key with the modifier held, as a hardware keyboard does,
 so ⌘ and delete removes the line and ⌥ and an arrow goes one word. See ADR
-0003. ⌘ and a letter can be a Shortcut. While the Composer is open,
+0003. A chord with ⌘ is first a Keyboard Shortcut, decided as for a
+hardware keyboard. While the Composer is open,
 or while Typing is not open, the keys are disabled. The strip and key frames stay
 fixed during touch. A physical keyboard hides the row. iOS supplies its
 initial state, connection changes, and a fresh state on foreground entry.
@@ -581,34 +582,37 @@ Screen and remains when the row is hidden.
 _Avoid_: Dock (the old name), Key Bar (the old middle), toolbar, tab bar,
 bottom bar, modifiers
 
-**Shortcut**:
-What ⌘ and a letter do on the phone. ⌘c copies the active Pane's text, as Copy
-Pane text does. ⌘v pastes the clipboard into the active Pane and presses
-nothing after it, as Paste in a Selection's menu does. iOS asks "Allow Paste"
-for ⌘v each time, because the app reads the clipboard by itself there; Paste
-in the menu is the system's own, and iOS asks nothing for it. For both, text
-goes in as it is, and an image goes up to the Host as the Composer sends an
-Attachment, with its path pasted. Text goes through a
-tmux buffer with bracketed paste, so a program that asked for bracketed paste
-gets many lines as one piece and runs none. For text with a line break into a
-program that did not ask, the phone asks first, because that program runs
-each line as the line arrives. ⌘k clears the active
-Pane: the program in it draws its screen again and the Scrollback goes. A
-Keyboard Shortcut's key comes first, so ⌘ and K is Pane above. ⌘ and any
-other key does what it does on a hardware keyboard.
-_Avoid_: hotkey, command (on its own)
-
 **Keyboard Shortcut**:
-A ⌘ chord on a hardware keyboard that does something in Muxify: ⌘, opens
-Settings, ⌘D and ⇧⌘D split the active Pane right and down, and ⇧⌘H, ⇧⌘J,
-⇧⌘K and ⇧⌘L go to the Pane on that side. tmux finds that Pane, wraps at the
-edge, and keeps the Zoom. Settings > Keyboard Shortcuts changes the key of
-each one. Every one holds ⌘, because tmux has no ⌘ to give a Pane, and no two
-share a key. Only those the screen on top can do are offered, so a chord
-nothing handles still reaches the Pane. The Key Row's ⌘ reaches them too: ⌘
-and then D on the software keyboard is ⇧⌘D, and an armed ⌃ or ⌥ counts as
-held.
-_Avoid_: hotkey, key binding
+A ⌘ chord that does something in Muxify: ⌘, opens Settings, ⌘D and ⇧⌘D split
+the active Pane right and down, ⇧⌘H, ⇧⌘J, ⇧⌘K and ⇧⌘L go to the Pane on that
+side, ⌘C copies the active Pane's text as Copy Pane text does, and ⌘K clears
+the active Pane: the program in it draws its screen again and the Scrollback
+goes. tmux finds the Pane on a side, wraps at the edge, and keeps the Zoom.
+Settings > Keyboard Shortcuts changes the key of each one. Every one holds ⌘,
+because tmux has no ⌘ to give a Pane, and no two share a key.
+
+One rule, in the KeyCommands module, decides what a ⌘ chord is, for a
+hardware keyboard and for the Key Row's ⌘ alike: the Keyboard Shortcut with
+that chord, if the screen on top handles one. Any other chord goes on to what
+has the keys, and in a Pane that is ghostty, so ⌘ and delete removes the line.
+The module sees a hardware chord before any view does; see ADR 0022. Only
+those the screen on top can do are offered, so a chord nothing handles still
+reaches the Pane. ⌘C is not offered while a Selection, the Composer or a sheet
+has the keys, so there it is the system's Copy. On the Key Row, ⌘ and then D
+on the software keyboard is ⇧⌘D, and an armed ⌃ or ⌥ counts as held. While
+the recorder in Settings listens, no Keyboard Shortcut runs.
+
+⌘V is not a Keyboard Shortcut. On both keyboards it is the system's Paste
+into the active Pane, which presses nothing after it. iOS asks "Allow Paste"
+for ⌘V from the Key Row each time, because the app reads the clipboard by
+itself there; a hardware ⌘V and Paste in the menu are the system's own, and
+iOS asks nothing for them. Text goes in as it is, and an image goes up to the
+Host as the Composer sends an Attachment, with its path pasted. Text goes
+through a tmux buffer with bracketed paste, so a program that asked for
+bracketed paste gets many lines as one piece and runs none. For text with a
+line break into a program that did not ask, the phone asks first, because
+that program runs each line as the line arrives.
+_Avoid_: hotkey, key binding, Shortcut (on its own)
 
 **Composer**:
 The place to prepare a message for a Pane before sending it: multiline text,

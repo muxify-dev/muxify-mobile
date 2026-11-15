@@ -1924,10 +1924,10 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..eb3cce62bcda6e8c6527f991846e949d
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a327700e0 100644
+index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305c1bb7af3 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-@@ -12,18 +12,39 @@
+@@ -12,18 +12,47 @@
      extension UITerminalView {
          override open func pressesBegan(
              _ presses: Set<UIPress>,
@@ -1952,9 +1952,17 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
 +        ]
 +
 +        func isPasteCommand(_ key: UIKey?) -> Bool {
-+            guard let key, key.keyCode == .keyboardV else { return false }
-+            let held = key.modifierFlags.intersection([.command, .control, .alternate, .shift])
-+            return held == .command
++            guard let key else { return false }
++            return isPasteCommand(usage: key.keyCode.rawValue, modifiers: key.modifierFlags)
++        }
++
++        func isPasteCommand(_ stroke: TerminalKeyStroke) -> Bool {
++            isPasteCommand(usage: Int(stroke.usage), modifiers: stroke.modifierFlags)
++        }
++
++        private func isPasteCommand(usage: Int, modifiers: UIKeyModifierFlags) -> Bool {
++            let held = modifiers.intersection([.command, .control, .alternate, .shift])
++            return usage == UIKeyboardHIDUsage.keyboardV.rawValue && held == .command
 +        }
 +
          override open func pressesEnded(
@@ -1969,7 +1977,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              for press in presses {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
-@@ -48,6 +69,97 @@
+@@ -48,6 +77,103 @@
                  return
              }
  
@@ -1996,6 +2004,12 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
 +            @discardableResult
 +            public func pressKey(_ key: String, modifiers: UIKeyModifierFlags) -> Bool {
 +                guard let stroke = keyStroke(for: key, modifiers: modifiers) else { return false }
++                // Command-V is the system's Paste here too, as in
++                // pressesBegan, so both keyboards paste one way.
++                if onPasteCommand != nil, isPasteCommand(stroke) {
++                    paste(nil)
++                    return true
++                }
 +                guard let surface else { return true }
 +
 +                // ghostty encodes nothing for a key during composition, and
@@ -2067,7 +2081,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              let filteredModifierFlags = filteredModifierFlags(for: key)
              let isCommandModified = filteredModifierFlags.contains(.command)
              let mods = TerminalInputModifiers(from: filteredModifierFlags)
-@@ -57,21 +169,15 @@
+@@ -57,21 +183,15 @@
                  filteredModifierFlags: filteredModifierFlags
              )
  
@@ -2091,7 +2105,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              )
  
              if action == GHOSTTY_ACTION_RELEASE, delivery.isDirectInput {
-@@ -99,13 +205,30 @@
+@@ -99,13 +219,30 @@
              // translate the documented HID usage value from UIKey into the
              // corresponding AppKit keycode here.
              keyEvent.keycode = TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
@@ -2123,7 +2137,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              keyEvent.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
  
              guard action == GHOSTTY_ACTION_PRESS || action == GHOSTTY_ACTION_REPEAT else {
-@@ -129,7 +252,10 @@
+@@ -129,7 +266,10 @@
                  return
              }
  
@@ -2135,7 +2149,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
                    !text.isEmpty
              else {
                  _ = surface.sendKeyEvent(keyEvent)
-@@ -179,7 +305,7 @@
+@@ -179,7 +319,7 @@
              return true
          }
  
@@ -2144,7 +2158,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              var flags = key.modifierFlags
              let isFunctionKey =
                  TerminalInputText.filteredFunctionKeyText(key.characters) == nil ||
-@@ -191,7 +317,7 @@
+@@ -191,7 +331,7 @@
          }
  
          private func commandZoomDirection(
@@ -2153,7 +2167,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..23b9c323ac6e595ce206ac10c7f2777a
              action: ghostty_input_action_e,
              filteredModifierFlags: UIKeyModifierFlags
          ) -> KeyboardZoomDirection? {
-@@ -243,4 +369,29 @@
+@@ -243,4 +383,29 @@
              case decrease
          }
      }

@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
   s.name = 'KeyCommands'
   s.version = '1.0.0'
-  s.summary = 'Muxify Keyboard Shortcuts as UIKit key commands'
+  s.summary = 'Muxify Keyboard Shortcuts, decided for both keyboards'
   s.description = s.summary
   s.license = { :type => 'MIT' }
   s.author = 'Muxify'

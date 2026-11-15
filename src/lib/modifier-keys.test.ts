@@ -1,5 +1,4 @@
-import { NO_MODIFIERS, phoneCommand, typedKeys, type Modifiers } from './modifier-keys';
-import { chordsInForce } from '@/keyboard/keyboard-shortcuts';
+import { commandChord, NO_MODIFIERS, typedKeys, type Modifiers } from './modifier-keys';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const armed = (over: Partial<Modifiers>): Modifiers => ({ ...NO_MODIFIERS, ...over });
@@ -38,54 +37,32 @@ describe('the keys the system keyboard typed', () => {
   });
 });
 
-describe('a key while command is armed', () => {
-  it.each([
-    ['c', 'copy'],
-    ['v', 'paste'],
-    ['k', 'clear'],
-  ])('makes %s the %s Shortcut', (letter, shortcut) => {
-    expect(phoneCommand(letter, armed({ cmd: true }))).toEqual({ kind: 'shortcut', shortcut });
+describe('the chord a key makes with command armed', () => {
+  it('is the key as a hardware keyboard has it', () => {
+    expect(commandChord('d', armed({ cmd: true }))).toEqual({ key: 'd', shift: false, option: false, control: false });
+    expect(commandChord(',', armed({ cmd: true }))).toEqual({ key: ',', shift: false, option: false, control: false });
   });
 
-  it('is a Shortcut with ctrl and option armed too', () => {
-    expect(phoneCommand('c', armed({ cmd: true, ctrl: true, alt: true }))).toEqual({ kind: 'shortcut', shortcut: 'copy' });
+  it('holds shift for a capital letter, as the software keyboard types one', () => {
+    expect(commandChord('D', armed({ cmd: true }))).toEqual({ key: 'd', shift: true, option: false, control: false });
   });
 
-  it.each([
-    [',', 'open-settings'],
-    ['d', 'split-right'],
-    ['D', 'split-down'],
-    ['K', 'pane-up'],
-  ])('makes %s a Keyboard Shortcut, as a hardware keyboard would', (key, action) => {
-    expect(phoneCommand(key, armed({ cmd: true }))).toEqual({ kind: 'keyboard-shortcut', action });
+  it('holds an armed ctrl and option', () => {
+    expect(commandChord('h', armed({ cmd: true, alt: true, ctrl: true })))
+      .toEqual({ key: 'h', shift: false, option: true, control: true });
   });
 
-  it('runs the key the user gave a Keyboard Shortcut, and not its default', () => {
-    const chords = chordsInForce({ 'pane-left': { key: 'h', shift: false, option: true, control: false } });
-    expect(phoneCommand('h', armed({ cmd: true, alt: true }), chords))
-      .toEqual({ kind: 'keyboard-shortcut', action: 'pane-left' });
-    expect(phoneCommand('H', armed({ cmd: true }), chords)).toBeUndefined();
-  });
-
-  it('runs a Keyboard Shortcut that the user gave an arrow', () => {
-    const chords = chordsInForce({ 'pane-left': { key: 'UIKeyInputLeftArrow', shift: false, option: false, control: false } });
-    expect(phoneCommand('Left', armed({ cmd: true }), chords))
-      .toEqual({ kind: 'keyboard-shortcut', action: 'pane-left' });
-  });
-
-  it('leaves every other key to the Pane', () => {
-    // ghostty has these: command and delete removes the line, and command
-    // and an arrow goes to the start or the end of it.
-    for (const key of ['x', 'Backspace', 'Left', 'Right', 'Up', 'Enter']) {
-      expect(phoneCommand(key, armed({ cmd: true }))).toBeUndefined();
-    }
+  it('names a key that types no character as UIKit does', () => {
+    expect(commandChord('Left', armed({ cmd: true }))?.key).toBe('UIKeyInputLeftArrow');
+    expect(commandChord('Escape', armed({ cmd: true }))?.key).toBe('UIKeyInputEscape');
+    expect(commandChord('Backspace', armed({ cmd: true }))?.key).toBe('\b');
   });
 });
 
 describe('a key without command', () => {
-  it('is never the phone\'s own', () => {
+  it('makes no chord', () => {
     for (const held of [NO_MODIFIERS, armed({ ctrl: true }), armed({ alt: true }), armed({ ctrl: true, alt: true })]) {
-      for (const key of ['c', 'v', 'k', 'd', ',']) expect(phoneCommand(key, held)).toBeUndefined();
+      for (const key of ['c', 'v', 'k', 'd', ',']) expect(commandChord(key, held)).toBeUndefined();
     }
   });
 });

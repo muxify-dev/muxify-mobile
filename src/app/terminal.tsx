@@ -23,7 +23,7 @@ import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
-import { stageClipboardImage, stageFile } from '@/composer/staging';
+import { stageFile } from '@/composer/staging';
 import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
@@ -77,14 +77,13 @@ import { coast, createVelocityTracker, isFlick } from '@/lib/inertia';
 import { panAxis, swipeOf, type PanAxis } from '@/lib/pan-axis';
 import {
   anyArmed,
+  commandChord,
   NO_MODIFIERS,
-  phoneCommand,
   typedKeys,
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
-import { useRunKeyboardShortcut, useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
-import { chordsInForce } from '@/keyboard/keyboard-shortcuts';
+import { performChord, useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
@@ -785,20 +784,6 @@ export default function TerminalScreen() {
   }, [attach]);
 
   /**
-   * The clipboard into the active Pane, with nothing pressed after it.
-   *
-   * An image first, then text: a copied image often carries its file name as
-   * text too, and the name is not what was copied.
-   */
-  const pasteClipboard = useCallback(() => {
-    void pasteInto(attach, async () => {
-      const image = await stageClipboardImage();
-      if (image) return { kind: 'image', file: image };
-      return { kind: 'text', text: await Clipboard.getStringAsync() };
-    });
-  }, [attach]);
-
-  /**
    * Paste from the Surface's edit menu or from command-V on a hardware
    * keyboard. The Surface read the clipboard inside the system's own paste
    * action, so iOS asks nothing, and the text goes the same safe way in.
@@ -825,16 +810,13 @@ export default function TerminalScreen() {
       .catch((error: unknown) => Alert.alert('Could not clear the Pane', describeError(error)));
   }, [attach]);
 
-  const runKeyboardShortcut = useRunKeyboardShortcut();
-  const chords = useMemo(() => chordsInForce(settings.keyboardShortcuts), [settings.keyboardShortcuts]);
-
   /**
    * Keys from the Key Row or the system keyboard, for one Pane. The first
    * carries whatever is armed, and spends it.
    *
-   * With command, a key can be the phone's own: a Keyboard Shortcut or a
-   * Shortcut. Every other key is pressed into the Pane's Surface, as a
-   * hardware keyboard presses it, so ghostty does for it what it does for a
+   * With command, a key can be a Keyboard Shortcut, decided as for a
+   * hardware keyboard. Every other key is pressed into the Pane's Surface, as
+   * a hardware keyboard presses it, so ghostty does for it what it does for a
    * hardware key. What ghostty writes comes back through handlePaneInput.
    */
   const pressKeys = useCallback(
@@ -846,13 +828,12 @@ export default function TerminalScreen() {
       if (anyArmed(held)) setArmed(NO_MODIFIERS);
       keys.forEach((key, index) => {
         const modifiers = index === 0 ? held : NO_MODIFIERS;
-        const command = phoneCommand(key, modifiers, chords);
-        if (command === undefined) surfaces.current.get(paneId)?.pressKey(key, modifiers);
-        else if (command.kind === 'keyboard-shortcut') runKeyboardShortcut(command.action);
-        else ({ copy: copyPaneText, paste: pasteClipboard, clear: clearPane })[command.shortcut]();
+        const chord = commandChord(key, modifiers);
+        if (chord !== undefined && performChord(chord)) return;
+        surfaces.current.get(paneId)?.pressKey(key, modifiers);
       });
     },
-    [chords, copyPaneText, pasteClipboard, clearPane, endSelection, runKeyboardShortcut],
+    [endSelection],
   );
 
   /**
@@ -1229,7 +1210,10 @@ export default function TerminalScreen() {
     'pane-down': () => attach.selectPaneToward('down'),
     'pane-up': () => attach.selectPaneToward('up'),
     'pane-right': () => attach.selectPaneToward('right'),
-  } : {}, [attach, runVerb]));
+    'clear-pane': clearPane,
+    // ⌘C is the system's Copy wherever a text has the keys.
+    ...(inputElsewhere ? {} : { 'copy-pane': copyPaneText }),
+  } : {}, [attach, runVerb, clearPane, copyPaneText, inputElsewhere]));
 
   /**
    * The ⋯ menu, in the spec's order. Each entry is said to the Log as it is

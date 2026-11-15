@@ -22,6 +22,8 @@ interface NativeKeyCommand extends KeyChord {
 
 interface KeyCommandsModule {
   setCommands(commands: NativeKeyCommand[]): void;
+  /** Runs the Keyboard Shortcut this chord is, and says whether there was one. */
+  perform(chord: KeyChord): boolean;
   addListener(event: 'onCommand', listener: (event: { id: string }) => void): { remove(): void };
 }
 
@@ -43,20 +45,20 @@ interface Registration {
 
 interface KeyCommandsContextValue {
   register: (registration: Registration) => () => void;
-  /** Runs an action as its key would, for the Key Row's ⌘. */
-  run: (action: KeyboardAction) => void;
 }
 
 const KeyCommandsContext = createContext<KeyCommandsContextValue | null>(null);
 
 /**
- * Gives iOS a key command for each Keyboard Shortcut some mounted screen
- * handles, with the chord the user chose, and runs that screen's handler when
- * one is pressed.
+ * Tells the native module each Keyboard Shortcut some mounted screen handles,
+ * with the chord the user chose, and runs that screen's handler when the
+ * module says one was pressed.
  *
- * Only the handled ones go to iOS, so holding ⌘ on an iPad lists what works
- * on this screen, and a key nobody handles still reaches the Pane. When two
- * screens handle one action, the one registered last runs.
+ * The module decides, for a hardware keyboard and for the Key Row alike,
+ * whether a chord is a Keyboard Shortcut. Only the handled ones go to it, so
+ * a chord nobody handles still reaches the Pane, and holding ⌘ on an iPad
+ * lists what works on this screen. When two screens handle one action, the
+ * one registered last runs.
  */
 export function KeyCommandsProvider({ children }: { children: React.ReactNode }) {
   const { settings } = useSettings();
@@ -98,7 +100,7 @@ export function KeyCommandsProvider({ children }: { children: React.ReactNode })
     })));
   }, [revision, shortcuts]);
 
-  const value = useMemo(() => ({ register, run }), [register, run]);
+  const value = useMemo(() => ({ register }), [register]);
   return <KeyCommandsContext.Provider value={value}>{children}</KeyCommandsContext.Provider>;
 }
 
@@ -119,9 +121,13 @@ function useKeyCommands(): KeyCommandsContextValue {
   return value;
 }
 
-/** Runs a Keyboard Shortcut's action on whichever screen handles it. */
-export function useRunKeyboardShortcut(): (action: KeyboardAction) => void {
-  return useKeyCommands().run;
+/**
+ * Runs the Keyboard Shortcut a chord from the Key Row is, the way the same
+ * chord on a hardware keyboard runs it. False when no Keyboard Shortcut on
+ * this screen has the chord, and the key is for the Pane.
+ */
+export function performChord(chord: KeyChord): boolean {
+  return keyCommands?.perform(chord) ?? false;
 }
 
 /** Handles Keyboard Shortcuts for as long as the caller is mounted. */

@@ -11,18 +11,12 @@
  * the way a hardware keyboard's go in. ghostty applies its keybinds and
  * encodes the key, so nothing here knows what a chord types. This file
  * answers the two questions that come before the press: which keys were
- * typed, and whether command makes the key the phone's own.
+ * typed, and which chord a key with command armed is.
  *
- * Pure: bytes and flags in, keys or a command out.
+ * Pure: bytes and flags in, keys or a chord out.
  */
 
-import {
-  DEFAULT_CHORDS,
-  KEYBOARD_ACTIONS,
-  sameChord,
-  type KeyboardAction,
-  type KeyChord,
-} from '@/keyboard/keyboard-shortcuts';
+import type { KeyChord } from '@/keyboard/keyboard-shortcuts';
 import { bytesToUtf8 } from '@/lib/utf8';
 
 export type Modifier = 'ctrl' | 'alt' | 'cmd';
@@ -35,16 +29,6 @@ export const NO_MODIFIERS: Modifiers = { ctrl: false, alt: false, cmd: false };
 export function anyArmed(modifiers: Modifiers): boolean {
   return modifiers.ctrl || modifiers.alt || modifiers.cmd;
 }
-
-/** What command and a letter do on the phone. */
-export type Shortcut = 'copy' | 'paste' | 'clear';
-
-const SHORTCUTS: Record<string, Shortcut> = { c: 'copy', v: 'paste', k: 'clear' };
-
-/** What a key with command does in Muxify, where it is not a key for the Pane. */
-export type PhoneCommand =
-  | { kind: 'keyboard-shortcut'; action: KeyboardAction }
-  | { kind: 'shortcut'; shortcut: Shortcut };
 
 /** The named keys as a Keyboard Shortcut's chord has them, which is UIKit's way. */
 const CHORD_KEYS: Record<string, string> = {
@@ -59,30 +43,19 @@ const CHORD_KEYS: Record<string, string> = {
 };
 
 /**
- * What this key does on the phone with these modifiers armed, or undefined
- * when the key is for the Pane.
- *
- * Only with command. A Keyboard Shortcut comes first, as UIKit takes its
- * chord from a hardware keyboard before the Surface gets the key. Then a
- * Shortcut, with ctrl and option armed or not.
+ * The chord this key and the armed modifiers make, as a hardware keyboard
+ * would make it, or undefined without command. Whether a Keyboard Shortcut
+ * claims the chord is the native module's to say, for both keyboards.
  */
-export function phoneCommand(
-  key: string,
-  modifiers: Modifiers,
-  chords: Readonly<Record<KeyboardAction, KeyChord>> = DEFAULT_CHORDS,
-): PhoneCommand | undefined {
+export function commandChord(key: string, modifiers: Modifiers): KeyChord | undefined {
   if (!modifiers.cmd) return undefined;
-  const pressed: KeyChord = {
+  return {
     key: CHORD_KEYS[key] ?? key.toLowerCase(),
     // A capital letter is the software keyboard's shift.
     shift: /^[A-Z]$/.test(key),
     option: modifiers.alt,
     control: modifiers.ctrl,
   };
-  const action = KEYBOARD_ACTIONS.find((each) => sameChord(chords[each], pressed));
-  if (action !== undefined) return { kind: 'keyboard-shortcut', action };
-  const shortcut = SHORTCUTS[key.toLowerCase()];
-  return shortcut === undefined ? undefined : { kind: 'shortcut', shortcut };
 }
 
 /**

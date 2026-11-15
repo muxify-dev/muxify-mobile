@@ -15,6 +15,8 @@ export const KEYBOARD_ACTIONS = [
   'pane-down',
   'pane-up',
   'pane-right',
+  'copy-pane',
+  'clear-pane',
 ] as const;
 export type KeyboardAction = (typeof KEYBOARD_ACTIONS)[number];
 
@@ -26,6 +28,8 @@ export const KEYBOARD_ACTION_TITLES: Record<KeyboardAction, string> = {
   'pane-down': 'Pane below',
   'pane-up': 'Pane above',
   'pane-right': 'Pane to the right',
+  'copy-pane': 'Copy Pane text',
+  'clear-pane': 'Clear Pane',
 };
 
 /**
@@ -52,6 +56,8 @@ export const DEFAULT_CHORDS: Readonly<Record<KeyboardAction, KeyChord>> = {
   'pane-down': chord('j', true),
   'pane-up': chord('k', true),
   'pane-right': chord('l', true),
+  'copy-pane': chord('c'),
+  'clear-pane': chord('k'),
 };
 
 export function chordFor(shortcuts: KeyboardShortcuts | undefined, action: KeyboardAction): KeyChord {

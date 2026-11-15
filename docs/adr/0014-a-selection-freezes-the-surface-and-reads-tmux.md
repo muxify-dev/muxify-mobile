@@ -76,7 +76,7 @@ the user drags the Pane through its Scrollback.
   typed.
 - Paste from the system menu, and ⌘V on a hardware keyboard, read the
   clipboard inside the system's own paste action. iOS shows no "Allow Paste"
-  prompt for that. The text goes into the Pane as the Shortcut ⌘v sends it:
+  prompt for that. The text goes into the Pane as ⌘V from the Key Row sends it:
   through a tmux buffer, with the question first when the program would run
   each line.
 - The width of each character comes from a table in `selection-rows.ts`, not
