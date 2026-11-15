@@ -26,7 +26,8 @@ export type OpenPlaceRow = Extract<HostScreenRow, { kind: 'open-place' }>;
 export interface RowActions {
   onOpenSession: (name: string) => void;
   onOpenTopic: (row: TopicRow) => void;
-  busyTopic?: string | null;
+  /** Whether a Topic card waits on something: its Session opening, or a write to the Host. */
+  isBusy?: (topicId: string) => boolean;
   /** Wakes a Dormant Topic from its long-press menu. A screen that does not pass it gives a Dormant card no wake items. */
   onWake?: (row: TopicRow, wake: Wake) => void;
   /** Sends one order of the long-press menu. A screen that does not pass it gives the card no order items. */
@@ -162,7 +163,7 @@ export function HostScreenRowView({
           <HStack
             spacing={12}
             modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW, opacity(row.dimmed ? 0.5 : 1)]}>
-            {actions.busyTopic === row.id ? <ProgressView /> : <Image
+            {actions.isBusy?.(row.id) ? <ProgressView /> : <Image
               systemName={row.pinned ? 'pin.fill' : 'rectangle.stack'}
               size={20}
               color={row.pinned ? palette.controlAccent : palette.rowIcon}

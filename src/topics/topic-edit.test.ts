@@ -8,7 +8,6 @@ import {
   fieldsParam,
   saveTopicEdit,
   typedFields,
-  unsent,
   type TopicFields,
 } from './topic-edit';
 
@@ -124,15 +123,6 @@ describe('what the user typed', () => {
 
   it('is no change when it matches the Host', () => {
     expect(changes(ON_HOST, typedFields(' Fix login', 'at step 3 ', ['work', 'old']))).toEqual([]);
-  });
-});
-
-describe('a Host that could not be reached', () => {
-  it('puts the reason under every field that changed', () => {
-    expect(unsent(ON_HOST, { ...ON_HOST, title: 'New', tags: [] }, 'Connection refused')).toEqual({
-      title: 'Connection refused',
-      tags: 'Connection refused',
-    });
   });
 });
 

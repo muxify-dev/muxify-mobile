@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
@@ -16,6 +16,7 @@ import {
 import {
   accessibilityLabel,
   background,
+  disabled,
   environment,
   listRowBackground,
   scrollContentBackground,
@@ -25,14 +26,15 @@ import {
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { TagChoice } from '@/components/tag-choice';
-import { ToolbarWord } from '@/components/toolbar-word';
+import { HostWriteRow } from '@/components/host-write-row';
 import { toggled } from '@/lib/toggled';
+import { useHostWrite } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/connect-host';
+import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
-import type { NewTopicRead } from '@/topics/new-topic';
-import type { Tag } from '@/topics/environment';
+import type { Tag, TopicId } from '@/topics/environment';
+import { emptyTopicTitled } from '@/topics/new-topic';
 import { topicSeedParam } from '@/topics/topic-detail';
 
 
@@ -61,86 +63,63 @@ export default function TopicFormScreen() {
 
   const title = useNativeState('');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
-  const [error, setError] = useState<string | undefined>();
-  const [creating, setCreating] = useState(false);
-  const present = useRef(true);
-  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
+  const [titleError, setTitleError] = useState<string | undefined>();
+  const { write, hostName, send, check } = useHostWrite(hostId);
+  const locked = write.kind === 'running' || write.kind === 'unsure';
 
   const toggle = useCallback((name: string) => {
     setChosen((previous) => toggled(previous, name));
   }, []);
 
-  const save = useCallback(() => {
-    if (creating || tags === null) return;
+  // In Config order, as the Mac lists a Topic's Tags. Before the Tags read answers none can be chosen.
+  const chosenTags = (tags ?? []).filter((tag) => chosen.has(tag.name)).map((tag) => tag.name);
+
+  const opened = (topic: TopicId | undefined, label: string) => {
+    if (topic === undefined) return;
+    router.replace({ pathname: '/topic-add-session', params: { hostId, topicId: topic, created: '1',
+      seed: topicSeedParam({ id: topic, label, note: null, tags: chosenTags, state: 'empty', sessions: [] }) } });
+  };
+
+  const save = () => {
+    if (locked) return;
     const wanted = title.value.trim();
     if (wanted === '') {
-      setError('Give the Topic a title.');
+      setTitleError('Give the Topic a title.');
       return;
     }
+    setTitleError(undefined);
+    void send(async ({ host, step, refuse }) => {
+      const made = await appConnections().write(host, (transport, muxify) => {
+        step('sending');
+        return muxify.create((command) => transport.exec(command), wanted, chosenTags);
+      });
+      if (made.kind === 'failed') return refuse(made.error);
+      return made.topic;
+    }).then((topic) => opened(topic, wanted));
+  };
 
-    setCreating(true);
-    setError(undefined);
-    void (async () => {
-      const store = deviceHostStore();
-      const records = await store.load();
-      const host = records.hosts.find((candidate) => candidate.id === hostId);
-      if (!host) {
-        setError('This Host is no longer saved.');
-        setCreating(false);
-        return;
-      }
-
-      let made: NewTopicRead;
-      try {
-        made = await appConnections().write(host, (transport, muxify) =>
-          muxify.create(
-            (command) => transport.exec(command),
-            wanted,
-            // In Config order, as the Mac lists a Topic's Tags.
-            tags.filter((tag) => chosen.has(tag.name)).map((tag) => tag.name),
-          ),
-        );
-      } catch (caught) {
-        made = { kind: 'failed', error: describeConnectionFailure(caught) };
-      }
-      if (!present.current) return;
-      if (made.kind === 'failed') {
-        setError(made.error);
-        setCreating(false);
-        return;
-      }
-
-      router.replace({ pathname: '/topic-add-session', params: { hostId, topicId: made.topic, created: '1',
-        seed: topicSeedParam({ id: made.topic, label: wanted, note: null,
-          tags: tags.filter((tag) => chosen.has(tag.name)).map((tag) => tag.name), state: 'empty', sessions: [] }) } });
-    })();
-  }, [creating, title, hostId, tags, chosen, router]);
+  const checkMade = () => {
+    const wanted = title.value.trim();
+    void check(async ({ host, refuse }) => {
+      const read = await appConnections().read(host, (transport, muxify) => muxify.read((command) => transport.exec(command)));
+      if (read.kind !== 'listed') throw new Error(read.kind === 'failed' ? read.error : 'Update Muxify on this Host to create Topics.');
+      return emptyTopicTitled(read.snapshot, wanted) ?? refuse(`${wanted} is not on ${host.displayName}. Save creates it.`);
+    }).then((topic) => opened(topic, wanted));
+  };
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen
-        options={{
-          title: 'New Topic',
-          gestureEnabled: !creating,
-          headerLeft: () => (
-            <ToolbarWord
-              label="Cancel"
-              disabled={creating}
-              color={palette.controlAccent}
-              bold={false}
-              onPress={() => { if (!creating) router.back(); }}
-            />
-          ),
-          headerRight: () => (
-            <ToolbarWord
-              label={creating ? 'Saving…' : 'Save'}
-              color={creating || tags === null ? palette.secondaryLabel : palette.controlAccent}
-              disabled={creating || tags === null}
-              onPress={save}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: 'New Topic', gestureEnabled: write.kind !== 'running' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button tintColor={palette.controlAccent} disabled={write.kind === 'running'} onPress={() => router.back()}>
+          Cancel
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button variant="done" tintColor={palette.controlAccent} disabled={locked} onPress={save}>
+          Save
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
 
       <Host style={styles.fill} matchContents={false}>
         <Form
@@ -150,22 +129,29 @@ export default function TopicFormScreen() {
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
+          <HostWriteRow
+            write={write}
+            words={{ host: hostName, sending: `Creating ${title.value.trim()}`, mayHaveHappened: 'The Topic may exist.' }}
+            palette={palette}
+            onRetry={save}
+            onCheck={checkMade}
+          />
           <Section
             header={<SectionHeader palette={palette}>Title</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <TextField
               text={title}
               placeholder="Fix login"
-              modifiers={[accessibilityLabel('Topic title')]}
+              modifiers={[accessibilityLabel('Topic title'), disabled(locked)]}
             />
-            <FieldError error={error} palette={palette} />
+            <FieldError error={titleError} palette={palette} />
           </Section>
 
           {tags === null ? <Section
             header={<SectionHeader palette={palette}>Tags</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <Text>{tagError ?? 'Reading Tags…'}</Text>
-            {tagError ? <Button label="Retry Tags" onPress={() => setAttempt((value) => value + 1)} /> : null}
+            {tagError ? <Button label="Retry Tags" onPress={() => setAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
           </Section> : tags.length === 0 ? null : (
             <Section
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}
@@ -179,6 +165,7 @@ export default function TopicFormScreen() {
                       chosen={chosen.has(tag.name)}
                       appearance={appearance}
                       fallbackColor={palette.secondaryLabel}
+                      disabled={locked}
                       onPress={() => toggle(tag.name)}
                     />
                   ))}

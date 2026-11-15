@@ -4,6 +4,7 @@ import {
   accessibilityValue,
   buttonStyle,
   controlSize,
+  disabled as disabledModifier,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
@@ -16,6 +17,7 @@ export function TagChoice({
   chosen,
   appearance,
   fallbackColor,
+  disabled = false,
   onPress,
 }: {
   tag: Tag;
@@ -23,6 +25,7 @@ export function TagChoice({
   appearance: ColorAppearance;
   /** For a Tag with no colour the phone can read. */
   fallbackColor: string;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   const color = tag.color[appearance];
@@ -36,6 +39,7 @@ export function TagChoice({
         tint(color === null ? fallbackColor : tagColorHex(color, appearance)),
         accessibilityLabel(`Tag #${tag.name}`),
         accessibilityValue(chosen ? 'chosen' : 'not chosen'),
+        disabledModifier(disabled),
       ]}
     />
   );
@@ -49,10 +53,12 @@ export function TagChoice({
 export function RetiredTagChoice({
   name,
   color,
+  disabled = false,
   onPress,
 }: {
   name: string;
   color: string;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -64,6 +70,7 @@ export function RetiredTagChoice({
         tint(color),
         accessibilityLabel(`Tag #${name}`),
         accessibilityValue('not in the Config, tap to remove'),
+        disabledModifier(disabled),
       ]}>
       <HStack spacing={4}>
         <Image systemName="square.dashed" size={11} color={color} />

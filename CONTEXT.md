@@ -171,6 +171,18 @@ spinner to stand in for it. A refusal is the exception and drops the list,
 because a Host that cannot be reached has no Sessions to offer.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
+**Host Write**:
+One change the user asks of a Host: New Topic, Edit Topic, New Session, Add a
+Session, and the menu orders, drops and wakes of a Topic card. It is never sent
+again by itself. While it runs, a second tap is ignored. It ends done, failed
+or unsure. Failed means that nothing reached the Host or the Host refused, and
+the user can send it again. Unsure means that a command may have reached the
+Host and no answer came, so the user checks before sending again: a sheet
+offers Check, which reads the Host, and a card reads the Listing again. A sheet
+reports it in a row at the top of its form, and a Topic card with a spinner
+and an alert. See ADR 0020.
+_Avoid_: request, save (for the general idea), mutation
+
 **Client**:
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A
@@ -276,10 +288,11 @@ The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
 has a title and one button for each Tag of the Host's Config, in
 Config order and in the Tag colour. Save opens Add a Session for the new Topic. That sheet confirms the Topic was
 created and offers Add later. An existing Topic keeps Cancel. An
-error from the Host shows in the sheet, and the sheet stays open. The Host
+error from the Host shows in the sheet, and the sheet stays open (see Host Write). The Host
 Screen Options menu always offers New Session and New Topic.
 New Topic reads Config Tags when it opens. A failed read offers Retry Tags
-and keeps the entered title.
+and keeps the entered title. Save does not wait for the read: before it
+answers, no Tag can be chosen.
 _Avoid_: Create Topic, Add Topic
 
 **Edit Topic**:

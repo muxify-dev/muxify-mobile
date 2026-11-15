@@ -46,9 +46,7 @@ import {
 } from '@/domain/host-screen';
 import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useHostReading } from '@/hooks/use-host-reading';
-import { useTopicActionFromMenu } from '@/hooks/use-topic-action-from-menu';
-import { useTopicDrop } from '@/hooks/use-topic-drop';
-import { useWakeFromMenu } from '@/hooks/use-wake-from-menu';
+import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { toggled } from '@/lib/toggled';
 import { useHostLists, useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
@@ -61,7 +59,9 @@ import {
   swipeAction,
   TOPIC_ACTION_ICON,
   TOPIC_ACTION_LABEL,
+  type TopicAction,
 } from '@/topics/topic-action';
+import type { Drop } from '@/topics/topic-drop';
 import { useHostEntry } from '@/hooks/use-host-entry';
 
 /** How many rows a section shows before it offers to show the rest. */
@@ -163,10 +163,9 @@ export default function HostScreen() {
 
   const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
-  const wakeFromMenu = useWakeFromMenu(id, readHost);
-  const actFromMenu = useTopicActionFromMenu(id, readHost);
-
-  const dropOnHost = useTopicDrop(id, readHost);
+  const cardWrites = useTopicCardWrites(id, readHost);
+  const actFromMenu = (topic: TopicId, action: TopicAction) => cardWrites.order(topic, { kind: 'action', action });
+  const dropOnHost = (topic: TopicId, drop: Drop) => cardWrites.order(topic, { kind: 'drop', drop });
   const startMove = (row: TopicRow) => {
     setMoving(row.id);
     // The targets come from the newest Listing, not from the one the menu was opened on.
@@ -197,8 +196,8 @@ export default function HostScreen() {
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
-    busyTopic: hostEntry.busyTopic,
-    onWake: (row, wake) => wakeFromMenu(row.id, wake),
+    isBusy: (topic) => hostEntry.busyTopic === topic || cardWrites.writing(topic as TopicId),
+    onWake: (row, wake) => void cardWrites.order(row.id, { kind: 'wake', wake }),
     onTopicAction: (row, action) => void actFromMenu(row.id, action),
     onMove: startMove,
     onSettle: askSettle,

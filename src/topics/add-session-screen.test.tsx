@@ -1,7 +1,8 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, TextField } from '@expo/ui/swift-ui';
-import { Stack } from 'expo-router';
+import { ExecDeadlineError } from '@/ssh/host-connections';
+import { toolbarSide } from '@/test-support/toolbar';
 
 import TopicAddSessionScreen from '@/app/topic-add-session';
 import type { AddSessionRead } from './add-session';
@@ -19,14 +20,14 @@ const mockRouter = { back: mockBack, dismissTo: mockDismiss };
 const mockHolder = { current: () => null };
 
 jest.mock('expo-router', () => ({
-  Stack: { Screen: () => null },
+  ...require('@/test-support/toolbar').mockStack,
   useRouter: () => mockRouter,
   useLocalSearchParams: () => ({ hostId: 'host', topicId: 'topic', created: mockCreated }),
 }));
 jest.mock('@expo/ui/swift-ui', () => {
   const React = require('react');
   return {
-    Button: 'Button', Form: 'Form', Host: 'Host', Section: 'Section', Text: 'Text', TextField: 'TextField', VStack: 'VStack',
+    Button: 'Button', Form: 'Form', Host: 'Host', HStack: 'HStack', ProgressView: 'ProgressView', Section: 'Section', Text: 'Text', TextField: 'TextField', VStack: 'VStack',
     useNativeState: (value: string) => React.useRef({ value }).current,
   };
 });
@@ -56,9 +57,11 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => { renderer?.unmount(); }); });
 
 async function mount() { await act(async () => { renderer = create(<TopicAddSessionScreen />); }); }
-function row() { return renderer.root.findAllByType(Button).find((button) => !button.props.label)!; }
-function options() { return renderer.root.findByType(Stack.Screen).props.options; }
-async function submit() { await act(async () => { options().headerRight().props.onPress(); }); }
+function row() { return renderer.root.findAllByType(Button).find((button) => button.props.label === undefined)!; }
+const right = () => toolbarSide(renderer, 'right');
+const left = () => toolbarSide(renderer, 'left');
+const sheetGesture = () => renderer.root.find((node) => node.props.options?.title === 'Add a Session').props.options.gestureEnabled;
+async function submit() { await act(async () => { right().props.onPress(); }); }
 async function type(value: string) {
   await act(async () => {
     const field = renderer.root.findByType(TextField);
@@ -74,17 +77,17 @@ it('selects without a write, then creates once and reuses the Session after Atta
   const pick = row().props.onPress;
   await act(async () => { pick(); pick(); });
   expect(mockAdd).not.toHaveBeenCalled();
-  const createSession = options().headerRight().props.onPress;
+  const createSession = right().props.onPress;
   await act(async () => { createSession(); createSession(); });
   expect(mockAdd).toHaveBeenCalledTimes(1);
   expect(mockAdd.mock.calls[0][2]).toBe(' /exact folder/ ');
-  expect(options().gestureEnabled).toBe(false);
+  expect(sheetGesture()).toBe(false);
   await act(async () => { finish({ kind: 'added', session: 'new-session' }); });
   await act(async () => { pick(); });
   expect(mockAdd).toHaveBeenCalledTimes(1);
-  expect(options().headerRight().props.label).toBe('Retry Attach');
+  expect(right().props.children).toBe('Retry Attach');
   mockOpen.mockResolvedValue(undefined);
-  const retry = options().headerRight().props.onPress;
+  const retry = right().props.onPress;
   await act(async () => { retry(); retry(); });
   expect(mockOpen).toHaveBeenCalledTimes(2);
   expect(mockOpen.mock.calls[1][0].destination.sessionName).toBe('new-session');
@@ -123,7 +126,7 @@ it('ignores a late read after a successful write', async () => {
   await act(async () => { renderer.root.findByType(Button).props.onPress(); });
   await submit();
   await act(async () => { finish({ kind: 'old' }); });
-  expect(options().headerRight().props.label).toBe('Retry Attach');
+  expect(right().props.children).toBe('Retry Attach');
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
   expect(mockAdd).toHaveBeenCalledTimes(1);
 });
@@ -135,15 +138,15 @@ it('preserves typed text when an old CLI answers and requires Create and open', 
   await type('~/typed');
   await act(async () => { finish({ kind: 'old' }); });
   expect(renderer.root.findByType(TextField).props.text.value).toBe('~/typed');
-  expect(options().headerRight().props.label).toBe('Create and open');
-  await act(async () => { options().headerRight().props.onPress(); });
+  expect(right().props.children).toBe('Create and open');
+  await act(async () => { right().props.onPress(); });
   expect(mockAdd.mock.calls[0][2]).toBe('~/typed');
 });
 
 it('does not act on a row callback after Cancel', async () => {
   await mount();
   const pick = row().props.onPress;
-  await act(async () => { options().headerLeft().props.onPress(); pick(); });
+  await act(async () => { left().props.onPress(); pick(); });
   expect(mockBack).toHaveBeenCalledTimes(1);
   expect(mockAdd).not.toHaveBeenCalled();
 });
@@ -161,17 +164,33 @@ it('ignores a read after Cancel before the sheet unmounts', async () => {
   let finish!: (value: SessionPathsRead) => void;
   mockRead.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
   await mount();
-  await act(async () => { options().headerLeft().props.onPress(); });
+  await act(async () => { left().props.onPress(); });
   await act(async () => { finish({ kind: 'old' }); });
   expect(renderer.root.findByType(TextField).props.placeholder).toBe('Search folders or type a path');
-  expect(options().headerRight().props.disabled).toBe(true);
+  expect(right().props.disabled).toBe(true);
 });
 
 it('offers Add later only after New Topic has saved', async () => {
   mockCreated = '1';
   await mount();
-  expect(options().headerLeft().props.label).toBe('Add later');
-  await act(async () => { options().headerLeft().props.onPress(); });
+  expect(left().props.children).toBe('Add later');
+  await act(async () => { left().props.onPress(); });
   expect(mockBack).toHaveBeenCalledTimes(1);
   expect(mockAdd).not.toHaveBeenCalled();
+});
+
+it('checks a write the Host did not answer, and opens the new Session of the Topic', async () => {
+  const mockShow = jest.fn().mockResolvedValue({ kind: 'shown', topic: { label: 'Fix login', sessions: [{ id: 's1', name: 'fix-login' }] } });
+  mockRead.mockImplementation((_host, work) => work({ exec: jest.fn() }, { sessionPaths: async () => listed, show: mockShow }));
+  mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
+  mockOpen.mockResolvedValue(undefined);
+  await mount();
+  await act(async () => { row().props.onPress(); });
+  await submit();
+  expect(right().props.disabled).toBe(true);
+  const check = renderer.root.findAllByType(Button).find((button) => button.props.label === 'Check')!;
+  await act(async () => { check.props.onPress(); });
+  expect(mockAdd).toHaveBeenCalledTimes(1);
+  expect(mockOpen.mock.calls[0][0].destination.sessionName).toBe('fix-login');
+  expect(mockDismiss).toHaveBeenCalledWith('/terminal');
 });

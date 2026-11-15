@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
 
 import {
@@ -15,6 +15,7 @@ import {
 import {
   accessibilityLabel,
   background,
+  disabled,
   environment,
   listRowBackground,
   scrollContentBackground,
@@ -24,10 +25,11 @@ import {
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { RetiredTagChoice, TagChoice } from '@/components/tag-choice';
-import { ToolbarWord } from '@/components/toolbar-word';
+import { HostWriteRow } from '@/components/host-write-row';
 import type { Appearance } from '@/constants/app-theme';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { useHostWrite } from '@/hooks/use-host-write';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
@@ -40,7 +42,6 @@ import {
   fieldsFromParam,
   saveTopicEdit,
   typedFields,
-  unsent,
   type FieldErrors,
   type TopicFields,
 } from '@/topics/topic-edit';
@@ -118,16 +119,16 @@ function EditForm({
 }) {
   const router = useRouter();
   const holder = useAttachHolder();
-  const present = useRef(true);
-  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
   const { appearance } = useSettings();
+  const { write, hostName, send, check } = useHostWrite(hostId);
+  const locked = write.kind === 'running' || write.kind === 'unsure';
 
   const title = useNativeState(opened.title);
   const note = useNativeState(opened.note ?? '');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(opened.tags));
   const [saved, setSaved] = useState(opened);
-  const [errors, setErrors] = useState<FieldErrors>({});
-  const [saving, setSaving] = useState(false);
+  const [titleError, setTitleError] = useState<string | undefined>();
+  const errors: FieldErrors = { ...(write.kind === 'failed' ? write.fields : undefined), ...(titleError ? { title: titleError } : {}) };
 
   const retired = useMemo(
     () => opened.tags.filter((name) => !configTags.some((tag) => tag.name === name)),
@@ -138,95 +139,69 @@ function EditForm({
     setChosen((previous) => toggled(previous, name));
   }, []);
 
-  const save = useCallback(() => {
-    if (saving) return;
-    const wanted = typedFields(
-      title.value,
-      note.value,
-      // In Config order, as the Mac lists a Topic's Tags, with the kept retired ones last.
-      [...configTags.map((tag) => tag.name), ...retired].filter((name) => chosen.has(name)),
-    );
-    if (wanted.title === '') {
-      setErrors({ title: 'Give the Topic a title.' });
+  const wanted = () => typedFields(
+    title.value,
+    note.value,
+    // In Config order, as the Mac lists a Topic's Tags, with the kept retired ones last.
+    [...configTags.map((tag) => tag.name), ...retired].filter((name) => chosen.has(name)),
+  );
+
+  const finished = (done: true | undefined) => {
+    const attached = holder.current();
+    if (attached?.hostId === hostId && attached.state().topic?.id === topicId) void attached.refreshTopic();
+    if (done) router.back();
+  };
+
+  const save = () => {
+    if (locked) return;
+    const fields = wanted();
+    if (fields.title === '') {
+      setTitleError('Give the Topic a title.');
       return;
     }
-    if (changes(saved, wanted).length === 0) {
+    setTitleError(undefined);
+    if (changes(saved, fields).length === 0) {
       router.back();
       return;
     }
-
-    setSaving(true);
-    setErrors({});
-    void (async () => {
-      const store = deviceHostStore();
-      const host = (await store.load()).hosts.find((candidate) => candidate.id === hostId);
-      let outcome: { saved: TopicFields; errors: FieldErrors };
-      if (!host) {
-        outcome = {
-          saved,
-          errors: unsent(saved, wanted, 'This Host is no longer saved.'),
-        };
-      } else {
-        try {
-          outcome = await appConnections().write(host, (transport, muxify) =>
-            saveTopicEdit(saved, wanted, (change) =>
-              muxify
-                .change((command) => transport.exec(command), topicId, change)
-                .catch((caught: unknown) => ({
-                  kind: 'failed' as const,
-                  error: describeConnectionFailure(caught),
-                })),
-            ),
-          );
-        } catch (caught) {
-          outcome = {
-            saved,
-            errors: unsent(saved, wanted, describeConnectionFailure(caught)),
-          };
-        }
-      }
-
-      const attached = holder.current();
-      if (attached?.hostId === hostId && attached.state().topic?.id === topicId) void attached.refreshTopic();
-      if (!present.current) return;
-      const refused = Object.keys(outcome.errors);
-      say(
-        refused.length === 0
-          ? 'saved a Topic edit'
-          : `the Host refused a Topic edit of ${refused.join(', ')}`,
-      );
+    void send(async ({ host, step, refuse }) => {
+      const outcome = await appConnections().write(host, (transport, muxify) => {
+        step('sending');
+        return saveTopicEdit(saved, fields, (change) => muxify.change((command) => transport.exec(command), topicId, change));
+      });
       setSaved(outcome.saved);
-      setSaving(false);
-      if (refused.length === 0) router.back();
-      else setErrors(outcome.errors);
-    })();
-  }, [saving, title, note, configTags, retired, chosen, saved, hostId, topicId, router, holder]);
+      const refused = Object.keys(outcome.errors);
+      say(refused.length === 0 ? 'saved a Topic edit' : `the Host refused a Topic edit of ${refused.join(', ')}`);
+      if (refused.length > 0) refuse(`${host.displayName} refused part of the edit.`, outcome.errors);
+      return true as const;
+    }).then(finished);
+  };
+
+  const checkSaved = () => {
+    const fields = wanted();
+    void check(async ({ host, refuse }) => {
+      const read = await appConnections().read(host, (transport, muxify) => muxify.show((command) => transport.exec(command), topicId));
+      if (read.kind === 'failed') throw new Error(read.error);
+      const onHost: TopicFields = { title: read.topic.label, note: read.topic.note, tags: read.topic.tags };
+      setSaved(onHost);
+      if (changes(onHost, fields).length > 0) refuse(`Some changes are not on ${host.displayName}. Save sends them.`);
+      return true as const;
+    }).then(finished);
+  };
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen
-        options={{
-          title: 'Edit Topic',
-          gestureEnabled: !saving,
-          headerLeft: () => (
-            <ToolbarWord
-              label="Cancel"
-              disabled={saving}
-              color={palette.controlAccent}
-              bold={false}
-              onPress={() => { if (!saving) router.back(); }}
-            />
-          ),
-          headerRight: () => (
-            <ToolbarWord
-              label={saving ? 'Saving…' : 'Save'}
-              color={saving ? palette.secondaryLabel : palette.controlAccent}
-              disabled={saving}
-              onPress={save}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: 'Edit Topic', gestureEnabled: write.kind !== 'running' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button tintColor={palette.controlAccent} disabled={write.kind === 'running'} onPress={() => router.back()}>
+          Cancel
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button variant="done" tintColor={palette.controlAccent} disabled={locked} onPress={save}>
+          Save
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
 
       <Host style={styles.fill} matchContents={false}>
         <Form
@@ -236,10 +211,17 @@ function EditForm({
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
+          <HostWriteRow
+            write={write}
+            words={{ host: hostName, sending: `Saving ${saved.title}`, mayHaveHappened: 'The changes may be saved.' }}
+            palette={palette}
+            onRetry={save}
+            onCheck={checkSaved}
+          />
           <Section
             header={<SectionHeader palette={palette}>Title</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
-            <TextField text={title} modifiers={[accessibilityLabel('Topic title')]} />
+            <TextField text={title} modifiers={[accessibilityLabel('Topic title'), disabled(locked)]} />
             <FieldError error={errors.title} palette={palette} />
           </Section>
 
@@ -249,7 +231,7 @@ function EditForm({
             <TextField
               text={note}
               placeholder="No Note"
-              modifiers={[accessibilityLabel('Topic Note')]}
+              modifiers={[accessibilityLabel('Topic Note'), disabled(locked)]}
             />
             <FieldError error={errors.note} palette={palette} />
           </Section>
@@ -267,6 +249,7 @@ function EditForm({
                       chosen={chosen.has(tag.name)}
                       appearance={appearance}
                       fallbackColor={palette.secondaryLabel}
+                      disabled={locked}
                       onPress={() => toggle(tag.name)}
                     />
                   ))}
@@ -277,6 +260,7 @@ function EditForm({
                         key={name}
                         name={name}
                         color={palette.secondaryLabel}
+                        disabled={locked}
                         onPress={() => toggle(name)}
                       />
                     ))}

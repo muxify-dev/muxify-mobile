@@ -3,7 +3,6 @@ import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
@@ -33,19 +32,10 @@ export default function WebViewScreen() {
 
   return (
     <View style={[styles.fill, { backgroundColor: palette.background }]}>
-      <Stack.Screen
-        options={{
-          title: title || url,
-          headerRight: () => (
-            <ToolbarGlyphButton
-              systemImage="arrow.clockwise"
-              label="Reload"
-              tint={palette.toolbarTint}
-              onPress={reload}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: title || url }} />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button icon="arrow.clockwise" accessibilityLabel="Reload" onPress={reload} />
+      </Stack.Toolbar>
       <WebView
         ref={page}
         source={{ uri: url }}

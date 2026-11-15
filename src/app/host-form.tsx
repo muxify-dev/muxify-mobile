@@ -32,8 +32,6 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { SectionHeader } from '@/components/section-header';
-import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
-import { ToolbarWord } from '@/components/toolbar-word';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import {
@@ -165,26 +163,15 @@ function HostForm({
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen
-        options={{
-          title: hostId ? 'Edit Host' : 'New Host',
-          headerLeft: () => (
-            <ToolbarGlyphButton
-              systemImage="xmark"
-              label="Cancel"
-              tint={palette.toolbarTint}
-              onPress={() => router.back()}
-            />
-          ),
-          headerRight: () => (
-            <ToolbarWord
-              label={hostId ? 'Save' : 'Add'}
-              color={palette.controlAccent}
-              onPress={save}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: hostId ? 'Edit Host' : 'New Host' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button icon="xmark" accessibilityLabel="Cancel" onPress={() => router.back()} />
+      </Stack.Toolbar>
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button variant="done" tintColor={palette.controlAccent} onPress={save}>
+          {hostId ? 'Save' : 'Add'}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
 
       <Host style={styles.fill} matchContents={false}>
         <Form

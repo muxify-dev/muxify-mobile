@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Button, Form, Host, Section, Text, TextField, VStack, useNativeState } from '@expo/ui/swift-ui';
@@ -20,9 +20,10 @@ import {
 
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
-import { ToolbarWord } from '@/components/toolbar-word';
+import { HostWriteRow } from '@/components/host-write-row';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
 import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
@@ -31,15 +32,9 @@ import type { TopicId } from '@/topics/environment';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
 import { topicSeedFromParam } from '@/topics/topic-detail';
-import { describeError } from '@/lib/describe-error';
 import { sessionPathSections, type SessionPathsRead } from '@/topics/session-paths';
 
 const say = speakingAs(deviceLog(), 'add-session');
-
-type Operation =
-  | { kind: 'ready' }
-  | { kind: 'creating' }
-  | { kind: 'created'; session: string; attaching: boolean };
 
 export default function TopicAddSessionScreen() {
   const router = useRouter();
@@ -53,14 +48,13 @@ export default function TopicAddSessionScreen() {
     const attach = holder.current();
     return fromAttach ? captureAttachOrigin(attach) : undefined;
   });
-  const [operation, setOperation] = useState<Operation>({ kind: 'ready' });
-  const currentOperation = useRef<Operation>(operation);
-  const changeOperation = useCallback((next: Operation) => {
-    currentOperation.current = next;
-    if (present.current) setOperation(next);
-  }, []);
-  const present = useRef(true);
-  useEffect(() => { present.current = true; return () => { present.current = false; }; }, []);
+  const { write, hostName, send, check } = useHostWrite(hostId);
+  const locked = write.kind === 'running' || write.kind === 'unsure';
+  /** The Session this sheet made. Once there is one, the folder choices stay off and Retry Attach sends no second write. */
+  const [made, setMade] = useState<string | null>(null);
+  const madeRef = useRef<string | null>(null);
+  /** Cancel was tapped: callbacks that were already on their way do nothing. */
+  const closed = useRef(false);
   const { appearance, palette } = useSettings();
 
   const folder = useNativeState('');
@@ -68,107 +62,102 @@ export default function TopicAddSessionScreen() {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [paths, setPaths] = useState<SessionPathsRead | { kind: 'loading' }>({ kind: 'loading' });
   const [readAttempt, setReadAttempt] = useState(0);
-  const [error, setError] = useState<string | undefined>();
-  const adding = operation.kind === 'creating' || (operation.kind === 'created' && operation.attaching);
-  const completion = operation.kind === 'created' ? operation.session : null;
+  const [folderError, setFolderError] = useState<string | undefined>();
+  const choosing = !locked && made === null;
   const sections = paths.kind === 'listed' ? sessionPathSections(paths.choices, query) : [];
+  const choose = (directory: string) => { if (!closed.current && madeRef.current === null) setSelectedFolder(directory); };
 
   useEffect(() => {
     let left = false;
+    const settled = () => !left && !closed.current && madeRef.current === null;
     setPaths({ kind: 'loading' });
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('This Host is no longer saved.');
       const result = await appConnections().read(host, (transport, muxify) =>
         muxify.sessionPaths((command) => transport.exec(command), topicId as TopicId));
-      if (!left && present.current && currentOperation.current.kind !== 'created') setPaths(result);
+      if (settled()) setPaths(result);
     })().catch((caught) => {
-      if (!left && present.current && currentOperation.current.kind !== 'created') setPaths({ kind: 'failed', error: describeConnectionFailure(caught) });
+      if (settled()) setPaths({ kind: 'failed', error: describeConnectionFailure(caught) });
     });
     return () => { left = true; };
   }, [hostId, topicId, readAttempt]);
 
-  const attachSession = useCallback(async (session: string) => {
-    changeOperation({ kind: 'created', session, attaching: true });
-    setError(undefined);
-    try {
-      if (origin && !origin.attach) throw new Error('The Attach has ended. Open the Session from Home.');
-      await openSession({ hostId, destination: { sessionName: session, topic: { id: topicId as TopicId, seed } }, origin });
-      if (present.current) router.dismissTo('/terminal');
-    } catch (caught) {
-      if (present.current) setError(describeError(caught));
-      changeOperation({ kind: 'created', session, attaching: false });
-    }
-  }, [changeOperation, hostId, topicId, seed, origin, openSession, router]);
+  const attach = async (session: string, step: HostWriteRun['step']) => {
+    madeRef.current = session;
+    setMade(session);
+    step('attaching');
+    if (origin && !origin.attach) throw new Error('The Attach has ended. Open the Session from Home.');
+    await openSession({ hostId, destination: { sessionName: session, topic: { id: topicId as TopicId, seed } }, origin });
+    return true as const;
+  };
+  const opened = (done: true | undefined) => { if (done && !closed.current) router.dismissTo('/terminal'); };
 
-  const addFolder = useCallback((wanted: string) => {
-    if (currentOperation.current.kind !== 'ready' || !present.current) return;
+  const addFolder = (wanted: string) => {
+    if (closed.current || madeRef.current !== null) return;
     if (wanted === '') {
-      setError('Give a folder on the Host.');
+      setFolderError('Give a folder on the Host.');
       return;
     }
-    changeOperation({ kind: 'creating' });
-    setError(undefined);
-    void (async () => {
-      try {
-        const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
-        if (!host) throw new Error('This Host is no longer saved.');
-        if (!present.current) return;
-        const added = await appConnections().write(host, (transport, muxify) =>
-          muxify.addSession((command) => transport.exec(command), topicId as TopicId, wanted));
-        if (added.kind === 'failed') {
-          say(`${host.displayName} made no Session: ${added.error}`);
-          if (present.current) setError(added.error);
-          changeOperation({ kind: 'ready' });
-          return;
-        }
-        say(`${host.displayName} made ${added.session}`);
-        changeOperation({ kind: 'created', session: added.session, attaching: false });
-        if (present.current) await attachSession(added.session);
-      } catch (caught) {
-        if (present.current) setError(describeConnectionFailure(caught));
-        changeOperation({ kind: 'ready' });
+    setFolderError(undefined);
+    void send(async ({ host, step, refuse }) => {
+      const added = await appConnections().write(host, (transport, muxify) => {
+        step('sending');
+        return muxify.addSession((command) => transport.exec(command), topicId as TopicId, wanted);
+      });
+      if (added.kind === 'failed') {
+        say(`${host.displayName} made no Session: ${added.error}`);
+        return refuse(added.error);
       }
-    })();
-  }, [changeOperation, hostId, topicId, attachSession]);
+      say(`${host.displayName} made ${added.session}`);
+      return attach(added.session, step);
+    }).then(opened);
+  };
 
-  const retryAttach = useCallback(() => {
-    const current = currentOperation.current;
-    if (current.kind === 'created' && !current.attaching && present.current) void attachSession(current.session);
-  }, [attachSession]);
+  const retryAttach = () => {
+    const session = madeRef.current;
+    if (session === null || closed.current) return;
+    void send(({ step }) => attach(session, step)).then(opened);
+  };
+
+  const create = () => (made === null ? addFolder(selectedFolder ?? folder.value.trim()) : retryAttach());
+
+  // A new Session is one the Topic did not have when the sheet opened.
+  const checkMade = () => {
+    void check(async ({ host, step, refuse }) => {
+      const read = await appConnections().read(host, (transport, muxify) =>
+        muxify.show((command) => transport.exec(command), topicId as TopicId));
+      if (read.kind === 'failed') throw new Error(read.error);
+      const before = new Set(seed?.sessions.map((session) => session.id));
+      const added = read.topic.sessions.find((session) => !before.has(session.id));
+      if (!added) return refuse(`${read.topic.label} has no new Session on ${host.displayName}. Create and open sends it again.`);
+      return attach(added.name, step);
+    }).then(opened);
+  };
 
   const cancel = () => {
-    const current = currentOperation.current;
-    if (current.kind === 'creating' || (current.kind === 'created' && current.attaching)) return;
-    present.current = false;
+    if (write.kind === 'running') return;
+    closed.current = true;
     router.back();
   };
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen
-        options={{
-          title: 'Add a Session',
-          gestureEnabled: !adding,
-          headerLeft: () => (
-            <ToolbarWord
-              label={created === '1' && !completion ? 'Add later' : 'Cancel'}
-              disabled={adding}
-              color={palette.controlAccent}
-              bold={false}
-              onPress={cancel}
-            />
-          ),
-          headerRight: () => (
-            <ToolbarWord
-              label={adding ? 'Creating…' : completion ? 'Retry Attach' : 'Create and open'}
-              color={adding ? palette.secondaryLabel : palette.controlAccent}
-              disabled={adding || (!completion && selectedFolder === null && query.trim() === '')}
-              onPress={completion ? retryAttach : () => addFolder(selectedFolder ?? folder.value.trim())}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: 'Add a Session', gestureEnabled: write.kind !== 'running' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button tintColor={palette.controlAccent} disabled={write.kind === 'running'} onPress={cancel}>
+          {created === '1' && made === null ? 'Add later' : 'Cancel'}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          variant="done"
+          tintColor={palette.controlAccent}
+          disabled={locked || (made === null && selectedFolder === null && query.trim() === '')}
+          onPress={create}>
+          {made === null ? 'Create and open' : 'Retry Attach'}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
 
       <Host style={styles.fill} matchContents={false}>
         <Form
@@ -178,6 +167,15 @@ export default function TopicAddSessionScreen() {
             background(palette.background),
             tint(palette.controlAccent),
           ]}>
+          <HostWriteRow
+            write={write}
+            words={{ host: hostName, sending: `Creating a Session in ${seed?.label ?? 'the Topic'}`,
+              attaching: made === null ? undefined : `Opening ${made}`, mayHaveHappened: 'The Session may exist.' }}
+            palette={palette}
+            onRetry={create}
+            retryLabel={made === null ? 'Retry' : 'Retry Attach'}
+            onCheck={checkMade}
+          />
           {created === '1' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
             <Text>{seed ? `${seed.label} was created.` : 'The Topic was created.'}</Text>
             <Text>Choose a folder to add a Session, or add one later.</Text>
@@ -196,14 +194,14 @@ export default function TopicAddSessionScreen() {
                 accessibilityLabel(paths.kind === 'old' ? 'Folder' : 'Search folders'),
                 textInputAutocapitalization('never'),
                 autocorrectionDisabled(),
-                disabled(operation.kind !== 'ready'),
+                disabled(!choosing),
               ]}
             />
-            <FieldError error={error} palette={palette} />
+            <FieldError error={folderError} palette={palette} />
             {paths.kind === 'loading' && <Text>Reading folders…</Text>}
             {paths.kind === 'failed' && <>
               <FieldError error={paths.error} palette={palette} />
-              <Button label="Retry" onPress={() => setReadAttempt((value) => value + 1)} modifiers={[disabled(operation.kind !== 'ready')]} />
+              <Button label="Retry" onPress={() => setReadAttempt((value) => value + 1)} modifiers={[disabled(!choosing)]} />
             </>}
             {paths.kind === 'listed' && sections.length === 0 && <Text>No matching folders.</Text>}
           </Section>
@@ -213,8 +211,8 @@ export default function TopicAddSessionScreen() {
             modifiers={[listRowBackground(palette.rowSurface)]}>
             {section.choices.map((choice, index) => <Button
               key={`${choice.directory}:${index}`}
-              onPress={() => { if (present.current && currentOperation.current.kind === 'ready') setSelectedFolder(choice.directory); }}
-              modifiers={[disabled(operation.kind !== 'ready'), accessibilityLabel(`Select folder ${choice.directory}`)]}>
+              onPress={() => choose(choice.directory)}
+              modifiers={[disabled(!choosing), accessibilityLabel(`Select folder ${choice.directory}`)]}>
               <VStack alignment="leading" spacing={3}>
                 <Text modifiers={[foregroundColor(palette.toolbarTint)]}>{selectedFolder === choice.directory ? `✓ ${choice.label}` : choice.label}</Text>
                 <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel), lineLimit(1)]}>{choice.directory}</Text>
@@ -226,7 +224,7 @@ export default function TopicAddSessionScreen() {
             </Button>)}
           </Section>)}
           {paths.kind !== 'old' && query.trim() !== '' && <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-            <Button label={`Use ${query.trim()}`} onPress={() => { if (present.current && currentOperation.current.kind === 'ready') setSelectedFolder(query.trim()); }} modifiers={[disabled(operation.kind !== 'ready')]} />
+            <Button label={`Use ${query.trim()}`} onPress={() => choose(query.trim())} modifiers={[disabled(!choosing)]} />
           </Section>}
 
         </Form>

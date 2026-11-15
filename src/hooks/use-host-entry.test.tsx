@@ -35,7 +35,7 @@ jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings
 jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpenAttach(...args) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ openConnection: jest.fn(), lifecycleChanged: jest.fn() }) }));
 jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => mockReadTopic(...args) }));
-jest.mock('@/topics/wake-topic', () => ({ WAKE_LABEL: {}, wakeTopic: jest.fn() }));
+jest.mock('@/topics/act-on-topic', () => ({ sendTopicOrder: jest.fn() }));
 
 const host = { id: 'host', displayName: 'Host', address: 'host', port: 22, identityId: 'key' };
 const records: Records = { hosts: [host], identities: [], fingerprints: [], recentSessions: [], lastPlace: null };

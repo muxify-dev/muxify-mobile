@@ -67,11 +67,6 @@ export async function saveTopicEdit(
   return { saved: now, errors };
 }
 
-/** Every change refused for one reason, as when the Host could not be reached and nothing was sent. */
-export function unsent(saved: TopicFields, wanted: TopicFields, error: string): FieldErrors {
-  return Object.fromEntries(changes(saved, wanted).map(({ field }) => [field, error]));
-}
-
 function applied(fields: TopicFields, change: TopicChange): TopicFields {
   switch (change.field) {
     case 'title':

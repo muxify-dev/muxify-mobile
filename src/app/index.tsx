@@ -30,7 +30,6 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
-import { ToolbarGlyphButton } from '@/components/toolbar-glyph-button';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
@@ -91,19 +90,10 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen
-        options={{
-          title: 'Hosts',
-          headerLeft: () => (
-            <ToolbarGlyphButton
-              systemImage="gearshape"
-              label="Settings"
-              tint={palette.toolbarTint}
-              onPress={() => router.push('/settings')}
-            />
-          ),
-        }}
-      />
+      <Stack.Screen options={{ title: 'Hosts' }} />
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button icon="gearshape" accessibilityLabel="Settings" onPress={() => router.push('/settings')} />
+      </Stack.Toolbar>
 
       {hosts === null ? null : hosts.length === 0 ? (
         <EmptyState

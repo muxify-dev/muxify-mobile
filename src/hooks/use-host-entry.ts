@@ -2,15 +2,20 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert } from 'react-native';
 
+import { ended, IDLE, reached, send, type HostWrite } from '@/domain/host-write';
 import { describeError } from '@/lib/describe-error';
+import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
 import type { TopicId } from '@/topics/environment';
 import { chooseTopicSession } from '@/topics/open-topic';
+import { sendTopicOrder } from '@/topics/act-on-topic';
 import { readTopic } from '@/topics/read-topic';
 import { topicSeedParam, type TopicDetail } from '@/topics/topic-detail';
-import { WAKE_LABEL, wakeTopic, type Wake } from '@/topics/wake-topic';
+import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
+
+import { alertCardWrite } from './use-topic-card-writes';
 
 interface EntryFeedback {
   isCurrent: () => boolean;
@@ -96,10 +101,10 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
         const wake: Wake | undefined = index === 0 ? 'reopen' : index === 1 ? 'start-fresh' : undefined;
         if (!wake) return;
         run(topic.id, async (delivery) => {
-          const result = await wakeTopic(hostId, topic.id, wake);
+          const end = await wakeOnce(hostId, topic.id, wake);
           if (!delivery.isCurrent()) return;
-          if (result.kind === 'failed') {
-            Alert.alert(`Could not ${WAKE_LABEL[wake]}`, result.error);
+          if (end.kind !== 'idle') {
+            alertCardWrite(WAKE_LABEL[wake], end);
             return;
           }
           await readAndAttach(topic.id, delivery);
@@ -118,4 +123,21 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
   }, [hostId, run, deliverSession, onAttached]);
 
   return { openTopic, openSession, busyTopic };
+}
+
+/**
+ * One wake from a card tap, as a Host Write, ended. The tap has its own
+ * spinner and its own one-at-a-time rule, so it moves the Host Write itself
+ * rather than through a runner.
+ */
+async function wakeOnce(hostId: string, topicId: TopicId, wake: Wake): Promise<HostWrite> {
+  let write = send(IDLE, 0)!;
+  try {
+    const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
+    if (!host) return ended(write, { kind: 'refused', reason: 'This Host is no longer saved.' });
+    const result = await sendTopicOrder(host, topicId, { kind: 'wake', wake }, () => { write = reached(write, 'sending'); });
+    return ended(write, result.kind === 'failed' ? { kind: 'refused', reason: result.error } : { kind: 'done' });
+  } catch (error) {
+    return ended(write, { kind: 'threw', reason: describeConnectionFailure(error) });
+  }
 }
