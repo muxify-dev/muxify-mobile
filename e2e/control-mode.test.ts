@@ -106,6 +106,8 @@ interface LinkTap {
   lines: string[];
   /** While true, what tmux says is dropped: the link took a line and died before the reply. */
   deaf: boolean;
+  /** The link goes deaf from the first line written that starts with this. */
+  deafFrom?: string;
   /** The next Connection opens when this resolves. */
   gate: Promise<void>;
 }
@@ -137,7 +139,9 @@ function localTransport(children: ChildProcess[], tap?: LinkTap): TmuxTransport 
       });
       return {
         write: (bytes) => {
-          tap?.lines.push(...Buffer.from(bytes).toString('utf8').split('\n').filter((line) => line !== ''));
+          const lines = Buffer.from(bytes).toString('utf8').split('\n').filter((line) => line !== '');
+          tap?.lines.push(...lines);
+          if (tap?.deafFrom && lines.some((line) => line.startsWith(tap.deafFrom as string))) tap.deaf = true;
           if (open) child.stdin.write(Buffer.from(bytes));
         },
         // What the foreground check asks. A dead child is a dead channel, and
@@ -192,7 +196,7 @@ function attachTo(options: { sessionName?: string; record?: Host; colours?: Pane
     store,
     openConnection: async (): Promise<HostConnection> => {
       await options.tap?.gate;
-      if (options.tap) options.tap.deaf = false;
+      if (options.tap) Object.assign(options.tap, { deaf: false, deafFrom: undefined });
       return {
         transport: localTransport(children, options.tap),
         fingerprint: 'SHA256:local',
@@ -696,7 +700,7 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
     await reaches(attach, 'connected');
     await until('a discarded notice', () => attach.state().input.length > 0);
     expect(attach.state().input).toEqual([
-      { kind: 'discarded', paneId, preview: 'zzz', reason: 'server-restarted' },
+      { kind: 'discarded', paneId, preview: 'zzz', reason: 'server-restarted', message: false },
     ]);
     await wait(700);
     expect(screen()).toBe('');
@@ -721,4 +725,175 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
 
     await attach.close();
   }, 30000);
+
+  describe('a paste and a Composer Send, across a break', () => {
+    /** A stopped server answers nothing, also not the `kill-server` of the clean-up. */
+    let frozen: number | null = null;
+    afterEach(() => {
+      if (frozen !== null) process.kill(frozen, 'SIGCONT');
+      frozen = null;
+    });
+
+    /** Says each check as it passes, so a run shows what it proved. */
+    function check(what: string, actual: unknown, expected: unknown): void {
+      expect(actual).toEqual(expected);
+      process.stdout.write(`  ok: ${what}\n`);
+    }
+
+    /** An Attach on a Pane that runs `cat` from a clean screen, with its mark read. */
+    async function catPane() {
+      tmux(['respawn-pane', '-k', '-t', TYPED, 'cat']);
+      tmux(['clear-history', '-t', TYPED]);
+      const tap: LinkTap = { lines: [], deaf: false, gate: Promise.resolve() };
+      const kit = attachTo({ sessionName: TYPED, tap });
+      const paneId = await activePane(kit.attach);
+      kit.attach.view(paneId);
+      await wait(400);
+      const screen = () => tmux(['capture-pane', '-p', '-t', paneId]).trimEnd();
+      /** The tmux server stops reading, as a Host does whose network went away mid-line. */
+      const serverPid = Number(tmux(['display-message', '-p', '#{pid}']).trim());
+      const freeze = () => {
+        frozen = serverPid;
+        process.kill(serverPid, 'SIGSTOP');
+      };
+      const thaw = () => {
+        frozen = null;
+        process.kill(serverPid, 'SIGCONT');
+      };
+      /**
+       * Ends the link, and starts a stopped server again. The next link opens
+       * when the returned function is called.
+       *
+       * The server holds the client's stdout, so the link closes only once
+       * the server runs again and reads what the dead client wrote.
+       */
+      const breakLink = async () => {
+        let open!: () => void;
+        tap.gate = new Promise<void>((resolve) => {
+          open = resolve;
+        });
+        kit.children[kit.children.length - 1].kill('SIGKILL');
+        await wait(200);
+        if (frozen !== null) thaw();
+        await reaches(kit.attach, 'reconnecting');
+        return open;
+      };
+      /** Writes every line that started a paste again, as a late copy from a lost link. */
+      const replayLate = async () => {
+        const lines = tap.lines.filter((line) => line.startsWith("'set-buffer'") || line.startsWith("'if-shell'"));
+        const late = spawn('tmux', ['-L', SOCKET, '-C', 'attach-session', '-t', TYPED]);
+        late.stdin.write(`${lines.join('\n')}\n`);
+        await wait(700);
+        late.kill();
+        return lines.length;
+      };
+      return { ...kit, tap, paneId, screen, breakLink, freeze, replayLate };
+    }
+
+    it('sends a Composer message once, whether tmux took its line before the break or not', async () => {
+      ownServer();
+      const pane = await catPane();
+      const { attach, paneId, screen, tap } = pane;
+
+      // tmux runs the whole paste line, and the link dies before the reply.
+      tap.deafFrom = "'if-shell'";
+      attach.composer.edit(paneId, 'alpha');
+      await attach.composer.send(paneId);
+      check('the Draft keeps the message until tmux confirms it', attach.composer.draft(paneId).text, 'alpha');
+      await until('alpha in the Pane', () => screen() === 'alpha\nalpha');
+      let reopen = await pane.breakLink();
+      reopen();
+      await reaches(attach, 'connected');
+      await wait(900);
+      check('a Send whose reply was lost is not held', attach.state().input, []);
+      check('a Send whose reply was lost shows once', screen(), 'alpha\nalpha');
+      check('the Draft is empty when the next Connection confirms the message', attach.composer.draft(paneId).text, '');
+
+      // The server stops with the Send on its way, and the link ends.
+      pane.freeze();
+      attach.composer.edit(paneId, 'bravo');
+      await attach.composer.send(paneId);
+      await wait(300);
+      reopen = await pane.breakLink();
+      reopen();
+      await reaches(attach, 'connected');
+      await until('a held notice', () => attach.state().input.length > 0);
+      check('a Send that did not arrive is held for the user', attach.state().input, [
+        expect.objectContaining({ kind: 'held', paneId, preview: 'bravo⏎', reasons: ['risky-keys'] }),
+      ]);
+      check('a held Send has not reached the Pane', screen(), 'alpha\nalpha');
+      check('the Draft keeps a held message', attach.composer.draft(paneId), expect.objectContaining({ text: 'bravo', phase: expect.objectContaining({ kind: 'sending' }) }));
+      attach.heldInput(paneId, 'send');
+      await until('bravo in the Pane', () => screen().endsWith('bravo\nbravo'));
+      await wait(700);
+      check('a held Send shows once after Send', screen(), 'alpha\nalpha\nbravo\nbravo');
+      check('nothing waits after the Send', attach.state().input, []);
+      check('the Draft is empty after tmux confirms the held message', attach.composer.draft(paneId).text, '');
+
+      const replayed = await pane.replayLate();
+      process.stdout.write(`  (wrote ${replayed} lines of both links again)\n`);
+      check('late copies of every paste line type nothing', screen(), 'alpha\nalpha\nbravo\nbravo');
+      process.stdout.write(`  (tmux keeps ${tmux(['list-buffers']).split('\n').filter(Boolean).length} buffers)\n`);
+
+      // The server stops with the Send on its way, and the Pane starts again during the break.
+      pane.freeze();
+      attach.composer.edit(paneId, 'charlie');
+      await attach.composer.send(paneId);
+      await wait(300);
+      reopen = await pane.breakLink();
+      tmux(['respawn-pane', '-k', '-t', paneId, 'cat']);
+      reopen();
+      await reaches(attach, 'connected');
+      await until('a discarded notice', () => attach.state().input.length > 0);
+      check('a message for a Pane that started again is discarded', attach.state().input, [
+        expect.objectContaining({ kind: 'discarded', paneId, reason: 'pane-replaced', message: true }),
+      ]);
+      check('the Draft keeps a discarded message, and takes edits', attach.composer.draft(paneId), expect.objectContaining({
+        text: 'charlie',
+        phase: { kind: 'idle' },
+        message: 'Not sent: the Pane was started again. The Draft is kept.',
+      }));
+      await wait(700);
+      check('a discarded message is not in the Pane', screen(), '');
+
+      await attach.close();
+    }, 60000);
+
+    it('sends a plain paste again after a break, and the Pane shows it once', async () => {
+      ownServer();
+      const pane = await catPane();
+      const { attach, paneId, screen, tap } = pane;
+
+      // A first paste, so the link has read the tmux version before the server stops.
+      await attach.paste({ kind: 'text', text: 'one ' }, () => Promise.resolve(true));
+      await until('the first paste in the Pane', () => screen() === 'one');
+
+      pane.freeze();
+      await attach.paste({ kind: 'text', text: 'two' }, () => Promise.resolve(true));
+      await wait(300);
+      const reopen = await pane.breakLink();
+      reopen();
+      await reaches(attach, 'connected');
+      await until('the second paste in the Pane', () => screen() === 'one two');
+      await wait(900);
+      check('a plain paste is sent again without a question', attach.state().input, []);
+      check('a plain paste sent again shows once', screen(), 'one two');
+
+      // tmux takes the line of a paste, and the link dies before the reply.
+      tap.deafFrom = "'if-shell'";
+      await attach.paste({ kind: 'text', text: ' three' }, () => Promise.resolve(true));
+      await until('the third paste in the Pane', () => screen() === 'one two three');
+      const again = await pane.breakLink();
+      again();
+      await reaches(attach, 'connected');
+      await wait(900);
+      check('a paste whose reply was lost is confirmed, not sent again', screen(), 'one two three');
+      check('nothing waits after the reconnect', attach.state().input, []);
+
+      await pane.replayLate();
+      check('late copies of every paste line type nothing', screen(), 'one two three');
+
+      await attach.close();
+    }, 60000);
+  });
 });

@@ -20,7 +20,7 @@
  * Pure string building, no transport.
  */
 
-import type { MarkRead, PaneMark, Seq } from './input-lane';
+import type { PaneMark, Seq } from './input-lane';
 import type { RenderedPress } from './key-press';
 import { tmuxAtLeast } from './tmux-version';
 
@@ -94,8 +94,12 @@ export function renderControlCommand(argv: TmuxArgv): string {
  */
 export function describeCommand(argv: TmuxArgv): string {
   if (argv[0] === 'set-buffer') return `set-buffer (${argv.at(-1)?.length ?? 0} characters)`;
-  // Its last argument is the commands it runs, and those carry typed input.
-  if (argv[0] === 'if-shell') return `${argv.slice(0, -1).join(' ')} (commands hidden)`;
+  // The arguments after the condition are the commands it runs, and those carry typed input.
+  if (argv[0] === 'if-shell') {
+    const target = argv.indexOf('-t');
+    const condition = target >= 0 ? target + 2 : argv.findIndex((arg, at) => at > 0 && !arg.startsWith('-'));
+    return `${argv.slice(0, condition + 1).join(' ')} (commands hidden)`;
+  }
   if (argv[0] !== 'send-keys') return argv.join(' ');
   const target = argv.indexOf('-t');
   const named = target >= 0 ? argv[target + 1] : '?';
@@ -426,17 +430,16 @@ export function paneMarkCommand(paneId: string, option: string): TmuxArgv {
 }
 
 /** The reply of paneMarkCommand. Null when it is not a mark at all. */
-export function parsePaneMark(line: string | undefined): MarkRead | null {
+export function parsePaneMark(line: string | undefined): Omit<PaneMark, 'refusesCopies'> | 'gone' | null {
   const [ack, serverPid, panePid, ...program] = (line ?? '').split(':');
   if (program.length === 0 || !/^\d+$/.test(serverPid)) return null;
   if (!/^\d+$/.test(panePid)) return 'gone';
-  const mark: PaneMark = {
+  return {
     serverPid: Number(serverPid),
     panePid: Number(panePid),
     program: program.join(':'),
     ack: /^\d+$/.test(ack) ? (Number(ack) as Seq) : null,
   };
-  return mark;
 }
 
 /**
@@ -456,6 +459,44 @@ export function guardsLateLines(version: string): boolean {
   return tmuxAtLeast(version, 3, 2);
 }
 
+/** What one Batch types: a key, bytes, or a paste that waits in a tmux buffer. */
+export type Typing = RenderedPress | { readonly buffer: string; readonly submit: boolean };
+
+/**
+ * The most code points in one `set-buffer`. Measured on tmux 3.8: a line
+ * with 8000 bytes ran and one with 16000 was `yacc stack overflow`.
+ */
+const PASTE_CHUNK = 2048;
+
+/**
+ * Puts a paste in a tmux buffer, in commands that each stay below what tmux
+ * can parse. Run them with `runAll`, before the line that pastes the buffer:
+ * `runChain` joins its commands into one line. Code points, not UTF-16
+ * units, so a chunk never ends inside a surrogate pair.
+ */
+export function stagePasteCommands(buffer: string, text: string): TmuxArgv[] {
+  const points = Array.from(text);
+  const commands: TmuxArgv[] = [];
+  for (let offset = 0; offset < points.length; offset += PASTE_CHUNK) {
+    const chunk = points.slice(offset, offset + PASTE_CHUNK).join('');
+    commands.push(['set-buffer', '-b', buffer, ...(offset > 0 ? ['-a'] : []), '--', chunk]);
+  }
+  return commands;
+}
+
+/**
+ * `-p` brackets the paste for a program that asked for it, `-r` keeps each
+ * line break as a line feed, and `-d` deletes the buffer. Enter goes after a
+ * pause, as in Remux: a program can take a fast Enter as part of the paste.
+ * `run-shell` without `-b` holds the rest of the line until it ends.
+ */
+function typingCommands(paneId: string, typing: Typing): TmuxArgv[] {
+  if ('key' in typing) return [sendKeyCommand(paneId, typing.key)];
+  if ('bytes' in typing) return [sendKeysCommand(paneId, typing.bytes)];
+  const paste = ['paste-buffer', '-p', '-r', '-d', '-b', typing.buffer, '-t', paneId];
+  return typing.submit ? [paste, ['run-shell', 'sleep 0.15'], sendKeyCommand(paneId, 'Enter')] : [paste];
+}
+
 /**
  * The line that types one Batch: the key, then the Pane's new Seq, then the
  * Pane's mark. Run it with `runChain`.
@@ -466,20 +507,23 @@ export function guardsLateLines(version: string): boolean {
  * a line from a lost Connection that arrives after the same Batch was sent
  * again. The mark is read in both cases, so a skipped line answers like a
  * delivered one. Measured on tmux 3.8 with `e2e/probe-input-guard.mjs`.
+ *
+ * A refused paste deletes its buffer, which no other line pastes.
  */
 export function deliverCommands(
   paneId: string,
-  key: RenderedPress,
+  typing: Typing,
   seq: Seq,
   option: string,
   guarded: boolean,
 ): TmuxArgv[] {
-  const send = 'key' in key ? sendKeyCommand(paneId, key.key) : sendKeysCommand(paneId, key.bytes);
+  const send = typingCommands(paneId, typing);
   const record = ['set-option', '-p', '-t', paneId, option, String(seq)];
   const mark = paneMarkCommand(paneId, option);
-  if (!guarded) return [send, record, mark];
+  if (!guarded) return [...send, record, mark];
+  const otherwise = 'buffer' in typing ? [renderControlCommand(['delete-buffer', '-b', typing.buffer])] : [];
   return [
-    ['if-shell', '-F', '-t', paneId, belowSeq(option, seq), `${renderControlCommand(send)} ; ${renderControlCommand(record)}`],
+    ['if-shell', '-F', '-t', paneId, belowSeq(option, seq), [...send, record].map(renderControlCommand).join(' ; '), ...otherwise],
     mark,
   ];
 }

@@ -9,7 +9,8 @@ import type { AttachmentFile } from '@/composer/types';
 import { openControlConnection } from '@/tmux/control-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { TmuxTransport } from '@/tmux/transport';
-import { describeCommand, shellQuote } from '@/tmux/commands';
+import { describeCommand, shellQuote, stagePasteCommands, type OutboxToken } from '@/tmux/commands';
+import type { MessageId, Seq } from '@/tmux/input-lane';
 
 let home: string;
 const children: ChildProcess[] = [];
@@ -93,7 +94,7 @@ it('cancels between acknowledged chunks without finalizing partial content', asy
   expect(readdirSync(root).flatMap((id) => readdirSync(join(root, id)))).toEqual([]);
 });
 
-it('round-trips Unicode, multiline text and shell syntax through a private tmux paste buffer', async () => {
+it('round-trips Unicode, multiline text and shell syntax through a private tmux paste buffer, then Enter', async () => {
   tmux('new-session', '-d', '-s', 'composer', '-x', '80', '-y', '24');
   const transport: TmuxTransport = {
     exec: async () => { throw new Error('unused'); },
@@ -113,10 +114,7 @@ it('round-trips Unicode, multiline text and shell syntax through a private tmux 
   const control = await openControlConnection(transport, { sessionName: 'composer' }, { onOutput() {}, onNotification() {}, onClosed() {} });
   const client = new TmuxClient(control);
   const text = `${'🙂'.repeat(2100)}\nsecond\tline '\\' \"quotes\" $HOME #{pane_id}\r\nlast`;
-  const buffer = await client.preparePaste(text, 'muxify-test', () => {});
-  const actual = execFileSync('tmux', ['-L', SOCKET, 'save-buffer', '-b', 'muxify-test', '-']);
-  expect(actual.toString('utf8')).toBe(text);
-  expect(describeCommand(['set-buffer', '-b', 'muxify-test', '--', text])).not.toContain('second');
+  expect(stagePasteCommands('muxify-test', text).map(describeCommand).join(' ')).not.toContain('second');
 
   // A raw receiver enables bracketed paste, proving -p follows the Pane mode
   // and -r preserves newlines. Its file is independent of terminal rendering.
@@ -132,8 +130,8 @@ it('round-trips Unicode, multiline text and shell syntax through a private tmux 
     }
   };
   await waitFor(() => existsSync(ready));
-  await buffer.paste('composer:0.0');
-  await client.pressKey('composer:0.0', 'Enter');
+  const batch = { seq: 1 as Seq, key: { kind: 'paste', text, message: 'e2e' as MessageId } as const, typedAt: 0 };
+  expect(await client.deliver('composer:0.0', batch, 'e2e' as OutboxToken)).toMatchObject({ ack: 1 });
   const expected = `\x1b[200~${text}\x1b[201~\r`;
   await waitFor(() => existsSync(output) && readFileSync(output).length >= Buffer.byteLength(expected));
   expect(readFileSync(output).toString('utf8')).toBe(expected);

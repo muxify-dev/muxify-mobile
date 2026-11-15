@@ -26,6 +26,7 @@ import {
   sendKeysCommand,
   shellQuote,
   splitWindowCommand,
+  stagePasteCommands,
   switchSessionCommand,
   tmuxQuote,
   zoomPaneCommand,
@@ -328,5 +329,15 @@ describe('what the Log says of typed input', () => {
     expect(said).not.toMatch(/68 75|hunter/);
     expect(said).toContain('%3');
     expect(said).toContain('7');
+  });
+
+  it('shows no text of a paste, staged or pasted, and no buffer name in either branch', () => {
+    const staged = stagePasteCommands('muxify-k-7-r', 'hunter2\n'.repeat(300)).map(describeCommand);
+    expect(staged).toEqual(['set-buffer (2048 characters)', 'set-buffer (352 characters)']);
+    const said = deliverCommands('%3', { buffer: 'muxify-k-7-r', submit: true }, 7 as Seq, '@muxify-in-k7f2', true)
+      .map(describeCommand)
+      .join(' ; ');
+    expect(said).not.toMatch(/muxify-k-7-r|Enter|sleep/);
+    expect(said).toContain('%3');
   });
 });

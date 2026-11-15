@@ -2,6 +2,7 @@ import { describeError } from '@/lib/describe-error';
 
 import type { OutboxToken } from './commands';
 import {
+  messageFates,
   newLane,
   noticeOf,
   pendingKeys,
@@ -13,6 +14,8 @@ import {
   type Key,
   type Lane,
   type LaneEvent,
+  type MessageFate,
+  type MessageId,
   type Seq,
 } from './input-lane';
 import type { KeyPress } from './key-press';
@@ -30,6 +33,8 @@ export interface PaneInput {
   /** `gesture`: the bytes come from a scroll or a tap, and are not sent after a break. */
   type(bytes: Uint8Array, gesture?: boolean): void;
   press(key: string | KeyPress): void;
+  /** `message`: a Composer Send, which presses Enter after it. */
+  paste(text: string, message: MessageId | null): void;
 }
 
 /**
@@ -62,6 +67,8 @@ export interface OutboxOptions {
   ttlMs: number;
   /** Every notice, in the order the Panes got a Lane, each time the notices change. */
   onNotices: (notices: InputNotice[]) => void;
+  /** A Composer message left its Lane. */
+  onMessage: (paneId: string, id: MessageId, fate: MessageFate) => void;
   /** For the Log: Pane ids, counts and Seqs. Never the keys. */
   say: (line: string) => void;
 }
@@ -109,6 +116,7 @@ export function createOutbox(options: OutboxOptions): Outbox {
     note(before, next.lane);
     for (const effect of next.effects) run(paneId, effect);
     publish();
+    for (const { id, fate } of messageFates(before, next.lane)) options.onMessage(paneId, id, fate);
   }
 
   function note(before: Lane, after: Lane): void {
@@ -174,6 +182,9 @@ export function createOutbox(options: OutboxOptions): Outbox {
           if (bytes.length > 0) typed({ kind: 'text', bytes: Array.from(bytes), gesture });
         },
         press: (key) => typed({ kind: 'key', key }),
+        paste: (text, message) => {
+          if (text.length > 0) typed({ kind: 'paste', text, message });
+        },
       };
     },
 

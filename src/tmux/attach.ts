@@ -1,6 +1,6 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
-import { busy, createComposer, type Composer } from '@/composer/composer';
-import { checkAborted, uniqueId, type AttachmentFile, type Upload } from '@/composer/types';
+import { createComposer, type Composer } from '@/composer/composer';
+import { type AttachmentFile, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { sameTyping, typingOf, type Typing } from '@/domain/typing';
@@ -11,7 +11,7 @@ import type { HostStore } from '@/storage/store';
 import type { TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
 
-import { toDraftText, type InputNotice } from './input-lane';
+import { toDraftText, type InputNotice, type Key } from './input-lane';
 import { createOutbox } from './input-outbox';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
@@ -235,6 +235,7 @@ export interface Attach {
   /**
    * Pastes into the active Pane and presses nothing after it: a paste is not
    * a send. An image goes up to the Host first, and its path is what is pasted.
+   * The paste goes into the Pane's Outbox Lane, after the keys typed before it.
    *
    * `runLines` is asked when the text has a line break and the program in the
    * Pane did not ask for bracketed paste, because that program takes each
@@ -256,12 +257,19 @@ export interface Attach {
   acceptHostKey(): Promise<void>;
   /**
    * What the user decided about a Pane's held keys: send them, move their
-   * text to the Pane's Draft, or throw them away. False when nothing was
-   * done: the Pane holds no keys, or its Draft is on its way to the Pane.
+   * text to the Pane's Draft, or throw them away. A Composer message among
+   * them is its Draft already: compose keeps that Draft, and discard empties
+   * it. False when nothing was done: the Pane holds no keys, or its Draft is
+   * uploading attachments.
    */
   heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean;
-  /** The user has read that a Pane's keys were discarded. */
-  dismissInput(paneId: string): void;
+  /**
+   * What the user decided about a Pane's discarded keys: dismiss the notice,
+   * or move the Draft of the message among them into the active Pane's
+   * Draft. That Draft can be of a Pane that is gone, which the user cannot
+   * open. False when nothing was moved.
+   */
+  discardedInput(paneId: string, action: 'dismiss' | 'compose'): boolean;
 
   // Per-Pane, for the views the screen puts Surfaces into.
   view(paneId: string): PaneView;
@@ -370,9 +378,9 @@ export function openAttach(options: AttachOptions): Attach {
   let currentSessionId: string | null = null;
 
   /**
-   * The two ways into a Pane that are not typing, on the Connection in force
-   * now: an upload to the Host, and a paste through a tmux buffer. The
-   * Composer's Send and the Key Row's ⌘v both go through this.
+   * What a paste needs from the Connection in force now, before it goes into
+   * the Outbox: an upload to the Host, and what the program in the Pane asked
+   * for. The Composer's Send and the Key Row's ⌘v both use this.
    *
    * `kept` ends each refusal with what became of the caller's text.
    */
@@ -393,45 +401,21 @@ export function openAttach(options: AttachOptions): Attach {
       return link.upload(file, signal, progress);
     };
     return {
-      check,
       upload,
-      /** `started` is called immediately before the command that reaches the Pane. */
-      async paste(paneId: string, text: string, valid: () => void, started: () => void): Promise<void> {
-        valid();
-        const buffer = await current.preparePaste(text, `muxify-${uniqueId()}`, valid);
-        try {
-          valid();
-          // Check that the captured Pane still exists, even after switching
-          // Windows or Sessions. The current Topology only lists visible Panes.
-          if (!await current.paneState(paneId)) throw new Error(`The destination Pane has gone.${kept}`);
-          valid();
-          started();
-          say(`pasting into ${paneId} (${text.length} characters)`);
-          await buffer.paste(paneId);
-        } finally {
-          await buffer.dispose().catch(() => {});
-        }
-      },
-      pressEnter: (paneId: string) => current.pressKey(paneId, 'Enter'),
       paneState: (paneId: string) => current.paneState(paneId),
     };
   }
 
-  const composer = createComposer((paneId) => {
-    const delivery = openDelivery(' Draft kept.');
-    return {
-      upload: delivery.upload,
-      async deliver(text, signal, started) {
-        const valid = () => { checkAborted(signal); delivery.check(); };
-        await delivery.paste(paneId, text, valid, started);
-        // As in remux, let the receiving application settle its pasted text
-        // before the separate Enter. Never replay either after a reconnect.
-        await new Promise<void>((resolve) => setTimeout(resolve, 150));
-        valid();
-        await delivery.pressEnter(paneId);
-      },
-    };
-  });
+  // The Lane of the Draft's Pane sends the message from Send on: it keeps it
+  // through a break, and the guard in tmux refuses a copy. The Draft keeps
+  // the text until the Lane settles it.
+  const composer = createComposer((paneId) => ({
+    upload: (file, signal, progress) => openDelivery(' Draft kept.').upload(file, signal, progress),
+    deliver: (text, id) => {
+      say(`sending a message to ${paneId} (${text.length} characters)`);
+      outbox.lane(paneId).paste(text, id);
+    },
+  }));
 
   /** Which automatic sources have already had their one attempt. */
   const attempted = new Set<ReconnectSource>();
@@ -484,6 +468,10 @@ export function openAttach(options: AttachOptions): Attach {
     now: () => clock.now(),
     ttlMs: INPUT_TTL_MS,
     onNotices: (input) => change({ input }),
+    onMessage: (paneId, id, fate) => {
+      say(`the message to ${paneId} is ${fate.kind}`);
+      composer.settle(paneId, id, fate);
+    },
     say: speakingAs(log, 'outbox'),
   });
 
@@ -1357,16 +1345,16 @@ export function openAttach(options: AttachOptions): Attach {
     async paste(content: Paste, runLines: () => Promise<boolean>): Promise<void> {
       const pane = state.topology.activePane;
       if (!pane) throw new Error('No active Pane.');
-      const delivery = openDelivery('');
       const text =
         content.kind === 'text'
           ? content.text
-          : shellQuote(await delivery.upload(content.file, new AbortController().signal, () => {}));
+          : shellQuote(await openDelivery('').upload(content.file, new AbortController().signal, () => {}));
       if (/[\r\n]/.test(text)) {
-        const program = await delivery.paneState(pane.id);
+        const program = await openDelivery('').paneState(pane.id);
         if (program && !program.bracketedPaste && !(await runLines())) return;
       }
-      await delivery.paste(pane.id, text, delivery.check, () => {});
+      say(`pasting into ${pane.id} (${text.length} characters)`);
+      outbox.lane(pane.id).paste(text, null);
     },
 
     async clearPane(): Promise<void> {
@@ -1414,19 +1402,31 @@ export function openAttach(options: AttachOptions): Attach {
     heldInput(paneId: string, action: 'send' | 'compose' | 'discard'): boolean {
       if (closed) return false;
       if (action === 'send') return outbox.release(paneId);
-      if (action === 'discard') return outbox.take(paneId).length > 0;
-      // A Draft that is on its way to the Pane takes no edit, and the keys
-      // must not go where the user cannot see them.
-      const draft = composer.draft(paneId);
-      if (busy(draft)) return false;
+      const { phase } = composer.draft(paneId);
+      // A Draft that uploads takes no edit, and the keys must not go where
+      // the user cannot see them.
+      if (action === 'compose' && phase.kind === 'uploading') return false;
+      const sending = phase.kind === 'sending' ? phase.id : null;
       const keys = outbox.take(paneId);
       if (keys.length === 0) return false;
-      composer.edit(paneId, draft.text + toDraftText(keys).text);
+      // Taking the keys gave the message back to its Draft, which edits now.
+      const at = keys.findIndex((key) => sending !== null && key.kind === 'paste' && key.message === sending);
+      if (action === 'discard') {
+        if (at >= 0) composer.clear(paneId);
+        return true;
+      }
+      const text = (part: Key[]) => toDraftText(part).text;
+      const { text: draft } = composer.draft(paneId);
+      composer.edit(paneId, at < 0 ? draft + text(keys) : text(keys.slice(0, at)) + draft + text(keys.slice(at + 1)));
       return true;
     },
 
-    dismissInput(paneId: string): void {
-      if (!closed) outbox.dismiss(paneId);
+    discardedInput(paneId: string, action: 'dismiss' | 'compose'): boolean {
+      if (closed) return false;
+      const active = state.topology.activePane?.id;
+      if (action === 'compose' && (active === undefined || !composer.move(paneId, active))) return false;
+      outbox.dismiss(paneId);
+      return true;
     },
 
     view: viewFor,

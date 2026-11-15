@@ -25,12 +25,14 @@ import {
   selectPaneTowardCommand,
   selectWindowCommand,
   sendKeyCommand,
+  stagePasteCommands,
   splitWindowCommand,
   switchSessionCommand,
   zoomPaneCommand,
   type PaneColours,
   type OutboxToken,
   type PaneDirection,
+  type Typing,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
 import type { Batch, DeliverResult, Seq } from './input-lane';
@@ -338,36 +340,9 @@ export class TmuxClient {
     await this.runner.runAll(paneIds.flatMap((id) => reportPaneColoursCommands(id, colours)));
   }
 
-  /** tmux supplies bracketed paste only when the destination application asks. */
-  async preparePaste(text: string, name: string, check: () => void): Promise<{
-    paste(paneId: string): Promise<void>;
-    dispose(): Promise<void>;
-  }> {
-    // Small commands stay below tmux's command-line limit. Iterating code points
-    // also keeps surrogate pairs together at the chunk boundary.
-    const points = Array.from(text);
-    const dispose = async () => { await this.runner.run(['delete-buffer', '-b', name]); };
-    try {
-      for (let offset = 0; offset < points.length; offset += 2048) {
-        check();
-        await this.mustRun('prepare paste', [
-          'set-buffer', '-b', name, ...(offset ? ['-a'] : []), '--',
-          points.slice(offset, offset + 2048).join(''),
-        ]);
-      }
-    } catch (error) {
-      await dispose().catch(() => {});
-      throw error;
-    }
-    return {
-      paste: (paneId) => this.mustRun('paste message', ['paste-buffer', '-p', '-r', '-d', '-b', name, '-t', paneId]),
-      dispose,
-    };
-  }
-
   /**
-   * Presses one named key as part of something the app does: the Enter behind
-   * a Composer Send, the `C-l` of a clear. It fails when the Connection does.
+   * Presses one named key as part of something the app does: the `C-l` of a
+   * clear. It fails when the Connection does.
    *
    * Not for what the user types. Typed keys go through the Outbox, which
    * numbers them and can send them again; see `deliver`.
@@ -382,21 +357,38 @@ export class TmuxClient {
    */
   async deliver(paneId: string, batch: Batch, token: OutboxToken): Promise<DeliverResult> {
     const { naming, guarded } = await this.host();
-    const { key } = batch;
-    const rendered =
-      key.kind === 'text'
-        ? { bytes: Uint8Array.from(key.bytes) }
-        : typeof key.key === 'string'
-          ? { key: key.key }
-          : renderPress(key.key, naming);
-    return deliveryOf(
-      await this.runner.runChain(deliverCommands(paneId, rendered, batch.seq, inputOption(token), guarded)),
-    );
+    const { key, seq } = batch;
+    const option = inputOption(token);
+    const type = async (typing: Typing) =>
+      deliveryOf(await this.runner.runChain(deliverCommands(paneId, typing, seq, option, guarded)), guarded);
+    switch (key.kind) {
+      case 'text':
+        return type({ bytes: Uint8Array.from(key.bytes) });
+      case 'key':
+        return type(typeof key.key === 'string' ? { key: key.key } : renderPress(key.key, naming));
+      case 'paste': {
+        // New for each write: a staging line of a lost Connection that
+        // arrives late then fills a buffer that no line pastes.
+        const buffer = `muxify-${token}-${seq}-${Math.random().toString(36).slice(2, 10)}`;
+        const staged = await this.runner.runAll(stagePasteCommands(buffer, key.text));
+        const failed = staged.find((reply) => !reply.ok);
+        const result = failed
+          ? { refused: failed.text.join(' ').trim() || 'tmux did not take the paste' }
+          : await type({ buffer, submit: key.message !== null });
+        // `paste-buffer -d` deletes the buffer only when it pasted. Any other
+        // end leaves the text, maybe a password, in tmux. A missing buffer
+        // makes `delete-buffer` fail, and that changes nothing here.
+        const pasted = result !== 'gone' && !('refused' in result) && result.ack !== null && result.ack >= seq;
+        if (!pasted) await this.runner.run(['delete-buffer', '-b', buffer]);
+        return result;
+      }
+    }
   }
 
   /** The Pane's mark alone. Rejects only when the Connection ends. */
   async readMark(paneId: string, token: OutboxToken): Promise<DeliverResult> {
-    return deliveryOf([await this.runner.run(paneMarkCommand(paneId, inputOption(token)))]);
+    const { guarded } = await this.host();
+    return deliveryOf([await this.runner.run(paneMarkCommand(paneId, inputOption(token)))], guarded);
   }
 
   /** Makes the Pane refuse a Batch that a lost Connection may still deliver. */
@@ -405,6 +397,7 @@ export class TmuxClient {
     const option = inputOption(token);
     return deliveryOf(
       await this.runner.runChain([burnSeqCommand(paneId, seq, option, guarded), paneMarkCommand(paneId, option)]),
+      guarded,
     );
   }
 
@@ -630,9 +623,10 @@ function meansMissingTarget(reply: CommandReply): boolean {
  * The mark is the last reply, and tmux prints it even after the key failed. A
  * line that tmux could not run at all has no mark, only its error.
  */
-function deliveryOf(replies: CommandReply[]): DeliverResult {
+function deliveryOf(replies: CommandReply[], refusesCopies: boolean): DeliverResult {
   const last = replies.at(-1);
-  const mark = last?.ok ? parsePaneMark(last.text[0]) : null;
+  const parsed = last?.ok ? parsePaneMark(last.text[0]) : null;
+  const mark = parsed === null || parsed === 'gone' ? parsed : { ...parsed, refusesCopies };
   if (mark === 'gone') return 'gone';
   const refused = replies.find((reply) => !reply.ok);
   if (refused) {

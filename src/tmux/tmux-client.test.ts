@@ -2,7 +2,7 @@ import { bytesToUtf8 } from '@/lib/utf8';
 
 import { renderControlCommand, type OutboxToken, type TmuxArgv } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
-import type { Batch, Key, Seq } from './input-lane';
+import type { Batch, Key, MessageId, Seq } from './input-lane';
 import { TmuxClient, TmuxError } from './tmux-client';
 
 /**
@@ -252,14 +252,18 @@ describe('typing a Batch', () => {
   const text = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: false });
 
   /** A tmux that answers a chain with these replies, whatever the chain is. */
-  function chained(version: string, replies: (string[] | { error: string[] })[]) {
+  function chained(version: string, replies: (string[] | { error: string[] })[], staging: string[] | null = null) {
     const asked: string[] = [];
     const runner: CommandRunner = {
       run: (argv) => {
         asked.push(renderControlCommand(argv));
         return Promise.resolve(replyOf(true, argv.at(-1) === '#{version}' ? [version] : (replies[0] as string[])));
       },
-      runAll: () => Promise.reject(new Error('not used')),
+      /** `staging`: tmux refuses each `set-buffer` with this error. */
+      runAll: (commands) => {
+        asked.push(...commands.map(renderControlCommand));
+        return Promise.resolve(commands.map(() => (staging ? replyOf(false, staging) : replyOf(true, []))));
+      },
       runChain: (commands) => {
         asked.push(commands.map(renderControlCommand).join(' ; '));
         return Promise.resolve(
@@ -277,6 +281,7 @@ describe('typing a Batch', () => {
       panePid: 200,
       program: 'zsh',
       ack: 7,
+      refusesCopies: true,
     });
     expect(asked).toEqual([
       VERSION,
@@ -316,21 +321,103 @@ describe('typing a Batch', () => {
     ['a line that an old tmux stopped at a missing Pane', [{ error: ["can't find pane: %4"] }], 'gone'],
     ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['6:100:200:zsh']], { refused: 'repeat count invalid' }],
     ['a line that tmux could not parse', [{ error: ['yacc stack overflow'] }], { refused: 'yacc stack overflow' }],
-    ['a line that was a copy', [[], ['9:100:200:vim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9 }],
+    ['a line that was a copy', [[], ['9:100:200:vim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9, refusesCopies: true }],
   ] as [string, (string[] | { error: string[] })[], unknown][])('reads %s', async (_, replies, result) => {
     const { client } = chained('3.8', replies);
     expect(await client.deliver('%4', batch(text('hi')), token)).toEqual(result);
   });
 
+  describe('a paste', () => {
+    const paste = (value: string, submit: boolean): Key => ({
+      kind: 'paste',
+      text: value,
+      message: submit ? ('m1' as MessageId) : null,
+    });
+    /** The asked lines with the buffer name, which is new for each write, as `BUF`. */
+    const named = (asked: string[]) => {
+      const buffer = /'(muxify-k7f2-7-[a-z0-9]+)'/.exec(asked.join('\n'))?.[1] ?? 'none';
+      return { buffer, lines: asked.map((line) => line.split(`'${buffer}'`).join('BUF')) };
+    };
+
+    it('stages the text in chunks of whole characters, then pastes it, waits and presses Enter under the guard', async () => {
+      const { client, asked } = chained('3.8', [[], [], [], [], [], ['7:100:200:zsh']]);
+      const long = `${'a'.repeat(2047)}🙂b`;
+      expect(await client.deliver('%4', batch(paste(long, true)), token)).toMatchObject({ ack: 7 });
+      const { buffer, lines } = named(asked);
+      expect(buffer).toMatch(/^muxify-k7f2-7-[a-z0-9]+$/);
+      expect(lines).toEqual([
+        VERSION,
+        `'set-buffer' '-b' BUF '--' '${'a'.repeat(2047)}🙂'`,
+        "'set-buffer' '-b' BUF '-a' '--' 'b'",
+        `${GUARD} "'paste-buffer' '-p' '-r' '-d' '-b' BUF '-t' '%4' ; 'run-shell' 'sleep 0.15' ; ` +
+          `'send-keys' '-t' '%4' 'Enter' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ` +
+          `"'delete-buffer' '-b' BUF" ; ${MARK}`,
+      ]);
+    });
+
+    it('pastes without Enter, and without the guard on a tmux that cannot compare numbers', async () => {
+      const { client, asked } = chained('3.1c', [[], [], ['7:100:200:zsh']]);
+      await client.deliver('%4', batch(paste('ls', false)), token);
+      expect(named(asked).lines.at(-1)).toBe(
+        `'paste-buffer' '-p' '-r' '-d' '-b' BUF '-t' '%4' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
+      );
+    });
+
+    it('uses a new buffer for each write of the same Batch', async () => {
+      const { client, asked } = chained('3.8', [[], ['7:100:200:zsh']]);
+      await client.deliver('%4', batch(paste('ls', false)), token);
+      await client.deliver('%4', batch(paste('ls', false)), token);
+      const buffers = new Set(asked.flatMap((line) => /'(muxify-k7f2-7-[a-z0-9]+)'/.exec(line)?.[1] ?? []));
+      expect(buffers.size).toBe(2);
+    });
+
+    it('is refused when tmux does not take the text, and the buffer is deleted', async () => {
+      const { client, asked } = chained('3.8', [[]], ['no space']);
+      expect(await client.deliver('%4', batch(paste('ls', true)), token)).toEqual({ refused: 'no space' });
+      const { lines } = named(asked);
+      expect(lines.at(-1)).toBe("'delete-buffer' '-b' BUF");
+      expect(lines.join('\n')).not.toContain('paste-buffer');
+    });
+
+    it('deletes the buffer when the mark does not show the paste, and keeps the mark as the answer', async () => {
+      const { client, asked } = chained('3.8', [[], ['6:100:200:zsh']]);
+      expect(await client.deliver('%4', batch(paste('hunter2', false)), token)).toMatchObject({ ack: 6 });
+      expect(named(asked).lines.at(-1)).toBe("'delete-buffer' '-b' BUF");
+    });
+
+    it('deletes no buffer when the mark shows the paste', async () => {
+      const { client, asked } = chained('3.8', [[], ['7:100:200:zsh']]);
+      await client.deliver('%4', batch(paste('ls', false)), token);
+      expect(named(asked).lines.at(-1)).toContain('paste-buffer');
+    });
+
+    it('deletes the buffer when the Pane is gone', async () => {
+      const { client, asked } = chained('3.8', [[], { error: ["can't find pane: %4"] }, [':100::']]);
+      expect(await client.deliver('%4', batch(paste('ls', false)), token)).toBe('gone');
+      expect(named(asked).lines.at(-1)).toBe("'delete-buffer' '-b' BUF");
+    });
+  });
+
   it('reads the mark alone', async () => {
     const { client, asked } = chained('3.8', [[':100:200:node']]);
-    expect(await client.readMark('%4', token)).toEqual({ serverPid: 100, panePid: 200, program: 'node', ack: null });
-    expect(asked).toEqual([MARK]);
+    expect(await client.readMark('%4', token)).toEqual({
+      serverPid: 100,
+      panePid: 200,
+      program: 'node',
+      ack: null,
+      refusesCopies: true,
+    });
+    expect(asked).toEqual([VERSION, MARK]);
+  });
+
+  it('reads that a tmux which cannot compare numbers does not refuse a copy', async () => {
+    const { client } = chained('3.1c', [[':100:200:node']]);
+    expect(await client.readMark('%4', token)).toMatchObject({ refusesCopies: false });
   });
 
   it('raises the Seq of a Pane without typing, and reads the mark', async () => {
     const { client, asked } = chained('3.8', [[], [], ['7:100:200:zsh']]);
-    expect(await client.burn('%4', 7 as Seq, token)).toEqual({ serverPid: 100, panePid: 200, program: 'zsh', ack: 7 });
+    expect(await client.burn('%4', 7 as Seq, token)).toEqual({ serverPid: 100, panePid: 200, program: 'zsh', ack: 7, refusesCopies: true });
     expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`);
   });
 });

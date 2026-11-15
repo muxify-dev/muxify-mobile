@@ -1024,13 +1024,40 @@ export default function TerminalScreen() {
    * the card waits until the Composer closes.
    */
   const inputNotice = state && attach && !composerOpen ? shownInputNotice(state.input, activePaneId) : null;
+  /** The open Composer shows the held keys of its own Pane, which can hold its message. */
+  const composerHeld = useMemo(() => {
+    if (!composerOpen) return null;
+    const held = state?.input.find((notice) => notice.paneId === activePaneId && notice.kind === 'held');
+    return held?.kind === 'held' ? inputNoticeCopy(held, activePaneId) : null;
+  }, [composerOpen, state?.input, activePaneId]);
   const inputCard = useMemo(() => {
     if (!inputNotice || !attach) return null;
     const { paneId } = inputNotice;
     const copy = inputNoticeCopy(inputNotice, activePaneId);
+    const openComposer = () => {
+      setArmed(NO_MODIFIERS);
+      setComposerOpen(true);
+    };
+    const compose: BannerAction[] = copy.compose
+      ? [{
+          id: 'compose',
+          label: copy.compose,
+          prominent: false,
+          onPress: () => {
+            const moved = inputNotice.kind === 'discarded'
+              ? attach.discardedInput(paneId, 'compose')
+              : attach.heldInput(paneId, 'compose') && paneId === activePaneId;
+            if (moved) openComposer();
+          },
+          testID: 'input-compose',
+        }]
+      : [];
     const actions: BannerAction[] =
       inputNotice.kind === 'discarded'
-        ? [{ id: 'dismiss', label: 'Dismiss', onPress: () => attach.dismissInput(paneId), testID: 'input-dismiss' }]
+        ? [
+            ...compose,
+            { id: 'dismiss', label: 'Dismiss', onPress: () => attach.discardedInput(paneId, 'dismiss'), testID: 'input-dismiss' },
+          ]
         : [
             { id: 'discard', label: 'Discard', prominent: false, onPress: () => attach.heldInput(paneId, 'discard'), testID: 'input-discard' },
             {
@@ -1056,7 +1083,7 @@ export default function TerminalScreen() {
         actions={actions}
         appearance={appearance}
         palette={chrome}
-        accessibilityLabel={inputNotice.kind === 'discarded' ? 'Typed keys were discarded' : 'Typed keys were not sent'}
+        accessibilityLabel={copy.label}
         testID={inputNotice.kind === 'discarded' ? 'input-discarded' : 'input-held'}
       />
     );
@@ -1626,6 +1653,10 @@ export default function TerminalScreen() {
           palette={chrome}
           appearance={appearance}
           inputRef={composerInput}
+          held={composerHeld}
+          onHeld={(action) => {
+            attach.heldInput(activePaneId, action);
+          }}
         />
       ) : null}
       {!physicalKeyboard ? <KeyRow

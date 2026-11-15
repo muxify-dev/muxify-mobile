@@ -625,8 +625,9 @@ _Avoid_: terminal input (which sends keystrokes immediately)
 **Draft**:
 One Pane's unsent text and Attachments. Follows that Pane across navigation and
 reconnects for the life of its Attach. Switching Panes changes which Draft is
-shown. Successful Send clears it; a failed Send keeps it. Drafts do not survive
-an app restart.
+shown. A sent message stays in the Draft until tmux confirms it on the Pane;
+a held or discarded message stays, with the reason. A failed upload keeps it.
+Drafts do not survive an app restart.
 
 **Attachment**:
 An image or file included in a Draft. Can be previewed when it is an image,
@@ -673,9 +674,11 @@ _Avoid_: overlay, loading screen, error screen, Reconnect Screen (the old name)
 **Outbox**:
 Every key on its way into a Pane, kept by the Attach until tmux confirms it or
 the user has seen what became of it. One per Attach. It outlives each
-Connection, so a key typed just before or during a break is not lost. Composer
-Send and paste do not go through it. Keys do not survive an app restart, and
-closing the Attach discards them with a count in the Log. See ADR 0019.
+Connection, so a key typed just before or during a break is not lost. Every
+write to a Pane's input goes through it: typed keys, Key Row keys, a paste and a
+Composer Send. Keys do not survive an app restart, and
+closing the Attach discards them with a count in the Log. See ADRs 0019 and
+0022.
 _Avoid_: queue, buffer, pending input
 
 **Lane**:
@@ -683,7 +686,8 @@ One Pane's part of the Outbox: its keys in the order typed, and what tmux last
 said about the Pane. The keys of a Lane go one Batch at a time.
 
 **Batch**:
-One key, or one run of typed text, written to tmux under a number (its Seq).
+One key, one run of typed text, one paste or one Composer Send (its paste and
+its Enter together), written to tmux under a number (its Seq).
 The Outbox has one count of Seqs, which only grows. The Pane keeps the highest
 Seq it took, so the Outbox can ask if a Batch arrived, and tmux refuses a Batch
 that arrives twice.
@@ -691,11 +695,14 @@ _Avoid_: packet, message (which is the Composer's)
 
 **Held keys**:
 Keys from before a reconnect that the Outbox does not send by itself: Enter, a
-control key, keys older than 30 seconds, or keys for a Pane that runs another
-program now. A card above the Key Row shows them as typed, with Send, Move to
-Composer and Discard. Plain text and arrows are sent again without a question.
-Keys for a Pane that is gone are discarded, and the card says so until it is
-dismissed.
+control key, a paste with a newline, a Composer Send, any paste on
+tmux below 3.2, keys older than 30 seconds, or keys for a Pane that runs
+another program now. A card above the Key Row shows them as typed, with Send,
+Move to Composer and Discard; the open Composer shows the same for its Pane.
+Plain text and arrows are sent again without a question. Keys for a Pane that
+is gone are discarded, and the card says so until it is dismissed. A discarded
+Composer message stays in its Draft, and Move to Composer brings it to the
+Pane on screen.
 
 ### Diagnosing
 

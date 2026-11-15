@@ -40,31 +40,80 @@ async function settle(): Promise<void> {
 
 type Block = string[] | { error: string };
 
+/** A line as tmux reads it: the arguments of each command, unquoted. */
+function commandsOf(line: string): string[][] {
+  const commands: string[][] = [[]];
+  let at = 0;
+  while (at < line.length) {
+    const quote = line[at];
+    if (quote === ' ') {
+      at += 1;
+    } else if (quote === "'") {
+      const close = line.indexOf("'", at + 1);
+      commands[commands.length - 1].push(line.slice(at + 1, close));
+      at = close + 1;
+    } else if (quote === '"') {
+      let word = '';
+      for (at += 1; line[at] !== '"'; at += 1) {
+        if (line[at] !== '\\') word += line[at];
+        else if (/^[0-7]{3}/.test(line.slice(at + 1, at + 4))) {
+          word += String.fromCharCode(parseInt(line.slice(at + 1, at + 4), 8));
+          at += 3;
+        } else word += line[(at += 1)];
+      }
+      commands[commands.length - 1].push(word);
+      at += 1;
+    } else {
+      const space = line.indexOf(' ', at);
+      const word = line.slice(at, space < 0 ? line.length : space);
+      if (word === ';') commands.push([]);
+      else commands[commands.length - 1].push(word);
+      at += word.length;
+    }
+  }
+  return commands;
+}
+
 /**
  * The part of a tmux server that typed input meets, which every link to the
- * server shares: what each Pane was typed, and the Seq it keeps. It answers
- * the Batch line with the blocks that tmux 3.8 was measured to answer with.
+ * server shares: what each Pane was typed, its buffers, and the Seq it keeps.
+ * It answers the Batch line with the blocks that tmux 3.8 was measured to
+ * answer with.
  */
 function fakeServer() {
   let pid = 100;
   let program = 'zsh';
   const panes = new Map([['%0', { pid: 200, ack: 0, typed: [] as string[] }]]);
+  const buffers = new Map<string, string>();
   const mark = (paneId: string): string => {
     const pane = panes.get(paneId);
     return pane ? `${pane.ack || ''}:${pid}:${pane.pid}:${program}` : `:${pid}::`;
   };
-  const keyOf = (send: string): string => {
-    const words = send.replace(/'/g, '').split(' ').slice(3);
-    return words[0] === '-H' ? String.fromCharCode(...words.slice(1).map((byte) => parseInt(byte, 16))) : `<${words[0]}>`;
+  /** Runs one command of the commands that `if-shell` was given. */
+  const type = (pane: { typed: string[] }, [verb, ...args]: string[]): void => {
+    if (verb === 'send-keys') {
+      pane.typed.push(
+        args[2] === '-H' ? String.fromCharCode(...args.slice(3).map((byte) => parseInt(byte, 16))) : `<${args[2]}>`,
+      );
+    } else if (verb === 'paste-buffer') {
+      const name = args[args.indexOf('-b') + 1];
+      pane.typed.push(buffers.get(name) ?? '');
+      buffers.delete(name);
+    } else if (verb === 'delete-buffer') {
+      buffers.delete(args[1]);
+    }
   };
 
   return {
-    /** What a Pane was typed, in order. A named key is `<Enter>`. */
+    /** What a Pane was typed, in order. A named key is `<Enter>`, a paste its text. */
     typed: (paneId = '%0') => panes.get(paneId)?.typed.join('') ?? null,
+    /** The names of the buffers that tmux keeps. */
+    buffers: () => [...buffers.keys()],
     /** The server ends and another starts, with a new Pane under the same id. */
     restart(): void {
       pid += 1;
       panes.clear();
+      buffers.clear();
       panes.set('%0', { pid: 300, ack: 0, typed: [] });
     },
     /** `respawn-pane -k`: another process in the same Pane, which keeps its options. */
@@ -82,17 +131,27 @@ function fakeServer() {
       if (line.includes('#{version}')) return [['3.8']];
       const read = /^'display-message' '-p' '-t' '(%\d+)' '#\{@muxify-in-/.exec(line);
       if (read) return [[mark(read[1])]];
-      const guard = /^'if-shell' '-F' '-t' '(%\d+)' '#\{e\|<:#\{e\|\+:0,#\{@muxify-in-\w+\}\},(\d+)\}' "(.*?)"(?: ; |$)/.exec(line);
-      if (!guard) return null;
-      const [, paneId, seq, inner] = guard;
+      const [[verb, ...args], ...rest] = commandsOf(line);
+      if (verb === 'set-buffer') {
+        const name = args[1];
+        buffers.set(name, (args.includes('-a') ? (buffers.get(name) ?? '') : '') + args.at(-1));
+        return [[]];
+      }
+      if (verb !== 'if-shell') return null;
+      const [, , paneId, condition, then, otherwise] = args;
+      const seq = Number(/,(\d+)\}$/.exec(condition)?.[1]);
       const pane = panes.get(paneId);
-      const last: Block[] = line.includes(" ; 'display-message'") ? [[mark(paneId)]] : [];
-      if (pane && pane.ack >= Number(seq)) return [[], ...last];
+      const last: Block[] = rest.length > 0 ? [[mark(paneId)]] : [];
       if (!pane) return [[], { error: `can't find pane: ${paneId}` }, ...last];
-      const send = inner.includes(' ; ') ? inner.split(' ; ')[0] : null;
-      if (send) pane.typed.push(keyOf(send));
-      pane.ack = Number(seq);
-      return [[], ...(send ? [[]] : []), [], ...last.map(() => [mark(paneId)])];
+      if (pane.ack >= seq) {
+        const copy = otherwise === undefined ? [] : commandsOf(otherwise);
+        for (const command of copy) type(pane, command);
+        return [[], ...copy.map((): Block => []), ...last];
+      }
+      const typing = commandsOf(then);
+      for (const command of typing) type(pane, command);
+      pane.ack = seq;
+      return [[], ...typing.map((): Block => []), ...last.map((): Block => [mark(paneId)])];
     },
   };
 }
@@ -920,42 +979,43 @@ describe('the Key Row’s Shortcuts', () => {
     dispose: () => {},
   };
 
-  it('pastes text into the active Pane and presses nothing after it', async () => {
-    const kit = attachOn();
+  /** An Attach on a server that keeps what each Pane was typed. */
+  async function onServer(options: { upload?: Upload } = {}) {
+    const server = fakeServer();
+    const kit = attachOn({ hosts: [fakeHost(server), fakeHost(server)], ...options });
     await connected(kit);
     kit.hosts[0].commands.length = 0;
+    return { kit, server };
+  }
+
+  it('pastes text into the active Pane and presses nothing after it', async () => {
+    const { kit, server } = await onServer();
 
     await kit.attach.paste({ kind: 'text', text: 'rm -rf build' }, never);
+    await settle();
 
-    const sent = kit.hosts[0].commands.join('\n');
-    expect(sent).toContain("'set-buffer'");
-    expect(sent).toContain("'rm -rf build'");
-    expect(sent).toMatch(/'paste-buffer'.*'-t' '%0'/);
     // A paste is not a send: no Enter, and no other key either.
-    expect(kit.hosts[0].verbs()).not.toContain('send-keys');
+    expect(server.typed()).toBe('rm -rf build');
+    expect(server.buffers()).toEqual([]);
+    expect(kit.hosts[0].commands.join('\n')).toMatch(/'paste-buffer'.*'-t' '%0'/);
   });
 
   it('uploads a pasted image and pastes its path, quoted for a shell', async () => {
     const uploaded: AttachmentFile[] = [];
-    const kit = attachOn({
+    const { kit, server } = await onServer({
       upload: (file) => {
         uploaded.push(file);
         return Promise.resolve("/tmp/muxify/it's a shot.png");
       },
     });
-    await connected(kit);
-    kit.hosts[0].commands.length = 0;
 
     await kit.attach.paste({ kind: 'image', file: stagedImage }, never);
+    await settle();
 
     expect(uploaded).toEqual([stagedImage]);
     // The path as the Composer writes one into a message: single-quoted, with
-    // its own quote closed, escaped and reopened. Inside tmux's double quotes
-    // the backslash is doubled.
-    const sent = kit.hosts[0].commands.join('\n');
-    expect(sent).toContain(`"'/tmp/muxify/it'\\\\''s a shot.png'"`);
-    expect(sent).toMatch(/'paste-buffer'.*'-t' '%0'/);
-    expect(kit.hosts[0].verbs()).not.toContain('send-keys');
+    // its own quote closed, escaped and reopened.
+    expect(server.typed()).toBe("'/tmp/muxify/it'\\''s a shot.png'");
   });
 
   it('refuses an image on a Connection that cannot upload, and pastes nothing', async () => {
@@ -969,39 +1029,68 @@ describe('the Key Row’s Shortcuts', () => {
     expect(kit.hosts[0].commands).toEqual([]);
   });
 
-  it('refuses to paste once the Connection is gone', async () => {
-    const kit = attachOn();
-    await connected(kit);
-    kit.hosts[0].exit('server exited');
+  it('keeps a line pasted with no Connection, and pastes it once after the reconnect', async () => {
+    const { kit, server } = await onServer();
+    // The Pane on screen: its mark is read, so the next Connection can tell it is the same Pane.
+    kit.attach.view('%0');
+    await settle();
+    kit.hosts[0].drop();
     await settle();
 
-    await expect(kit.attach.paste({ kind: 'text', text: 'late' }, never)).rejects.toThrow(
+    await kit.attach.paste({ kind: 'text', text: 'late' }, never);
+    expect(kit.attach.state().input).toEqual([{ kind: 'waiting', paneId: '%0', preview: 'late' }]);
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(server.typed()).toBe('late');
+    expect(kit.attach.state().input).toEqual([]);
+  });
+
+  it('refuses two lines with no Connection, which cannot ask the program how it takes them', async () => {
+    const { kit, server } = await onServer();
+    kit.hosts[0].drop();
+    await settle();
+
+    await expect(kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, never)).rejects.toThrow(
       'The Connection changed.',
     );
+    expect(kit.attach.state().input).toEqual([]);
+    expect(server.typed()).toBe('');
+  });
+
+  it('pastes after the keys typed before it, which wait for their turn', async () => {
+    const { kit, server } = await onServer();
+    kit.hosts[0].hold('if-shell');
+    kit.attach.view('%0').type(new TextEncoder().encode('echo '));
+    await kit.attach.paste({ kind: 'text', text: 'pasted' }, never);
+    kit.attach.view('%0').type(new TextEncoder().encode('!'));
+    kit.hosts[0].release();
+    await settle();
+
+    expect(server.typed()).toBe('echo pasted!');
   });
 
   it('pastes two lines whole into a program that asked for bracketed paste', async () => {
-    const kit = attachOn();
-    await connected(kit);
-    kit.hosts[0].commands.length = 0;
+    const { kit, server } = await onServer();
 
     await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, never);
+    await settle();
 
-    expect(kit.hosts[0].verbs()).toContain('paste-buffer');
+    expect(server.typed()).toBe('make\nmake install');
   });
 
   it('asks before two lines go to a program that runs each line, and pastes nothing on a no', async () => {
-    const kit = attachOn();
-    await connected(kit);
+    const { kit, server } = await onServer();
     kit.hosts[0].answering('display-message', ['0\t0\t0\t100\t49\t41\t0\t1\t0']);
-    kit.hosts[0].commands.length = 0;
 
     await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, () => Promise.resolve(false));
+    await settle();
+    expect(server.typed()).toBe('');
     expect(kit.hosts[0].verbs()).not.toContain('set-buffer');
-    expect(kit.hosts[0].verbs()).not.toContain('paste-buffer');
 
     await kit.attach.paste({ kind: 'text', text: 'make\nmake install' }, () => Promise.resolve(true));
-    expect(kit.hosts[0].verbs()).toContain('paste-buffer');
+    await settle();
+    expect(server.typed()).toBe('make\nmake install');
   });
 
   it('clears by letting the program redraw before it drops the Scrollback', async () => {
@@ -1019,6 +1108,7 @@ describe('the Key Row’s Shortcuts', () => {
     await cleared;
     expect(kit.hosts[0].commands.slice(1)).toEqual(["'clear-history' '-t' '%0'"]);
   });
+
 });
 
 describe('a Session that is let go', () => {
@@ -2168,6 +2258,7 @@ describe('typed keys and a Connection that breaks', () => {
         preview: 'rm -rf x⏎',
         reasons: ['risky-keys'],
         draft: { text: 'rm -rf x\n', dropped: [] },
+        message: false,
       },
     ]);
 
@@ -2216,7 +2307,7 @@ describe('typed keys and a Connection that breaks', () => {
     expect(server.typed()).toBe('');
   });
 
-  it('keeps held keys on the card and says so when the Draft is on its way to the Pane', async () => {
+  it('puts a Composer Send behind held keys, and Move to Composer gives both back as the Draft', async () => {
     const { kit, server, hosts } = await typing();
     hosts[0].drop();
     await settle();
@@ -2224,15 +2315,112 @@ describe('typed keys and a Connection that breaks', () => {
     kit.hosts[1].accept();
     await settle();
     kit.attach.composer.edit('%0', 'echo');
-    hosts[1].hold('set-buffer');
-    void kit.attach.composer.send('%0');
-    await settle();
-    expect(kit.attach.composer.draft('%0').phase).toBe('sending');
+    await kit.attach.composer.send('%0');
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: 'echo', phase: { kind: 'sending' } });
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎echo⏎', message: true }]);
 
-    expect(kit.attach.heldInput('%0', 'compose')).toBe(false);
-    expect(kit.attach.composer.draft('%0').text).toBe('echo');
-    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'hi⏎' }]);
+    expect(kit.attach.heldInput('%0', 'compose')).toBe(true);
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: 'hi\necho', phase: { kind: 'idle' } });
+    await settle();
     expect(server.typed()).toBe('');
+  });
+
+  it('sends a Composer message once when the reply to its line was lost, and clears the Draft when tmux confirms it', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('if-shell');
+    kit.attach.composer.edit('%0', 'make\nmake install');
+    await kit.attach.composer.send('%0');
+    await settle();
+    hosts[0].mute();
+    hosts[0].release();
+    expect(server.typed()).toBe('make\nmake install<Enter>');
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: 'make\nmake install', phase: { kind: 'sending' } });
+
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('make\nmake install<Enter>');
+    expect(kit.attach.state().input).toEqual([]);
+    expect(server.buffers()).toEqual([]);
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: '', phase: { kind: 'idle' } });
+  });
+
+  it('keeps the Draft of a message that the Lane discards, and it can be sent again', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    kit.attach.composer.edit('%0', 'deploy');
+    await kit.attach.composer.send('%0');
+    server.restart();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'discarded', preview: 'deploy⏎', message: true }]);
+    expect(kit.attach.composer.draft('%0')).toMatchObject({
+      text: 'deploy',
+      phase: { kind: 'idle' },
+      message: 'Not sent: tmux started again on the Host. The Draft is kept.',
+    });
+    expect(server.typed()).toBe('');
+
+    await kit.attach.composer.send('%0');
+    await settle();
+    expect(server.typed()).toBe('deploy<Enter>');
+    expect(kit.attach.composer.draft('%0').text).toBe('');
+  });
+
+  it('moves the Draft of a message for a gone Pane into the Draft of the active Pane', async () => {
+    const { kit, server } = await typing();
+    kit.attach.composer.edit('%0', 'echo');
+    kit.attach.composer.edit('%5', 'deploy');
+    await kit.attach.composer.send('%5');
+    await settle();
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'discarded', paneId: '%5', reason: 'pane-gone', message: true }]);
+
+    expect(kit.attach.discardedInput('%5', 'compose')).toBe(true);
+    expect(kit.attach.composer.draft('%0').text).toBe('echo\ndeploy');
+    expect(kit.attach.composer.draft('%5').text).toBe('');
+    expect(kit.attach.state().input).toEqual([]);
+    expect(server.typed()).toBe('');
+  });
+
+
+
+
+  it('keeps the Draft of a held message, and Discard empties it', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('set-buffer');
+    kit.attach.composer.edit('%0', 'deploy');
+    await kit.attach.composer.send('%0');
+    await settle();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', message: true }]);
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: 'deploy', phase: { kind: 'sending' } });
+    await kit.attach.composer.send('%0');
+    kit.attach.composer.edit('%0', 'other');
+    expect(kit.attach.composer.draft('%0').text).toBe('deploy');
+
+    expect(kit.attach.heldInput('%0', 'discard')).toBe(true);
+    expect(kit.attach.composer.draft('%0')).toMatchObject({ text: '', phase: { kind: 'idle' } });
+    hosts[0].release();
+    await settle();
+    expect(server.typed()).toBe('');
+  });
+
+  it('holds a Composer message whose line never reached tmux, and a late copy of it pastes nothing', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].hold('set-buffer');
+    kit.attach.composer.edit('%0', 'deploy');
+    await kit.attach.composer.send('%0');
+    await settle();
+    await reconnected(kit, 1);
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'deploy⏎' }]);
+
+    kit.attach.heldInput('%0', 'send');
+    await settle();
+    expect(server.typed()).toBe('deploy<Enter>');
+
+    hosts[0].release();
+    await settle();
+    expect(server.typed()).toBe('deploy<Enter>');
   });
 
   it('throws held keys away when the user says Discard', async () => {
@@ -2285,11 +2473,11 @@ describe('typed keys and a Connection that breaks', () => {
     await settle();
 
     expect(kit.attach.state().input).toEqual([
-      { kind: 'discarded', paneId: '%0', preview: 'abc', reason: 'server-restarted' },
+      { kind: 'discarded', paneId: '%0', preview: 'abc', reason: 'server-restarted', message: false },
     ]);
     expect(server.typed()).toBe('');
 
-    kit.attach.dismissInput('%0');
+    kit.attach.discardedInput('%0', 'dismiss');
     expect(kit.attach.state().input).toEqual([]);
     type(kit, 'x');
     await settle();

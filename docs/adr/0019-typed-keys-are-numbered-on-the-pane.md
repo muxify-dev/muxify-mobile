@@ -57,3 +57,10 @@ without typing. A late line with those keys is then a copy.
   number, so the two cannot disagree.
 - Keeping the Outbox across an app restart. The Seq count and the token would
   have to be stored with it.
+
+## Every Pane input
+
+ADR 0022 makes this the way for every write to a Pane's input. A paste, a
+Composer Send are Keys of the Lane too, each under one Seq. They
+follow the rules above. A paste with a newline and every Composer Send is held
+after a break, like Enter.

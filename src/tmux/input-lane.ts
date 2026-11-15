@@ -21,7 +21,15 @@ import type { KeyPress } from './key-press';
  */
 export type Seq = number & { readonly __brand: 'Seq' };
 
-/** One thing on its way into a Pane. Text is bytes; a key is a name that tmux encodes for the program. */
+/** Names one Composer Send, so the Composer learns what became of it. */
+export type MessageId = string & { readonly __brand: 'MessageId' };
+
+/**
+ * One thing on its way into a Pane. Text is bytes; a key is a name that tmux
+ * encodes for the program. A paste goes in through a tmux buffer, which keeps
+ * its newlines and brackets it for a program that asks; it is one Batch,
+ * whatever its size.
+ */
 export type Key =
   | {
       readonly kind: 'text';
@@ -29,7 +37,13 @@ export type Key =
       /** Bytes that a scroll or a tap made. They are sent while the Pane is live and never again. */
       readonly gesture: boolean;
     }
-  | { readonly kind: 'key'; readonly key: string | KeyPress };
+  | { readonly kind: 'key'; readonly key: string | KeyPress }
+  | {
+      readonly kind: 'paste';
+      readonly text: string;
+      /** A Composer Send, which presses Enter after the paste. Null for a plain paste. */
+      readonly message: MessageId | null;
+    };
 
 /** A Key that waits, with the time of its first byte. */
 export type Typed = Key & { readonly typedAt: number };
@@ -55,6 +69,8 @@ export interface PaneMark {
   readonly program: string;
   /** The highest Seq of this Outbox that the Pane took, or null for none. */
   readonly ack: Seq | null;
+  /** The tmux server refuses a second write of a Seq that the Pane took. */
+  readonly refusesCopies: boolean;
 }
 
 export type MarkRead = PaneMark | 'gone';
@@ -70,6 +86,8 @@ export type HoldReason =
   | 'unsure-delivered'
   /** tmux never told this Outbox which Pane had the id before the break. */
   | 'unwitnessed'
+  /** A paste written before the break, on a tmux that cannot refuse its late copy. */
+  | 'unguarded'
   | 'refused';
 
 export type DiscardReason = 'pane-gone' | 'server-restarted' | 'pane-replaced';
@@ -159,8 +177,22 @@ export function newLane(paneId: string, connected: boolean): Lane {
 
 const isGesture = (key: Key) => key.kind === 'text' && key.gesture;
 
-const untimed = (key: Typed): Key =>
-  key.kind === 'text' ? { kind: 'text', bytes: key.bytes, gesture: key.gesture } : { kind: 'key', key: key.key };
+function untimed(key: Typed): Key {
+  switch (key.kind) {
+    case 'text':
+      return { kind: 'text', bytes: key.bytes, gesture: key.gesture };
+    case 'key':
+      return { kind: 'key', key: key.key };
+    case 'paste':
+      return { kind: 'paste', text: key.text, message: key.message };
+    default:
+      return unreachable(key);
+  }
+}
+
+function unreachable(value: never): never {
+  throw new Error(`not a Key: ${JSON.stringify(value)}`);
+}
 
 /** Everything the Pane has not provably got, oldest first, without gesture bytes. */
 export function pendingKeys(lane: Lane): Key[] {
@@ -381,6 +413,8 @@ export function judge(input: {
   if (unconfirmed && !acked && ack < input.delivered) reasons.push('unsure-delivered');
   if (witness === null) reasons.push('unwitnessed');
   else if (read.program !== witness.program) reasons.push('program-changed');
+  // Typed keys sent again are accepted on such a tmux; a paste can be a whole text.
+  if (unconfirmed && !acked && unconfirmed.key.kind === 'paste' && !read.refusesCopies) reasons.push('unguarded');
   if (pending.some((key) => input.now - key.typedAt > input.ttlMs)) reasons.push('stale');
   if (!pending.every(isSafeKey)) reasons.push('risky-keys');
   return { acked, verdict: reasons.length === 0 ? { kind: 'send' } : { kind: 'hold', reasons } };
@@ -401,19 +435,29 @@ const isCharacter = (name: string) => [...name].length === 1 && name >= ' ' && n
 
 /** Safe to send after a break without a question: printable text and plain arrows. */
 export function isSafeKey(key: Key): boolean {
-  if (key.kind === 'key') {
-    if (typeof key.key === 'string') return key.key in ARROWS || isCharacter(key.key);
-    const { key: name, ctrl, alt, shift } = key.key;
-    return !ctrl && !alt && (isCharacter(name) || (name in ARROWS && !shift));
+  switch (key.kind) {
+    case 'key': {
+      if (typeof key.key === 'string') return key.key in ARROWS || isCharacter(key.key);
+      const { key: name, ctrl, alt, shift } = key.key;
+      return !ctrl && !alt && (isCharacter(name) || (name in ARROWS && !shift));
+    }
+    case 'text':
+      for (let at = 0; at < key.bytes.length; at += 1) {
+        if (isArrowBytes(key.bytes, at)) at += 2;
+        else if (key.bytes[at] < 0x20 || key.bytes[at] === 0x7f) return false;
+      }
+      return true;
+    case 'paste':
+      return key.message === null && !/[\x00-\x1f\x7f]/.test(key.text);
+    default:
+      return unreachable(key);
   }
-  for (let at = 0; at < key.bytes.length; at += 1) {
-    if (isArrowBytes(key.bytes, at)) at += 2;
-    else if (key.bytes[at] < 0x20 || key.bytes[at] === 0x7f) return false;
-  }
-  return true;
 }
 
-/** One thing a key shows as, and what it is in a Draft: text, a step back, or nothing. */
+/**
+ * One thing a key shows as, and what it is in a Draft: text, a step back,
+ * nothing that the Draft misses (`''`), or nothing that is lost (null).
+ */
 interface Glyph {
   readonly show: string;
   readonly draft: string | 'erase' | null;
@@ -471,10 +515,28 @@ function textGlyphs(bytes: readonly number[]): Glyph[] {
   return glyphs;
 }
 
+/** The Enter of a Composer Send. Send in the Composer presses it again, so the Draft misses nothing. */
+const SUBMIT: Glyph = { show: '⏎', draft: '' };
+
+function pasteGlyphs(text: string, submit: boolean): Glyph[] {
+  const glyphs = [...text.replace(/\r\n?/g, '\n')].map((character) =>
+    character === '\n' ? NAMED.Enter : { show: character, draft: character },
+  );
+  return submit ? [...glyphs, SUBMIT] : glyphs;
+}
+
 function glyphsOf(keys: readonly Key[]): Glyph[] {
   return keys.flatMap((key) => {
-    if (key.kind === 'text') return key.gesture ? [] : textGlyphs(key.bytes);
-    return [typeof key.key === 'string' ? namedGlyph(key.key) : pressGlyph(key.key)];
+    switch (key.kind) {
+      case 'text':
+        return key.gesture ? [] : textGlyphs(key.bytes);
+      case 'key':
+        return [typeof key.key === 'string' ? namedGlyph(key.key) : pressGlyph(key.key)];
+      case 'paste':
+        return pasteGlyphs(key.text, key.message !== null);
+      default:
+        return unreachable(key);
+    }
   });
 }
 
@@ -494,12 +556,46 @@ export function toDraftText(keys: readonly Key[]): DraftText {
   const characters: string[] = [];
   const dropped: string[] = [];
   for (const glyph of glyphsOf(keys)) {
+    if (glyph.draft === '') continue;
     if (glyph.draft !== null && glyph.draft !== 'erase') characters.push(glyph.draft);
     // A Backspace with nothing before it took back a character that the Pane already has.
     else if (glyph.draft === 'erase' && characters.length > 0) characters.pop();
     else if (!dropped.includes(glyph.show)) dropped.push(glyph.show);
   }
   return { text: characters.join(''), dropped };
+}
+
+const messageOf = (key: Key): MessageId | null => (key.kind === 'paste' ? key.message : null);
+const messagesIn = (keys: readonly Key[]) => keys.flatMap((key) => messageOf(key) ?? []);
+
+/** What became of a Composer message that left the Lane. */
+export type MessageFate =
+  | { readonly kind: 'delivered' }
+  /** The user took it back from a held Lane: Move to Composer or Discard. */
+  | { readonly kind: 'taken' }
+  | { readonly kind: 'discarded'; readonly reason: DiscardReason };
+
+/**
+ * The Composer messages that one `step` took out of the Lane, and where each
+ * went. A message that left in any other way reads as taken, which keeps its
+ * Draft.
+ */
+export function messageFates(before: Lane, after: Lane): { id: MessageId; fate: MessageFate }[] {
+  const still = new Set(messagesIn(pendingKeys(after)));
+  const dropped = after.dropped && after.dropped !== before.dropped ? after.dropped : null;
+  const confirmed =
+    before.unconfirmed && after.delivered >= before.unconfirmed.seq ? messageOf(before.unconfirmed.key) : null;
+  return messagesIn(pendingKeys(before))
+    .filter((id) => !still.has(id))
+    .map((id) => ({
+      id,
+      fate:
+        dropped && messagesIn(dropped.keys).includes(id)
+          ? { kind: 'discarded', reason: dropped.reason }
+          : id === confirmed
+            ? { kind: 'delivered' }
+            : { kind: 'taken' },
+    }));
 }
 
 /** What the screen shows for one Pane. Read from the Lane each time, never kept. */
@@ -511,18 +607,34 @@ export type InputNotice =
       readonly preview: string;
       readonly reasons: readonly HoldReason[];
       readonly draft: DraftText;
+      /** The keys hold a Composer message, which its Draft still has. */
+      readonly message: boolean;
     }
-  | { readonly kind: 'discarded'; readonly paneId: string; readonly preview: string; readonly reason: DiscardReason };
+  | {
+      readonly kind: 'discarded';
+      readonly paneId: string;
+      readonly preview: string;
+      readonly reason: DiscardReason;
+      readonly message: boolean;
+    };
 
 export function noticeOf(lane: Lane): InputNotice | null {
   const { paneId } = lane;
   // First, because it is the older news: these keys went before the others were typed.
   if (lane.dropped) {
-    return { kind: 'discarded', paneId, preview: previewOf(lane.dropped.keys), reason: lane.dropped.reason };
+    const { keys, reason } = lane.dropped;
+    return { kind: 'discarded', paneId, preview: previewOf(keys), reason, message: messagesIn(keys).length > 0 };
   }
   const keys = pendingKeys(lane);
   if (lane.phase.kind === 'held') {
-    return { kind: 'held', paneId, preview: previewOf(keys), reasons: lane.phase.reasons, draft: toDraftText(keys) };
+    return {
+      kind: 'held',
+      paneId,
+      preview: previewOf(keys),
+      reasons: lane.phase.reasons,
+      draft: toDraftText(keys),
+      message: messagesIn(keys).length > 0,
+    };
   }
   if (lane.phase.kind === 'live' || keys.length === 0) return null;
   return { kind: 'waiting', paneId, preview: previewOf(keys) };

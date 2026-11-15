@@ -12,6 +12,7 @@ import {
   type Key,
   type Lane,
   type LaneEvent,
+  type MessageId,
   type PaneMark,
   type Seq,
 } from './input-lane';
@@ -19,13 +20,16 @@ import {
 const seq = (value: number) => value as Seq;
 const text = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: false });
 const wheel = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: true });
+const message = 'm1' as MessageId;
 const named = (key: string): Key => ({ kind: 'key', key });
+const paste = (value: string, submit = false): Key => ({ kind: 'paste', text: value, message: submit ? message : null });
 const typed = (key: Key): LaneEvent => ({ kind: 'typed', key });
 const mark = (over: Partial<PaneMark> = {}): PaneMark => ({
   serverPid: 100,
   panePid: 200,
   program: 'zsh',
   ack: null,
+  refusesCopies: true,
   ...over,
 });
 const answered = (result: DeliverResult): LaneEvent => ({ kind: 'answered', result });
@@ -130,7 +134,13 @@ describe('a live Lane', () => {
   it('discards everything when the Pane has gone', () => {
     const run = live();
     run.send(typed(text('a')), typed(named('Enter')), answered('gone'));
-    expect(noticeOf(run.lane)).toEqual({ kind: 'discarded', paneId: '%1', preview: 'a⏎', reason: 'pane-gone' });
+    expect(noticeOf(run.lane)).toEqual({
+      kind: 'discarded',
+      paneId: '%1',
+      preview: 'a⏎',
+      reason: 'pane-gone',
+      message: false,
+    });
     expect(pendingKeys(run.lane)).toEqual([]);
   });
 });
@@ -275,6 +285,65 @@ describe('a Lane across a break', () => {
   });
 });
 
+describe('a paste', () => {
+  it('lands after the text that waits before it, and is never merged with it', () => {
+    const run = live();
+    run.send(typed(text('a')), typed(text('b')), typed(paste('xyz')), typed(text('c')));
+    for (const ack of [1, 2, 3]) run.send(answered(mark({ ack: seq(ack) })));
+    expect(run.delivered()).toEqual(['1:a', '2:b', '3:xyz', '4:c']);
+  });
+
+  it('keeps its place behind keys typed while there is no Connection', () => {
+    const run = live();
+    run.send({ kind: 'lost' }, typed(text('ls ')), typed(paste('-la')), { kind: 'connected' }, answered(mark()));
+    run.send(answered(mark({ ack: seq(1) })));
+    expect(run.delivered()).toEqual(['1:ls ', '2:-la']);
+  });
+
+  it('is one Batch, however long', () => {
+    const run = driver(true, { maxBatchBytes: 4 });
+    run.send(answered(mark()), typed(paste('abcdefghij')));
+    expect(run.delivered()).toEqual(['1:abcdefghij']);
+  });
+
+  it('is confirmed without a resend when the Pane took it before the break', () => {
+    const run = live();
+    run.send(typed(paste('a\nb', true)), { kind: 'lost' }, { kind: 'connected' }, answered(mark({ ack: seq(1) })));
+    expect(run.delivered()).toEqual(['1:a⏎b⏎']);
+    expect(run.lane.phase).toEqual({ kind: 'live' });
+    expect(noticeOf(run.lane)).toBeNull();
+  });
+
+  it('is sent again with the same Seq when it is plain text and fresh', () => {
+    const run = live();
+    run.send(typed(paste('hello')), { kind: 'lost' }, { kind: 'connected' }, answered(mark()));
+    expect(run.delivered()).toEqual(['1:hello', '1:hello']);
+  });
+
+  it('is held after a break on a Host that cannot refuse a copy, which a late line can paste', () => {
+    const run = live();
+    run.send(typed(paste('hello')), { kind: 'lost' }, { kind: 'connected' }, answered(mark({ refusesCopies: false })));
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['unguarded'] });
+    expect(run.delivered()).toEqual(['1:hello']);
+  });
+
+  it('that was never written goes after a break also on a Host that cannot refuse a copy', () => {
+    const run = live();
+    run.send({ kind: 'lost' }, typed(paste('hello')), { kind: 'connected' }, answered(mark({ refusesCopies: false })));
+    expect(run.delivered()).toEqual(['1:hello']);
+  });
+
+  it.each([
+    ['a newline', paste('a\nb')],
+    ['a Send', paste('ls', true)],
+  ])('with %s is held after a break', (_, key) => {
+    const run = live();
+    run.send(typed(key), { kind: 'lost' }, { kind: 'connected' }, answered(mark()));
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['risky-keys'] });
+    expect(run.delivered()).toHaveLength(1);
+  });
+});
+
 describe('gesture bytes', () => {
   it('go to a live Pane like typed bytes, apart from them', () => {
     const run = live();
@@ -396,6 +465,11 @@ describe('which keys are safe to send after a break', () => {
     [text('\x7f'), false],
     [text('\x1b'), false],
     [text('\x1b[5~'), false],
+    [paste('ls -la ~/x 漢字'), true],
+    [paste('a\nb'), false],
+    [paste('a\tb'), false],
+    [paste('a\x7f'), false],
+    [paste('ls', true), false],
     [named('Up'), true],
     [named('Left'), true],
     [named('~'), true],
@@ -431,6 +505,8 @@ describe('held keys as the user reads them, and as a Draft', () => {
     [[press('a', { shift: true }), press('Enter', { shift: true }), press('r', { ctrl: true })], 'A⏎^R', 'A\n', ['^R']],
     [[press('b', { alt: true }), named('M-.'), named('PageUp')], 'M-bM-.PageUp', '', ['M-b', 'M-.', 'PageUp']],
     [[text('a'), wheel('\x1b[<64;1;1M'), text('b')], 'ab', 'ab', []],
+    [[paste('one\r\ntwo')], 'one⏎two', 'one\ntwo', []],
+    [[paste('echo hi', true)], 'echo hi⏎', 'echo hi', []],
   ] as [Key[], string, string, string[]][])('%j', (keys, preview, draft, dropped) => {
     expect(previewOf(keys)).toBe(preview);
     expect(toDraftText(keys)).toEqual({ text: draft, dropped });
@@ -454,6 +530,7 @@ describe('what the screen is told', () => {
       preview: 'ls↑⏎',
       reasons: ['risky-keys'],
       draft: { text: 'ls\n', dropped: ['↑'] },
+      message: false,
     });
   });
 

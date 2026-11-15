@@ -57,3 +57,12 @@ delivery remain in TypeScript. Photos and Files use Expo's system pickers.
 Only Draft state is in memory. Attachment bytes are owned temporary local files,
 released on removal, successful Send, or Attach closure; stale staging is swept
 on the next process's first use. Large files need not be held in JS memory.
+
+## Superseded in part: Send goes through the Outbox
+
+ADR 0022 changes the delivery. A Send is now one Batch in the Pane's Lane: the
+paste, the 150 ms wait and the Enter are one guarded tmux line under one Seq.
+The Composer has no "not sure" state. The Draft keeps the message until the
+Lane confirms, holds or discards it, and the Composer shows a held message
+with its actions. The buffer, `paste-buffer -p -r -d` and the uploads stay as
+written above.

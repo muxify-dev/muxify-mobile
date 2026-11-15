@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Appearance } from '@/constants/app-theme';
+import type { InputNoticeCopy } from '@/lib/input-notice-copy';
 import { busy, type Composer } from './composer';
 import { ComposerInput, nativePaste, type ComposerInputRef } from './native-input';
 import { stageFile } from './staging';
@@ -20,10 +21,13 @@ import { stageFile } from './staging';
  * a white card over a Dracula terminal — and its text in the Theme's chrome
  * colours. See appearanceFor.
  */
-export function ComposerPanel({ composer, paneId, connected, palette, appearance, inputRef }: {
+export function ComposerPanel({ composer, paneId, connected, held: heldKeys, onHeld, palette, appearance, inputRef }: {
   composer: Composer;
   paneId: string;
   connected: boolean;
+  /** The Pane's held keys, which can hold this Draft's message. Null when the Pane holds none. */
+  held: InputNoticeCopy | null;
+  onHeld(action: 'send' | 'compose' | 'discard'): void;
   palette: Appearance;
   /** The Theme's appearance, not the phone's: the glass and keyboard match it. */
   appearance: 'light' | 'dark';
@@ -34,17 +38,21 @@ export function ComposerPanel({ composer, paneId, connected, palette, appearance
   const [picking, setPicking] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [preview, setPreview] = useState<string>();
-  const sending = busy(draft);
-  const ready = connected && draft.phase === 'idle' && !picking &&
+  const { phase } = draft;
+  const uploading = phase.kind === 'uploading';
+  const locked = busy(draft);
+  // An upload keeps its Cancel; its message goes behind the held keys when it ends.
+  const held = uploading ? null : heldKeys;
+  const ready = connected && !locked && !picking &&
     (draft.text.trim().length > 0 || draft.attachments.length > 0) &&
     draft.attachments.every((item) => item.phase === 'ready');
 
   useEffect(() => {
-    if (!sending && !picking && !preview) void inputRef.current?.focus();
-  }, [inputRef, sending, picking, preview]);
+    if (!locked && !picking && !preview) void inputRef.current?.focus();
+  }, [inputRef, locked, picking, preview]);
 
   async function pick(kind: 'photos' | 'files') {
-    if (picking || sending) return;
+    if (picking || locked) return;
     setPicking(true);
     setNotice(undefined);
     try {
@@ -70,6 +78,15 @@ export function ComposerPanel({ composer, paneId, connected, palette, appearance
       void inputRef.current?.focus();
     }
   }
+
+  // Held keys are news the user must act on, so they come before the Draft's own phase.
+  const status = held ? `${held.preview}\n${held.reason}`
+    : phase.kind === 'uploading'
+      ? phase.progress && phase.progress.total > 0
+        ? `Uploading ${Math.round(100 * phase.progress.sent / phase.progress.total)}%` : 'Preparing upload…'
+      : phase.kind === 'sending'
+        ? connected ? 'Sending…' : 'The message waits for the Connection.'
+        : null;
 
   const glass = isGlassEffectAPIAvailable();
   const Card = glass ? GlassView : View;
@@ -104,7 +121,7 @@ export function ComposerPanel({ composer, paneId, connected, palette, appearance
                   <Text style={{ color: palette.controlAccent }}>Retry</Text>
                 </Pressable>
               ) : null}
-              <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${item.name}`} disabled={sending}
+              <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${item.name}`} disabled={locked}
                 onPress={() => composer.remove(paneId, item.id)} style={[styles.remove, { backgroundColor: palette.rowSurface }]}>
                 <Text style={{ color: palette.toolbarTint, fontSize: 20 }}>×</Text>
               </Pressable>
@@ -116,7 +133,7 @@ export function ComposerPanel({ composer, paneId, connected, palette, appearance
         ref={inputRef}
         style={styles.input}
         value={{ text: draft.text, eventCount }}
-        editable={!sending}
+        editable={!locked}
         dark={appearance === 'dark'}
         textColor={palette.toolbarTint}
         tintColor={palette.controlAccent}
@@ -133,20 +150,26 @@ export function ComposerPanel({ composer, paneId, connected, palette, appearance
         }}
       />
       {draft.message || notice ? <Text accessibilityRole="alert" style={[styles.message, { color: palette.destructive }]}>{draft.message ?? notice}</Text> : null}
-      {sending ? <Text style={[styles.message, { color: palette.secondaryLabel }]}>
-        {draft.phase === 'sending' ? 'Sending…' : draft.progress && draft.progress.total > 0
-          ? `Uploading ${Math.round(100 * draft.progress.sent / draft.progress.total)}%` : 'Preparing upload…'}
-      </Text> : null}
+      {status ? <Text style={[styles.message, { color: palette.secondaryLabel }]}>{status}</Text> : null}
       <View style={styles.actions}>
-        <Action label="Paste" palette={palette} disabled={sending || picking} onPress={() => { void inputRef.current?.paste(); }} />
-        <Action label="Photos" palette={palette} disabled={sending || picking} onPress={() => { void pick('photos'); }} />
-        <Action label="Files" palette={palette} disabled={sending || picking} onPress={() => { void pick('files'); }} />
-        <View style={{ flex: 1 }} />
-        {draft.phase === 'uncertain' ? (
-          <Action label="Keep draft" palette={palette} onPress={() => composer.acknowledge(paneId)} />
-        ) : sending ? (
-          <Action label="Cancel" palette={palette} onPress={() => composer.cancel(paneId)} />
-        ) : <Action label="Send" palette={palette} disabled={!ready} onPress={() => { void composer.send(paneId); }} />}
+        {held ? (
+          <>
+            <Action label="Discard" palette={palette} onPress={() => onHeld('discard')} />
+            <Action label={held.compose} palette={palette} onPress={() => onHeld('compose')} />
+            <View style={{ flex: 1 }} />
+            <Action label="Send" palette={palette} disabled={!connected} onPress={() => onHeld('send')} />
+          </>
+        ) : (
+          <>
+            <Action label="Paste" palette={palette} disabled={locked || picking} onPress={() => { void inputRef.current?.paste(); }} />
+            <Action label="Photos" palette={palette} disabled={locked || picking} onPress={() => { void pick('photos'); }} />
+            <Action label="Files" palette={palette} disabled={locked || picking} onPress={() => { void pick('files'); }} />
+            <View style={{ flex: 1 }} />
+            {uploading ? (
+              <Action label="Cancel" palette={palette} onPress={() => composer.cancel(paneId)} />
+            ) : <Action label="Send" palette={palette} disabled={!ready} onPress={() => { void composer.send(paneId); }} />}
+          </>
+        )}
       </View>
       <Modal visible={!!preview} transparent animationType="fade" onRequestClose={() => setPreview(undefined)}>
         <View style={styles.preview}>

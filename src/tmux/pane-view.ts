@@ -287,7 +287,8 @@ export const OUTPUT_SETTLE_MS = 300;
 export function createPaneView(
   paneId: string,
   reader: PaneReader,
-  input: PaneInput,
+  /** What the view types. A paste does not come from the Surface. */
+  input: Pick<PaneInput, 'type' | 'press'>,
   events: PaneViewEvents,
   options: { clock?: Clock; log?: Log } = {},
 ): PaneView {

@@ -1,3 +1,5 @@
+import type { MessageId } from '@/tmux/input-lane';
+
 /** A local, owned copy. Disposal never deletes the user's original file. */
 export interface AttachmentFile {
   /**
@@ -24,8 +26,8 @@ export type Upload = (
 
 export interface ComposerDestination {
   upload: Upload;
-  /** Called immediately before the first command that can reach the Pane. */
-  deliver(text: string, signal: AbortSignal, started: () => void): Promise<void>;
+  /** Hands the message to the Pane's Lane, which pastes it, presses Enter and later settles `id`. */
+  deliver(text: string, id: MessageId): void;
 }
 
 export function uniqueId(): string {

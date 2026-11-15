@@ -8,12 +8,13 @@ const held = (paneId: string, over: Partial<Extract<InputNotice, { kind: 'held' 
   preview: 'ls -la⏎',
   reasons: ['risky-keys'],
   draft: { text: 'ls -la\n', dropped: [] },
+  message: false,
   ...over,
 });
 
 describe('which notice the screen shows', () => {
   const waiting: InputNotice = { kind: 'waiting', paneId: '%1', preview: 'a' };
-  const discarded: InputNotice = { kind: 'discarded', paneId: '%2', preview: 'b', reason: 'pane-gone' };
+  const discarded: InputNotice = { kind: 'discarded', paneId: '%2', preview: 'b', reason: 'pane-gone', message: false };
 
   it('the active Pane’s, when it has one', () => {
     expect(shownInputNotice([discarded, held('%3')], '%3')).toEqual(held('%3'));
@@ -49,10 +50,29 @@ describe('what a notice says', () => {
   });
 
   it('says why keys were discarded', () => {
-    const notice: InputNotice = { kind: 'discarded', paneId: '%1', preview: 'abc', reason: 'server-restarted' };
+    const notice = { kind: 'discarded', paneId: '%1', preview: 'abc', reason: 'server-restarted', message: false } as const;
     expect(inputNoticeCopy(notice, '%1')).toMatchObject({
       preview: 'abc',
       reason: 'Discarded: tmux started again on the Host.',
+      label: 'Typed keys were discarded',
+    });
+  });
+
+  it('calls a Composer Send a message, and offers its Draft to the active Pane after a discard for another Pane', () => {
+    const notice = { kind: 'discarded', paneId: '%2', preview: 'make⏎', reason: 'pane-gone', message: true } as const;
+    expect(inputNoticeCopy(notice, '%1')).toMatchObject({
+      reason: 'For another Pane. Message not sent: the Pane is gone.',
+      compose: 'Move to Composer',
+      label: 'A message was not sent',
+    });
+    expect(inputNoticeCopy({ ...notice, paneId: '%1' }, '%1')).toMatchObject({
+      reason: 'Message not sent: the Pane is gone. The Composer keeps it.',
+      compose: '',
+    });
+    expect(inputNoticeCopy(held('%1', { message: true }), '%1')).toMatchObject({
+      reason: 'Message not sent: it has Enter or a control key.',
+      compose: 'Edit in Composer',
+      label: 'A message was not sent',
     });
   });
 

@@ -79,7 +79,7 @@ function fakePane(state: PaneState = paneState()) {
 
   /** The Pane's way in, which records what the view gave it, in order. */
   const entered: string[] = [];
-  const input: PaneInput = {
+  const input: Pick<PaneInput, 'type' | 'press'> = {
     type(data, gesture = false) {
       entered.push(`${gesture ? 'gesture' : 'typed'} ${shown([data])}`);
       sent.push(data);

@@ -1,4 +1,6 @@
+import { whyDiscarded } from '@/lib/input-notice-copy';
 import { shellQuote } from '@/tmux/commands';
+import type { MessageFate, MessageId } from '@/tmux/input-lane';
 
 import { abortable, checkAborted, uniqueId, type AttachmentFile, type ComposerDestination, type UploadProgress } from './types';
 
@@ -9,11 +11,20 @@ export interface Attachment {
   file?: AttachmentFile;
 }
 
+export type DraftPhase =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'uploading'; readonly progress?: UploadProgress }
+  /**
+   * The message is in the Pane's Lane, and the Lane has not settled it. The
+   * Draft keeps the text until tmux confirms it, so a message that the Lane
+   * throws away is still here.
+   */
+  | { readonly kind: 'sending'; readonly id: MessageId };
+
 export interface Draft {
   text: string;
   attachments: Attachment[];
-  phase: 'idle' | 'uploading' | 'sending' | 'uncertain';
-  progress?: UploadProgress;
+  phase: DraftPhase;
   message?: string;
 }
 
@@ -25,14 +36,25 @@ export interface Composer {
   remove(paneId: string, id: string): void;
   retry(paneId: string, id: string): void;
   send(paneId: string): Promise<void>;
+  /** What became of the message that a Send handed to the Pane's Lane. */
+  settle(paneId: string, id: MessageId, fate: MessageFate): void;
+  /** Empties a Draft that takes edits: the user discarded its message. */
+  clear(paneId: string): void;
+  /**
+   * Moves a Draft's text and attachments into another Pane's Draft, after
+   * the text that Draft has, and drops the first Draft. False when either
+   * Draft takes no edit, or there is nothing to move.
+   */
+  move(from: string, to: string): boolean;
   cancel(paneId: string): void;
-  acknowledge(paneId: string): void;
   interrupt(): void;
   dispose(): void;
 }
 
-const EMPTY: Draft = { text: '', attachments: [], phase: 'idle' };
-export const busy = (draft: Draft) => draft.phase === 'uploading' || draft.phase === 'sending';
+const IDLE = { kind: 'idle' } as const;
+const EMPTY: Draft = { text: '', attachments: [], phase: IDLE };
+/** The Draft takes no edit: its attachments upload, or its message is in the Lane. */
+export const busy = (draft: Draft) => draft.phase.kind !== 'idle';
 
 /** One draft per Pane, surviving screens and Connection replacements. */
 export function createComposer(destination: (paneId: string) => ComposerDestination): Composer {
@@ -51,6 +73,14 @@ export function createComposer(destination: (paneId: string) => ComposerDestinat
     for (const listener of [...listeners]) listener();
   }
   function cleanup(file?: AttachmentFile) { try { file?.dispose(); } catch { /* Best effort cache cleanup. */ } }
+  function empty(paneId: string) {
+    for (const item of draft(paneId).attachments) {
+      cleanup(item.file);
+      release(item.id);
+      attempts.delete(item.id);
+    }
+    change(paneId, EMPTY);
+  }
   function release(id: string) {
     releases.get(id)?.();
     releases.delete(id);
@@ -102,12 +132,11 @@ export function createComposer(destination: (paneId: string) => ComposerDestinat
     },
     async send(paneId) {
       const snapshot = draft(paneId);
-      if (disposed || snapshot.phase !== 'idle' || (!snapshot.text.trim() && !snapshot.attachments.length)) return;
+      if (disposed || busy(snapshot) || (!snapshot.text.trim() && !snapshot.attachments.length)) return;
       if (snapshot.attachments.some((item) => item.phase !== 'ready')) return;
       const controller = new AbortController();
       sends.set(paneId, controller);
-      let delivered = false;
-      change(paneId, { phase: 'uploading', message: undefined, progress: undefined });
+      change(paneId, { phase: { kind: 'uploading' }, message: undefined });
       try {
         const target = destination(paneId);
         const paths: string[] = [];
@@ -117,36 +146,51 @@ export function createComposer(destination: (paneId: string) => ComposerDestinat
           const file = item.file!;
           checkAborted(controller.signal);
           paths.push(await abortable(target.upload(file, controller.signal, ({ sent }) => {
-            if (!controller.signal.aborted) change(paneId, { progress: { sent: completed + sent, total } });
+            if (!controller.signal.aborted) change(paneId, { phase: { kind: 'uploading', progress: { sent: completed + sent, total } } });
           }), controller.signal));
           completed += file.size;
         }
         checkAborted(controller.signal);
         const message = [snapshot.text, paths.map(shellQuote).join(' ')].filter(Boolean).join('\n');
-        change(paneId, { phase: 'sending', progress: undefined });
-        await abortable(target.deliver(message, controller.signal, () => { delivered = true; }), controller.signal);
-        for (const item of snapshot.attachments) {
-          cleanup(item.file);
-          release(item.id);
-          attempts.delete(item.id);
-        }
-        change(paneId, { ...EMPTY, message: undefined, progress: undefined });
+        const id = uniqueId() as MessageId;
+        // Before `deliver`: a held Lane can settle the message inside that call.
+        change(paneId, { phase: { kind: 'sending', id } });
+        target.deliver(message, id);
       } catch (error) {
         change(paneId, {
-          phase: delivered ? 'uncertain' : 'idle',
-          progress: undefined,
-          message: delivered
-            ? 'Delivery may have reached the Pane. Check the terminal before sending again.'
-            : error instanceof Error ? error.message : 'Couldn’t send. Draft kept.',
+          phase: IDLE,
+          message: error instanceof Error ? error.message : 'Couldn’t send. Draft kept.',
         });
       } finally {
         if (sends.get(paneId) === controller) sends.delete(paneId);
       }
     },
-    cancel(paneId) { sends.get(paneId)?.abort(); },
-    acknowledge(paneId) {
-      if (draft(paneId).phase === 'uncertain') change(paneId, { phase: 'idle', message: undefined });
+    settle(paneId, id, fate) {
+      const { phase } = draft(paneId);
+      if (phase.kind !== 'sending' || phase.id !== id) return;
+      if (fate.kind === 'delivered') empty(paneId);
+      else if (fate.kind === 'taken') change(paneId, { phase: IDLE });
+      else change(paneId, { phase: IDLE, message: `Not sent: ${whyDiscarded(fate.reason)}. The Draft is kept.` });
     },
+    clear(paneId) {
+      if (!busy(draft(paneId))) empty(paneId);
+    },
+    move(from, to) {
+      const source = draft(from);
+      const target = draft(to);
+      if (disposed || from === to || busy(source) || busy(target)) return false;
+      if (!source.text && !source.attachments.length) return false;
+      // A preparation that ends later writes to the Draft it started in.
+      if (source.attachments.some((item) => item.phase === 'preparing')) return false;
+      drafts.delete(from);
+      change(to, {
+        text: [target.text, source.text].filter(Boolean).join('\n'),
+        attachments: [...target.attachments, ...source.attachments],
+        message: undefined,
+      });
+      return true;
+    },
+    cancel(paneId) { sends.get(paneId)?.abort(); },
     interrupt() { for (const controller of sends.values()) controller.abort(); },
     dispose() {
       disposed = true;
