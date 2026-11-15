@@ -9,7 +9,7 @@ function deferred<T>() {
 }
 
 function file(name = 'image.png'): AttachmentFile {
-  return { uri: `file:///${name}`, name, size: 10, image: true,
+  return { id: `id-${name}`, uri: `file:///${name}`, name, size: 10, image: true,
     open: () => { throw new Error('unused'); }, dispose: jest.fn() };
 }
 

@@ -1,5 +1,11 @@
 /** A local, owned copy. Disposal never deletes the user's original file. */
 export interface AttachmentFile {
+  /**
+   * Names the folder on the Host that an upload of this file writes. It is
+   * chosen one time, so a second upload writes the same folder and leaves no
+   * second copy.
+   */
+  id: string;
   uri: string;
   name: string;
   size: number;

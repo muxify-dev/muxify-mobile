@@ -43,11 +43,12 @@ install (ADR 0016) are not Host Writes.
 ## Considered Options
 
 - **Send again after the deadline.** Rejected: ADR 0012's reason holds, and a
-  second `topic new` makes a second Topic.
+  second `topic new` makes a second Topic. ADR 0021 later sends a write again
+  one time, only when it has a Request id.
 - **A longer deadline for writes.** Rejected: it waits longer to say the same
   thing, and the deadline is how the registry finds a dead Connection.
 - **An idempotency key on each write.** The Host CLI would have to keep and
   compare keys. It is the right fix if Check is not enough, and it belongs to
-  muxify-shell.
+  muxify-shell. Taken later, as the Request id of ADR 0021.
 - **The error under the first field, as before.** Rejected: a Connection
   failure is not about the title, and the user edits a field that is correct.

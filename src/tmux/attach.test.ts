@@ -911,6 +911,7 @@ describe('the Key Row’s Shortcuts', () => {
   const never = () => Promise.reject(new Error('asked to run lines'));
 
   const stagedImage: AttachmentFile = {
+    id: 'staged-1',
     uri: 'file:///cache/composer/1/pasted-image.png',
     name: 'pasted-image.png',
     size: 3,

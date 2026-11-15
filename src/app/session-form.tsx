@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Form, Host, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
@@ -27,6 +27,7 @@ import { appConnections } from '@/tmux/ssh-connection';
 import { useOpenSession } from '@/tmux/attach-context';
 import { TmuxClient } from '@/tmux/tmux-client';
 import { TmuxError } from '@/tmux/tmux-error';
+import { WriteOutcomeUnknown } from '@/topics/request';
 
 /**
  * Makes a Session on a Host.
@@ -44,6 +45,9 @@ export default function SessionFormScreen() {
   const locked = write.kind === 'running' || write.kind === 'unsure';
   /** The Session this sheet made: a later tap attaches to it and sends no second write. */
   const [made, setMade] = useState<string | null>(null);
+  // The name of a create that got no answer. tmux has no Request id, so a
+  // "duplicate session" for this name can be the Session of that create.
+  const unanswered = useRef<string | null>(null);
 
   const name = useNativeState('');
   const [nameError, setNameError] = useState<string | undefined>();
@@ -73,9 +77,16 @@ export default function SessionFormScreen() {
           await new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).createSession(wanted);
         } catch (caught) {
           if (!(caught instanceof TmuxError)) throw caught;
+          if (unanswered.current === wanted && isDuplicateSession(caught)) {
+            setMade(wanted);
+            refuse('The Host has a Session with this name. It can be the one that you made. Retry Attach opens it.');
+          }
           const aboutName = nameRefusal(caught);
           refuse(aboutName ?? caught.message, aboutName ? { name: aboutName } : undefined);
         }
+      }).catch((caught: unknown) => {
+        if (caught instanceof WriteOutcomeUnknown) unanswered.current = wanted;
+        throw caught;
       });
       return attach(wanted, step);
     }).then(opened);
@@ -152,13 +163,17 @@ export default function SessionFormScreen() {
 
 /** Why tmux refused the name, for the two refusals that are about it. */
 function nameRefusal(error: TmuxError): string | undefined {
-  if (/duplicate session/i.test(error.message)) {
+  if (isDuplicateSession(error)) {
     return 'A Session with that name is already running on this Host.';
   }
   if (/bad session name|invalid/i.test(error.message)) {
     return 'tmux will not accept that name. Avoid dots and colons.';
   }
   return undefined;
+}
+
+function isDuplicateSession(error: TmuxError): boolean {
+  return /duplicate session/i.test(error.message);
 }
 
 function Header({ children, palette }: { children: string; palette: Appearance }) {

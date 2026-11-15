@@ -34,6 +34,7 @@ import { join, resolve } from 'path';
 import type { Card } from '@/topics/environment';
 import { installHostCli, type OpenCommandChannel } from '@/topics/host-cli-install';
 import { createMuxifyCli } from '@/topics/muxify-cli';
+import { newRequestId } from '@/topics/request';
 import { shellQuote } from '@/tmux/commands';
 import type { TmuxExecResult } from '@/tmux/transport';
 
@@ -222,10 +223,10 @@ afterAll(() => {
     const cli = createMuxifyCli((line) => log.push(line));
     const title = `e2e Host CLI ${arch} ${Date.now()}`;
 
-    const created = await cli.create(exec, title, []);
+    const created = await cli.create(exec, title, [], newRequestId());
     expect(created).toMatchObject({ kind: 'created' });
     if (created.kind !== 'created') return;
-    expect(log).toEqual([`found muxify at ${home}/.local/bin/muxify by ~/.local/bin`]);
+    expect(log).toContain(`found muxify at ${home}/.local/bin/muxify by ~/.local/bin`);
 
     const read = await cli.read(exec);
     expect(read.kind).toBe('listed');

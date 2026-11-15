@@ -45,7 +45,8 @@ export function loadingTopics(previous: HostTopics): HostTopics {
 
 /** What one read of the Host came to. A failure here has not yet met the last snapshot. */
 export type TopicsRead =
-  | { kind: 'listed'; snapshot: EnvironmentSnapshot }
+  /** `capabilities` is what this Host CLI can do past the first layout, such as take a Request id. */
+  | { kind: 'listed'; snapshot: EnvironmentSnapshot; capabilities: string[] }
   | { kind: 'absent' }
   | { kind: 'old' }
   | { kind: 'failed'; error: string };
@@ -57,8 +58,9 @@ export function settled(previous: HostTopics, read: TopicsRead): HostTopics {
     case 'old':
       return { ...read, last: lastSnapshot(previous) };
     case 'absent':
-    case 'listed':
       return read;
+    case 'listed':
+      return { kind: 'listed', snapshot: read.snapshot };
   }
 }
 

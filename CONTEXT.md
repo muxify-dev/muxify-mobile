@@ -173,15 +173,17 @@ _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Write**:
 One change the user asks of a Host: New Topic, Edit Topic, New Session, Add a
-Session, and the menu orders, drops and wakes of a Topic card. It is never sent
-again by itself. While it runs, a second tap is ignored. It ends done, failed
-or unsure. Failed means that nothing reached the Host or the Host refused, and
+Session, and the menu orders, drops and wakes of a Topic card. The user never
+sends it again blind: a Host Write that carries a Request is sent one more
+time with the same id when no answer came, and any other is not sent again by
+itself. While it runs, a second tap is ignored. It ends done, failed or
+unsure. Failed means that nothing reached the Host or the Host refused, and
 the user can send it again. Unsure means that a command may have reached the
-Host and no answer came, so the user checks before sending again: a sheet
-offers Check, which reads the Host, and a card reads the Listing again. A sheet
-reports it in a row at the top of its form, and a Topic card with a spinner
-and an alert. See ADR 0020.
-_Avoid_: request, save (for the general idea), mutation
+Host and no answer came, or that the Host has the Request in doubt, so the
+user checks before sending again: a sheet offers Check, which reads the Host,
+and a card reads the Listing again. A sheet reports it in a row at the top of
+its form, and a Topic card with a spinner and an alert. See ADR 0020 and ADR 0021.
+_Avoid_: request (a Request is the Host CLI command of a Host Write, with its id), save (for the general idea), mutation
 
 **Client**:
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it
@@ -288,7 +290,8 @@ The sheet that makes an Empty Topic on a Host, as New Topic on the Mac does. It
 has a title and one button for each Tag of the Host's Config, in
 Config order and in the Tag colour. Save opens Add a Session for the new Topic. That sheet confirms the Topic was
 created and offers Add later. An existing Topic keeps Cancel. An
-error from the Host shows in the sheet, and the sheet stays open (see Host Write). The Host
+error from the Host shows in the sheet, and the sheet stays open (see Host Write). A
+Retry of the same title and Tags is the same Request. The Host
 Screen Options menu always offers New Session and New Topic.
 New Topic reads Config Tags when it opens. A failed read offers Retry Tags
 and keeps the entered title. Save does not wait for the read: before it
@@ -300,7 +303,7 @@ The sheet that Options > Topic > Edit Topic opens. It changes the title, the Top
 Note and the Tags. Save sends only the fields that differ from what the Host
 last had, so a phone edit does not undo a different edit made on the Mac. A
 field the Host refuses shows its error under it, the sheet stays open, and the
-next Save sends only what still differs. A Tag that the Config no longer
+next Save sends only what still differs. Each field is one Request. A Tag that the Config no longer
 defines shows dashed and can only be removed. The sheet reads the Config Tags
 even when the Topics list is off. A failed read offers Retry before editing.
 The Attach refreshes the Topic after Save and when the sheet closes.
@@ -315,7 +318,9 @@ that folder and opens it in the Attach.
 The final row uses a typed folder, where a leading `~` is the Host's home folder.
 It does not create a Worktree or move an existing Session. An old Host CLI
 instead shows a Folder field and Create and open. Other read failures show Retry and keep
-typed entry available. A Host write error keeps the sheet open. If entry fails
+typed entry available. A Host write error keeps the sheet open. On a Host CLI
+that takes a Request id, the phone picks the Session's name, and a second try
+at the same folder is the same Request, so it makes no second Session. If entry fails
 after creation, Retry Attach uses the saved Session name and sends no second
 write. Cancel leaves any Session already made on the Host. Folder actions stay
 disabled after creation. Cancel and dismissal are disabled while creation or
@@ -335,6 +340,19 @@ start-fresh`: it makes one Session with one shell Window in each Session Path
 that a Dormant or Settled Topic remembers, with no remembered Windows, Tabs or
 Agents.
 _Avoid_: Reset, Restart
+
+**Request**:
+One change that the user asks of a Host through its Host CLI, with an id that
+the phone makes when the action starts. The Host applies a Request one time: a
+second send with the same id gets the answer of the first and changes nothing.
+So when the answer to a change is lost, the phone sends the same Request one
+more time. If there is still no answer, or the Host says that the Request is
+in doubt, the Host Write is unsure: the phone says that the change may have
+reached the Host, and gives a way to check. It does not say that the change
+failed. In New Topic and Add a Session, a Retry of the same input is the same
+Request, unless the Host refused it. A Host CLI that is too old for Request ids gets the change with no id,
+and that change is not sent again. See ADR 0021.
+_Avoid_: retry (for the second send), idempotency key, transaction
 
 ### Terminal
 

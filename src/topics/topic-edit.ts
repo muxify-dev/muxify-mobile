@@ -4,6 +4,8 @@
  * title does not put back a Note that the Mac changed in the meantime.
  */
 
+import type { UnknownOutcome } from './request';
+
 /** A Topic's three fields that the Edit sheet can change. */
 export interface TopicFields {
   title: string;
@@ -21,8 +23,8 @@ export type TopicChange =
   | { field: 'note'; note: string | null }
   | { field: 'tags'; tags: readonly string[] };
 
-/** What one write came to. */
-export type TopicWrite = { kind: 'changed' } | { kind: 'failed'; error: string };
+/** What one write came to. `unknown` is a Request in doubt (exit status 4): the Host may have made the change. */
+export type TopicWrite = { kind: 'changed' } | { kind: 'failed'; error: string } | UnknownOutcome;
 
 /** The Host's reason, under the field whose write it refused. */
 export type FieldErrors = Partial<Record<TopicField, string>>;
@@ -50,17 +52,19 @@ export function changes(saved: TopicFields, wanted: TopicFields): TopicChange[] 
  * Sends each change, one at a time, and gives back what the Host now has. A
  * write that fails leaves its field as the Host had it, so the next Save with
  * the returned `saved` sends that field again and not the ones that went
- * through.
+ * through. A write that the Host has in doubt stops the Save, and `inDoubt`
+ * carries the Host's words: the caller cannot know what that field is now.
  */
 export async function saveTopicEdit(
   saved: TopicFields,
   wanted: TopicFields,
   write: (change: TopicChange) => Promise<TopicWrite>,
-): Promise<{ saved: TopicFields; errors: FieldErrors }> {
+): Promise<{ saved: TopicFields; errors: FieldErrors; inDoubt?: string }> {
   let now = saved;
   const errors: FieldErrors = {};
   for (const change of changes(saved, wanted)) {
     const result = await write(change);
+    if (result.kind === 'unknown') return { saved: now, errors, inDoubt: result.message };
     if (result.kind === 'failed') errors[change.field] = result.error;
     else now = applied(now, change);
   }

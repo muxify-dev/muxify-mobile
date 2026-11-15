@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
@@ -35,6 +35,7 @@ import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
 import { emptyTopicTitled } from '@/topics/new-topic';
+import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { topicSeedParam } from '@/topics/topic-detail';
 
 
@@ -66,6 +67,8 @@ export default function TopicFormScreen() {
   const [titleError, setTitleError] = useState<string | undefined>();
   const { write, hostName, send, check } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
+  // The Request of the last Save, so a Retry with the same title and Tags is the same Request.
+  const intent = useRef<Intent | null>(null);
 
   const toggle = useCallback((name: string) => {
     setChosen((previous) => toggled(previous, name));
@@ -88,12 +91,16 @@ export default function TopicFormScreen() {
       return;
     }
     setTitleError(undefined);
-    void send(async ({ host, step, refuse }) => {
+    const sent = intentFor(intent.current, JSON.stringify([wanted, chosenTags]));
+    intent.current = sent;
+    void send(async ({ host, step, refuse, unsure }) => {
       const made = await appConnections().write(host, (transport, muxify) => {
         step('sending');
-        return muxify.create((command) => transport.exec(command), wanted, chosenTags);
+        return muxify.create((command) => transport.exec(command), wanted, chosenTags, sent.request);
       });
+      intent.current = intentAfter(sent, made);
       if (made.kind === 'failed') return refuse(made.error);
+      if (made.kind === 'unknown') return unsure(made.message);
       return made.topic;
     }).then((topic) => opened(topic, wanted));
   };

@@ -17,14 +17,15 @@ function stagingRoot() {
 }
 
 export async function stageFile(uri: string, name: string, image: boolean): Promise<AttachmentFile> {
-  const directory = new Directory(stagingRoot(), uniqueId());
+  const id = uniqueId();
+  const directory = new Directory(stagingRoot(), id);
   directory.create();
   const clean = name.replace(/[\x00-\x1f\x7f/\\]/g, '_') || 'attachment';
   const local = new File(directory, clean);
   try {
     await new File(uri).copy(local);
     return {
-      uri: local.uri, name: clean, size: local.size, image,
+      id, uri: local.uri, name: clean, size: local.size, image,
       open: () => local.open(FileMode.ReadOnly),
       dispose: () => { if (directory.exists) directory.delete(); },
     };

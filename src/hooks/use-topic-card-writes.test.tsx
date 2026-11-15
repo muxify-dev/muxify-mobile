@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import { ExecDeadlineError } from '@/ssh/host-connections';
+import { WriteOutcomeUnknown } from '@/topics/request';
 import type { sendTopicOrder, TopicOrder } from '@/topics/act-on-topic';
 import type { TopicId } from '@/topics/environment';
 import type { TopicWrite } from '@/topics/topic-edit';
@@ -93,6 +94,22 @@ describe('a write from a Topic card', () => {
     expect(order).toEqual(['write', 'read']);
     await act(async () => { await card.order(TOPIC, REOPEN); });
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('says a move may have happened when the Host has the Request in doubt, and reads again', async () => {
+    await mount(host({ kind: 'unknown', message: 'The Request changed the records and did not finish.' }));
+    await act(async () => { await card.order(TOPIC, MOVE_UP); });
+    expect(Alert.alert).toHaveBeenCalledWith('Move Up may have happened', expect.stringContaining('The Request changed the records and did not finish.'));
+    expect(order).toEqual(['write', 'read']);
+  });
+
+  it('says an order may have happened when the second send of its Request got no answer either', async () => {
+    await mount(host(new WriteOutcomeUnknown(true, new ExecDeadlineError())));
+    await act(async () => { await card.order(TOPIC, MOVE_UP); });
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Move Up may have happened',
+      expect.stringContaining('The Host did not answer in time. It did not answer a second send of the same Request either.'),
+    );
   });
 
   it('fails without a question when the Connection breaks before the order leaves the phone', async () => {

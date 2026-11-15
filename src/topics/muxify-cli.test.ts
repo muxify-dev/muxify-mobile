@@ -10,12 +10,15 @@ import flatList from './__fixtures__/environment-flat-list.json';
 import inPlay from './__fixtures__/environment-in-play.json';
 import liveTopic from './__fixtures__/topic-live.json';
 import type { TopicId } from './environment';
+import { RequestUnanswered, type RequestId } from './request';
 import type { TopicAction } from './topic-action';
 import type { Drop } from './topic-drop';
 import type { TopicChange } from './topic-edit';
 
 type Answer = Partial<TmuxExecResult>;
 const NOT_FOUND: Answer = { exitCode: 1 };
+const REQUEST = '0b0e4a3c-6f1d-4c0a-9a57-2f3c1d9e8b10' as RequestId;
+
 
 /** A Host that answers each command by the first rule that matches it, and records them all. */
 function fakeHost(rules: [match: string, answer: Answer][]) {
@@ -327,7 +330,7 @@ describe('making a Topic', () => {
     const read = await createMuxifyCli().create(host.exec, `Fix "login" it's $HOME`, [
       'big project',
       "o'brien",
-    ]);
+    ], REQUEST);
 
     expect(host.argv()).toEqual([
       'topic',
@@ -348,7 +351,7 @@ describe('making a Topic', () => {
   it('gives no --tag with no Tags', async () => {
     const host = scriptedHost(JSON.stringify(created));
 
-    await createMuxifyCli().create(host.exec, 'Notes', []);
+    await createMuxifyCli().create(host.exec, 'Notes', [], REQUEST);
 
     expect(host.argv()).toEqual(['topic', 'new', 'Notes', '--json']);
   });
@@ -363,7 +366,7 @@ describe('making a Topic', () => {
     };
     const host = scriptedHost(JSON.stringify(failure), 1);
 
-    expect(await createMuxifyCli().create(host.exec, 'bad', ['nosuchtag'])).toEqual({
+    expect(await createMuxifyCli().create(host.exec, 'bad', ['nosuchtag'], REQUEST)).toEqual({
       kind: 'failed',
       error: 'The Config does not define #nosuchtag in topics.tags. Add a Tag there first.',
     });
@@ -375,13 +378,13 @@ describe('making a Topic', () => {
       ['topic new', { exitCode: 0, stdout: '{"changed":{}}' }],
     ]);
 
-    const read = await createMuxifyCli().create(host.exec, 'Notes', []);
+    const read = await createMuxifyCli().create(host.exec, 'Notes', [], REQUEST);
 
     expect(read.kind === 'failed' && read.error).toContain('changed.topic_id: expected a string');
   });
 
   it('fails, and says why, on a Host with no muxify', async () => {
-    expect(await createMuxifyCli().create(fakeHost([]).exec, 'Notes', [])).toEqual({
+    expect(await createMuxifyCli().create(fakeHost([]).exec, 'Notes', [], REQUEST)).toEqual({
       kind: 'failed',
       error: 'Muxify is not on this Host.',
     });
@@ -413,7 +416,7 @@ describe('changing a Topic', () => {
   ])('%s, and names the Topic by id', async (_, change, command) => {
     const host = scriptedHost(CHANGED);
 
-    const write = await createMuxifyCli().change(host.exec, ID, change);
+    const write = await createMuxifyCli().change(host.exec, ID, change, REQUEST);
 
     expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
     expect(write).toEqual({ kind: 'changed' });
@@ -425,7 +428,7 @@ describe('changing a Topic', () => {
     await createMuxifyCli().change(host.exec, "x' ; rm -rf ~ '" as TopicId, {
       field: 'note',
       note: null,
-    });
+    }, REQUEST);
 
     expect(host.argv()).toEqual([
       'topic',
@@ -456,7 +459,7 @@ describe('changing a Topic', () => {
       1,
     );
 
-    expect(await createMuxifyCli().change(host.exec, ID, change)).toEqual({
+    expect(await createMuxifyCli().change(host.exec, ID, change, REQUEST)).toEqual({
       kind: 'failed',
       error: message,
     });
@@ -477,7 +480,7 @@ describe('changing a Topic', () => {
     const write = await createMuxifyCli().change(host.exec, ID, {
       field: 'note',
       note: '-x',
-    });
+    }, REQUEST);
 
     expect(write.kind === 'failed' && write.error).toContain('starts with -');
   });
@@ -487,7 +490,7 @@ describe('changing a Topic', () => {
       await createMuxifyCli().change(fakeHost([]).exec, ID, {
         field: 'title',
         title: 'New',
-      }),
+      }, REQUEST),
     ).toEqual({ kind: 'failed', error: 'Muxify is not on this Host.' });
   });
 });
@@ -508,7 +511,7 @@ describe('sending a menu order for a Topic', () => {
   ])('%s sends exactly its command with the Topic id and --json', async (action, command) => {
     const host = scriptedHost(CHANGED);
 
-    const write = await createMuxifyCli().act(host.exec, ID, action);
+    const write = await createMuxifyCli().act(host.exec, ID, action, REQUEST);
 
     expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
     expect(write).toEqual({ kind: 'changed' });
@@ -521,7 +524,7 @@ describe('sending a menu order for a Topic', () => {
       1,
     );
 
-    expect(await createMuxifyCli().act(host.exec, ID, 'bench')).toEqual({
+    expect(await createMuxifyCli().act(host.exec, ID, 'bench', REQUEST)).toEqual({
       kind: 'failed',
       error: message,
     });
@@ -552,7 +555,7 @@ describe('sending the drop of a dragged Topic card', () => {
   ])('%j sends exactly its command with the Topic id and --json', async (drop, command) => {
     const host = scriptedHost(CHANGED);
 
-    const write = await createMuxifyCli().drop(host.exec, ID, drop);
+    const write = await createMuxifyCli().drop(host.exec, ID, drop, REQUEST);
 
     expect(host.argv()).toEqual([...command, '--topic', ID, '--json']);
     expect(write).toEqual({ kind: 'changed' });
@@ -568,10 +571,12 @@ describe('sending the drop of a dragged Topic card', () => {
       kind: 'place',
       side: 'before',
       anchor: { kind: 'topic', id: OTHER },
-    });
+    }, REQUEST);
 
     expect(write.kind === 'failed' && write.error).toContain('an old muxify does not have this command');
-    expect(host.ran.slice(1)).toEqual([`'/opt/bin/muxify' topic move --before '${OTHER}' --topic '${ID}' --json`]);
+    expect(host.ran.filter((command) => command.includes(' topic '))).toEqual([
+      `'/opt/bin/muxify' topic move --before '${OTHER}' --topic '${ID}' --json`,
+    ]);
   });
 });
 
@@ -592,7 +597,7 @@ describe('adding a Session to a Topic', () => {
   it('gives the folder as one argument, spaces and quotes kept, and names the Topic by id', async () => {
     const host = scriptedHost(ADDED);
 
-    const read = await createMuxifyCli().addSession(host.exec, ID, `/Users/me/my "big" project's $HOME`);
+    const read = await createMuxifyCli().addSession(host.exec, ID, `/Users/me/my "big" project's $HOME`, REQUEST);
 
     expect(host.argv()).toEqual([
       'topic',
@@ -614,7 +619,7 @@ describe('adding a Session to a Topic', () => {
   ])('reads a leading ~ in %s as the home folder on the Host', async (folder, given) => {
     const host = scriptedHost(ADDED);
 
-    await createMuxifyCli().addSession(host.exec, ID, folder);
+    await createMuxifyCli().addSession(host.exec, ID, folder, REQUEST);
 
     expect(host.argv()[2]).toBe(given);
   });
@@ -625,7 +630,7 @@ describe('adding a Session to a Topic', () => {
       ['topic add-session', { exitCode: 2, stderr: "muxify: no directory '/nope'\n" }],
     ]);
 
-    expect(await createMuxifyCli().addSession(host.exec, ID, '/nope')).toEqual({
+    expect(await createMuxifyCli().addSession(host.exec, ID, '/nope', REQUEST)).toEqual({
       kind: 'failed',
       error: "muxify: no directory '/nope'",
     });
@@ -638,7 +643,7 @@ describe('adding a Session to a Topic', () => {
       1,
     );
 
-    expect(await createMuxifyCli().addSession(host.exec, ID, '/tmp')).toEqual({
+    expect(await createMuxifyCli().addSession(host.exec, ID, '/tmp', REQUEST)).toEqual({
       kind: 'failed',
       error: message,
     });
@@ -647,13 +652,13 @@ describe('adding a Session to a Topic', () => {
   it('fails, and says why, on an answer with no Session name', async () => {
     const host = scriptedHost(JSON.stringify({ changed: { topic_id: ID } }));
 
-    const read = await createMuxifyCli().addSession(host.exec, ID, '/tmp');
+    const read = await createMuxifyCli().addSession(host.exec, ID, '/tmp', REQUEST);
 
     expect(read.kind === 'failed' && read.error).toContain('changed.session_name');
   });
 
   it('fails, and says why, on a Host with no muxify', async () => {
-    expect(await createMuxifyCli().addSession(fakeHost([]).exec, ID, '/tmp')).toEqual({
+    expect(await createMuxifyCli().addSession(fakeHost([]).exec, ID, '/tmp', REQUEST)).toEqual({
       kind: 'failed',
       error: 'Muxify is not on this Host.',
     });
@@ -670,7 +675,7 @@ describe('waking a Dormant Topic', () => {
   ] as const)('%s asks the Host for topic %s on the Topic by id', async (call, verb) => {
     const host = scriptedHost(WOKEN);
 
-    const write = await createMuxifyCli()[call](host.exec, ID);
+    const write = await createMuxifyCli()[call](host.exec, ID, REQUEST);
 
     expect(host.argv()).toEqual(['topic', verb, '--topic', ID, '--json']);
     expect(write).toEqual({ kind: 'changed' });
@@ -685,7 +690,7 @@ describe('waking a Dormant Topic', () => {
         1,
       );
 
-      expect(await createMuxifyCli()[call](host.exec, ID)).toEqual({ kind: 'failed', error: message });
+      expect(await createMuxifyCli()[call](host.exec, ID, REQUEST)).toEqual({ kind: 'failed', error: message });
     },
   );
 
@@ -697,14 +702,14 @@ describe('waking a Dormant Topic', () => {
         ['topic', { exitCode: 2, stderr: 'usage: muxify topic open …' }],
       ]);
 
-      const write = await createMuxifyCli()[call](host.exec, ID);
+      const write = await createMuxifyCli()[call](host.exec, ID, REQUEST);
 
       expect(write.kind === 'failed' && write.error).toContain('old muxify');
     },
   );
 
   it.each(['reopenTopic', 'startTopicFresh'] as const)('%s fails, and says why, on a Host with no muxify', async (call) => {
-    expect(await createMuxifyCli()[call](fakeHost([]).exec, ID)).toEqual({
+    expect(await createMuxifyCli()[call](fakeHost([]).exec, ID, REQUEST)).toEqual({
       kind: 'failed',
       error: 'Muxify is not on this Host.',
     });
@@ -777,5 +782,185 @@ describe('Session Path choices', () => {
       if (command.includes('session-paths')) throw new Error('lost');
       return host.exec(command);
     }, id)).rejects.toThrow('lost');
+  });
+});
+
+describe('a write with a Request id', () => {
+  const ID = '5a11abd7-0f6d-4f18-acbc-d1fa100b87e6' as TopicId;
+  const CHANGED: Answer = { exitCode: 0, stdout: JSON.stringify({ changed: { topic_id: ID } }) };
+  const WITH_REQUEST: Answer = { exitCode: 0, stdout: JSON.stringify({ ...inPlay, capabilities: ['request'] }) };
+  const MUXIFY = "'/opt/bin/muxify'";
+
+  it('goes out with --request when the Host CLI has the capability, and learns that one time', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', WITH_REQUEST], ['topic', CHANGED]]);
+    const cli = createMuxifyCli();
+
+    expect(await cli.act(host.exec, ID, 'move-up', REQUEST)).toEqual({ kind: 'changed' });
+    await cli.act(host.exec, ID, 'bench', REQUEST);
+
+    expect(host.ran).toEqual([
+      'command -v muxify',
+      `${MUXIFY} environment show --json`,
+      `${MUXIFY} --request '${REQUEST}' topic move up --topic '${ID}' --json`,
+      `${MUXIFY} --request '${REQUEST}' topic bench --topic '${ID}' --json`,
+    ]);
+  });
+
+  it('uses the capabilities that a read of the Topics gave', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', WITH_REQUEST], ['topic', CHANGED]]);
+    const cli = createMuxifyCli();
+
+    const read = await cli.read(host.exec);
+    await cli.reopenTopic(host.exec, ID, REQUEST);
+
+    expect(read).toMatchObject({ kind: 'listed', capabilities: ['request'] });
+    expect(host.ran.filter((command) => command.includes('environment show'))).toHaveLength(1);
+    expect(host.ran.at(-1)).toBe(`${MUXIFY} --request '${REQUEST}' topic reopen --topic '${ID}' --json`);
+  });
+
+  it('never gives --request to a read', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', WITH_REQUEST]]);
+    const cli = createMuxifyCli();
+
+    await cli.read(host.exec);
+    await cli.show(host.exec, ID);
+    await cli.sessionPaths(host.exec, ID);
+    await cli.browserTabs(host.exec, '@1');
+
+    expect(host.ran.filter((command) => command.includes('--request'))).toEqual([]);
+  });
+
+  it('goes out with no id on a Host CLI without the capability, and says so in the Log one time', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', SHOW], ['topic', CHANGED]]);
+    const log: string[] = [];
+    const cli = createMuxifyCli((line) => log.push(line));
+
+    expect(await cli.act(host.exec, ID, 'move-up', REQUEST)).toEqual({ kind: 'changed' });
+    await cli.act(host.exec, ID, 'bench', REQUEST);
+
+    expect(host.ran.slice(2)).toEqual([
+      `${MUXIFY} topic move up --topic '${ID}' --json`,
+      `${MUXIFY} topic bench --topic '${ID}' --json`,
+    ]);
+    expect(log.filter((line) => line.includes('too old for Request ids'))).toHaveLength(1);
+  });
+
+  it('asks the Host CLI again what it can do after it is told to forget', async () => {
+    const answers: Answer[] = [SHOW, WITH_REQUEST];
+    const ran: string[] = [];
+    const exec: TmuxTransport['exec'] = async (command) => {
+      ran.push(command);
+      const answer = command.includes('command -v') ? PATH_FOUND : command.includes('environment show') ? answers.shift() : CHANGED;
+      return { stdout: '', stderr: '', exitCode: 0, ...answer };
+    };
+    const cli = createMuxifyCli();
+
+    await cli.act(exec, ID, 'bench', REQUEST);
+    cli.forget();
+    await cli.act(exec, ID, 'bench', REQUEST);
+
+    expect(ran.filter((command) => command.includes('topic bench'))).toEqual([
+      `${MUXIFY} topic bench --topic '${ID}' --json`,
+      `${MUXIFY} --request '${REQUEST}' topic bench --topic '${ID}' --json`,
+    ]);
+  });
+
+  it('is unknown, with the words of the Host, when the Host says that the Request is in doubt', async () => {
+    const message = 'Request 0b0e changed the records and did not finish.';
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['environment show', WITH_REQUEST],
+      ['topic', { exitCode: 4, stdout: JSON.stringify({ failed: { message } }) }],
+    ]);
+
+    expect(await createMuxifyCli().act(host.exec, ID, 'move-up', REQUEST)).toEqual({
+      kind: 'unknown',
+      message,
+    });
+  });
+
+  it('fails with a plain error, and names a phone bug in the Log, when the Host has the id with other arguments', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['environment show', WITH_REQUEST],
+      ['topic', { exitCode: 3, stderr: 'the Request came before as topic bench' }],
+    ]);
+    const log: string[] = [];
+
+    const write = await createMuxifyCli((line) => log.push(line)).create(host.exec, 'Fix login', [], REQUEST);
+
+    expect(write).toEqual({
+      kind: 'failed',
+      error: 'Muxify sent this change in a way that the Host could not accept. Try again.',
+    });
+    expect(log.at(-1)).toBe(
+      `phone bug: the Host refused Request ${REQUEST}, which came before with other arguments: the Request came before as topic bench`,
+    );
+  });
+
+  it('keeps the meaning of the other exit statuses: a refusal fails with the reason of the Host', async () => {
+    const host = fakeHost([
+      ['command -v', PATH_FOUND],
+      ['environment show', WITH_REQUEST],
+      ['topic', { exitCode: 1, stdout: JSON.stringify({ failed: { message: 'The Config does not define the Tag wrok.' } }) }],
+    ]);
+
+    expect(await createMuxifyCli().create(host.exec, 'Fix login', ['wrok'], REQUEST)).toEqual({
+      kind: 'failed',
+      error: 'The Config does not define the Tag wrok.',
+    });
+  });
+
+  it('throws RequestUnanswered when the exec of a write with --request ends with no answer', async () => {
+    const lost = new Error('channel closed');
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', WITH_REQUEST]]);
+    const exec: TmuxTransport['exec'] = (command) =>
+      command.includes('topic new') ? Promise.reject(lost) : host.exec(command);
+
+    const write = createMuxifyCli().create(exec, 'Fix login', [], REQUEST);
+
+    await expect(write).rejects.toBeInstanceOf(RequestUnanswered);
+    await expect(write).rejects.toMatchObject({ request: REQUEST, cause: lost });
+  });
+
+  it('throws the error of the exec as it is when the write went out with no id', async () => {
+    const lost = new Error('channel closed');
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', SHOW]]);
+    const exec: TmuxTransport['exec'] = (command) =>
+      command.includes('topic new') ? Promise.reject(lost) : host.exec(command);
+
+    await expect(createMuxifyCli().create(exec, 'Fix login', [], REQUEST)).rejects.toBe(lost);
+  });
+
+  it('does not send a Request a second time with no id', async () => {
+    const host = fakeHost([['command -v', PATH_FOUND], ['environment show', { exitCode: 1, stderr: 'store busy' }], ['topic', CHANGED]]);
+    const cli = createMuxifyCli();
+    cli.resending(REQUEST);
+
+    await expect(cli.create(host.exec, 'Fix login', [], REQUEST)).rejects.toBeInstanceOf(RequestUnanswered);
+    expect(host.ran.filter((command) => command.includes('topic new'))).toEqual([]);
+  });
+
+  describe('for Add a Session', () => {
+    const ADDED: Answer = { exitCode: 0, stdout: JSON.stringify({ changed: { session_name: 'gs+2/fix-login' } }) };
+
+    it('gives the picked name as --name with the id', async () => {
+      const host = fakeHost([['command -v', PATH_FOUND], ['environment show', WITH_REQUEST], ['topic', ADDED]]);
+
+      const added = await createMuxifyCli().addSession(host.exec, ID, '/code/gs', REQUEST, 'gs+2');
+
+      expect(added).toEqual({ kind: 'added', session: 'gs+2/fix-login' });
+      expect(host.ran.at(-1)).toBe(
+        `${MUXIFY} --request '${REQUEST}' topic add-session '/code/gs' --topic '${ID}' --json --name 'gs+2'`,
+      );
+    });
+
+    it('gives no --name to a Host CLI without the capability', async () => {
+      const host = fakeHost([['command -v', PATH_FOUND], ['environment show', SHOW], ['topic', ADDED]]);
+
+      await createMuxifyCli().addSession(host.exec, ID, '/code/gs', REQUEST, 'gs+2');
+
+      expect(host.ran.at(-1)).toBe(`${MUXIFY} topic add-session '/code/gs' --topic '${ID}' --json`);
+    });
   });
 });

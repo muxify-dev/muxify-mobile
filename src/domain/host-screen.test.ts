@@ -796,6 +796,7 @@ describe('hostScreen with Topics', () => {
         settled({ kind: 'loading', last: null }, {
           kind: 'listed',
           snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
+          capabilities: [],
         }),
         installDone('installed', 'abc1234 1760000000'),
       ),
@@ -938,7 +939,7 @@ describe('homeRows of a Host that is not in In Play', () => {
 describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
   const sessionsOnly = { hostScreenLists: ['recent', 'sessions'] as HostScreenLists };
   const withTopics = { hostScreenLists: ['topics', 'recent', 'sessions'] as HostScreenLists };
-  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) });
+  const listed = settled(TOPICS_UNASKED, { kind: 'listed', snapshot: parseEnvironment(inPlayFixture), capabilities: [] });
 
   it.each<{ name: string; settings: { hostScreenLists: HostScreenLists }; listing: Listing; topics: HostTopics; answered: boolean }>([
     { name: 'waits while the first read is in flight', settings: sessionsOnly, listing: UNASKED, topics: TOPICS_UNASKED, answered: false },

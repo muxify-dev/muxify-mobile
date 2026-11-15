@@ -43,8 +43,10 @@ const open: OpenUploadChannel = async (command, events) => {
   };
 };
 
+let sources = 0;
+
 function source(data: Buffer, name = 'image.png', size = data.length): AttachmentFile {
-  return { uri: '', name, image: true, size, dispose() {}, open() {
+  return { id: `e2e-${process.pid}-${(sources += 1)}`, uri: '', name, image: true, size, dispose() {}, open() {
     let at = 0;
     return { close() {}, readBytes(length) {
       const part = data.subarray(at, at + length);

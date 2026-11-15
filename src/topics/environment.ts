@@ -127,6 +127,15 @@ export function parseEnvironment(json: unknown): EnvironmentSnapshot {
   };
 }
 
+/**
+ * The `capabilities` at the top of the answer: the names of what this Host CLI
+ * can do, such as `request`. A Host CLI from before the key has none.
+ */
+export function parseCapabilities(json: unknown): string[] {
+  const { capabilities } = object(json, 'environment');
+  return Array.isArray(capabilities) ? capabilities.filter((name): name is string => typeof name === 'string') : [];
+}
+
 function parseUnpinned(unpinned: Record<string, unknown>): Unpinned {
   switch (unpinned.kind) {
     case 'in_play':

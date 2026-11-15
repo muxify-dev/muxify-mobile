@@ -3,13 +3,14 @@ import { shellQuote } from '@/tmux/commands';
 import type { TmuxTransport } from '@/tmux/transport';
 
 import { folderArgument, parseAddedSession, type AddSessionRead } from './add-session';
-import { HostCliTooOld, parseEnvironment, type EnvironmentSnapshot, type TopicId } from './environment';
+import { HostCliTooOld, parseCapabilities, parseEnvironment, type EnvironmentSnapshot, type TopicId } from './environment';
 import type { TopicsRead } from './host-topics';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import { parseTopicDetail, type TopicRead } from './topic-detail';
 import type { TopicChange, TopicWrite } from './topic-edit';
 import { topicActionCommand, type TopicAction } from './topic-action';
 import { dropCommand, type Drop } from './topic-drop';
+import { REQUEST_CAPABILITY, RequestUnanswered, type RequestId, type UnknownOutcome } from './request';
 import { parseSessionPaths, type SessionPathsRead } from './session-paths';
 
 type Exec = TmuxTransport['exec'];
@@ -38,6 +39,12 @@ const NO_MUXIFY = 'Muxify is not on this Host.';
 
 /** `muxify` exits 2 on a usage error, which is how a CLI with no `environment show` answers. */
 const USAGE_ERROR = 2;
+/** The Request id came before with another command or other arguments. Only a phone bug gives it. */
+const REQUEST_MISMATCH = 3;
+/** The Request changed the Host's records and did not finish, and its command is not safe to run again. */
+const REQUEST_IN_DOUBT = 4;
+
+const REQUEST_MISMATCH_ERROR = 'Muxify sent this change in a way that the Host could not accept. Try again.';
 
 /**
  * A usage error answers a change with the whole help text. It comes from a
@@ -47,9 +54,18 @@ const USAGE_ERROR = 2;
 const CHANGE_USAGE_ERROR =
   'muxify on this Host did not take this. It reads a value that starts with - as an option, and an old muxify does not have this command.';
 
+/**
+ * Each write takes a Request id, which the caller makes when the user starts
+ * the action. The write sends it as `--request` when the Host CLI has the
+ * `request` capability, and the Host then applies the write one time. An exec
+ * of such a write that ends with no answer throws `RequestUnanswered`. A Host
+ * CLI without the capability gets the command with no id. Exit status 4, a
+ * Request in doubt, answers `unknown` with the Host's words.
+ */
 export interface MuxifyCli {
   /**
-   * One read of the Host's Topics: `environment show --json`, parsed.
+   * One read of the Host's Topics: `environment show --json`, parsed. It also
+   * learns the capabilities of the Host CLI.
    *
    * The first call finds `muxify` on the Host and every later call reuses
    * what the first found, so a refresh is one exec. A call that throws, because
@@ -70,7 +86,7 @@ export interface MuxifyCli {
    * It finds `muxify` as `read` does. A Tag the Config does not define, or any
    * other refusal, fails with the Host's reason, and the Host makes nothing.
    */
-  create(exec: Exec, title: string, tags: string[]): Promise<NewTopicRead>;
+  create(exec: Exec, title: string, tags: string[], request: RequestId): Promise<NewTopicRead>;
 
   /**
    * Changes one field of a Topic: `topic rename`, `topic note` (`--clear` for
@@ -78,7 +94,7 @@ export interface MuxifyCli {
    * as `read` does. A refusal fails with the Host's reason, and the Host
    * changes nothing.
    */
-  change(exec: Exec, topic: TopicId, change: TopicChange): Promise<TopicWrite>;
+  change(exec: Exec, topic: TopicId, change: TopicChange, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Sends one order of the long-press menu: `topic mark-unread`, `topic move
@@ -87,7 +103,7 @@ export interface MuxifyCli {
    * does. A refusal, such as a move at the end, fails with the Host's reason,
    * and the Host changes nothing.
    */
-  act(exec: Exec, topic: TopicId, action: TopicAction): Promise<TopicWrite>;
+  act(exec: Exec, topic: TopicId, action: TopicAction, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Sends one drop of the Edit mode drag: `topic move --before`, `--after` or
@@ -96,15 +112,19 @@ export interface MuxifyCli {
    * to place a card next to another fails with the usual old-muxify reason,
    * and nothing stands in for the command.
    */
-  drop(exec: Exec, topic: TopicId, drop: Drop): Promise<TopicWrite>;
+  drop(exec: Exec, topic: TopicId, drop: Drop, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Makes a Session at a folder on the Host in this Topic: `topic add-session`,
    * with no Worktree. It names the Topic by id and finds `muxify` as `read`
    * does. A folder that is not there, or any other refusal, fails with the
    * Host's reason, and the Host makes nothing.
+   *
+   * `name` goes out as `--name`, only together with the Request id. The Host
+   * then names the Session `<name>/<slug>`, and a second send finds that
+   * Session and makes no second one. See `freeSessionName`.
    */
-  addSession(exec: Exec, topic: TopicId, folder: string): Promise<AddSessionRead>;
+  addSession(exec: Exec, topic: TopicId, folder: string, request: RequestId, name?: string): Promise<AddSessionRead>;
 
   sessionPaths(exec: Exec, topic: TopicId): Promise<SessionPathsRead>;
 
@@ -116,14 +136,14 @@ export interface MuxifyCli {
    * with the Host's reason, and an old `muxify` without the command fails
    * with the usual old-muxify reason.
    */
-  reopenTopic(exec: Exec, topic: TopicId): Promise<TopicWrite>;
+  reopenTopic(exec: Exec, topic: TopicId, request: RequestId): Promise<TopicWrite>;
 
   /**
    * Makes one Session with one shell Window in each Session Path that a
    * Dormant or Settled Topic remembers: `topic start-fresh`, as Start Topic
    * Fresh does. It answers as `reopenTopic` does.
    */
-  startTopicFresh(exec: Exec, topic: TopicId): Promise<TopicWrite>;
+  startTopicFresh(exec: Exec, topic: TopicId, request: RequestId): Promise<TopicWrite>;
 
   /**
    * The Tabs of one Window's Browser: `browser tabs --json`. It names the
@@ -134,9 +154,17 @@ export interface MuxifyCli {
   browserTabs(exec: Exec, window: string): Promise<BrowserTabsRead>;
 
   /**
-   * Forgets where `muxify` was found, so the next call probes again. The
-   * registry calls it when the Host CLI install answers `installed` or
-   * `updated`, which puts a new one in `~/.local/bin`.
+   * Tells this CLI that the Request went out with `--request` before, on this
+   * Connection or on one that broke. From then on the Request goes out with
+   * the id or not at all: without the id, the Host would apply it a second
+   * time.
+   */
+  resending(request: RequestId): void;
+
+  /**
+   * Forgets where `muxify` was found and what it can do, so the next call
+   * probes again. The registry calls it when the Host CLI install answers
+   * `installed` or `updated`, which puts a new one in `~/.local/bin`.
    */
   forget(): void;
 }
@@ -151,6 +179,10 @@ export interface MuxifyCli {
  */
 export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyCli {
   let probed: Promise<string | null> | undefined;
+  /** What the Host CLI said it can do. Undefined until an `environment show` has answered. */
+  let capabilities: ReadonlySet<string> | undefined;
+  let saidTooOld = false;
+  const resent = new Set<RequestId>();
 
   async function probe(exec: Exec): Promise<string | null> {
     for (const { step, command } of PROBE_STEPS) {
@@ -192,12 +224,90 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
     return parseAnswer(result.stdout, parse);
   }
 
+  async function read(exec: Exec): Promise<TopicsRead> {
+    const path = await locate(exec);
+    if (path === null) return { kind: 'absent' };
+
+    const result = await exec(`${shellQuote(path)} environment show --json`);
+    if (result.exitCode === USAGE_ERROR) {
+      capabilities = new Set();
+      return { kind: 'old' };
+    }
+    if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
+    const parsed = parseAnswer(result.stdout, (json) => {
+      // First, so that a snapshot this phone cannot read does not hide what the Host CLI can do.
+      const offered = parseCapabilities(json);
+      capabilities = new Set(offered);
+      const snapshot = parseEnvironmentOrOld(json);
+      return snapshot === 'old' ? snapshot : { snapshot, capabilities: offered };
+    });
+    if ('error' in parsed) return { kind: 'failed', ...parsed };
+    return parsed.value === 'old' ? { kind: 'old' } : { kind: 'listed', ...parsed.value };
+  }
+
+  /**
+   * Runs one write, `muxify <args>`, with the Request id when the Host CLI
+   * takes one. The first write on a Host CLI that has not said what it can do
+   * reads `environment show` to learn it.
+   */
+  async function send(
+    exec: Exec,
+    path: string,
+    args: string,
+    request: RequestId,
+    withRequest = '',
+  ): Promise<{ result: Awaited<ReturnType<Exec>>; stopped?: UnknownOutcome | { kind: 'failed'; error: string } }> {
+    if (capabilities === undefined) await read(exec);
+    if (!capabilities?.has(REQUEST_CAPABILITY)) {
+      if (resent.has(request)) {
+        throw new RequestUnanswered(request, new Error('The Host CLI did not offer the Request id for the second send.'));
+      }
+      if (capabilities !== undefined && !saidTooOld) {
+        saidTooOld = true;
+        log('the Host CLI is too old for Request ids; writes go out with no id');
+      }
+      return { result: await exec(`${shellQuote(path)} ${args}`) };
+    }
+
+    let result: Awaited<ReturnType<Exec>>;
+    try {
+      result = await exec(`${shellQuote(path)} --request ${shellQuote(request)} ${args}${withRequest}`);
+    } catch (error) {
+      throw new RequestUnanswered(request, error);
+    }
+    if (result.exitCode === REQUEST_IN_DOUBT) {
+      return { result, stopped: { kind: 'unknown', message: failureText(result) } };
+    }
+    if (result.exitCode === REQUEST_MISMATCH) {
+      log(`phone bug: the Host refused Request ${request}, which came before with other arguments: ${failureText(result)}`);
+      return { result, stopped: { kind: 'failed', error: REQUEST_MISMATCH_ERROR } };
+    }
+    return { result };
+  }
+
+  /** One write that answers with JSON to parse. A refusal fails with the Host's reason. */
+  async function writeFor<T>(
+    exec: Exec,
+    args: string,
+    request: RequestId,
+    parse: (json: unknown) => T,
+    withRequest?: string,
+  ): Promise<{ value: T } | { error: string } | { stopped: UnknownOutcome | { kind: 'failed'; error: string } }> {
+    const path = await locate(exec);
+    if (path === null) return { error: NO_MUXIFY };
+    const { result, stopped } = await send(exec, path, args, request, withRequest);
+    if (stopped) return { stopped };
+    if (result.exitCode !== 0) return { error: failureText(result) };
+    return parseAnswer(result.stdout, parse);
+  }
+
   /** One write on a Topic: `<command> --topic <id> --json`. A refusal fails with the Host's reason. */
-  async function writeTopic(exec: Exec, command: string, topic: TopicId): Promise<TopicWrite> {
+  async function writeTopic(exec: Exec, command: string, topic: TopicId, request: RequestId): Promise<TopicWrite> {
     const path = await locate(exec);
     if (path === null) return { kind: 'failed', error: NO_MUXIFY };
 
-    const result = await exec(`${shellQuote(path)} ${command} --topic ${shellQuote(topic)} --json`);
+    const { result, stopped } = await send(exec, path, `${command} --topic ${shellQuote(topic)} --json`, request);
+    if (stopped) return stopped;
     if (result.exitCode === USAGE_ERROR) return { kind: 'failed', error: CHANGE_USAGE_ERROR };
     return result.exitCode === 0
       ? { kind: 'changed' }
@@ -205,38 +315,29 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
   }
 
   return {
-    async read(exec) {
-      const path = await locate(exec);
-      if (path === null) return { kind: 'absent' };
-
-      const result = await exec(`${shellQuote(path)} environment show --json`);
-      if (result.exitCode === USAGE_ERROR) return { kind: 'old' };
-      if (result.exitCode !== 0) return { kind: 'failed', error: failureText(result) };
-      const parsed = parseAnswer(result.stdout, parseEnvironmentOrOld);
-      if ('error' in parsed) return { kind: 'failed', ...parsed };
-      return parsed.value === 'old' ? { kind: 'old' } : { kind: 'listed', snapshot: parsed.value };
-    },
+    read,
 
     async show(exec, topic) {
       const parsed = await answerTo(exec, `topic show --json --topic ${shellQuote(topic)}`, parseTopicDetail);
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'shown', topic: parsed.value };
     },
 
-    async create(exec, title, tags) {
+    async create(exec, title, tags, request) {
       const tagFlags = tags.map((tag) => ` --tag ${shellQuote(tag)}`).join('');
-      const parsed = await answerTo(exec, `topic new ${shellQuote(title)}${tagFlags} --json`, parseNewTopic);
+      const parsed = await writeFor(exec, `topic new ${shellQuote(title)}${tagFlags} --json`, request, parseNewTopic);
+      if ('stopped' in parsed) return parsed.stopped;
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'created', topic: parsed.value };
     },
 
-    change: (exec, topic, change) => writeTopic(exec, changeCommand(change), topic),
+    change: (exec, topic, change, request) => writeTopic(exec, changeCommand(change), topic, request),
 
-    act: (exec, topic, action) => writeTopic(exec, topicActionCommand(action), topic),
+    act: (exec, topic, action, request) => writeTopic(exec, topicActionCommand(action), topic, request),
 
-    drop: (exec, topic, drop) => writeTopic(exec, dropCommand(drop), topic),
+    drop: (exec, topic, drop, request) => writeTopic(exec, dropCommand(drop), topic, request),
 
-    reopenTopic: (exec, topic) => writeTopic(exec, 'topic reopen', topic),
+    reopenTopic: (exec, topic, request) => writeTopic(exec, 'topic reopen', topic, request),
 
-    startTopicFresh: (exec, topic) => writeTopic(exec, 'topic start-fresh', topic),
+    startTopicFresh: (exec, topic, request) => writeTopic(exec, 'topic start-fresh', topic, request),
 
     async sessionPaths(exec, topic) {
       const path = await locate(exec);
@@ -248,12 +349,15 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', choices: parsed.value };
     },
 
-    async addSession(exec, topic, folder) {
-      const parsed = await answerTo(
+    async addSession(exec, topic, folder, request, name) {
+      const parsed = await writeFor(
         exec,
         `topic add-session ${folderArgument(folder)} --topic ${shellQuote(topic)} --json`,
+        request,
         parseAddedSession,
+        name === undefined ? '' : ` --name ${shellQuote(name)}`,
       );
+      if ('stopped' in parsed) return parsed.stopped;
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'added', session: parsed.value };
     },
 
@@ -262,8 +366,14 @@ export function createMuxifyCli(log: (line: string) => void = () => {}): MuxifyC
       return 'error' in parsed ? { kind: 'failed', ...parsed } : { kind: 'listed', tabs: parsed.value };
     },
 
+    resending(request) {
+      resent.add(request);
+    },
+
     forget() {
       probed = undefined;
+      capabilities = undefined;
+      saidTooOld = false;
     },
   };
 }

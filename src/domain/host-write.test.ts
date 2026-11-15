@@ -29,6 +29,11 @@ describe('a Host Write', () => {
     expect(ended(running('checking'), { kind: 'threw', reason: 'late' })).toEqual({ kind: 'unsure', reason: 'late' });
   });
 
+  it('is unsure, at any step, when the command went out and the Host gave no answer it can trust', () => {
+    expect(ended(running('connecting'), { kind: 'unknown', reason: 'in doubt' })).toEqual({ kind: 'unsure', reason: 'in doubt' });
+    expect(ended(running('sending'), { kind: 'unknown', reason: 'late' })).toEqual({ kind: 'unsure', reason: 'late' });
+  });
+
   it("keeps the Host's reasons for each field", () => {
     expect(ended(running('sending'), { kind: 'refused', reason: 'no', fields: { title: 'taken' } }))
       .toEqual({ kind: 'failed', reason: 'no', fields: { title: 'taken' } });

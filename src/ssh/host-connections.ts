@@ -12,6 +12,7 @@ import {
   type OpenCommandChannel,
 } from '@/topics/host-cli-install';
 import { createMuxifyCli, type MuxifyCli } from '@/topics/muxify-cli';
+import { RequestUnanswered, WriteOutcomeUnknown } from '@/topics/request';
 
 /** How long a Connection with no Attach stays open after its last screen read. */
 export const IDLE_MS = 60_000;
@@ -56,7 +57,12 @@ export interface HostConnections {
    * time, on a Connection that works.
    */
   read<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
-  /** A screen's write. It is never sent again: it may have reached the Host. */
+  /**
+   * A screen's write. When it goes out and no answer comes back, it fails with
+   * `WriteOutcomeUnknown`: it may have reached the Host. Before that, a write
+   * that went out with a Request id is sent one more time. A failure with
+   * another error means that nothing reached the Host.
+   */
   write<T>(host: Host, use: ScreenUse<T>, options?: ScreenOptions): Promise<T>;
   /** React Native's app-state, forwarded as a fact. */
   lifecycleChanged(phase: LifecyclePhase): void;
@@ -264,28 +270,66 @@ export function createHostConnections(options: {
     };
   }
 
-  async function run<T>(
+  /** One run of a screen's work on the Host's Connection: its value, or the error and if the Connection was the cause. */
+  async function attempt<T>(
     host: Host,
     work: ScreenUse<T>,
-    retry: boolean,
     options: ScreenOptions | undefined,
-  ): Promise<T> {
-    for (let attempt = 1; ; attempt += 1) {
-      const { entry, dialed } = await acquire(host);
-      checkHostKey(entry, dialed, options);
-      install(entry, dialed);
-      entry.uses += 1;
-      busy(entry);
-      try {
-        return await work(withDeadline(entry, dialed.transport), entry.muxify);
-      } catch (error) {
-        const failedByConnection = error instanceof ExecDeadlineError || !dialed.isConnected();
-        if (!failedByConnection || !retry || attempt > 1) throw error;
-        say(`${host.displayName}: the read failed on its Connection; reading again`);
-      } finally {
-        entry.uses -= 1;
-        settle(entry);
-      }
+    unanswered?: RequestUnanswered,
+  ): Promise<{ value: T } | { error: unknown; failedByConnection: boolean }> {
+    const { entry, dialed } = await acquire(host);
+    checkHostKey(entry, dialed, options);
+    install(entry, dialed);
+    if (unanswered) entry.muxify.resending(unanswered.request);
+    entry.uses += 1;
+    busy(entry);
+    try {
+      return { value: await work(withDeadline(entry, dialed.transport), entry.muxify) };
+    } catch (error) {
+      return { error, failedByConnection: error instanceof ExecDeadlineError || !dialed.isConnected() };
+    } finally {
+      entry.uses -= 1;
+      settle(entry);
+    }
+  }
+
+  async function read<T>(host: Host, work: ScreenUse<T>, options: ScreenOptions | undefined): Promise<T> {
+    const first = await attempt(host, work, options);
+    if ('value' in first) return first.value;
+    if (!first.failedByConnection) throw first.error;
+    say(`${host.displayName}: the read failed on its Connection; reading again`);
+    const second = await attempt(host, work, options);
+    if ('value' in second) return second.value;
+    throw second.error;
+  }
+
+  /**
+   * A write with no answer may have reached the Host, so a second send could
+   * apply it two times. That is why a write is not sent again as a read is.
+   * A write that went out with a Request id is the exception: the Host keeps
+   * the id and applies the Request one time, and a second send gets the
+   * answer of the first. The phone then learns what the Host did, which it
+   * cannot learn another way. One second send is enough to cover an answer
+   * that was lost. See ADR 0021.
+   */
+  async function write<T>(host: Host, work: ScreenUse<T>, options: ScreenOptions | undefined): Promise<T> {
+    const first = await attempt(host, work, options);
+    if ('value' in first) return first.value;
+    if (!(first.error instanceof RequestUnanswered)) {
+      if (first.failedByConnection) throw new WriteOutcomeUnknown(false, first.error);
+      throw first.error;
+    }
+    say(`${host.displayName}: a write with a Request id got no answer; sending the same Request again`);
+    try {
+      // A deadline closes a Connection that no Attach holds, so this send
+      // dials a new one. A Connection that an Attach holds is the Attach's to
+      // close, so this send can go out on that one. Each is safe: the Host
+      // lets one id run in one process at a time.
+      const second = await attempt(host, work, options, first.error);
+      if ('value' in second) return second.value;
+      throw second.error;
+    } catch (error) {
+      throw new WriteOutcomeUnknown(true, error);
     }
   }
 
@@ -327,8 +371,8 @@ export function createHostConnections(options: {
       };
     },
 
-    read: (host, use, options) => run(host, use, true, options),
-    write: (host, use, options) => run(host, use, false, options),
+    read,
+    write,
 
     hostCli: (hostId) => installs.get(hostId)?.state ?? NOT_STARTED,
 

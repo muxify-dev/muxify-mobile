@@ -36,6 +36,7 @@ import { describeConnectionFailure } from '@/ssh/connect-host';
 import { deviceHostStore } from '@/storage/device-store';
 import { appConnections } from '@/tmux/ssh-connection';
 import type { Tag, TopicId } from '@/topics/environment';
+import { newRequestId } from '@/topics/request';
 import { useAttachHolder } from '@/tmux/attach-context';
 import {
   changes,
@@ -164,12 +165,17 @@ function EditForm({
       router.back();
       return;
     }
-    void send(async ({ host, step, refuse }) => {
+    // One Request id for each field write, made before the work, so that the
+    // Connections' second send of the Save sends each field with its first id.
+    const requests = new Map(changes(saved, fields).map(({ field }) => [field, newRequestId()]));
+    void send(async ({ host, step, refuse, unsure }) => {
       const outcome = await appConnections().write(host, (transport, muxify) => {
         step('sending');
-        return saveTopicEdit(saved, fields, (change) => muxify.change((command) => transport.exec(command), topicId, change));
+        return saveTopicEdit(saved, fields, (change) =>
+          muxify.change((command) => transport.exec(command), topicId, change, requests.get(change.field)!));
       });
       setSaved(outcome.saved);
+      if (outcome.inDoubt !== undefined) unsure(outcome.inDoubt);
       const refused = Object.keys(outcome.errors);
       say(refused.length === 0 ? 'saved a Topic edit' : `the Host refused a Topic edit of ${refused.join(', ')}`);
       if (refused.length > 0) refuse(`${host.displayName} refused part of the edit.`, outcome.errors);

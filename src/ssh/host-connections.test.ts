@@ -4,6 +4,7 @@ import type { Host } from '@/storage/records';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import { INSTALL_TIMEOUT_MS, type HostCliState } from '@/topics/host-cli-install';
 import type { TopicsRead } from '@/topics/host-topics';
+import { newRequestId, WriteOutcomeUnknown } from '@/topics/request';
 
 import {
   createHostConnections,
@@ -31,6 +32,10 @@ interface FakeLink {
   disconnected: boolean;
   /** Execs from now on never answer. */
   silent: boolean;
+  /** Execs that have this text never answer. */
+  silentOn?: string;
+  /** The Connection breaks at an exec that has this text. */
+  breaksOn?: string;
   /** What the library calls when its keepalive finds the Connection dead. */
   drop: () => void;
   /** The non-PTY channels opened on it: the Host CLI install's. */
@@ -45,7 +50,19 @@ interface FakeChannel {
   exit(code?: number): void;
 }
 
-function setup(options: { verdict?: KeyVerdict; channels?: boolean } = {}) {
+/**
+ * `capabilities` is what the Host CLI of every Connection offers in its
+ * `environment show`. Without it, that command answers with no JSON, as every
+ * other command does.
+ */
+function setup(options: {
+  verdict?: KeyVerdict;
+  channels?: boolean;
+  capabilities?: string[];
+  dialFails?: () => boolean;
+  /** Each Connection starts with this `silentOn`. */
+  silentOn?: string;
+} = {}) {
   const clock = createTestClock();
   const links: FakeLink[] = [];
   const remembered: string[] = [];
@@ -60,11 +77,13 @@ function setup(options: { verdict?: KeyVerdict; channels?: boolean } = {}) {
       },
     },
     dial: (_host, dropped): Promise<Dialed> => {
+      if (options.dialFails?.()) return Promise.reject(new Error('no route to the Host'));
       const link: FakeLink = {
         execs: [],
         connected: true,
         disconnected: false,
         silent: false,
+        silentOn: options.silentOn,
         drop: () => {
           link.connected = false;
           for (const channel of link.channels) if (!channel.closed) channel.exit();
@@ -76,8 +95,12 @@ function setup(options: { verdict?: KeyVerdict; channels?: boolean } = {}) {
       const transport: TmuxTransport = {
         exec: (command) => {
           link.execs.push(command);
-          if (link.silent) return new Promise(() => {});
+          if (link.silent || (link.silentOn && command.includes(link.silentOn))) return new Promise(() => {});
+          if (link.breaksOn && command.includes(link.breaksOn)) link.connected = false;
           if (!link.connected) return Promise.reject(new Error('channel closed'));
+          if (options.capabilities && command.includes('environment show')) {
+            return Promise.resolve({ ...OK, stdout: JSON.stringify({ capabilities: options.capabilities }) });
+          }
           if (command === 'command -v muxify') {
             return Promise.resolve({ ...OK, stdout: '/usr/local/bin/muxify\n' });
           }
@@ -235,19 +258,144 @@ describe('the app’s Connections', () => {
     expect(links).toHaveLength(2);
   });
 
-  it('never sends a write again', async () => {
+  it('never sends again a write that has no Request id, and says that it may have reached the Host', async () => {
     const { clock, links, connections } = setup();
     await connections.read(HOST, ls);
     links[0]!.silent = true;
 
     const write = connections.write(HOST, (transport) => transport.exec('muxify topic new'));
-    const failed = expect(write).rejects.toBeInstanceOf(ExecDeadlineError);
+    const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: false });
     await settle();
     clock.advance(EXEC_DEADLINE_MS);
     await failed;
 
     expect(links).toHaveLength(1);
     expect(links[0]?.execs.filter((command) => command === 'muxify topic new')).toHaveLength(1);
+  });
+
+  describe('a write with a Request id', () => {
+    const request = newRequestId();
+    const create: ScreenUse<unknown> = (transport, muxify) =>
+      muxify.create((command) => transport.exec(command), 'Fix login', [], request);
+    const sends = (link: { execs: string[] } | undefined) => link?.execs.filter((command) => command.includes('topic new')) ?? [];
+    const SENT = `'/usr/local/bin/muxify' --request '${request}' topic new 'Fix login' --json`;
+
+    it('is sent one more time, with the same id, on a new Connection, when no answer comes before the deadline', async () => {
+      const { clock, links, connections } = setup({ capabilities: ['request'] });
+      await connections.read(HOST, ls);
+      links[0]!.silentOn = 'topic new';
+
+      const write = connections.write(HOST, create);
+      await settle();
+      clock.advance(EXEC_DEADLINE_MS);
+      await write;
+
+      expect(links).toHaveLength(2);
+      expect(links[0]?.disconnected).toBe(true);
+      expect(sends(links[0])).toEqual([SENT]);
+      expect(sends(links[1])).toEqual([SENT]);
+    });
+
+    it('is sent only one more time, and then may have reached the Host', async () => {
+      const { clock, links, connections } = setup({ capabilities: ['request'], silentOn: 'topic new' });
+
+      const write = connections.write(HOST, create);
+      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: true });
+      await settle();
+      clock.advance(EXEC_DEADLINE_MS);
+      await settle();
+      clock.advance(EXEC_DEADLINE_MS);
+      await failed;
+
+      expect(links).toHaveLength(2);
+      expect(sends(links[0])).toEqual([SENT]);
+      expect(sends(links[1])).toEqual([SENT]);
+    });
+
+    it('is sent one more time when the Connection breaks before the answer', async () => {
+      const { links, connections } = setup({ capabilities: ['request'] });
+      await connections.read(HOST, ls);
+      links[0]!.breaksOn = 'topic new';
+
+      await connections.write(HOST, create);
+
+      expect(links).toHaveLength(2);
+      expect(sends(links[0])).toEqual([SENT]);
+      expect(sends(links[1])).toEqual([SENT]);
+    });
+
+    it('is not sent again with no id when the Host CLI of the new Connection does not offer Request ids', async () => {
+      let offered = ['request'];
+      const { clock, links, connections } = setup({ get capabilities() { return offered; } });
+      await connections.read(HOST, ls);
+      links[0]!.silentOn = 'topic new';
+
+      const write = connections.write(HOST, create);
+      const failed = expect(write).rejects.toBeInstanceOf(WriteOutcomeUnknown);
+      await settle();
+      offered = [];
+      clock.advance(EXEC_DEADLINE_MS);
+      await failed;
+
+      expect(sends(links[1])).toEqual([]);
+    });
+
+    it('may have reached the Host when the second send cannot dial', async () => {
+      let down = false;
+      const { clock, links, connections } = setup({ capabilities: ['request'], dialFails: () => down });
+      await connections.read(HOST, ls);
+      links[0]!.silentOn = 'topic new';
+
+      const write = connections.write(HOST, create);
+      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: true });
+      await settle();
+      down = true;
+      clock.advance(EXEC_DEADLINE_MS);
+      await failed;
+
+      expect(links).toHaveLength(1);
+    });
+
+    it('goes out with no id, and is not sent again, on a Host CLI without the capability', async () => {
+      const { clock, links, logged, connections } = setup({ capabilities: [] });
+      await connections.read(HOST, ls);
+      links[0]!.silentOn = 'topic new';
+
+      const write = connections.write(HOST, create);
+      const failed = expect(write).rejects.toMatchObject({ name: 'WriteOutcomeUnknown', resent: false });
+      await settle();
+      clock.advance(EXEC_DEADLINE_MS);
+      await failed;
+
+      expect(links).toHaveLength(1);
+      expect(sends(links[0])).toEqual([`'/usr/local/bin/muxify' topic new 'Fix login' --json`]);
+      expect(logged.filter((line) => line.includes('too old for Request ids'))).toHaveLength(1);
+    });
+
+    it('is sent again on the Connection that an Attach holds, which the registry does not close', async () => {
+      const { clock, links, connections } = setup({ capabilities: ['request'] });
+      const attach = await connections.openConnection(HOST);
+      attach.suspected?.(() => {});
+      links[0]!.silentOn = 'topic new';
+
+      const write = connections.write(HOST, create);
+      await settle();
+      links[0]!.silentOn = undefined;
+      clock.advance(EXEC_DEADLINE_MS);
+      await write;
+
+      expect(links).toHaveLength(1);
+      expect(sends(links[0])).toEqual([SENT, SENT]);
+    });
+  });
+
+  it('fails a write with the error of the dial when no Connection opens, because nothing went out', async () => {
+    const { connections } = setup({ dialFails: () => true });
+
+    const write = connections.write(HOST, (transport) => transport.exec('muxify topic new'));
+
+    await expect(write).rejects.toThrow('no route to the Host');
+    await expect(write).rejects.not.toBeInstanceOf(WriteOutcomeUnknown);
   });
 
   it('asks the Attach, and does not close its Connection, when an exec passes its deadline', async () => {

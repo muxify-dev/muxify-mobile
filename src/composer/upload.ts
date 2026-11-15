@@ -2,7 +2,7 @@ import { base64ToBytes } from '@/lib/base64';
 import { bytesToUtf8 } from '@/lib/utf8';
 import { shellQuote } from '@/tmux/commands';
 
-import { abortable, checkAborted, uniqueId, type Upload } from './types';
+import { abortable, checkAborted, type Upload } from './types';
 
 export interface UploadChannel {
   write(data: string | Uint8Array): void;
@@ -96,7 +96,7 @@ export function createUploader(open: OpenUploadChannel): Upload {
     };
     signal.addEventListener('abort', abort);
     try {
-      channel = await abortable<UploadChannel>(open(uploadCommand(uniqueId(), file.name, file.size), {
+      channel = await abortable<UploadChannel>(open(uploadCommand(file.id, file.name, file.size), {
         onData(data) {
           // Protocol is ASCII; the only non-ASCII field (path) is base64.
           buffered += bytesToUtf8(new Uint8Array(data));

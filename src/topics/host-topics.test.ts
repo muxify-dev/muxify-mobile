@@ -47,6 +47,6 @@ describe('what the Host last said about its Topics', () => {
   it('settles on a listed snapshot, whatever came before', () => {
     const previous: HostTopics = { kind: 'failed', error: 'old trouble', last: null };
 
-    expect(settled(previous, { kind: 'listed', snapshot })).toEqual({ kind: 'listed', snapshot });
+    expect(settled(previous, { kind: 'listed', snapshot, capabilities: ['request'] })).toEqual({ kind: 'listed', snapshot });
   });
 });

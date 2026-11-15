@@ -1,8 +1,12 @@
 import { topicId, type EnvironmentSnapshot, type TopicId } from './environment';
 import { object } from './json-shape';
+import type { UnknownOutcome } from './request';
 
-/** What one `topic new` came to: the new Topic, or the Host's reason it made none. */
-export type NewTopicRead = { kind: 'created'; topic: TopicId } | { kind: 'failed'; error: string };
+/**
+ * What one `topic new` came to: the new Topic, the Host's reason it made
+ * none, or no answer, when the Host may have made it.
+ */
+export type NewTopicRead = { kind: 'created'; topic: TopicId } | { kind: 'failed'; error: string } | UnknownOutcome;
 
 /** The id in the answer of `topic new --json`: `{"changed":{"topic_id":…}}`. */
 export function parseNewTopic(json: unknown): TopicId {

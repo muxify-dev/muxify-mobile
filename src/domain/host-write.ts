@@ -2,10 +2,11 @@
  * A Host Write: one change the user asks of a Host, from the tap until the
  * user knows what became of it. See ADR 0020.
  *
- * A write is never sent again by itself, because it may have reached the Host
- * (ADR 0012). So the state says what the user may do next: nothing while it
- * runs, Retry when nothing reached the Host or the Host refused, and Check
- * when the phone cannot know.
+ * A write without a Request id is never sent again by itself, because it may
+ * have reached the Host (ADR 0012). A write with one is sent again one time
+ * below this state, by the Connections (ADR 0021). So the state says what the
+ * user may do next: nothing while it runs, Retry when nothing reached the Host
+ * or the Host refused, and Check when the phone cannot know.
  */
 
 /**
@@ -31,7 +32,9 @@ export type HostWrite =
 export type HostWriteEnd =
   | { kind: 'done' }
   | { kind: 'refused'; reason: string; fields?: Readonly<Record<string, string>> }
-  | { kind: 'threw'; reason: string };
+  | { kind: 'threw'; reason: string }
+  /** The command went out and the phone cannot know what the Host did: no answer after the last send, or a Request in doubt. */
+  | { kind: 'unknown'; reason: string };
 
 export const IDLE: HostWrite = { kind: 'idle' };
 
@@ -57,6 +60,8 @@ export function ended(write: HostWrite, end: HostWriteEnd): HostWrite {
       return IDLE;
     case 'refused':
       return end.fields ? { kind: 'failed', reason: end.reason, fields: end.fields } : { kind: 'failed', reason: end.reason };
+    case 'unknown':
+      return { kind: 'unsure', reason: end.reason };
     case 'threw':
       // A break while a command was out, or while finding out, leaves the Host's state unknown.
       return write.step === 'sending' || write.step === 'checking'

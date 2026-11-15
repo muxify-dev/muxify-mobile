@@ -4,6 +4,7 @@ import { check, ended, IDLE, reached, send, type HostWrite, type HostWriteEnd, t
 import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
+import { WriteOutcomeUnknown } from '@/topics/request';
 
 /** What a write's code gets while it runs. */
 export interface HostWriteRun {
@@ -12,6 +13,8 @@ export interface HostWriteRun {
   step(next: Exclude<HostWriteStep, 'connecting' | 'checking'>): void;
   /** Ends the run as failed: nothing changed, or the Host said no. `fields` puts reasons under their fields. */
   refuse(reason: string, fields?: Readonly<Record<string, string>>): never;
+  /** Ends the run as unsure: the Host answered that the change may have happened (a Request in doubt). */
+  unsure(reason: string): never;
 }
 
 export interface HostWrites {
@@ -38,6 +41,23 @@ class Refusal extends Error {
   constructor(readonly reason: string, readonly fields?: Readonly<Record<string, string>>) {
     super(reason);
   }
+}
+
+class InDoubt extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
+
+/** How a run that threw ended: refused, unknown, or a break that the step decides. */
+export function endOfThrow(error: unknown): HostWriteEnd {
+  if (error instanceof Refusal) return { kind: 'refused', reason: error.reason, fields: error.fields };
+  if (error instanceof InDoubt) return { kind: 'unknown', reason: error.reason };
+  if (error instanceof WriteOutcomeUnknown) {
+    const reason = describeConnectionFailure(error.cause);
+    return { kind: 'unknown', reason: error.resent ? `${reason} It did not answer a second send of the same Request either.` : reason };
+  }
+  return { kind: 'threw', reason: describeConnectionFailure(error) };
 }
 
 /**
@@ -83,12 +103,11 @@ export function useHostWrites(hostId: string, now: () => number = Date.now): Hos
         host,
         step: (next) => move(target, reached(at(), next)),
         refuse: (reason, fields) => { throw new Refusal(reason, fields); },
+        unsure: (reason) => { throw new InDoubt(reason); },
       });
       end = { kind: 'done' };
     } catch (error) {
-      end = error instanceof Refusal
-        ? { kind: 'refused', reason: error.reason, fields: error.fields }
-        : { kind: 'threw', reason: describeConnectionFailure(error) };
+      end = endOfThrow(error);
     }
     const last = ended(at(), end);
     move(target, last);

@@ -4,7 +4,6 @@ import { ActionSheetIOS, Alert } from 'react-native';
 
 import { ended, IDLE, reached, send, type HostWrite } from '@/domain/host-write';
 import { describeError } from '@/lib/describe-error';
-import { describeConnectionFailure } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
@@ -15,6 +14,7 @@ import { readTopic } from '@/topics/read-topic';
 import { topicSeedParam, type TopicDetail } from '@/topics/topic-detail';
 import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
+import { endOfThrow } from './use-host-write';
 import { alertCardWrite } from './use-topic-card-writes';
 
 interface EntryFeedback {
@@ -104,7 +104,7 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
           const end = await wakeOnce(hostId, topic.id, wake);
           if (!delivery.isCurrent()) return;
           if (end.kind !== 'idle') {
-            alertCardWrite(WAKE_LABEL[wake], end);
+            alertCardWrite(WAKE_LABEL[wake], end, { text: 'Open Topic', onPress: retryRead });
             return;
           }
           await readAndAttach(topic.id, delivery);
@@ -136,8 +136,15 @@ async function wakeOnce(hostId: string, topicId: TopicId, wake: Wake): Promise<H
     const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
     if (!host) return ended(write, { kind: 'refused', reason: 'This Host is no longer saved.' });
     const result = await sendTopicOrder(host, topicId, { kind: 'wake', wake }, () => { write = reached(write, 'sending'); });
-    return ended(write, result.kind === 'failed' ? { kind: 'refused', reason: result.error } : { kind: 'done' });
+    switch (result.kind) {
+      case 'changed':
+        return ended(write, { kind: 'done' });
+      case 'failed':
+        return ended(write, { kind: 'refused', reason: result.error });
+      case 'unknown':
+        return ended(write, { kind: 'unknown', reason: result.message });
+    }
   } catch (error) {
-    return ended(write, { kind: 'threw', reason: describeConnectionFailure(error) });
+    return ended(write, endOfThrow(error));
   }
 }

@@ -20,9 +20,10 @@ export function useTopicCardWrites(
 ) {
   const writes = useHostWrites(hostId);
   const order = async (topicId: TopicId, order: TopicOrder) => {
-    const end = await writes.sendAndReport(topicId, async ({ host, step, refuse }) => {
+    const end = await writes.sendAndReport(topicId, async ({ host, step, refuse, unsure }) => {
       const write = await send(host, topicId, order, () => step('sending'));
       if (write.kind === 'failed') refuse(write.error);
+      if (write.kind === 'unknown') unsure(write.message);
     });
     if (end === undefined) return;
     alertCardWrite(orderLabel(order), end);
@@ -31,10 +32,16 @@ export function useTopicCardWrites(
   return { order, writing: (topicId: TopicId) => writes.state(topicId).kind === 'running' };
 }
 
-/** The alert for how a card's write ended. Nothing when it went through. */
-export function alertCardWrite(label: string, end: HostWrite) {
+/**
+ * The alert for how a card's write ended. Nothing when it went through.
+ * `look` is a button for an unsure end, for a caller that does not read the
+ * Listing again by itself.
+ */
+export function alertCardWrite(label: string, end: HostWrite, look?: { text: string; onPress: () => void }) {
   if (end.kind === 'failed') Alert.alert(`Could not ${label}`, end.reason);
   if (end.kind === 'unsure') {
-    Alert.alert(`${label} may have happened`, `${end.reason} It may still be working: look at the Topic again in a moment.`);
+    const body = `${end.reason} It may still be working: look at the Topic again in a moment.`;
+    if (look) Alert.alert(`${label} may have happened`, body, [look, { text: 'OK' }]);
+    else Alert.alert(`${label} may have happened`, body);
   }
 }

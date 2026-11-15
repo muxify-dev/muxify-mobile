@@ -56,7 +56,7 @@ it('saves before the Tags read answers, with no Tag', async () => {
   await mount('Fix login');
   expect(save().props.disabled).toBe(false);
   await act(async () => { save().props.onPress(); });
-  expect(mockCreate).toHaveBeenCalledWith(expect.any(Function), 'Fix login', []);
+  expect(mockCreate).toHaveBeenCalledWith(expect.any(Function), 'Fix login', [], expect.any(String));
   expect(mockReplace).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/topic-add-session' }));
 });
 
@@ -101,4 +101,46 @@ it('checks a create the Host did not answer, and never sends it again by itself'
   await act(async () => { button('Check')!.props.onPress(); });
   expect(mockReplace).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ topicId: 'made' }) }));
   expect(mockCreate).toHaveBeenCalledTimes(2);
+});
+
+describe('the Request id of a Save', () => {
+  const sentId = (call: number) => mockCreate.mock.calls[call][3];
+  async function unanswered(title: string) {
+    mockCreate.mockRejectedValueOnce(new ExecDeadlineError());
+    await mount(title);
+    await act(async () => { save().props.onPress(); });
+    await act(async () => { button('Check')!.props.onPress(); });
+  }
+
+  it('stays the same for a Retry after a create that the Host did not answer', async () => {
+    await unanswered('Fix login');
+    await act(async () => { button('Retry')!.props.onPress(); });
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(sentId(1)).toBe(sentId(0));
+  });
+
+  it('is new when the title changes', async () => {
+    await unanswered('Fix login');
+    renderer.root.findByType(TextField).props.text.value = 'Fix logout';
+    await act(async () => { save().props.onPress(); });
+    expect(sentId(1)).not.toBe(sentId(0));
+  });
+
+  it('is new after the Host refuses, so the Host does not answer with the old refusal', async () => {
+    mockCreate.mockResolvedValueOnce({ kind: 'failed', error: 'The Config does not define the Tag wrok.' });
+    await mount('Fix login');
+    await act(async () => { save().props.onPress(); });
+    await act(async () => { button('Retry')!.props.onPress(); });
+    expect(sentId(1)).not.toBe(sentId(0));
+  });
+
+  it('says the Topic may exist, and does not say Could not, when the Host has the Request in doubt', async () => {
+    mockCreate.mockResolvedValueOnce({ kind: 'unknown', message: 'The Request changed the records and did not finish.' });
+    await mount('Fix login');
+    await act(async () => { save().props.onPress(); });
+    expect(text()).toContain('The Request changed the records and did not finish. The Topic may exist.');
+    expect(text()).not.toContain('Could not');
+    expect(renderer.root.findByType(TextField).props.text.value).toBe('Fix login');
+    expect(button('Check')).toBeDefined();
+  });
 });

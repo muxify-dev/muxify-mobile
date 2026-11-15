@@ -1,0 +1,19 @@
+context platform=ios kind=simulator
+
+open "dev.muxify.app" --relaunch
+wait "text" "Dev Host" 15000
+press "label=\"Host Dev Host\""
+wait "label=\"Host Options\"" 15000
+wait 1500
+
+press "label=\"Host Options\""
+wait "label=\"New Topic\"" 5000
+press "role=button label=\"New Topic\""
+wait "role=text-field" 8000
+fill "role=text-field" "e2e Request Topic"
+press "label=\"Save\""
+wait "text" "e2e Request Topic was created." 40000
+press "label=\"Add later\""
+wait "label=\"Topic e2e Request Topic\"" 15000
+
+close

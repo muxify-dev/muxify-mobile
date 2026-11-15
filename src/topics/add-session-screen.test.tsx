@@ -10,6 +10,8 @@ import type { SessionPathsRead } from './session-paths';
 
 const mockLoad = jest.fn();
 const mockRead = jest.fn();
+const mockPaths = jest.fn();
+const mockTopics = jest.fn();
 const mockWrite = jest.fn();
 const mockAdd = jest.fn();
 const mockOpen = jest.fn();
@@ -48,7 +50,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockCreated = undefined;
   mockLoad.mockResolvedValue({ hosts: [{ id: 'host', displayName: 'Host' }] });
-  mockRead.mockResolvedValue(listed);
+  mockPaths.mockResolvedValue(listed);
+  mockTopics.mockResolvedValue({ kind: 'old' });
+  mockRead.mockImplementation((_host, read) => read({ exec: jest.fn() }, { sessionPaths: mockPaths, read: mockTopics }));
   mockAdd.mockResolvedValue({ kind: 'added', session: 'new-session' });
   mockWrite.mockImplementation((_host, write) => write({ exec: jest.fn() }, { addSession: mockAdd }));
   mockOpen.mockRejectedValue(new Error('Attach failed'));
@@ -107,7 +111,7 @@ it('allows a deliberate new folder attempt after a refused write', async () => {
 });
 
 it('keeps typed entry last and available after a read failure', async () => {
-  mockRead.mockResolvedValue({ kind: 'failed', error: 'read failed' });
+  mockPaths.mockResolvedValue({ kind: 'failed', error: 'read failed' });
   await mount();
   await type('  ~/folder with spaces  ');
   const buttons = renderer.root.findAllByType(Button);
@@ -120,7 +124,7 @@ it('keeps typed entry last and available after a read failure', async () => {
 
 it('ignores a late read after a successful write', async () => {
   let finish!: (value: SessionPathsRead) => void;
-  mockRead.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
   await mount();
   await type('/typed');
   await act(async () => { renderer.root.findByType(Button).props.onPress(); });
@@ -133,7 +137,7 @@ it('ignores a late read after a successful write', async () => {
 
 it('preserves typed text when an old CLI answers and requires Create and open', async () => {
   let finish!: (value: SessionPathsRead) => void;
-  mockRead.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
   await mount();
   await type('~/typed');
   await act(async () => { finish({ kind: 'old' }); });
@@ -153,7 +157,7 @@ it('does not act on a row callback after Cancel', async () => {
 
 it('ignores a read after the sheet unmounts', async () => {
   let finish!: (value: SessionPathsRead) => void;
-  mockRead.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { renderer.unmount(); finish(listed); });
   expect(mockAdd).not.toHaveBeenCalled();
@@ -162,7 +166,7 @@ it('ignores a read after the sheet unmounts', async () => {
 
 it('ignores a read after Cancel before the sheet unmounts', async () => {
   let finish!: (value: SessionPathsRead) => void;
-  mockRead.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
+  mockPaths.mockImplementation(() => new Promise<SessionPathsRead>((resolve) => { finish = resolve; }));
   await mount();
   await act(async () => { left().props.onPress(); });
   await act(async () => { finish({ kind: 'old' }); });
@@ -181,7 +185,7 @@ it('offers Add later only after New Topic has saved', async () => {
 
 it('checks a write the Host did not answer, and opens the new Session of the Topic', async () => {
   const mockShow = jest.fn().mockResolvedValue({ kind: 'shown', topic: { label: 'Fix login', sessions: [{ id: 's1', name: 'fix-login' }] } });
-  mockRead.mockImplementation((_host, work) => work({ exec: jest.fn() }, { sessionPaths: async () => listed, show: mockShow }));
+  mockRead.mockImplementation((_host, work) => work({ exec: jest.fn() }, { sessionPaths: async () => listed, read: mockTopics, show: mockShow }));
   mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
   mockOpen.mockResolvedValue(undefined);
   await mount();
@@ -193,4 +197,41 @@ it('checks a write the Host did not answer, and opens the new Session of the Top
   expect(mockAdd).toHaveBeenCalledTimes(1);
   expect(mockOpen.mock.calls[0][0].destination.sessionName).toBe('fix-login');
   expect(mockDismiss).toHaveBeenCalledWith('/terminal');
+});
+
+describe('on a Host CLI that takes a Request id', () => {
+  const topics = (sessions: { name: string; topic: string }[]) => ({
+    kind: 'listed', capabilities: ['request'], snapshot: { sessions },
+  });
+  const mockShow = jest.fn();
+  beforeEach(() => {
+    mockShow.mockResolvedValue({ kind: 'shown', topic: { label: 'Fix login', sessions: [] } });
+    mockRead.mockImplementation((_host, read) => read({ exec: jest.fn() }, { sessionPaths: mockPaths, read: mockTopics, show: mockShow }));
+  });
+  const button = (label: string) => renderer.root.findAllByType(Button).find((node) => node.props.label === label)!;
+
+  it('sends a Session name that the Topic does not have', async () => {
+    mockTopics.mockResolvedValue(topics([{ name: 'project/fix-login', topic: 'topic' }]));
+    await mount();
+    await act(async () => { row().props.onPress(); });
+    await submit();
+
+    expect(mockAdd.mock.calls[0].slice(1)).toEqual(['topic', ' /exact folder/ ', expect.any(String), 'project+2']);
+  });
+
+  it('sends the same Request and the same name on a Retry after no answer', async () => {
+    mockTopics
+      .mockResolvedValueOnce(topics([]))
+      .mockResolvedValue(topics([{ name: 'project/fix-login', topic: 'topic' }]));
+    mockAdd.mockRejectedValueOnce(new ExecDeadlineError());
+    await mount();
+    await act(async () => { row().props.onPress(); });
+    await submit();
+    await act(async () => { button('Check').props.onPress(); });
+    await act(async () => { button('Retry').props.onPress(); });
+
+    expect(mockAdd).toHaveBeenCalledTimes(2);
+    expect(mockAdd.mock.calls[1].slice(3)).toEqual(mockAdd.mock.calls[0].slice(3));
+    expect(mockAdd.mock.calls[0][4]).toBe('project');
+  });
 });
