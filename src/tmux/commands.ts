@@ -461,8 +461,22 @@ export function guardsLateLines(version: string): boolean {
   return tmuxAtLeast(version, 3, 2);
 }
 
-/** What one Batch types: a key, bytes, or a paste that waits in a tmux buffer. */
-export type Typing = RenderedPress | { readonly buffer: string; readonly submit: boolean };
+/** What one Batch types: a key, bytes, a paste that waits in a tmux buffer, or a clear. */
+export type Typing =
+  | RenderedPress
+  | { readonly buffer: string; readonly submit: boolean }
+  | { readonly clear: true };
+
+/**
+ * How long the program in a Pane has to answer `C-l` before the Scrollback is
+ * dropped behind it.
+ *
+ * A shell answers by clearing its screen, and tmux moves a screen cleared
+ * from the top into the Scrollback. Measured on tmux 3.8 down one Control
+ * Connection: with no wait, `clear-history` ran first and the 24 lines came
+ * back ten times out of ten; with 150 ms, none did.
+ */
+const CLEAR_SETTLE_MS = 250;
 
 /**
  * The most code points in one `set-buffer`. Measured on tmux 3.8: a line
@@ -495,6 +509,9 @@ export function stagePasteCommands(buffer: string, text: string): TmuxArgv[] {
 function typingCommands(paneId: string, typing: Typing): TmuxArgv[] {
   if ('key' in typing) return [sendKeyCommand(paneId, typing.key)];
   if ('bytes' in typing) return [sendKeysCommand(paneId, typing.bytes)];
+  if ('clear' in typing) {
+    return [sendKeyCommand(paneId, 'C-l'), ['run-shell', `sleep ${CLEAR_SETTLE_MS / 1000}`], clearHistoryCommand(paneId)];
+  }
   const paste = ['paste-buffer', '-p', '-r', '-d', '-b', typing.buffer, '-t', paneId];
   return typing.submit ? [paste, ['run-shell', 'sleep 0.15'], sendKeyCommand(paneId, 'Enter')] : [paste];
 }
@@ -657,9 +674,9 @@ export function capturePaneTextCommand(paneId: string): TmuxArgv {
  * screen too. Measured on tmux 3.8: `-R` resets the modes the program in the
  * Pane asked for. A program that hid the cursor gets it back, DECCKM goes off,
  * and bracketed paste goes off, so the next multi-line paste runs line by
- * line. The program clears its own screen instead; see `clearPane` in attach.
+ * line. The program clears its own screen instead, after `C-l`.
  */
-export function clearHistoryCommand(paneId: string): TmuxArgv {
+function clearHistoryCommand(paneId: string): TmuxArgv {
   return ['clear-history', '-t', paneId];
 }
 

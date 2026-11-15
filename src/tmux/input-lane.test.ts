@@ -23,6 +23,7 @@ const wheel = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncode
 const message = 'm1' as MessageId;
 const named = (key: string): Key => ({ kind: 'key', key });
 const paste = (value: string, submit = false): Key => ({ kind: 'paste', text: value, message: submit ? message : null });
+const clear: Key = { kind: 'clear' };
 const typed = (key: Key): LaneEvent => ({ kind: 'typed', key });
 const mark = (over: Partial<PaneMark> = {}): PaneMark => ({
   serverPid: 100,
@@ -285,6 +286,22 @@ describe('a Lane across a break', () => {
   });
 });
 
+describe('a clear', () => {
+  it('lands after the text that waits before it, as a Batch of its own', () => {
+    const run = live();
+    run.send(typed(text('ls')), typed(clear), typed(text('x')));
+    for (const ack of [1, 2]) run.send(answered(mark({ ack: seq(ack) })));
+    expect(run.delivered()).toEqual(['1:ls', '2:Clear', '3:x']);
+  });
+
+  it('is held after a break, as a control key is', () => {
+    const run = live();
+    run.send({ kind: 'lost' }, typed(clear), { kind: 'connected' }, answered(mark()));
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['risky-keys'] });
+    expect(noticeOf(run.lane)).toMatchObject({ preview: 'Clear', draft: { text: '', dropped: ['Clear'] } });
+  });
+});
+
 describe('a paste', () => {
   it('lands after the text that waits before it, and is never merged with it', () => {
     const run = live();
@@ -482,6 +499,7 @@ describe('which keys are safe to send after a break', () => {
     [{ kind: 'key', key: { key: 'Down', ctrl: false, alt: false, shift: true } }, false],
     [{ kind: 'key', key: { key: 'c', ctrl: true, alt: false, shift: false } }, false],
     [{ kind: 'key', key: { key: 'Enter', ctrl: false, alt: false, shift: true } }, false],
+    [clear, false],
   ] as [Key, boolean][])('%j is %s', (key, safe) => {
     expect(isSafeKey(key)).toBe(safe);
   });
@@ -507,6 +525,7 @@ describe('held keys as the user reads them, and as a Draft', () => {
     [[text('a'), wheel('\x1b[<64;1;1M'), text('b')], 'ab', 'ab', []],
     [[paste('one\r\ntwo')], 'one⏎two', 'one\ntwo', []],
     [[paste('echo hi', true)], 'echo hi⏎', 'echo hi', []],
+    [[text('ls'), clear], 'lsClear', 'ls', ['Clear']],
   ] as [Key[], string, string, string[]][])('%j', (keys, preview, draft, dropped) => {
     expect(previewOf(keys)).toBe(preview);
     expect(toDraftText(keys)).toEqual({ text: draft, dropped });

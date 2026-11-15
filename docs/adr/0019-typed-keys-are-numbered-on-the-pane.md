@@ -61,6 +61,6 @@ without typing. A late line with those keys is then a copy.
 ## Every Pane input
 
 ADR 0022 makes this the way for every write to a Pane's input. A paste, a
-Composer Send are Keys of the Lane too, each under one Seq. They
-follow the rules above. A paste with a newline and every Composer Send is held
-after a break, like Enter.
+Composer Send and a clear are Keys of the Lane too, each under one Seq. They
+follow the rules above. A paste with a newline, every Composer Send and every
+clear is held after a break, like Enter.

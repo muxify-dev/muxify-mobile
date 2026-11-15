@@ -195,17 +195,6 @@ const INPUT_TTL_MS = 30_000;
 /** What the Key Row's ⌘v delivers: the clipboard's text, or its image as a staged file. */
 export type Paste = { kind: 'text'; text: string } | { kind: 'image'; file: AttachmentFile };
 
-/**
- * How long the program in a Pane has to answer `C-l` before the Scrollback is
- * dropped behind it.
- *
- * A shell answers by clearing its screen, and tmux moves a screen cleared
- * from the top into the Scrollback. Measured on tmux 3.8 down one Control
- * Connection: with no wait, `clear-history` ran first and the 24 lines came
- * back ten times out of ten; with 150 ms, none did.
- */
-export const CLEAR_SETTLE_MS = 250;
-
 export interface Attach {
   readonly hostId: string;
   readonly hostName: string;
@@ -245,9 +234,10 @@ export interface Attach {
   paste(content: Paste, runLines: () => Promise<boolean>): Promise<void>;
   /**
    * What ⌘K does in a terminal: the active Pane's screen and its Scrollback
-   * go, and the program draws itself again.
+   * go, and the program draws itself again. It goes into the active Pane's
+   * Lane like a key, so it waits for a Connection like one.
    */
-  clearPane(): Promise<void>;
+  clearPane(): void;
   /** Re-reads the Host's Session list, which no notification describes. */
   refreshSessions(): void;
   /** Reads the Topology again. For a sheet correcting itself behind its own back. */
@@ -473,6 +463,8 @@ export function openAttach(options: AttachOptions): Attach {
       say(`the message to ${paneId} is ${fate.kind}`);
       composer.settle(paneId, id, fate);
     },
+    // A Surface that shows the Scrollback shows lines that are gone now.
+    onCleared: (paneId) => views.get(paneId)?.jumpToLatest(),
     say: speakingAs(log, 'outbox'),
   });
 
@@ -1369,19 +1361,11 @@ export function openAttach(options: AttachOptions): Attach {
       outbox.lane(pane.id).paste(text, null);
     },
 
-    async clearPane(): Promise<void> {
-      const mine = generation;
-      const current = client;
+    clearPane(): void {
       const pane = state.topology.activePane;
-      if (!current) throw new Error('Not connected.');
-      if (!pane) throw new Error('No active Pane.');
+      if (!pane) return;
       say(`clearing ${pane.id}`);
-      await current.pressKey(pane.id, 'C-l');
-      await new Promise<void>((resolve) => clock.after(CLEAR_SETTLE_MS, resolve));
-      if (stale(mine)) return;
-      await current.clearHistory(pane.id);
-      // A Surface that shows the Scrollback shows lines that are gone now.
-      views.get(pane.id)?.jumpToLatest();
+      outbox.lane(pane.id).clear();
     },
 
     refreshSessions,

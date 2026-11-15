@@ -2,7 +2,6 @@ import {
   capturePaneCommand,
   capturePaneTextCommand,
   captureSelectionCommands,
-  clearHistoryCommand,
   captureScrollbackCommand,
   capturePanesCommand,
   burnSeqCommand,
@@ -25,7 +24,6 @@ import {
   selectPaneCommand,
   selectPaneTowardCommand,
   selectWindowCommand,
-  sendKeyCommand,
   stagePasteCommands,
   switchSessionCommand,
   verbCommands,
@@ -344,17 +342,6 @@ export class TmuxClient {
   }
 
   /**
-   * Presses one named key as part of something the app does: the `C-l` of a
-   * clear. It fails when the Connection does.
-   *
-   * Not for what the user types. Typed keys go through the Outbox, which
-   * numbers them and can send them again; see `deliver`.
-   */
-  async pressKey(paneId: string, key: string): Promise<void> {
-    await this.mustRun('send key', sendKeyCommand(paneId, key));
-  }
-
-  /**
    * Types one Batch into a Pane and answers with the Pane's mark, which says
    * whether the Batch is there. Rejects only when the Connection ends.
    */
@@ -369,6 +356,8 @@ export class TmuxClient {
         return type({ bytes: Uint8Array.from(key.bytes) });
       case 'key':
         return type(typeof key.key === 'string' ? { key: key.key } : renderPress(key.key, naming));
+      case 'clear':
+        return type({ clear: true });
       case 'paste': {
         // New for each write: a staging line of a lost Connection that
         // arrives late then fills a buffer that no line pastes.
@@ -550,11 +539,6 @@ export class TmuxClient {
     let end = reply.text.length;
     while (end > 0 && reply.text[end - 1].trim() === '') end -= 1;
     return reply.text.slice(0, end).join('\n');
-  }
-
-  /** Drops a Pane's Scrollback. */
-  async clearHistory(paneId: string): Promise<void> {
-    await this.mustRun('clear the Scrollback', clearHistoryCommand(paneId));
   }
 
   /**

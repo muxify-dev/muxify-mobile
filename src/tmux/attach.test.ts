@@ -10,7 +10,6 @@ import type { HostStore } from '@/storage/store';
 import type { AttachmentFile, Upload } from '@/composer/types';
 
 import {
-  CLEAR_SETTLE_MS,
   openAttach,
   type Attach,
   type AttachState,
@@ -101,6 +100,8 @@ function fakeServer() {
       buffers.delete(name);
     } else if (verb === 'delete-buffer') {
       buffers.delete(args[1]);
+    } else if (verb === 'clear-history') {
+      pane.typed.push('<clear-history>');
     }
   };
 
@@ -1146,23 +1147,6 @@ describe('the Key Row’s Shortcuts', () => {
     await settle();
     expect(server.typed()).toBe('make\nmake install');
   });
-
-  it('clears by letting the program redraw before it drops the Scrollback', async () => {
-    const kit = attachOn();
-    await connected(kit);
-    kit.hosts[0].commands.length = 0;
-
-    const cleared = kit.attach.clearPane();
-    await settle();
-    // Measured on tmux: a shell answers C-l by clearing its screen, and that
-    // screen lands in the Scrollback if the Scrollback was dropped first.
-    expect(kit.hosts[0].commands).toEqual(["'send-keys' '-t' '%0' 'C-l'"]);
-
-    kit.clock.advance(CLEAR_SETTLE_MS);
-    await cleared;
-    expect(kit.hosts[0].commands.slice(1)).toEqual(["'clear-history' '-t' '%0'"]);
-  });
-
 });
 
 describe('a Session that is let go', () => {
@@ -2436,8 +2420,40 @@ describe('typed keys and a Connection that breaks', () => {
     expect(server.typed()).toBe('');
   });
 
+  it('clears the Pane in one line: C-l, the wait for the redraw, then the Scrollback', async () => {
+    const { kit, server } = await typing();
+    const jumped = jest.spyOn(kit.attach.view('%0'), 'jumpToLatest');
+    type(kit, 'ls');
+    kit.attach.clearPane();
+    await settle();
+    expect(server.typed()).toBe('ls<C-l><clear-history>');
+    expect(kit.hosts[0].commands.join('\n')).toContain("'run-shell' 'sleep 0.25'");
+    expect(jumped).toHaveBeenCalledTimes(1);
+  });
 
+  it('clears once when the reply to its line was lost', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].mute();
+    kit.attach.clearPane();
+    await settle();
+    await reconnected(kit, 1);
+    expect(server.typed()).toBe('<C-l><clear-history>');
+    expect(kit.attach.state().input).toEqual([]);
+  });
 
+  it('keeps a clear asked for with no Connection, and holds it for the user after the reconnect', async () => {
+    const { kit, server, hosts } = await typing();
+    hosts[0].drop();
+    await settle();
+    expect(() => kit.attach.clearPane()).not.toThrow();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(kit.attach.state().input).toMatchObject([{ kind: 'held', preview: 'Clear', reasons: ['risky-keys'] }]);
+    kit.attach.heldInput('%0', 'send');
+    await settle();
+    expect(server.typed()).toBe('<C-l><clear-history>');
+  });
 
   it('keeps the Draft of a held message, and Discard empties it', async () => {
     const { kit, server, hosts } = await typing();

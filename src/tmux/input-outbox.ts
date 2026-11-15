@@ -2,6 +2,7 @@ import { describeError } from '@/lib/describe-error';
 
 import type { OutboxToken } from './commands';
 import {
+  confirmedKey,
   messageFates,
   newLane,
   noticeOf,
@@ -35,6 +36,8 @@ export interface PaneInput {
   press(key: string | KeyPress): void;
   /** `message`: a Composer Send, which presses Enter after it. */
   paste(text: string, message: MessageId | null): void;
+  /** `C-l`, and then the Scrollback goes. */
+  clear(): void;
 }
 
 /**
@@ -69,6 +72,8 @@ export interface OutboxOptions {
   onNotices: (notices: InputNotice[]) => void;
   /** A Composer message left its Lane. */
   onMessage: (paneId: string, id: MessageId, fate: MessageFate) => void;
+  /** tmux confirmed a clear of the Pane. */
+  onCleared: (paneId: string) => void;
   /** For the Log: Pane ids, counts and Seqs. Never the keys. */
   say: (line: string) => void;
 }
@@ -117,6 +122,7 @@ export function createOutbox(options: OutboxOptions): Outbox {
     for (const effect of next.effects) run(paneId, effect);
     publish();
     for (const { id, fate } of messageFates(before, next.lane)) options.onMessage(paneId, id, fate);
+    if (confirmedKey(before, next.lane)?.kind === 'clear') options.onCleared(paneId);
   }
 
   function note(before: Lane, after: Lane): void {
@@ -185,6 +191,7 @@ export function createOutbox(options: OutboxOptions): Outbox {
         paste: (text, message) => {
           if (text.length > 0) typed({ kind: 'paste', text, message });
         },
+        clear: () => typed({ kind: 'clear' }),
       };
     },
 

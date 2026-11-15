@@ -675,8 +675,8 @@ _Avoid_: overlay, loading screen, error screen, Reconnect Screen (the old name)
 Every key on its way into a Pane, kept by the Attach until tmux confirms it or
 the user has seen what became of it. One per Attach. It outlives each
 Connection, so a key typed just before or during a break is not lost. Every
-write to a Pane's input goes through it: typed keys, Key Row keys, a paste and a
-Composer Send. Keys do not survive an app restart, and
+write to a Pane's input goes through it: typed keys, Key Row keys, a paste, a
+Composer Send and a clear. Keys do not survive an app restart, and
 closing the Attach discards them with a count in the Log. See ADRs 0019 and
 0022.
 _Avoid_: queue, buffer, pending input
@@ -686,8 +686,8 @@ One Pane's part of the Outbox: its keys in the order typed, and what tmux last
 said about the Pane. The keys of a Lane go one Batch at a time.
 
 **Batch**:
-One key, one run of typed text, one paste or one Composer Send (its paste and
-its Enter together), written to tmux under a number (its Seq).
+One key, one run of typed text, one paste, one Composer Send (its paste and
+its Enter together) or one clear, written to tmux under a number (its Seq).
 The Outbox has one count of Seqs, which only grows. The Pane keeps the highest
 Seq it took, so the Outbox can ask if a Batch arrived, and tmux refuses a Batch
 that arrives twice.
@@ -695,7 +695,7 @@ _Avoid_: packet, message (which is the Composer's)
 
 **Held keys**:
 Keys from before a reconnect that the Outbox does not send by itself: Enter, a
-control key, a paste with a newline, a Composer Send, any paste on
+control key, a clear, a paste with a newline, a Composer Send, any paste on
 tmux below 3.2, keys older than 30 seconds, or keys for a Pane that runs
 another program now. A card above the Key Row shows them as typed, with Send,
 Move to Composer and Discard; the open Composer shows the same for its Pane.

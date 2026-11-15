@@ -28,7 +28,8 @@ export type MessageId = string & { readonly __brand: 'MessageId' };
  * One thing on its way into a Pane. Text is bytes; a key is a name that tmux
  * encodes for the program. A paste goes in through a tmux buffer, which keeps
  * its newlines and brackets it for a program that asks; it is one Batch,
- * whatever its size.
+ * whatever its size. A clear is `C-l` and then the Scrollback dropped, as one
+ * Batch, so it keeps its place among the keys and runs one time.
  */
 export type Key =
   | {
@@ -43,7 +44,8 @@ export type Key =
       readonly text: string;
       /** A Composer Send, which presses Enter after the paste. Null for a plain paste. */
       readonly message: MessageId | null;
-    };
+    }
+  | { readonly kind: 'clear' };
 
 /** A Key that waits, with the time of its first byte. */
 export type Typed = Key & { readonly typedAt: number };
@@ -185,6 +187,8 @@ function untimed(key: Typed): Key {
       return { kind: 'key', key: key.key };
     case 'paste':
       return { kind: 'paste', text: key.text, message: key.message };
+    case 'clear':
+      return { kind: 'clear' };
     default:
       return unreachable(key);
   }
@@ -449,6 +453,8 @@ export function isSafeKey(key: Key): boolean {
       return true;
     case 'paste':
       return key.message === null && !/[\x00-\x1f\x7f]/.test(key.text);
+    case 'clear':
+      return false;
     default:
       return unreachable(key);
   }
@@ -534,6 +540,8 @@ function glyphsOf(keys: readonly Key[]): Glyph[] {
         return [typeof key.key === 'string' ? namedGlyph(key.key) : pressGlyph(key.key)];
       case 'paste':
         return pasteGlyphs(key.text, key.message !== null);
+      case 'clear':
+        return [{ show: 'Clear', draft: null }];
       default:
         return unreachable(key);
     }
@@ -575,6 +583,11 @@ export type MessageFate =
   | { readonly kind: 'taken' }
   | { readonly kind: 'discarded'; readonly reason: DiscardReason };
 
+/** The Key that one `step` saw tmux confirm on the Pane, if any. */
+export function confirmedKey(before: Lane, after: Lane): Key | null {
+  return before.unconfirmed && after.delivered >= before.unconfirmed.seq ? before.unconfirmed.key : null;
+}
+
 /**
  * The Composer messages that one `step` took out of the Lane, and where each
  * went. A message that left in any other way reads as taken, which keeps its
@@ -583,8 +596,8 @@ export type MessageFate =
 export function messageFates(before: Lane, after: Lane): { id: MessageId; fate: MessageFate }[] {
   const still = new Set(messagesIn(pendingKeys(after)));
   const dropped = after.dropped && after.dropped !== before.dropped ? after.dropped : null;
-  const confirmed =
-    before.unconfirmed && after.delivered >= before.unconfirmed.seq ? messageOf(before.unconfirmed.key) : null;
+  const key = confirmedKey(before, after);
+  const confirmed = key && messageOf(key);
   return messagesIn(pendingKeys(before))
     .filter((id) => !still.has(id))
     .map((id) => ({

@@ -155,7 +155,7 @@ export function ComposerPanel({ composer, paneId, connected, held: heldKeys, onH
         {held ? (
           <>
             <Action label="Discard" palette={palette} onPress={() => onHeld('discard')} />
-            <Action label={held.compose} palette={palette} onPress={() => onHeld('compose')} />
+            {held.compose ? <Action label={held.compose} palette={palette} onPress={() => onHeld('compose')} /> : null}
             <View style={{ flex: 1 }} />
             <Action label="Send" palette={palette} disabled={!connected} onPress={() => onHeld('send')} />
           </>

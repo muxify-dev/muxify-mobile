@@ -297,6 +297,24 @@ describe('typing a Batch', () => {
     );
   });
 
+  it('clears with C-l, waits for the program to redraw, then drops the Scrollback, under one Seq', async () => {
+    const { client, asked } = chained('3.8', [[], [], [], [], [], ['7:100:200:zsh']]);
+    expect(await client.deliver('%4', batch({ kind: 'clear' }), token)).toMatchObject({ ack: 7 });
+    expect(asked[1]).toBe(
+      `${GUARD} "'send-keys' '-t' '%4' 'C-l' ; 'run-shell' 'sleep 0.25' ; 'clear-history' '-t' '%4' ; ` +
+        `'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`,
+    );
+  });
+
+  it('clears without the guard on a tmux that cannot compare numbers', async () => {
+    const { client, asked } = chained('3.1c', [[], [], [], [], ['7:100:200:zsh']]);
+    await client.deliver('%4', batch({ kind: 'clear' }), token);
+    expect(asked[1]).toBe(
+      `'send-keys' '-t' '%4' 'C-l' ; 'run-shell' 'sleep 0.25' ; 'clear-history' '-t' '%4' ; ` +
+        `'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
+    );
+  });
+
   it('sends a hardware key as this tmux can deliver it', async () => {
     const press = { key: 'r', ctrl: true, alt: false, shift: false };
     const modern = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
@@ -419,15 +437,6 @@ describe('typing a Batch', () => {
     const { client, asked } = chained('3.8', [[], [], ['7:100:200:zsh']]);
     expect(await client.burn('%4', 7 as Seq, token)).toEqual({ serverPid: 100, panePid: 200, program: 'zsh', ack: 7, refusesCopies: true });
     expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`);
-  });
-});
-
-describe('pressing a key for the app', () => {
-  it('sends the name and fails when tmux refuses it', async () => {
-    const { client, asked } = fakeTmux({ [renderControlCommand(['send-keys', '-t', '%4', 'Enter'])]: [] });
-    await client.pressKey('%4', 'Enter');
-    expect(asked).toEqual(["'send-keys' '-t' '%4' 'Enter'"]);
-    await expect(client.pressKey('%9', 'Enter')).rejects.toThrow(TmuxError);
   });
 });
 

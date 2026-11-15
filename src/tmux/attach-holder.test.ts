@@ -59,7 +59,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     capturePreviews: () => {},
     capturePaneText: () => Promise.resolve(''),
     paste: () => Promise.resolve(),
-    clearPane: () => Promise.resolve(),
+    clearPane: () => {},
     refreshSessions: () => {},
     refreshTopology: () => {},
     refreshTopic: async () => {},

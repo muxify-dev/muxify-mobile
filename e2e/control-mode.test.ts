@@ -741,9 +741,9 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
     process.stdout.write(`  ok: ${what}\n`);
   }
 
-  /** An Attach on a Pane that runs `cat` from a clean screen, with its mark read. */
-  async function catPane() {
-    tmux(['respawn-pane', '-k', '-t', TYPED, 'cat']);
+  /** An Attach on a Pane that runs `cat`, or `program`, from a clean screen, with its mark read. */
+  async function catPane(program = 'cat') {
+    tmux(['respawn-pane', '-k', '-t', TYPED, program]);
     tmux(['clear-history', '-t', TYPED]);
     const tap: LinkTap = { lines: [], deaf: false, gate: Promise.resolve() };
     const kit = attachTo({ sessionName: TYPED, tap });
@@ -978,6 +978,59 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
 
       await pane.replayLate();
       check('late copies of every paste line type nothing', screen(), 'one two three');
+
+      await attach.close();
+    }, 60000);
+  });
+
+  describe('a clear, across a break', () => {
+    it('clears after the keys that wait before it, once when its reply was lost, and leaves no Scrollback', async () => {
+      ownServer();
+      const pane = await catPane("PS1='$ ' bash --norc --noprofile");
+      const { attach, paneId, screen, tap } = pane;
+      const history = () => Number(tmux(['display-message', '-p', '-t', paneId, '#{history_size}']).trim());
+      /** Output that fills the screen and the Scrollback, written by the shell and not by the app. */
+      const fill = async () => {
+        tmux(['send-keys', '-t', paneId, 'seq 1 60', 'Enter']);
+        await until('lines in the Scrollback', () => history() > 0);
+      };
+      await until('the prompt', () => screen() === '$');
+      await fill();
+
+      // Keys typed during the break, then a clear: all held, and sent in order.
+      let reopen = await pane.breakLink();
+      attach.view(paneId).type(new TextEncoder().encode('echo kept\r'));
+      attach.clearPane();
+      reopen();
+      await reaches(attach, 'connected');
+      await until('a held notice', () => attach.state().input.length > 0);
+      check('a clear typed during a break is held behind the keys before it', attach.state().input, [
+        expect.objectContaining({ kind: 'held', paneId, preview: 'echo kept⏎Clear', reasons: ['risky-keys'] }),
+      ]);
+      attach.heldInput(paneId, 'send');
+      await until('the cleared screen', () => screen() === '$');
+      await wait(900);
+      check('the clear ran after the command typed before it', screen(), '$');
+      check('the Scrollback is empty after the clear', history(), 0);
+
+      // tmux runs the clear line, and the link dies before the reply.
+      await fill();
+      tap.deafFrom = "'if-shell'";
+      attach.clearPane();
+      await until('the screen cleared again', () => screen() === '$' && history() === 0);
+      reopen = await pane.breakLink();
+      reopen();
+      await reaches(attach, 'connected');
+      await wait(900);
+      check('a clear whose reply was lost is not held', attach.state().input, []);
+      check('a clear whose reply was lost leaves no Scrollback', history(), 0);
+
+      tmux(['send-keys', '-t', paneId, 'echo after', 'Enter']);
+      await until('the output after the clear', () => screen().includes('\nafter'));
+      const kept = screen();
+      const replayed = await pane.replayLate();
+      process.stdout.write(`  (wrote ${replayed} lines of both links again)\n`);
+      check('late copies of every clear line clear nothing', screen(), kept);
 
       await attach.close();
     }, 60000);

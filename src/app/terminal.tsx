@@ -804,11 +804,7 @@ export default function TerminalScreen() {
     [attach],
   );
 
-  const clearPane = useCallback(() => {
-    void attach
-      ?.clearPane()
-      .catch((error: unknown) => Alert.alert('Could not clear the Pane', describeError(error)));
-  }, [attach]);
+  const clearPane = useCallback(() => attach?.clearPane(), [attach]);
 
   /**
    * Keys from the Key Row or the system keyboard, for one Pane. The first
@@ -1060,17 +1056,7 @@ export default function TerminalScreen() {
           ]
         : [
             { id: 'discard', label: 'Discard', prominent: false, onPress: () => attach.heldInput(paneId, 'discard'), testID: 'input-discard' },
-            {
-              id: 'compose',
-              label: copy.compose,
-              prominent: false,
-              onPress: () => {
-                if (!attach.heldInput(paneId, 'compose') || paneId !== activePaneId) return;
-                setArmed(NO_MODIFIERS);
-                setComposerOpen(true);
-              },
-              testID: 'input-compose',
-            },
+            ...compose,
             { id: 'send', label: 'Send', disabled: !open, onPress: () => attach.heldInput(paneId, 'send'), testID: 'input-send' },
           ];
     return (

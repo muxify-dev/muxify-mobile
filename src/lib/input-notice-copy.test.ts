@@ -43,6 +43,15 @@ describe('what a notice says', () => {
     );
   });
 
+  it('offers no Move to Composer for keys that leave the Draft empty, such as a clear', () => {
+    const clear = held('%1', { preview: 'Clear', draft: { text: '', dropped: ['Clear'] } });
+    expect(inputNoticeCopy(clear, '%1')).toMatchObject({
+      preview: 'Clear',
+      reason: 'Not sent: it has Enter or a control key.',
+      compose: '',
+    });
+  });
+
   it('says so when the keys are for another Pane', () => {
     expect(inputNoticeCopy(held('%2'), '%1').reason).toBe(
       'Typed in another Pane. Not sent: it has Enter or a control key.',

@@ -27,7 +27,10 @@ export interface InputNoticeCopy {
   preview: string;
   /** One line that says what became of them, and why. */
   reason: string;
-  /** The Move to Composer button, which names the keys that a Draft cannot hold. Held notices only. */
+  /**
+   * The Move to Composer button, which names the keys that a Draft cannot
+   * hold. Empty when there is no button.
+   */
   compose: string;
   /** What the notice is about, for VoiceOver. */
   label: string;
@@ -70,7 +73,7 @@ export function inputNoticeCopy(
   return {
     preview,
     reason: `${where}Not sent: ${heldReasons(notice)}.`,
-    compose: composeLabel('Move to Composer', notice),
+    compose: notice.draft.text === '' ? '' : composeLabel('Move to Composer', notice),
     label: 'Typed keys were not sent',
   };
 }
