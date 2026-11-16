@@ -53,6 +53,7 @@ const state = (over: Partial<AttachState> = {}): AttachState => ({
   rowInSight: 12,
   alternate: false,
   input: [],
+  tabToRestore: null,
   ...over,
 });
 

@@ -138,7 +138,8 @@ Where the user was when Muxify last closed: the Host, the Session and the Topic
 the Attach currently holds, if any. The app writes it each time an Attach reaches its
 attached phase or switches Session, and clears it on Disconnect. With Reconnect
 on start on, a cold start opens it again behind the Connection Screen, titled
-"Trying to reconnect".
+"Trying to reconnect". Its Topic, when it has one, opens at that Topic's Topic
+Place, so a cold start can open the Web View again.
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
@@ -219,6 +220,20 @@ One thing the user wants to get done, such as "Fix reward drop bug in GS". It
 groups Sessions with no limit per folder or repository. The Host Screen shows
 the Topics of a Host in the order that the Mac shows them.
 _Avoid_: task, project, workspace, thread
+
+**Topic Place**:
+Where the user was in one Topic on this phone: its Session, Window, Pane and, if
+the Web View was on top, the Browser Tab and how far the page was scrolled. The
+phone keeps one for each Topic of each Host. It is the phone's own: the Mac
+moving tmux's active Window does not move it. The Attach writes it while it holds
+the Topic, when the Session, the active Window, the active Pane or the shown Tab
+changes. Opening the Topic again goes back to it: the Topic Place's Session
+while the Topic lists it live, then its Window by id, else by index and name,
+then its Pane. When it has a Tab that the Host still lists, the Web View opens
+again; a Tab the Host lists no more leaves the user on the Pane. A pick in the
+Title Sheet, a Pane Swipe and the Panes picker only write it. A Disconnect keeps
+it; deleting the Host removes it. See ADR 0020.
+_Avoid_: last place (for one Topic), position, bookmark
 
 **Topic Note**:
 An optional line of text on a Topic that says what the user was doing there,
@@ -472,7 +487,8 @@ Window with one Pane has no map.
 _Avoid_: minimap, Pane indicator, thumbnail
 
 **Header**:
-The native bar at the top of the Terminal Screen. It owns the top safe area,
+The native bar at the top of the Terminal Screen, and of the Web View with
+the same title (see Web View). It owns the top safe area,
 with Back on the left, the title in the middle and Options on the right.
 Back goes to the Host Screen and leaves the Attach alive (ADR 0007). The content area starts
 below the Header. The title is the Session name over the program that runs in
@@ -489,7 +505,8 @@ command failed.
 _Avoid_: title bar, toolbar
 
 **Title Sheet**:
-The chooser opened by the Header title or its down chevron. Each Host has its
+The chooser opened by the Header title or its down chevron, on the Terminal
+Screen and on the Web View. Each Host has its
 own enabled lists and their order, separate from the Host Screen panels.
 Windows is the default. Sessions includes previews and marks the current
 Session. Topics can be enabled separately. The first enabled list opens first.
@@ -526,9 +543,14 @@ _Avoid_: page, link, bookmark, browser tab (in lower case, for the term)
 **Web View**:
 The screen that a tap on a Browser Tab opens, over the Terminal Screen. It
 loads the Tab's URL on the phone, so it shows what the address serves and not
-the state of the Tab on the Host. Its title is the page's title. Reload, and a
-pull down on the page, load the page again. A page that does not load shows
-the reason and **Try again**. Back goes to the Session, which stayed attached.
+the state of the Tab on the Host. Its title is the Header's for the Topic: the
+Topic title over one dim line with 🌐, the page's title and the Session name.
+Without a Topic, it is the Session name over the page's title. A tap on the
+title opens the Title Sheet. A Window or Session pick there, or a Topic, goes
+to the Terminal Screen; a Tab pick shows that Tab in the same Web View. Reload,
+and a pull down on the page, load the page again. A page that does not load
+shows the reason and **Try again**. Back goes to the Session, which stayed
+attached, and clears the Tab from the Topic Place.
 _Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:

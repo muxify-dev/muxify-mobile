@@ -46,11 +46,13 @@ export function useHostEntry(hostId: string, onAttached: () => void, fromAttach 
   }, []));
 
   const attachTopic = useCallback(async (topic: TopicDetail, delivery: Delivery) => {
-    const recent = await deviceHostStore().recentSessionsFor(hostId);
+    const store = deviceHostStore();
+    const [recent, place] = await Promise.all([store.recentSessionsFor(hostId), store.topicPlaceFor(hostId, topic.id)]);
     if (!delivery.isCurrent()) return;
-    const session = chooseTopicSession(topic, hostId, recent);
+    const session = chooseTopicSession(topic, hostId, recent, place);
     if (!session) throw new Error('This Topic has no live Session. Return Home and read it again.');
-    await deliverSession({ hostId, destination: { sessionName: session.name, topic: { id: topic.id, seed: topic } }, ...delivery });
+    await deliverSession({ hostId, destination: { sessionName: session.name, topic: { id: topic.id, seed: topic },
+      restore: place?.session === session.name ? place : null }, ...delivery });
     if (delivery.isCurrent()) onAttached();
   }, [hostId, onAttached, deliverSession]);
 

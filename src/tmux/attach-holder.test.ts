@@ -41,6 +41,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     rowInSight: null,
     alternate: false,
     input: [],
+    tabToRestore: null,
   });
 
   return {
@@ -67,6 +68,10 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     acceptHostKey: () => Promise.resolve(),
     heldInput: () => false,
     discardedInput: () => false,
+    showTab: () => 0,
+    updateTab: () => {},
+    leaveTab: () => {},
+    takeTabToRestore: () => null,
     view: () => {
       throw new Error('no views here');
     },

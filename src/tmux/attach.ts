@@ -6,7 +6,7 @@ import { describeError } from '@/lib/describe-error';
 import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { Host } from '@/storage/records';
+import type { Host, PlaceTab, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
@@ -20,6 +20,11 @@ export interface SessionDestination {
   sessionName: string;
   /** Null is a plain Session pick. An origin explicitly selects that Topic. */
   topic: TopicOrigin | null;
+  /**
+   * Set when a Topic is opened: its Topic Place, to go back to once the Session
+   * is attached. Only for this Topic and this Session; anything else is ignored.
+   */
+  restore?: TopicPlace | null;
 }
 export interface AttachedTopic { id: TopicId; view: TopicView }
 
@@ -47,7 +52,7 @@ import {
 import type { Extent } from './pane-layout';
 import { createTopologyStore, EMPTY_TOPOLOGY, windowGrid, type Topology, type TopologyStore } from './topology';
 import type { TmuxTransport } from './transport';
-import { sameGrid, TmuxClient, type Grid, type Session } from './tmux-client';
+import { sameGrid, TmuxClient, type Grid, type Session, type Window } from './tmux-client';
 
 /**
  * One live Connection to a Host, as Attach needs it.
@@ -183,6 +188,17 @@ export interface AttachState {
    * not on screen, because its keys wait all the same.
    */
   input: InputNotice[];
+  /**
+   * The Topic Place's Browser Tab, which a Topic opened just now had on top.
+   * The Terminal Screen shows it, once: see takeTabToRestore.
+   */
+  tabToRestore: ShownTab | null;
+}
+
+/** A Browser Tab the Web View shows, under the token showTab gave it. */
+export interface ShownTab {
+  token: number;
+  tab: PlaceTab;
 }
 
 /**
@@ -261,6 +277,19 @@ export interface Attach {
    * open. False when nothing was moved.
    */
   discardedInput(paneId: string, action: 'dismiss' | 'compose'): boolean;
+
+  // The Web View's Browser Tab, which the Topic Place keeps.
+  /** The Web View shows this Tab now. Answers the token for the other two. */
+  showTab(tab: PlaceTab): number;
+  /** Where the page is now. Does nothing for a stale token. */
+  updateTab(token: number, at: Pick<PlaceTab, 'page' | 'scrollY'>): void;
+  /**
+   * The Web View has gone: the user chose the Pane under it. Does nothing for
+   * a stale token: another Tab was shown since, or the Topic changed.
+   */
+  leaveTab(token: number): void;
+  /** The Tab a restore asks to show, handed out once. */
+  takeTabToRestore(): ShownTab | null;
 
   // Per-Pane, for the views the screen puts Surfaces into.
   view(paneId: string): PaneView;
@@ -453,6 +482,7 @@ export function openAttach(options: AttachOptions): Attach {
     rowInSight: null,
     alternate: false,
     input: [],
+    tabToRestore: null,
   };
 
   const outbox = createOutbox({
@@ -499,6 +529,7 @@ export function openAttach(options: AttachOptions): Attach {
       showCursors();
     }
     publish();
+    notePlace();
   }
 
   /** Whether the view of `paneId` may draw a cursor: the active Pane, while Typing is open. */
@@ -705,9 +736,9 @@ export function openAttach(options: AttachOptions): Attach {
   }
 
   /**
-   * Records a Session the user is now in: a Recent Session, and the Last Place
-   * a cold start goes back to. One after the other, because each rewrites the
-   * whole records file and two at once would lose one of them.
+   * The Attach's writes to the records: a Recent Session, the Last Place a
+   * cold start goes back to, and the Topic Place. One after the other, because
+   * each rewrites the whole records file and two at once would lose one of them.
    */
   let arrivalWrites = Promise.resolve();
   let topicRevision = 0;
@@ -732,6 +763,87 @@ export function openAttach(options: AttachOptions): Attach {
     void refreshTopic();
   }
 
+  /**
+   * The Tab the Web View shows for the current Topic. A Topic change drops it
+   * with no write, so the Web View that the change dismisses finds its token
+   * stale, and the Topic the user left keeps its Tab.
+   */
+  let shownTab: ShownTab | null = null;
+  let tabTokens = 0;
+  /** A Topic Place to go back to once the Session is attached. See restorePlace. */
+  let pendingRestore: TopicPlace | null = options.destination.restore?.topicId === options.destination.topic?.id
+    ? options.destination.restore ?? null
+    : null;
+  let restoring = false;
+  /** The Topic Place last written, so that a change which moves nothing writes nothing. */
+  let writtenPlace = '';
+
+  /**
+   * Writes the Topic Place when the user moved in the Topic. Not during a
+   * Session switch or a restore: the Topology then shows a Window that the
+   * user is only passing through.
+   */
+  function notePlace(): void {
+    const topic = state.topic;
+    const window = state.topology.activeWindow;
+    if (closed || !topic || !window || state.phase.kind !== 'connected' || pendingSwitch || pendingRestore || restoring) return;
+    const place = {
+      hostId: host.id,
+      topicId: topic.id,
+      session: state.sessionName,
+      window: { id: window.id, index: window.index, name: window.name },
+      pane: state.topology.activePane?.id ?? null,
+      tab: shownTab?.tab ?? null,
+    };
+    const written = JSON.stringify(place);
+    if (written === writtenPlace) return;
+    writtenPlace = written;
+    const at = new Date(clock.now()).toISOString();
+    arrivalWrites = arrivalWrites.then(() => store.rememberTopicPlace({ ...place, at })).catch(() => {});
+  }
+
+  /**
+   * Goes back to the Topic Place of a Topic just opened: its Window, then its
+   * Pane. The Tab is the Terminal Screen's to show, so it waits in the state.
+   */
+  async function restorePlace(mine: number): Promise<void> {
+    const place = pendingRestore;
+    const current = client;
+    if (!place || !current || stale(mine)) return;
+    pendingRestore = null;
+    if (state.topic?.id !== place.topicId || state.sessionName !== place.session) {
+      say(`not restoring the Topic Place of ${place.topicId}: the Attach is in ${state.sessionName} now`);
+      notePlace();
+      return;
+    }
+    restoring = true;
+    try {
+      const window = placeWindow(state.topology.windows, place.window);
+      if (window && !window.active) {
+        say(`restoring the Topic Place: Window ${window.index} (${window.id})`);
+        await current.selectWindow(currentSessionTarget(), window.index);
+        await settleAfterVerb(mine);
+        if (stale(mine)) return;
+      } else if (!window && place.window) {
+        say(`the Topic Place's Window ${place.window.id} is gone; staying in tmux's active Window`);
+      }
+      if (place.pane && place.pane !== state.topology.activePane?.id &&
+          state.topology.panes.some((pane) => pane.id === place.pane)) {
+        say(`restoring the Topic Place: Pane ${place.pane}`);
+        selectPane(place.pane);
+      }
+      if (place.tab && state.topic?.id === place.topicId) {
+        shownTab = { token: ++tabTokens, tab: place.tab };
+        change({ tabToRestore: shownTab });
+      }
+    } catch (error) {
+      if (!stale(mine)) change({ trouble: describeError(error) });
+    } finally {
+      restoring = false;
+      notePlace();
+    }
+  }
+
   function arrived(sessionName: string, topicId: string | null): void {
     arrivalWrites = arrivalWrites.then(async () => {
       await store.rememberSession(host.id, sessionName);
@@ -742,7 +854,9 @@ export function openAttach(options: AttachOptions): Attach {
   function acceptDestination(destination: SessionDestination): void {
     topicRevision += 1;
     const topic = destination.topic;
-    change({ sessionName: destination.sessionName, topic: topic
+    const otherTopic = (topic?.id ?? null) !== (state.topic?.id ?? null);
+    if (otherTopic) shownTab = null;
+    change({ ...(otherTopic ? { tabToRestore: null } : {}), sessionName: destination.sessionName, topic: topic
       ? { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) }
       : null });
     if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
@@ -991,6 +1105,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (stale(mine)) return;
       refreshSessions();
       reportColours();
+      await restorePlace(mine);
     } catch (error) {
       if (stale(mine)) return;
       say(`connect failed: ${describeError(error)}`);
@@ -1137,6 +1252,53 @@ export function openAttach(options: AttachOptions): Attach {
     })();
   }
 
+  function selectPane(paneId: string): boolean {
+    const mine = generation;
+    const current = client;
+    const model = topology;
+    const pane = state.topology.panes.find((each) => each.id === paneId);
+    const windowIndex = state.topology.activeWindow?.index;
+    if (!current || !model || !pane || windowIndex === undefined || pane.active) {
+      say(
+        `selecting Pane ${paneId} did nothing: ${
+          !current
+            ? 'no Client'
+            : !pane
+              ? 'not in the Topology'
+              : windowIndex === undefined
+                ? 'no active Window'
+                : 'it is already active'
+        }`,
+      );
+      return false;
+    }
+    say(`selecting Pane ${paneId} (index ${pane.index}) in Window ${windowIndex}`);
+    // Moved here first, then asked for. The cursor, the keyboard and the
+    // Panes sheet all follow the Topology, so doing it in this order is the
+    // difference between a tap that lands and one that lands a round trip
+    // later. tmux's own `%window-pane-changed` arrives after and agrees.
+    //
+    // The one verb that settles nothing afterwards, and that is the point.
+    // Zoom rides along in the command — `select-pane -Z`, so tmux carries it
+    // across rather than dropping it for Muxify to put back — and the
+    // Topology arrives in the notifications tmux sends of its own accord. A
+    // read here would be a round trip the tap is waiting on for no answer it
+    // does not already have.
+    model.activate(paneId);
+    void (async () => {
+      try {
+        await current.selectPane(currentSessionTarget(), windowIndex, pane.index);
+      } catch (error) {
+        if (stale(mine)) return;
+        change({ trouble: describeError(error) });
+        // The move was made on a guess the Host has just refused, so the
+        // guess is thrown away rather than left showing.
+        await model.refresh();
+      }
+    })();
+    return true;
+  }
+
   /** Re-applies the Zoom preference and reads the Topology. Every verb ends here. */
   async function settleAfterVerb(mine: number): Promise<void> {
     const current = client;
@@ -1184,6 +1346,9 @@ export function openAttach(options: AttachOptions): Attach {
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
+      // The Topic held now is where the user is, so its own Place has nothing to add.
+      const restore = destination.restore && destination.topic?.id === destination.restore.topicId &&
+        destination.topic.id !== state.topic?.id ? destination.restore : null;
       if (destination.topic === null) {
         if (destination.sessionName === state.sessionName) return;
         const topic = state.topic && lastTopic(state.topic.view);
@@ -1196,8 +1361,10 @@ export function openAttach(options: AttachOptions): Attach {
         }
       }
       if (destination.sessionName === state.sessionName) {
+        pendingRestore = restore;
         acceptDestination(destination);
         void refreshTopic();
+        if (state.phase.kind === 'connected') await restorePlace(generation);
         return;
       }
       const mine = generation;
@@ -1206,6 +1373,7 @@ export function openAttach(options: AttachOptions): Attach {
       const observed = sessionRevision;
       const switching: PendingSwitch = { destination, confirmed: null };
       pendingSwitch = switching;
+      pendingRestore = restore;
       change({});
       try {
         await current.switchSession(destination.sessionName);
@@ -1230,7 +1398,9 @@ export function openAttach(options: AttachOptions): Attach {
         if (completedAt !== sessionRevision) {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
+        await restorePlace(mine);
       } finally {
+        if (restore && pendingRestore === restore) pendingRestore = null;
         if (pendingSwitch === switching) {
           pendingSwitch = null;
           change({});
@@ -1247,52 +1417,7 @@ export function openAttach(options: AttachOptions): Attach {
       await settleAfterVerb(mine);
     },
 
-    selectPane(paneId: string): boolean {
-      const mine = generation;
-      const current = client;
-      const model = topology;
-      const pane = state.topology.panes.find((each) => each.id === paneId);
-      const windowIndex = state.topology.activeWindow?.index;
-      if (!current || !model || !pane || windowIndex === undefined || pane.active) {
-        say(
-          `selecting Pane ${paneId} did nothing: ${
-            !current
-              ? 'no Client'
-              : !pane
-                ? 'not in the Topology'
-                : windowIndex === undefined
-                  ? 'no active Window'
-                  : 'it is already active'
-          }`,
-        );
-        return false;
-      }
-      say(`selecting Pane ${paneId} (index ${pane.index}) in Window ${windowIndex}`);
-      // Moved here first, then asked for. The cursor, the keyboard and the
-      // Panes sheet all follow the Topology, so doing it in this order is the
-      // difference between a tap that lands and one that lands a round trip
-      // later. tmux's own `%window-pane-changed` arrives after and agrees.
-      //
-      // The one verb that settles nothing afterwards, and that is the point.
-      // Zoom rides along in the command — `select-pane -Z`, so tmux carries it
-      // across rather than dropping it for Muxify to put back — and the
-      // Topology arrives in the notifications tmux sends of its own accord. A
-      // read here would be a round trip the tap is waiting on for no answer it
-      // does not already have.
-      model.activate(paneId);
-      void (async () => {
-        try {
-          await current.selectPane(currentSessionTarget(), windowIndex, pane.index);
-        } catch (error) {
-          if (stale(mine)) return;
-          change({ trouble: describeError(error) });
-          // The move was made on a guess the Host has just refused, so the
-          // guess is thrown away rather than left showing.
-          await model.refresh();
-        }
-      })();
-      return true;
-    },
+    selectPane,
 
     selectPaneToward(direction: PaneDirection): void {
       const mine = generation;
@@ -1425,6 +1550,34 @@ export function openAttach(options: AttachOptions): Attach {
       return true;
     },
 
+    showTab(tab: PlaceTab): number {
+      shownTab = { token: ++tabTokens, tab };
+      say(`the Web View shows ${tab.url}`);
+      if (state.tabToRestore) change({ tabToRestore: null });
+      else notePlace();
+      return shownTab.token;
+    },
+
+    updateTab(token: number, at: Pick<PlaceTab, 'page' | 'scrollY'>): void {
+      if (shownTab?.token !== token) return;
+      shownTab = { token, tab: { ...shownTab.tab, ...at } };
+      notePlace();
+    },
+
+    leaveTab(token: number): void {
+      if (shownTab?.token !== token) return;
+      say(`the Web View left ${shownTab.tab.url}`);
+      shownTab = null;
+      if (state.tabToRestore?.token === token) change({ tabToRestore: null });
+      else notePlace();
+    },
+
+    takeTabToRestore(): ShownTab | null {
+      const wanted = state.tabToRestore;
+      if (wanted) change({ tabToRestore: null });
+      return wanted;
+    },
+
     view: viewFor,
 
     surfaceForPane(paneId: string, surface: PaneSurface | null, grid: Grid | null = null): void {
@@ -1552,4 +1705,11 @@ export function openAttach(options: AttachOptions): Attach {
   void connect();
 
   return attach;
+}
+
+/** The Topic Place's Window: by tmux's id, else by index and name, as Reopen makes it again. */
+function placeWindow(windows: readonly Window[], wanted: TopicPlace['window']): Window | undefined {
+  if (!wanted) return undefined;
+  return windows.find((window) => window.id === wanted.id)
+    ?? windows.find((window) => window.index === wanted.index && window.name === wanted.name);
 }

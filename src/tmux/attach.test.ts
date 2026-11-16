@@ -4,7 +4,7 @@ import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { Host } from '@/storage/records';
+import type { Host, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
 import type { AttachmentFile, Upload } from '@/composer/types';
@@ -342,6 +342,7 @@ function verbOf(line: string): string {
 
 function fakeStore() {
   const wrote: string[] = [];
+  const places: TopicPlace[] = [];
   let saved = HOST;
   const store: HostStore = {
     load: () =>
@@ -351,6 +352,7 @@ function fakeStore() {
         fingerprints: [],
         recentSessions: [],
         lastPlace: null,
+        topicPlaces: [],
       }),
     saveHost: () => Promise.reject(new Error('not used here')),
     removeHost: () => Promise.resolve(),
@@ -372,12 +374,17 @@ function fakeStore() {
       return Promise.resolve();
     },
     forgetLastPlace: () => Promise.resolve(),
+    topicPlaceFor: () => Promise.resolve(null),
+    rememberTopicPlace: (place) => {
+      places.push(place);
+      return Promise.resolve();
+    },
   };
   /** The Host as Edit Host saves it. */
   const edit = (host: Host) => {
     saved = host;
   };
-  return { store, wrote, edit };
+  return { store, wrote, places, edit };
 }
 
 /**
@@ -393,6 +400,7 @@ function attachOn(
     failLink?: () => unknown;
     sessionName?: string;
     topicId?: string;
+    restore?: TopicPlace;
     readTopic?: (hostId: string, topicId: TopicId) => Promise<TopicRead>;
     zoomed?: boolean;
     upload?: Upload;
@@ -401,7 +409,7 @@ function attachOn(
   } = {},
 ) {
   const hosts = options.hosts ?? [fakeHost()];
-  const { store, wrote, edit } = fakeStore();
+  const { store, wrote, places, edit } = fakeStore();
   /** The Host record each connect was opened with. */
   const dialled: Host[] = [];
   const clock = createTestClock();
@@ -416,7 +424,8 @@ function attachOn(
   let next = 0;
   const attach = openAttach({
     host: HOST,
-    destination: { sessionName: options.sessionName ?? 'work', topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null },
+    destination: { sessionName: options.sessionName ?? 'work', topic: options.topicId ? { id: options.topicId as TopicId, seed: null } : null,
+      restore: options.restore },
     zoomed: options.zoomed ?? true,
     colours: options.colours,
     readTopic: options.readTopic,
@@ -462,6 +471,7 @@ function attachOn(
     suspects,
     store,
     wrote,
+    places,
     edit,
     dialled,
     clock,
@@ -2754,5 +2764,170 @@ describe('a split or New Window across a break', () => {
     await settle();
 
     expect(sessions.ran).toEqual([]);
+  });
+});
+
+describe('the Topic Place', () => {
+  /**
+   * A Session with two Windows of two Panes each, `@0` (shell: %0 %1) and
+   * `@1` (editor: %2 %3), whose active Window and Panes follow what the
+   * Attach selects.
+   */
+  function twoWindows() {
+    const host = fakeHost();
+    let window = 0;
+    const activePane = [0, 0];
+    const panes = [['%0', '%1'], ['%2', '%3']];
+    const names = ['shell', 'editor'];
+    host.answering('select-window', (command) => {
+      const target = /'[^']*:(\d+)'$/.exec(command);
+      if (target) window = Number(target[1]);
+      return [];
+    });
+    host.answering('select-pane', (command) => {
+      const target = /'[^']*:(\d+)\.(\d+)'$/.exec(command);
+      if (target) {
+        window = Number(target[1]);
+        activePane[window] = Number(target[2]);
+      }
+      return [];
+    });
+    host.answering('list-windows', () =>
+      names.map((name, index) => `@${index}\t${index}\t${index === window ? 1 : 0}\t2\t1\t${name}\tzsh`));
+    host.answering('list-panes', (command) => {
+      if (command.includes("'-s'")) return panes.flat();
+      const ids = panes[window];
+      const layout = `b25d,49x41,0,0[49x20,0,0,${ids[0].slice(1)},49x20,0,21,${ids[1].slice(1)}]`;
+      return ids.map((id, index) => `${index}\t${id}\tzsh\t${index === activePane[window] ? 1 : 0}\t/home/user\t${layout}`);
+    });
+    return host;
+  }
+
+  const place = (over: Partial<TopicPlace> = {}): TopicPlace => ({
+    hostId: HOST.id,
+    topicId: 'a',
+    session: 'work',
+    window: { id: '@1', index: 1, name: 'editor' },
+    pane: '%3',
+    tab: null,
+    at: '2026-11-15T10:00:00.000Z',
+    ...over,
+  });
+  const TAB = { url: 'http://100.64.0.1:3000/', page: 'http://100.64.0.1:3000/docs', scrollY: 420 };
+  const where = (kit: ReturnType<typeof attachOn>) => {
+    const { topology } = kit.attach.state();
+    return `${topology.activeWindow?.id} ${topology.activePane?.id}`;
+  };
+  const written = (kit: ReturnType<typeof attachOn>) =>
+    kit.places.map((each) => `${each.topicId} ${each.session} ${each.window?.id} ${each.pane} ${each.tab?.page ?? 'no Tab'}`);
+
+  it('opens a Topic at the Window and Pane it was left at, and writes only where it ended', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a', restore: place() });
+    await connected(kit);
+    await settle();
+
+    expect(where(kit)).toBe('@1 %3');
+    expect(written(kit)).toEqual(['a work @1 %3 no Tab']);
+  });
+
+  it('finds the Window by index and name after Reopen gave it a new id, and keeps tmux’s Pane for one that is gone', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a',
+      restore: place({ window: { id: '@41', index: 1, name: 'editor' }, pane: '%93' }) });
+    await connected(kit);
+    await settle();
+
+    expect(where(kit)).toBe('@1 %2');
+  });
+
+  it('stays in tmux’s active Window when the Place’s Window is gone', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a',
+      restore: place({ window: { id: '@41', index: 1, name: 'renamed' }, pane: '%3' }) });
+    await connected(kit);
+    await settle();
+
+    expect(where(kit)).toBe('@0 %0');
+    expect(written(kit)).toEqual(['a work @0 %0 no Tab']);
+  });
+
+  it('asks the screen once for the Tab that was on top, and keeps it in the Place meanwhile', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a', restore: place({ tab: TAB }) });
+    await connected(kit);
+    await settle();
+
+    expect(kit.attach.state().tabToRestore?.tab).toEqual(TAB);
+    expect(written(kit)).toEqual(['a work @1 %3 http://100.64.0.1:3000/docs']);
+    const asked = kit.attach.takeTabToRestore();
+    expect(asked?.tab).toEqual(TAB);
+    expect(kit.attach.takeTabToRestore()).toBeNull();
+    expect(kit.attach.state().tabToRestore).toBeNull();
+
+    // The Host lists the Tab no more: the screen stays on the Pane.
+    kit.attach.leaveTab(asked!.token);
+    await settle();
+    expect(written(kit).at(-1)).toBe('a work @1 %3 no Tab');
+  });
+
+  it('writes the Place as the user moves, and the Tab the Web View shows', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a' });
+    await connected(kit);
+    await settle();
+    await kit.attach.selectWindow(1);
+    await settle();
+    const token = kit.attach.showTab({ url: TAB.url, page: TAB.url, scrollY: 0 });
+    kit.attach.updateTab(token, { page: TAB.page, scrollY: 420 });
+    await settle();
+
+    expect(written(kit)).toEqual([
+      'a work @0 %0 no Tab',
+      'a work @1 %2 no Tab',
+      'a work @1 %2 http://100.64.0.1:3000/',
+      'a work @1 %2 http://100.64.0.1:3000/docs',
+    ]);
+    expect(kit.places.at(-1)?.tab).toEqual(TAB);
+  });
+
+  it('keeps the Tab of the Topic the user left when the Web View goes after the switch', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a' });
+    await connected(kit);
+    await settle();
+    const token = kit.attach.showTab(TAB);
+    await settle();
+
+    await kit.attach.switchSession({ sessionName: 'play', topic: { id: 'b' as TopicId, seed: null } });
+    kit.attach.leaveTab(token);
+    await settle();
+
+    const lastFor = (topicId: string) => kit.places.filter((each) => each.topicId === topicId).at(-1);
+    expect(lastFor('a')?.tab).toEqual(TAB);
+    expect(kit.places.filter((each) => each.topicId === 'b').map((each) => each.tab)).toEqual([null]);
+  });
+
+  it('ignores a stale token once another Tab is shown', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'a' });
+    await connected(kit);
+    await settle();
+    const first = kit.attach.showTab(TAB);
+    kit.attach.showTab({ ...TAB, url: 'https://github.com/', page: 'https://github.com/' });
+    kit.attach.leaveTab(first);
+    kit.attach.updateTab(first, { page: 'http://elsewhere.ts.net/', scrollY: 1 });
+    await settle();
+
+    expect(kit.places.at(-1)?.tab?.page).toBe('https://github.com/');
+  });
+
+  it('goes back to the Place of a Topic opened from another one, and not of the Topic already held', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], topicId: 'b', sessionName: 'play' });
+    await connected(kit);
+    await settle();
+
+    await kit.attach.switchSession({ sessionName: 'play', topic: { id: 'b' as TopicId, seed: null },
+      restore: place({ topicId: 'b', session: 'play' }) });
+    await settle();
+    expect(where(kit)).toBe('@0 %0');
+
+    await kit.attach.switchSession({ sessionName: 'work', topic: { id: 'a' as TopicId, seed: null }, restore: place() });
+    await settle();
+    expect(where(kit)).toBe('@1 %3');
+    expect(kit.attach.state().topic?.id).toBe('a');
   });
 });

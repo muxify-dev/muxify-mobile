@@ -24,7 +24,6 @@ import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
 import { stageFile } from '@/composer/staging';
-import type { TopicRow } from '@/components/host-screen-row-view';
 import { PickerSheet, type PreviewCard, type SheetAction } from '@/components/picker-sheet';
 import {
   TerminalHeader,
@@ -32,7 +31,7 @@ import {
   type OptionsItem,
 } from '@/components/terminal-header';
 import { ThemedText } from '@/components/themed-text';
-import { TitleSheet, type TitlePick } from '@/components/title-sheet';
+import { TitleSheet } from '@/components/title-sheet';
 import {
   type Appearance,
   type TerminalPalette,
@@ -40,23 +39,18 @@ import {
 import type { NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
-import { sessionTitleRows, topicTitleRows, type TitleRow } from '@/domain/title-rows';
 import { actionLabel, coverOf, type Cover, type CoverAction } from '@/domain/cover';
-import { lastAnswer } from '@/domain/host-listing';
 import { keyboardMove } from '@/domain/typing';
-import { topicSections } from '@/domain/host-screen';
 import { useCopyLog } from '@/hooks/use-copy-log';
-import { useHostReading } from '@/hooks/use-host-reading';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
-import { clampFontSize, fontSizeInForce, type ChooserLists } from '@/settings/settings';
-import { useChooserLists, useSettings } from '@/settings/settings-context';
+import { clampFontSize, fontSizeInForce } from '@/settings/settings';
+import { useSettings } from '@/settings/settings-context';
 import type { TopicId } from '@/topics/environment';
-import { useHostEntry } from '@/hooks/use-host-entry';
-import { fieldsParam } from '@/topics/topic-edit';
+import { useTitleSheet } from '@/hooks/use-title-sheet';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
-import type { BrowserTab } from '@/browser/tabs';
+import { fieldsParam } from '@/topics/topic-edit';
+import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
 import {
-  lastTopic,
   topicSeedParam,
 } from '@/topics/topic-detail';
 import {
@@ -90,7 +84,6 @@ import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach
 import { cellOf, paneBoxes, windowSlide, clippedRowHeight, type Extent, type PaneBox } from '@/tmux/pane-layout';
 import type { PaneSurface, PaneView, SurfacePoint } from '@/tmux/pane-view';
 import { paneTopologyFrames } from '@/tmux/pane-topology';
-import { trimPreview } from '@/tmux/preview';
 import type { Grid, Pane } from '@/tmux/tmux-client';
 
 /**
@@ -136,8 +129,6 @@ type PaneSlot = {
 };
 
 type PickerState = { open: false } | { open: true; error?: string };
-/** `sessionsOnly` is the sheet opened by Choose a Session, on a Session that has ended. */
-type TitleSheetState = { open: false } | { open: true; revision: number; error?: string; sessionsOnly?: boolean };
 
 /**
  * One Session, on screen.
@@ -152,6 +143,12 @@ type TitleSheetState = { open: false } | { open: true; revision: number; error?:
  * the route names, it asks the root to open one. That is the only thing it
  * ever asks of an Attach's life.
  */
+// The React Compiler skips this component, for its react-hooks suppression,
+// so the refs it writes during render are not memoized. Until the Title Sheet
+// moved to useTitleSheet, the linter's compiler stopped at a `finally` in it
+// and checked nothing in this component; these rules are the ones it then
+// found.
+/* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization */
 export default function TerminalScreen() {
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
@@ -247,9 +244,14 @@ export default function TerminalScreen() {
         return;
       }
       setMissing(null);
+      // The Last Place's Topic opens at its Topic Place, a Browser Tab included.
+      const place = requested.topicId
+        ? records.topicPlaces.find((each) => each.hostId === host.id && each.topicId === requested.topicId && each.session === requested.session)
+        : undefined;
       const request = {
         host,
-        destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null },
+        destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null,
+          restore: place ?? null },
         zoomed: settings.zoomMultipaneWindows,
       };
       if (!requested.reconnect) {
@@ -318,12 +320,17 @@ export default function TerminalScreen() {
     say(`physical keyboard ${physicalKeyboard ? 'connected' : 'disconnected'}`);
   }, [physicalKeyboard]);
   const [picker, setPicker] = useState<PickerState>({ open: false });
-  const [titleSheet, setTitleSheet] = useState<TitleSheetState>({ open: false });
-  const chooserRevision = useRef(0);
-  const closeChooser = useCallback(() => {
-    chooserRevision.current += 1;
-    setTitleSheet({ open: false });
-  }, []);
+  const closePicker = useCallback(() => setPicker({ open: false }), []);
+  /** A cold start's visit is over once a Session is picked in place of one that stopped. */
+  const forgetLookup = useCallback(() => setLookup(null), []);
+  /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
+  const showTab = useCallback((tab: BrowserTab) => {
+    router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
+  }, [router]);
+  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, beforeOpen: closePicker,
+    onReplacingStopped: forgetLookup });
+  const { closeChooser, openTitleSheet, openSessionsOnly, topic, rereadTopic } = chooser;
+  useFocusEffect(useCallback(() => closePicker, [closePicker]));
 
   const fontSize = fontSizeInForce(settings.fontSize);
 
@@ -519,7 +526,36 @@ export default function TerminalScreen() {
     setScreenFocused(true);
     return () => setScreenFocused(false);
   }, []));
-  const sheetOpen = picker.open || titleSheet.open;
+
+  /**
+   * The Browser Tab a reopened Topic had on top, shown again in the Web View
+   * when the Host still lists it. Taken from the Attach once, while this
+   * screen is on top; a Web View over it takes it when it goes.
+   */
+  const tabToRestore = state?.tabToRestore ?? null;
+  useEffect(() => {
+    if (!attach || !tabToRestore || !screenFocused || !hostId) return;
+    const wanted = attach.takeTabToRestore();
+    if (!wanted) return;
+    const { topic: wantedTopic, topology } = attach.state();
+    const window = topology.activeWindow?.id;
+    void (async () => {
+      const read = window ? await readBrowserTabs(hostId, window) : { kind: 'failed' as const, error: 'no active Window' };
+      const restore = tabRestoreOf(read, wanted.tab.url);
+      const now = attach.state();
+      if (holder.current() !== attach || now.topic?.id !== wantedTopic?.id || now.topology.activeWindow?.id !== window ||
+          !navigation.isFocused() || restore.kind === 'gone') {
+        say(restore.kind === 'gone'
+          ? `the Topic Place's Tab ${wanted.tab.url} is no longer listed; staying on the Pane`
+          : `the user moved before the Topic Place's Tab ${wanted.tab.url} was shown; leaving it`);
+        attach.leaveTab(wanted.token);
+        return;
+      }
+      if (restore.unread !== null) say(`the Tabs of ${window} did not read (${restore.unread}); opening ${wanted.tab.url} anyway`);
+      router.push({ pathname: '/web-view', params: { url: wanted.tab.url, page: wanted.tab.page, scrollY: String(wanted.tab.scrollY) } });
+    })();
+  }, [attach, tabToRestore, screenFocused, hostId, holder, navigation, router]);
+  const sheetOpen = picker.open || chooser.sheet.isPresented;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
     paneId: slot.pane.id,
     box: slot.box,
@@ -902,71 +938,6 @@ export default function TerminalScreen() {
     activeView()?.jumpToLatest();
   }, [activeView]);
 
-  const chooserLists = useChooserLists(hostId ?? '');
-  const topicsOn = chooserLists.includes('topics');
-  const windowsOn = chooserLists.includes('windows');
-  const sessionsOn = chooserLists.includes('sessions');
-  const { topics: hostTopics, listing, read: readHost } = useHostReading(hostId ?? '', topicsOn);
-  const pickerTopics = useMemo(
-    () => (topicsOn ? topicSections(hostTopics, appearance) : []),
-    [topicsOn, hostTopics, appearance],
-  );
-  const hostEntry = useHostEntry(hostId ?? '', closeChooser, true);
-  const handover = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useFocusEffect(useCallback(() => () => {
-    if (handover.current) clearTimeout(handover.current);
-    closeChooser();
-    setPicker({ open: false });
-  }, [closeChooser]));
-  const openTopic = useCallback((row: TopicRow) => {
-    if (row.seed.state === 'live') {
-      const revision = chooserRevision.current;
-      hostEntry.openTopic(row.seed, {
-        isCurrent: () => chooserRevision.current === revision && holder.current() === attach,
-        onError: (error) => setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous),
-      });
-      return;
-    }
-    closeChooser();
-    if (handover.current) clearTimeout(handover.current);
-    const session = state?.sessionName;
-    handover.current = setTimeout(() => {
-      if (holder.current() === attach && attach?.state().sessionName === session && navigation.isFocused()) {
-        hostEntry.openTopic(row.seed);
-      }
-    }, SHEET_HANDOVER_MS);
-  }, [attach, closeChooser, holder, hostEntry, navigation, state?.sessionName]);
-
-  /** The Session a switch is on its way to, whose row shows it is busy. */
-  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
-  /**
-   * Where the Sessions list comes from. The Attach's own list while it is up;
-   * once it has stopped, it has no Connection to ask, so the Host is asked
-   * the way the Host Screen asks it.
-   */
-  const sessionsFromHost = state?.typing.kind !== 'open' && state?.typing.kind !== 'waiting';
-  const sessionCards = useMemo((): PreviewCard[] => {
-    if (sessionsFromHost) {
-      return (lastAnswer(listing) ?? []).map((session) => ({
-        id: session.name,
-        title: session.name,
-        detail: session.windowCount === undefined
-          ? session.name
-          : `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
-        current: false,
-        preview: [],
-      }));
-    }
-    if (!state) return [];
-    return (state.sessions ?? []).map((session) => ({
-      id: session.name,
-      title: session.name,
-      detail: `${session.name} · ${session.windowCount} ${plural(session.windowCount, 'window')}`,
-      current: session.name === state?.sessionName,
-      busy: session.name === switchingTo,
-      preview: previewOf(state.previews, `${session.name}:`),
-    }));
-  }, [state, sessionsFromHost, listing, switchingTo]);
   const paneCards = useMemo((): PreviewCard[] => {
     if (!state) return [];
     const frames = paneTopologyFrames(state.topology.panes);
@@ -1086,9 +1057,6 @@ export default function TerminalScreen() {
     setArmed((previous) => ({ ...previous, [modifier]: !previous[modifier] }));
   }, []);
 
-  const topicView = state?.topic?.view;
-  const topic = topicView ? lastTopic(topicView) : null;
-  const rereadTopic = useCallback(() => { void attach?.refreshTopic(); }, [attach]);
   useFocusEffect(useCallback(() => { rereadTopic(); }, [rereadTopic]));
 
   /** The header's lines. Until a Topic read lands, a Topic's Session reads as a Session. */
@@ -1100,97 +1068,6 @@ export default function TerminalScreen() {
       : { kind: 'session', session: state.sessionName, program };
   }, [state, topology, topic]);
 
-  const [windowTabs, setWindowTabs] = useState<{ revision: number; session: string | undefined; window: string; tabs: BrowserTab[] } | null>(null);
-  const activeWindowId = state?.topology.activeWindow?.id;
-  const titleRevision = titleSheet.open ? titleSheet.revision : null;
-  useEffect(() => {
-    setWindowTabs(null);
-    if (!windowsOn || titleRevision === null || !hostId || !activeWindowId) return;
-    let current = true;
-    void readBrowserTabs(hostId, activeWindowId).then((read) => {
-      if (current && chooserRevision.current === titleRevision && holder.current() === attach &&
-          attach?.state().sessionName === sessionName && attach?.state().topology.activeWindow?.id === activeWindowId) {
-        setWindowTabs({ revision: titleRevision, session: sessionName, window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
-      }
-    });
-    return () => { current = false; };
-  }, [windowsOn, titleRevision, hostId, activeWindowId, sessionName, attach, holder]);
-
-  const openTitleSheet = useCallback(() => {
-    if (!attach) return;
-    if (handover.current) clearTimeout(handover.current);
-    setPicker({ open: false });
-    setTitleSheet({ open: true, revision: ++chooserRevision.current });
-    attach.refreshTopology();
-    if (sessionsOn) attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
-    if (state?.topic) rereadTopic();
-    if (topicsOn) void readHost();
-  }, [attach, state, rereadTopic, topicsOn, sessionsOn, readHost]);
-
-  /** A Tab picked in the Title Sheet: its page in the Web View, over the Attach, which stays up. */
-  const openTab = useCallback(
-    (tab: BrowserTab) => {
-      say(`picked Tab ${tab.id}`);
-      closeChooser();
-      router.push({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
-    },
-    [router, closeChooser],
-  );
-
-  const titleRows = useMemo((): TitleRow[] => {
-    if (!state) return [];
-    if (state.topic) {
-      return topic
-        ? topicTitleRows(topic, { session: state.sessionName, topology: state.topology })
-        : [{ kind: 'session', name: state.sessionName, current: true, windows: sessionTitleRows(state.topology) }];
-    }
-    return sessionTitleRows(state.topology);
-  }, [state, topic]);
-
-  const chooserBusy = useRef(false);
-  const choose = useCallback((pick: TitlePick, explicitTopic: boolean) => {
-    if (!attach || !state || chooserBusy.current) return;
-    const revision = chooserRevision.current;
-    const current = () => chooserRevision.current === revision && holder.current() === attach;
-    chooserBusy.current = true;
-    if (pick.session !== null && pick.session !== state.sessionName) setSwitchingTo(pick.session);
-    void (async () => {
-      try {
-        if (pick.session !== null) {
-          await attach.switchSession({ sessionName: pick.session,
-            topic: explicitTopic && state.topic ? { id: state.topic.id, seed: topic } : null });
-        }
-        if (!current() || attach.state().sessionName !== (pick.session ?? state.sessionName)) return;
-        if (pick.window !== null) await attach.selectWindow(pick.window);
-        if (current()) closeChooser();
-      } catch (error) {
-        if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
-      } finally {
-        chooserBusy.current = false;
-        setSwitchingTo(null);
-      }
-    })();
-  }, [attach, state, topic, holder, closeChooser]);
-  const selectSession = useCallback((session: string) => {
-    if (!sessionsFromHost) {
-      choose({ session, window: null }, false);
-      return;
-    }
-    // The Attach has stopped, so the pick is a new one. A cold start's visit
-    // is over too: what the screen shows is the new Attach.
-    say(`choosing ${session} in place of a Session that has stopped`);
-    setLookup(null);
-    hostEntry.openSession(session);
-  }, [choose, sessionsFromHost, hostEntry]);
-
-  /** Choose a Session, from a Session that has ended: the Title Sheet with its Sessions only. */
-  const chooseSession = useCallback(() => {
-    if (handover.current) clearTimeout(handover.current);
-    setPicker({ open: false });
-    setTitleSheet({ open: true, revision: ++chooserRevision.current, sessionsOnly: true });
-    void readHost();
-  }, [readHost]);
-  const pickTitleRow = useCallback((pick: TitlePick) => choose(pick, true), [choose]);
 
   /**
    * One step of font size, from the size in force. The Surfaces follow the
@@ -1387,7 +1264,7 @@ export default function TerminalScreen() {
         }
         return;
       case 'choose-session':
-        chooseSession();
+        openSessionsOnly();
         return;
       case 'go-to-host':
         goHost();
@@ -1396,7 +1273,7 @@ export default function TerminalScreen() {
         router.dismissTo('/');
         return;
     }
-  }, [lookup, attach, hostId, router, tryReconnectAgain, chooseSession, goHost]);
+  }, [lookup, attach, hostId, router, tryReconnectAgain, openSessionsOnly, goHost]);
 
   return (
     // The ground the Surface sits on follows the Theme, or the safe-area strip
@@ -1607,30 +1484,7 @@ export default function TerminalScreen() {
         zoom={state ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) } : undefined}
       />
 
-      <TitleSheet
-        isPresented={titleSheet.open}
-        onDismiss={closeChooser}
-        lists={titleSheet.open && titleSheet.sessionsOnly ? SESSIONS_ONLY : chooserLists}
-        rows={titleRows}
-        topic={topic}
-        onRetry={titleSheet.open && titleSheet.error !== undefined ? undefined : rereadTopic}
-        loading={titleSheet.open && topicView?.kind === 'loading'}
-        error={
-          titleSheet.open
-            ? (titleSheet.error ??
-              (topicView?.kind === 'failed' ? topicView.error : undefined))
-            : undefined
-        }
-        sessions={{
-          cards: sessionCards,
-          loading: sessionsFromHost ? listing.phase === 'reading' : state?.sessions == null,
-          onSelect: selectSession,
-        }}
-        topics={topicsOn ? { sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost() } : undefined}
-        onPick={pickTitleRow}
-        tabs={windowTabs?.revision === titleRevision && windowTabs.session === sessionName && windowTabs.window === activeWindowId ? windowTabs.tabs : NO_TABS}
-        onOpenTab={openTab}
-      />
+      <TitleSheet {...chooser.sheet} />
 
       {composerOpen && attach && activePaneId ? (
         <ComposerPanel
@@ -1718,6 +1572,7 @@ interface ScreenSurface extends PaneSurface {
   pressKey(key: string, modifiers: Modifiers): void;
 }
 
+/* eslint-enable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization */
 /**
  * The `expo-libghostty` view, as the Pane view wants it.
  *
@@ -1727,6 +1582,7 @@ interface ScreenSurface extends PaneSurface {
  * character split across two reads survives byte handling and does not survive
  * text decoding.
  */
+
 function surfaceFor(ref: TerminalViewRef): ScreenSurface {
   return {
     write: (bytes) => void ref.write(bytesToBase64(bytes)),
@@ -2403,20 +2259,7 @@ const PANE_ACTIONS: SheetAction[] = [
   { id: 'split-down', label: 'Split ↓' },
 ];
 
-/** How long a sheet takes to leave, so the next one can be presented. */
-const SHEET_HANDOVER_MS = 450;
-
-const NO_TABS: BrowserTab[] = [];
 const NOTHING_PAINTED: ReadonlySet<string> = new Set();
-const SESSIONS_ONLY: ChooserLists = ['sessions'];
-
-/** How many captured lines a preview box can show before it is just noise. */
-const PREVIEW_LINES = 14;
-const PREVIEW_COLUMNS = 46;
-
-function previewOf(previews: Map<string, string[]>, target: string): string[] {
-  return trimPreview(previews.get(target) ?? [], PREVIEW_LINES, PREVIEW_COLUMNS);
-}
 
 /**
  * Asks before a paste that the program in the Pane will run line by line.

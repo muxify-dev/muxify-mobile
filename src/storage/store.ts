@@ -5,8 +5,10 @@ import {
   type Identity,
   type LastPlace,
   parseLastPlace,
+  parseTopicPlaces,
   type RecentSession,
   type Records,
+  type TopicPlace,
 } from './records';
 
 /** Where the JSON lives. The one seam between the store and the filesystem. */
@@ -60,6 +62,10 @@ export interface HostStore {
   rememberLastPlace(place: LastPlace): Promise<void>;
   /** Forgets it, so the next cold start opens the Hosts list. */
   forgetLastPlace(): Promise<void>;
+  /** Where the user was in this Topic on this phone, or null when it has not been opened here. */
+  topicPlaceFor(hostId: string, topicId: string): Promise<TopicPlace | null>;
+  /** Replaces the Topic's Topic Place. A Disconnect keeps them: see forgetLastPlace. */
+  rememberTopicPlace(place: TopicPlace): Promise<void>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -95,6 +101,7 @@ export function createHostStore(
         fingerprints: parsed.fingerprints ?? [],
         recentSessions: parsed.recentSessions ?? [],
         lastPlace: parseLastPlace(parsed.lastPlace),
+        topicPlaces: parseTopicPlaces(parsed.topicPlaces),
       };
     } catch {
       // Unreadable records are treated as none rather than as a crash on
@@ -122,11 +129,9 @@ export function createHostStore(
       const savedHost: Host = { ...host, id: hostId, identityId };
 
       await save({
+        ...records,
         hosts: replaceById(records.hosts, savedHost),
         identities: replaceById(records.identities, savedIdentity),
-        fingerprints: records.fingerprints,
-        recentSessions: records.recentSessions,
-        lastPlace: records.lastPlace,
       });
       // Written after the records, so a failed keychain write cannot leave a
       // credential belonging to a Host that was never saved.
@@ -157,6 +162,7 @@ export function createHostStore(
           (candidate) => candidate.hostId !== hostId,
         ),
         lastPlace: records.lastPlace?.hostId === hostId ? null : records.lastPlace,
+        topicPlaces: records.topicPlaces.filter((candidate) => candidate.hostId !== hostId),
       });
       if (!stillUsed) {
         await secrets.remove(credentialKey(host.identityId));
@@ -239,7 +245,27 @@ export function createHostStore(
       if (records.lastPlace === null) return;
       await save({ ...records, lastPlace: null });
     },
+
+    async topicPlaceFor(hostId: string, topicId: string): Promise<TopicPlace | null> {
+      const records = await load();
+      return records.topicPlaces.find((candidate) => sameTopic(candidate, hostId, topicId)) ?? null;
+    },
+
+    async rememberTopicPlace(place: TopicPlace): Promise<void> {
+      const records = await load();
+      await save({
+        ...records,
+        topicPlaces: [
+          ...records.topicPlaces.filter((candidate) => !sameTopic(candidate, place.hostId, place.topicId)),
+          place,
+        ],
+      });
+    },
   };
+}
+
+function sameTopic(candidate: TopicPlace, hostId: string, topicId: string): boolean {
+  return candidate.hostId === hostId && candidate.topicId === topicId;
 }
 
 function sameSession(candidate: RecentSession, hostId: string, name: string): boolean {

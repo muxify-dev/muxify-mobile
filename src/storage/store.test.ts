@@ -1,4 +1,5 @@
 import { createHostStore, credentialKey, type JsonFile, type Secrets } from './store';
+import type { TopicPlace } from './records';
 
 function fakeStorage(initial: string | null = null) {
   let contents = initial;
@@ -209,6 +210,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
+      topicPlaces: [],
     });
   });
 
@@ -221,6 +223,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
+      topicPlaces: [],
     });
   });
 
@@ -233,6 +236,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
+      topicPlaces: [],
     });
   });
 });
@@ -416,5 +420,64 @@ describe('reorderHosts', () => {
     await store.reorderHosts([saved[2]!.id, 'gone']);
 
     expect(await order(store)).toEqual(['three', 'one', 'two']);
+  });
+});
+
+describe('Topic Places', () => {
+  const place = (over: Partial<TopicPlace> = {}): TopicPlace => ({
+    hostId: 'host1',
+    topicId: 'topic1',
+    session: 'work',
+    window: { id: '@2', index: 1, name: 'editor' },
+    pane: '%7',
+    tab: { url: 'http://100.64.0.1:3000/', page: 'http://100.64.0.1:3000/docs', scrollY: 420 },
+    at: '2026-11-15T10:00:00.000Z',
+    ...over,
+  });
+
+  it('keeps one per Topic of each Host and reads it back after a relaunch', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    await store.rememberTopicPlace(place());
+    await store.rememberTopicPlace(place({ hostId: 'host2' }));
+    await store.rememberTopicPlace(place({ pane: '%8', tab: null }));
+
+    const relaunched = createHostStore(fakeStorage(storage.written()).file, storage.secrets);
+    expect(await relaunched.topicPlaceFor('host1', 'topic1')).toEqual(place({ pane: '%8', tab: null }));
+    expect(await relaunched.topicPlaceFor('host2', 'topic1')).toEqual(place({ hostId: 'host2' }));
+    expect(await relaunched.topicPlaceFor('host1', 'other')).toBeNull();
+  });
+
+  it('drops a bad entry and keeps the rest of the records', async () => {
+    const good = place();
+    const { file, secrets } = fakeStorage(JSON.stringify({
+      hosts: [],
+      lastPlace: { hostId: 'host1', session: 'work', topicId: 'topic1' },
+      topicPlaces: [
+        good,
+        { ...good, topicId: 'no window id', window: { index: 1, name: 'editor' } },
+        { ...good, topicId: 'bad tab', tab: { url: 'http://a.ts.net/', page: 'http://a.ts.net/', scrollY: 'top' } },
+        { ...good, session: '' },
+        'not a place',
+      ],
+    }));
+
+    const records = await createHostStore(file, secrets).load();
+    expect(records.topicPlaces).toEqual([good]);
+    expect(records.lastPlace).toEqual({ hostId: 'host1', session: 'work', topicId: 'topic1' });
+  });
+
+  it('goes with its Host, and stays through a Disconnect', async () => {
+    const { file, secrets } = fakeStorage();
+    const store = createHostStore(file, secrets, ids());
+    const kept = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
+    const removed = await store.saveHost({ host: { ...HOST, displayName: 'Other' }, identity: IDENTITY, credential: 'x' });
+    await store.rememberTopicPlace(place({ hostId: kept.id }));
+    await store.rememberTopicPlace(place({ hostId: removed.id }));
+
+    await store.forgetLastPlace();
+    await store.removeHost(removed.id);
+
+    expect((await store.load()).topicPlaces).toEqual([place({ hostId: kept.id })]);
   });
 });

@@ -15,6 +15,7 @@ const mockEntered = jest.fn();
 const mockOpenAttach = jest.fn();
 const mockLoad = jest.fn();
 const mockReadTopic = jest.fn();
+const mockTopicPlaceFor = jest.fn();
 let mockBlur: (() => void) | undefined;
 
 jest.mock('expo-router', () => ({
@@ -29,7 +30,7 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/storage/device-store', () => ({
-  deviceHostStore: () => ({ load: mockLoad, recentSessionsFor: async () => [], forgetLastPlace: async () => {} }),
+  deviceHostStore: () => ({ load: mockLoad, recentSessionsFor: async () => [], topicPlaceFor: (...args: unknown[]) => mockTopicPlaceFor(...args), forgetLastPlace: async () => {} }),
 }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings: { zoomMultipaneWindows: true }, terminal: { foreground: '#e6e6e6', background: '#11131a' } }) }));
 jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpenAttach(...args) }));
@@ -38,7 +39,7 @@ jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => moc
 jest.mock('@/topics/act-on-topic', () => ({ sendTopicOrder: jest.fn() }));
 
 const host = { id: 'host', displayName: 'Host', address: 'host', port: 22, identityId: 'key' };
-const records: Records = { hosts: [host], identities: [], fingerprints: [], recentSessions: [], lastPlace: null };
+const records: Records = { hosts: [host], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, topicPlaces: [] };
 const topic: TopicDetail = {
   id: 'topic' as TopicId, label: 'Topic', state: 'live', tags: [], note: null,
   sessions: [{ id: '$1' as SessionId, name: 'work', windows: [] }],
@@ -58,6 +59,7 @@ beforeEach(() => {
   mockBlur = undefined;
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   mockLoad.mockResolvedValue(records);
+  mockTopicPlaceFor.mockResolvedValue(null);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
@@ -146,4 +148,18 @@ it('does not deliver a live Topic after its chooser closes', async () => {
   expect(mockLoad).not.toHaveBeenCalled();
   expect(mockEntered).not.toHaveBeenCalled();
   expect(onError).not.toHaveBeenCalled();
+});
+
+it('opens a Topic in the Session of its Topic Place, and asks the Attach to go back to that Place', async () => {
+  const two = { ...topic, sessions: [...topic.sessions, { id: '$2' as SessionId, name: 'play', windows: [] }] };
+  const place = { hostId: host.id, topicId: topic.id, session: 'play', window: { id: '@3', index: 2, name: 'editor' },
+    pane: '%9', tab: null, at: '2026-11-15T10:00:00.000Z' };
+  mockTopicPlaceFor.mockResolvedValue(place);
+  mockOpenAttach.mockReturnValue({ state: () => ({ phase: { kind: 'connecting' }, sessionName: 'play', topic: null }) });
+  await mount();
+  await act(async () => { actions.openTopic(two); });
+  expect(mockTopicPlaceFor).toHaveBeenCalledWith(host.id, topic.id);
+  expect(mockOpenAttach).toHaveBeenCalledWith(expect.objectContaining({
+    destination: { sessionName: 'play', topic: { id: topic.id, seed: two }, restore: place },
+  }));
 });

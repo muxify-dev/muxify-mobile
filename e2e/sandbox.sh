@@ -17,8 +17,8 @@
 #   TMUX_PANE, which would send tmux to your server.
 # - The app, over SSH: a private sshd on a free port sets the same variables
 #   with SetEnv. The app's saved Dev Host is pointed at that port for the run,
-#   with no Fingerprint, no Recent Sessions and no Last Place, because the
-#   sandbox is a Host the app has never seen.
+#   with no Fingerprint, no Recent Sessions, no Last Place and no Topic Places,
+#   because the sandbox is a Host the app has never seen.
 #
 # The app's `muxify` over SSH is a stub, first on the sshd's PATH. It gives
 # every command to the real CLI except `browser`, which would talk to the
@@ -139,6 +139,7 @@ records["fingerprints"] = [f for f in records["fingerprints"] if f["hostId"] not
 records["recentSessions"] = [s for s in records["recentSessions"] if s["hostId"] not in ids]
 if (records.get("lastPlace") or {}).get("hostId") in ids:
     del records["lastPlace"]
+records["topicPlaces"] = [p for p in records.get("topicPlaces", []) if p.get("hostId") not in ids]
 json.dump(records, open(path, "w"))
 PY
 

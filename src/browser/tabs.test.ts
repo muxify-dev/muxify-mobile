@@ -1,4 +1,4 @@
-import { parseBrowserTabs, reachability, reachableTabs, tabAddress, tabLabel } from './tabs';
+import { parseBrowserTabs, reachability, reachableTabs, tabAddress, tabLabel, tabRestoreOf } from './tabs';
 
 const TAB = { id: 'A1', url: 'http://mac.tail1234.ts.net:3000/', title: 'Dev server', active: true };
 
@@ -109,5 +109,22 @@ describe('what a row says about a Tab', () => {
 
   it('is the address for a page with no title yet', () => {
     expect(tabLabel({ ...TAB, title: ' ' })).toBe(TAB.url);
+  });
+});
+
+describe('reopening a Topic with a Browser Tab on top', () => {
+  const url = 'http://100.64.0.1:3000/';
+  const tab = (at: string) => ({ id: at, url: at, title: '', active: false });
+
+  it('shows the Tab while the Host lists it', () => {
+    expect(tabRestoreOf({ kind: 'listed', tabs: [tab('https://github.com/'), tab(url)] }, url)).toEqual({ kind: 'show', unread: null });
+  });
+
+  it('goes to the Pane when the Host lists the Tab no more', () => {
+    expect(tabRestoreOf({ kind: 'listed', tabs: [tab('https://github.com/')] }, url)).toEqual({ kind: 'gone' });
+  });
+
+  it('shows the Tab when the Tabs could not be read', () => {
+    expect(tabRestoreOf({ kind: 'failed', error: 'no Browser' }, url)).toEqual({ kind: 'show', unread: 'no Browser' });
   });
 });

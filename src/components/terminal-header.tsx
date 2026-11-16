@@ -51,8 +51,6 @@ export function TerminalHeader({
   onTitle,
   options,
 }: TerminalHeaderProps) {
-  const { width: windowWidth } = useWindowDimensions();
-
   return (
     <>
       <Stack.Screen options={{
@@ -63,17 +61,7 @@ export function TerminalHeader({
           ? chromeHeaderColors(chrome)
           : { headerStyle: { backgroundColor: terminal.background }, headerTintColor: terminal.foreground }),
       }} />
-      <Stack.Title asChild>
-        <Pressable
-          onPress={onTitle}
-          accessibilityRole="button"
-          accessibilityLabel="Open Terminal chooser"
-          testID="header-title"
-          disabled={title === null}
-          style={[styles.title, { maxWidth: windowWidth / 2 }]}>
-          {title === null ? null : <TitleLines title={title} terminal={terminal} />}
-        </Pressable>
-      </Stack.Title>
+      <HeaderTitleButton title={title} colors={terminal} onTitle={onTitle} />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="Options">
           <Stack.Toolbar.Label>Options</Stack.Toolbar.Label>
@@ -84,7 +72,41 @@ export function TerminalHeader({
   );
 }
 
-function TitleLines({ title, terminal }: { title: HeaderTitle; terminal: TerminalPalette }) {
+/** The colours of the title's two lines. */
+export interface TitleColors {
+  foreground: string;
+  dim: string;
+}
+
+/**
+ * The Header's title, which opens the Title Sheet. The Terminal Screen's and
+ * the Web View's, so that the way to the Title Sheet is the same on both.
+ * `detailTestID` names the dim line: the Pane's program, or the Web View's page.
+ */
+export function HeaderTitleButton({ title, colors, onTitle, testID = 'header-title', detailTestID = 'pane-command' }: {
+  title: HeaderTitle | null;
+  colors: TitleColors;
+  onTitle: () => void;
+  testID?: string;
+  detailTestID?: string;
+}) {
+  const { width: windowWidth } = useWindowDimensions();
+  return (
+    <Stack.Title asChild>
+      <Pressable
+        onPress={onTitle}
+        accessibilityRole="button"
+        accessibilityLabel="Open Terminal chooser"
+        testID={testID}
+        disabled={title === null}
+        style={[styles.title, { maxWidth: windowWidth / 2 }]}>
+        {title === null ? null : <TitleLines title={title} terminal={colors} detailTestID={detailTestID} />}
+      </Pressable>
+    </Stack.Title>
+  );
+}
+
+function TitleLines({ title, terminal, detailTestID }: { title: HeaderTitle; terminal: TitleColors; detailTestID: string }) {
   const name = title.kind === 'topic' ? title.topic : title.session;
   return (
     <>
@@ -105,7 +127,7 @@ function TitleLines({ title, terminal }: { title: HeaderTitle; terminal: Termina
             numberOfLines={1}
             maxFontSizeMultiplier={1.2}
             style={[styles.program, title.kind === 'topic' && styles.topicProgram, { color: terminal.dim }]}
-            testID="pane-command">
+            testID={detailTestID}>
             {title.program}
           </Text>
         )}
