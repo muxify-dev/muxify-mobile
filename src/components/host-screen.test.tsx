@@ -140,10 +140,22 @@ const newSessionOf = (payload: object) =>
 const newSessions = () => mockServer.requests.flatMap((payload) => newSessionOf(payload) ?? []);
 
 /** What VoiceOver calls each button on screen, in order. */
-const labels = () => renderer.root.findAllByType(Button).flatMap((node) =>
-  (node.props.modifiers ?? []).flatMap((modifier: { name: string; value: unknown }) => (modifier.name === 'accessibilityLabel' ? [modifier.value as string] : [])));
-const row = (label: string) => renderer.root.findAllByType(Button)
-  .find((node) => node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label))!;
+const labels = () => renderer.root.findAllByType(Button).flatMap((node) => labelOf(node) ?? []);
+const row = (label: string) => renderer.root.findAllByType(Button).find((node) => labelOf(node) === label)!;
+const READING = 'Reading folders…';
+const WAITING = 'The Host sent a new list. It shows when you type.';
+/** The Go to list from top to bottom: each row by what VoiceOver calls it, and the lines about the read. */
+const goToLines = () => renderer.root
+  .findAll((node) => node.type === Button || (node.type === ('Text' as never) && [READING, WAITING].includes(node.props.children)))
+  .map((node) => (node.type === Button ? labelOf(node) : node.props.children))
+  .filter((line) => line !== undefined && line !== 'New Session here');
+const labelOf = (node: { props: { modifiers?: { name: string; value: unknown }[] } }) =>
+  node.props.modifiers?.find((modifier) => modifier.name === 'accessibilityLabel')?.value as string | undefined;
+function pendingPaths() {
+  const answers: ((value: unknown) => void)[] = [];
+  mockPaths.mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+  return (rows: ReturnType<typeof path>[]) => act(async () => { answers.shift()!(rows); });
+}
 const menu = () => [...toolbarMenuActions(renderer).keys()];
 const tabs = () => renderer.root.findAllByType(Picker);
 const focusGoTo = () => act(async () => { searchBar(renderer)!.props.onFocus(); });
@@ -361,6 +373,63 @@ describe('Go to', () => {
     const [first, second] = mockServer.writes();
     expect(mockServer.writes()).toHaveLength(2);
     expect(second!.request).not.toBe(first!.request);
+  });
+});
+
+describe('Go to while the Host reads the folders', () => {
+  it('says so after the rows on show, so no row moves, and stops when the answer comes', async () => {
+    const answer = pendingPaths();
+    await mount();
+    await focusGoTo();
+
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', READING]);
+    await act(async () => { mockKeys['list-down']!(); mockKeys['list-down']!(); mockKeys['list-down']!(); });
+    await act(async () => { mockKeys['list-pick']!(); });
+    expect(mockOpenSession).toHaveBeenLastCalledWith('api/fix-login');
+
+    await focusGoTo();
+    await answer([path('web')]);
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/web']);
+  });
+
+  it('says it once, in place of Nothing matches, while no row matches', async () => {
+    jest.useFakeTimers();
+    pendingPaths();
+    await mount();
+    await focusGoTo();
+    await type('zzz');
+    await act(async () => { jest.runAllTimers(); });
+    jest.useRealTimers();
+
+    expect(goToLines()).toEqual([READING]);
+    expect(renderer.root.findAllByType('Text' as never).filter((node) => node.props.children === 'Nothing matches.')).toEqual([]);
+  });
+
+  // The screen comes back from the Terminal and reads again, and the user opens Go to before the answer.
+  async function comeBackAndOpenGoTo() {
+    await mount();
+    const answer = pendingPaths();
+    mockFocused = false;
+    await act(async () => { renderer.update(<HostScreen />); });
+    mockFocused = true;
+    await act(async () => { renderer.update(<HostScreen />); });
+    await focusGoTo();
+    return answer;
+  }
+
+  it('keeps the folders on show in place while the field is empty, and says that a new list waits for the text', async () => {
+    const answer = await comeBackAndOpenGoTo();
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web', READING]);
+
+    await answer([path('web'), path('api')]);
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web', WAITING]);
+  });
+
+  it('shows a new answer at once, with no line, when it moves no row', async () => {
+    const answer = await comeBackAndOpenGoTo();
+    await answer([path('api'), path('web')]);
+
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
   });
 });
 
