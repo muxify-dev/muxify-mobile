@@ -157,7 +157,6 @@ function AppStack() {
           name="terminal"
           options={{
             headerShown: true,
-            headerTransparent: false,
             headerBackVisible: true,
             title: 'Session',
           }}

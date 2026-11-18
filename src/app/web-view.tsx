@@ -8,6 +8,7 @@ import type { ParamListBase } from 'expo-router/react-navigation';
 import { placeTabRoute } from '@/browser/place-tab-route';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
+import { HeaderBand } from '@/components/header-band';
 import { HeaderTitleButton, type HeaderTitle } from '@/components/terminal-header';
 import { TitleSheet } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
@@ -188,7 +189,7 @@ export default function WebViewScreen() {
   };
 
   return (
-    <View style={[styles.fill, { backgroundColor: palette.background }]}>
+    <HeaderBand color={palette.background}>
       <Stack.Screen options={{ title: pageTitle }} />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Button icon="arrow.clockwise" accessibilityLabel="Reload" onPress={reload} />
@@ -247,7 +248,7 @@ export default function WebViewScreen() {
         </View>
       )}
       <TitleSheet {...chooser.sheet} />
-    </View>
+    </HeaderBand>
   );
 }
 

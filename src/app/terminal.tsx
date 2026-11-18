@@ -1268,293 +1268,290 @@ export default function TerminalScreen() {
   }, [lookup, attach, hostId, router, tryReconnectAgain, openSessionsOnly, goHost]);
 
   return (
-    // The ground the Surface sits on follows the Theme, or the safe-area strip
-    // above it shows as a band of a different dark.
-    <View
-      ref={rootView}
-      onLayout={() => rootView.current?.measureInWindow((x, y, width, height) => {
-        setRootBounds({ x, y, width, height });
-      })}
-      style={[
-        styles.container,
-        { backgroundColor: terminal.background },
-      ]}>
-      {/* The Theme decides this, not the phone: white glyphs over Solarized's
-          near-white terminal are a status bar nobody can read. */}
-      <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
-
-      <TerminalHeader
-        title={headerTitle}
-        terminal={terminal}
-        chrome={cover.kind === 'connection-screen' ? chrome : null}
-        onTitle={openTitleSheet}
-        options={options}
-      />
-
+    <TerminalHeader
+      title={headerTitle}
+      terminal={terminal}
+      chrome={cover.kind === 'connection-screen' ? chrome : null}
+      onTitle={openTitleSheet}
+      options={options}>
       <View
-        style={[styles.surfaceArea, { backgroundColor: terminal.background }]}
-        testID="surface-area"
-        onLayout={({ nativeEvent }) => {
-          const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
-          say(
-            `container ${Math.round(size.width)}x${Math.round(size.height)}` +
-              (keyboardVisible ? ', keyboard up' : ''),
-          );
-          setContainerSize(size);
-        }}>
-        {/* Before there is a Topology there are no Panes to place, and nothing
-            but a Surface can measure a cell — so one stands in as the ruler.
-            That is the sizing module's decision, not this screen's; see its
-            docblock. It is replaced by the real Panes the moment they are
-            known, and their resync paints them. Nobody sees it: no Pane is
-            painted on it, and an empty Surface shows ghostty's own cursor. */}
-        {slots.length === 0 ? (
-          <View
-            // In the Window's box rather than filling the container, so that the
-            // grid it measures is the Window's whatever the keyboard is doing.
-            style={[styles.paneBox, styles.unseen, { left: 0, top: -slide, ...windowArea }]}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants">
-            <TerminalView
-              style={styles.surface}
-              fontSize={fontSize}
-              ligatures={settings.ligatures}
-              accessoryBar={false}
-              shortcutBar={false}
-              theme={{
-                background: terminal.background,
-                foreground: terminal.foreground,
-                cursorColor: terminal.cursor,
-                palette: ansi ? [...ansi] : undefined,
-              }}
-              onResize={(event) => {
-                say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
-                reportWindowGrid(event);
-                reportCell({ width: event.nativeEvent.cellWidth, height: event.nativeEvent.cellHeight });
-              }}
-            />
-          </View>
-        ) : null}
+        ref={rootView}
+        onLayout={() => rootView.current?.measureInWindow((x, y, width, height) => {
+          setRootBounds({ x, y, width, height });
+        })}
+        style={[
+          styles.container,
+          { backgroundColor: terminal.background },
+        ]}>
+        {/* The Theme decides this, not the phone: white glyphs over Solarized's
+            near-white terminal are a status bar nobody can read. */}
+        <StatusBar style={appearance === 'light' ? 'dark' : 'light'} />
 
-        <TrackpadScroll
-          style={StyleSheet.absoluteFill}
-          enabled={canType && screenFocused && !composerOpen && !sheetOpen}
-          context={trackpadContext}
-          targets={trackpadTargets}
-          scrollSpeed={SCROLL_SPEED}
-          selectionPane={frozenView.current?.paneId() ?? null}
-          attach={attach}
-          swipe={swipe}>
-          {slots.map((slot) => (
-            <PaneSurfaceView
-              key={slot.pane.id}
-              slot={slot}
-              painted={painted.has(slot.pane.id)}
-              font={fontSize}
-              ligatures={settings.ligatures}
-              terminal={terminal}
-              ansi={ansi}
-              onRef={adoptPaneSurface}
-              onPaneResize={reportPaneGrid}
-              onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
-              onCell={reportCell}
-              onInput={handlePaneInput}
-              onScroll={handlePaneScroll}
-              swipe={swipe}
-              onSelect={(paneId) => attach?.selectPane(paneId)}
-              selecting={selecting}
-              onSelectionPress={beginSelection}
-              onSelectionEnd={endSelection}
-              onSelectionEdge={scrollSelection}
-              onPaste={pasteFromSurface}
-            />
-          ))}
-
-          {/* Under the Scrollback chrome, and that ordering is the whole of
-              whether the Jump to latest pill can be pressed. The layer covers
-              the Pane and claims every touch in it, so drawn after the pill it
-              took the pill's presses as well — and judged them by a terminal's
-              rules rather than a button's, where ten points of finger travel is
-              a scroll and not a tap. A press that drifted did nothing at all,
-              except scroll further back. Measured: a fourteen-point drag on the
-              pill left it exactly where it was. */}
-          {/* Gone while a Selection is open: the touches are the Selection
-              Layer's then, which is under this one. Not before the press
-              that began it lifts: its finger is this layer's touch, and the
-              selection follows it. */}
-          {state?.mouseTracking && activeSlot && mouseGrid && (!selecting || mousePressHeld) ? (
-            <MouseLayer
-              box={activeSlot.box}
-              grid={mouseGrid}
-              cell={cellSize}
-              onTap={handleTapCell}
-              onLongPress={(press) => {
-                setMousePressHeld(true);
-                beginSelection(activePaneId, press);
-                // Held from here, so the rows that answer the press find a
-                // finger to follow even before it moves.
-                attach?.view(activePaneId).followSelectionPress(press, false);
-              }}
-              onPressMove={(point) => attach?.view(activePaneId).followSelectionPress(point, false)}
-              onPressEnd={(point) => {
-                setMousePressHeld(false);
-                attach?.view(activePaneId).followSelectionPress(point, true);
-              }}
-              onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
-              swipe={swipe}
-            />
-          ) : null}
-
-        </TrackpadScroll>
-
-        {state?.scrolled ? (
-          <>
-            <ScrollRail
-              position={state.scrolled}
-              rows={visibleGrid?.rows ?? 0}
-              palette={terminal}
-            />
-            <ScrollBackIndicator
-              position={state.scrolled}
-              palette={terminal}
-              appearance={appearance}
-              onPress={jumpToLatest}
-            />
-          </>
-        ) : null}
-
-        {clippedRow > 0 ? (
-          <View
-            pointerEvents="none"
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: terminal.background }}
-          />
-        ) : null}
-
-        {/* Last, so it is over the mouse layer and a tap on it is the map's. */}
-        {(state?.topology.panes.length ?? 0) > 1 ? (
-          <LayoutMap
-            panes={state?.topology.panes ?? []}
-            appearance={appearance}
-            palette={sheetPalette}
-            onPress={openPanes}
-          />
-        ) : null}
-
-        {/* The last content, dimmed, and every touch with it: nothing on it
-            can be typed into, scrolled or tapped until Typing opens. */}
-        {cover.kind === 'content' ? (
-          <View
-            style={[StyleSheet.absoluteFill, styles.dimmed, { backgroundColor: terminal.background }]}
-            testID="cover-dimmed"
-            onStartShouldSetResponder={() => true}
-          />
-        ) : null}
-        {cover.kind === 'content' && cover.notice.kind === 'card' ? (
-          <View style={[StyleSheet.absoluteFill, styles.cardArea]} pointerEvents="box-none">
-            <FailureCard
-              failure={cover.notice.failure}
-              appearance={appearance}
-              palette={chrome}
-              onAction={runCoverAction}
-            />
-          </View>
-        ) : null}
-      </View>
-
-      <PickerSheet
-        title="Panes"
-        isPresented={picker.open}
-        onDismiss={() => setPicker({ open: false })}
-        loading={false}
-        error={picker.open ? picker.error : undefined}
-        emptyMessage="No Panes in this Window"
-        cards={paneCards}
-        onSelect={selectPane}
-        actions={PANE_ACTIONS}
-        onAction={runSheetAction}
-        zoom={state ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) } : undefined}
-      />
-
-      <TitleSheet {...chooser.sheet} />
-
-      {composerOpen && attach && activePaneId ? (
-        <ComposerPanel
-          key={`${attach.hostId}:${activePaneId}`}
-          composer={attach.composer}
-          paneId={activePaneId}
-          connected={open}
-          palette={chrome}
-          appearance={appearance}
-          inputRef={composerInput}
-          held={composerHeld}
-          onHeld={(action) => {
-            attach.heldInput(activePaneId, action);
-          }}
-        />
-      ) : null}
-      {!physicalKeyboard ? <KeyRow
-        armed={armed}
-        onArm={armModifier}
-        onKey={pressKey}
-        onSymbol={pressSymbol}
-        onPanes={openPanes}
-        onKeyboard={toggleKeyboard}
-        keyboardVisible={keyboardVisible}
-        keysDisabled={!open || composerOpen}
-        // One Pane is when you reach for Split, so never disabled while keys go through.
-        panesDisabled={!open}
-        below={clearance.bottom}
-      /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
-
-      {inputCard && cover.kind !== 'connection-screen' ? (
         <View
-          style={[styles.top, { bottom: (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) + clearance.bottom + 8 }]}
-          pointerEvents="box-none">
-          {inputCard}
-        </View>
-      ) : null}
+          style={[styles.surfaceArea, { backgroundColor: terminal.background }]}
+          testID="surface-area"
+          onLayout={({ nativeEvent }) => {
+            const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
+            say(
+              `container ${Math.round(size.width)}x${Math.round(size.height)}` +
+                (keyboardVisible ? ', keyboard up' : ''),
+            );
+            setContainerSize(size);
+          }}>
+          {/* Before there is a Topology there are no Panes to place, and nothing
+              but a Surface can measure a cell — so one stands in as the ruler.
+              That is the sizing module's decision, not this screen's; see its
+              docblock. It is replaced by the real Panes the moment they are
+              known, and their resync paints them. Nobody sees it: no Pane is
+              painted on it, and an empty Surface shows ghostty's own cursor. */}
+          {slots.length === 0 ? (
+            <View
+              // In the Window's box rather than filling the container, so that the
+              // grid it measures is the Window's whatever the keyboard is doing.
+              style={[styles.paneBox, styles.unseen, { left: 0, top: -slide, ...windowArea }]}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants">
+              <TerminalView
+                style={styles.surface}
+                fontSize={fontSize}
+                ligatures={settings.ligatures}
+                accessoryBar={false}
+                shortcutBar={false}
+                theme={{
+                  background: terminal.background,
+                  foreground: terminal.foreground,
+                  cursorColor: terminal.cursor,
+                  palette: ansi ? [...ansi] : undefined,
+                }}
+                onResize={(event) => {
+                  say(`the ruler reported ${event.nativeEvent.cols}x${event.nativeEvent.rows}`);
+                  reportWindowGrid(event);
+                  reportCell({ width: event.nativeEvent.cellWidth, height: event.nativeEvent.cellHeight });
+                }}
+              />
+            </View>
+          ) : null}
 
-      {/* The native Header ends where this content area begins. */}
-      <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
-        <Presence shown={cover.kind === 'content' && cover.notice.kind === 'banner'}>
-          {cover.kind === 'content' && cover.notice.kind === 'banner' ? (
-            <Banner
-              title={cover.notice.label}
-              leading={{ busy: true }}
-              tone="neutral"
-              appearance={appearance}
-              palette={chrome}
-              accessibilityLabel={cover.notice.label}
+          <TrackpadScroll
+            style={StyleSheet.absoluteFill}
+            enabled={canType && screenFocused && !composerOpen && !sheetOpen}
+            context={trackpadContext}
+            targets={trackpadTargets}
+            scrollSpeed={SCROLL_SPEED}
+            selectionPane={frozenView.current?.paneId() ?? null}
+            attach={attach}
+            swipe={swipe}>
+            {slots.map((slot) => (
+              <PaneSurfaceView
+                key={slot.pane.id}
+                slot={slot}
+                painted={painted.has(slot.pane.id)}
+                font={fontSize}
+                ligatures={settings.ligatures}
+                terminal={terminal}
+                ansi={ansi}
+                onRef={adoptPaneSurface}
+                onPaneResize={reportPaneGrid}
+                onWindowResize={slot.fillsWindow ? reportWindowGrid : undefined}
+                onCell={reportCell}
+                onInput={handlePaneInput}
+                onScroll={handlePaneScroll}
+                swipe={swipe}
+                onSelect={(paneId) => attach?.selectPane(paneId)}
+                selecting={selecting}
+                onSelectionPress={beginSelection}
+                onSelectionEnd={endSelection}
+                onSelectionEdge={scrollSelection}
+                onPaste={pasteFromSurface}
+              />
+            ))}
+
+            {/* Under the Scrollback chrome, and that ordering is the whole of
+                whether the Jump to latest pill can be pressed. The layer covers
+                the Pane and claims every touch in it, so drawn after the pill it
+                took the pill's presses as well — and judged them by a terminal's
+                rules rather than a button's, where ten points of finger travel is
+                a scroll and not a tap. A press that drifted did nothing at all,
+                except scroll further back. Measured: a fourteen-point drag on the
+                pill left it exactly where it was. */}
+            {/* Gone while a Selection is open: the touches are the Selection
+                Layer's then, which is under this one. Not before the press
+                that began it lifts: its finger is this layer's touch, and the
+                selection follows it. */}
+            {state?.mouseTracking && activeSlot && mouseGrid && (!selecting || mousePressHeld) ? (
+              <MouseLayer
+                box={activeSlot.box}
+                grid={mouseGrid}
+                cell={cellSize}
+                onTap={handleTapCell}
+                onLongPress={(press) => {
+                  setMousePressHeld(true);
+                  beginSelection(activePaneId, press);
+                  // Held from here, so the rows that answer the press find a
+                  // finger to follow even before it moves.
+                  attach?.view(activePaneId).followSelectionPress(press, false);
+                }}
+                onPressMove={(point) => attach?.view(activePaneId).followSelectionPress(point, false)}
+                onPressEnd={(point) => {
+                  setMousePressHeld(false);
+                  attach?.view(activePaneId).followSelectionPress(point, true);
+                }}
+                onScroll={(lines) => handleScrollLines(lines, mouseGrid)}
+                swipe={swipe}
+              />
+            ) : null}
+
+          </TrackpadScroll>
+
+          {state?.scrolled ? (
+            <>
+              <ScrollRail
+                position={state.scrolled}
+                rows={visibleGrid?.rows ?? 0}
+                palette={terminal}
+              />
+              <ScrollBackIndicator
+                position={state.scrolled}
+                palette={terminal}
+                appearance={appearance}
+                onPress={jumpToLatest}
+              />
+            </>
+          ) : null}
+
+          {clippedRow > 0 ? (
+            <View
+              pointerEvents="none"
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, height: clippedRow, backgroundColor: terminal.background }}
             />
           ) : null}
-        </Presence>
 
-        <View style={styles.overlay} pointerEvents="none">
-          {state?.trouble ? (
-            // Loud enough to notice over whatever the Session is painting, quiet
-            // enough not to be a Banner: the Connection is fine, one command was
-            // not.
-            <ThemedText
-              type="code"
-              style={[styles.troubleText, { color: chrome.destructive }]}
-              testID="pane-trouble">
-              {state.trouble}
-            </ThemedText>
+          {/* Last, so it is over the mouse layer and a tap on it is the map's. */}
+          {(state?.topology.panes.length ?? 0) > 1 ? (
+            <LayoutMap
+              panes={state?.topology.panes ?? []}
+              appearance={appearance}
+              palette={sheetPalette}
+              onPress={openPanes}
+            />
+          ) : null}
+
+          {/* The last content, dimmed, and every touch with it: nothing on it
+              can be typed into, scrolled or tapped until Typing opens. */}
+          {cover.kind === 'content' ? (
+            <View
+              style={[StyleSheet.absoluteFill, styles.dimmed, { backgroundColor: terminal.background }]}
+              testID="cover-dimmed"
+              onStartShouldSetResponder={() => true}
+            />
+          ) : null}
+          {cover.kind === 'content' && cover.notice.kind === 'card' ? (
+            <View style={[StyleSheet.absoluteFill, styles.cardArea]} pointerEvents="box-none">
+              <FailureCard
+                failure={cover.notice.failure}
+                appearance={appearance}
+                palette={chrome}
+                onAction={runCoverAction}
+              />
+            </View>
           ) : null}
         </View>
-      </View>
 
-      {cover.kind === 'connection-screen' ? (
-        <ConnectionScreen
-          cover={cover}
-          place={missing === null && place.hostName !== '' ? place : null}
-          palette={chrome}
-          appearance={appearance}
-          onAction={runCoverAction}
+        <PickerSheet
+          title="Panes"
+          isPresented={picker.open}
+          onDismiss={() => setPicker({ open: false })}
+          loading={false}
+          error={picker.open ? picker.error : undefined}
+          emptyMessage="No Panes in this Window"
+          cards={paneCards}
+          onSelect={selectPane}
+          actions={PANE_ACTIONS}
+          onAction={runSheetAction}
+          zoom={state ? { on: state.zoomed, onChange: (on: boolean) => attach?.setZoom(on) } : undefined}
         />
-      ) : null}
-    </View>
+
+        <TitleSheet {...chooser.sheet} />
+
+        {composerOpen && attach && activePaneId ? (
+          <ComposerPanel
+            key={`${attach.hostId}:${activePaneId}`}
+            composer={attach.composer}
+            paneId={activePaneId}
+            connected={open}
+            palette={chrome}
+            appearance={appearance}
+            inputRef={composerInput}
+            held={composerHeld}
+            onHeld={(action) => {
+              attach.heldInput(activePaneId, action);
+            }}
+          />
+        ) : null}
+        {!physicalKeyboard ? <KeyRow
+          armed={armed}
+          onArm={armModifier}
+          onKey={pressKey}
+          onSymbol={pressSymbol}
+          onPanes={openPanes}
+          onKeyboard={toggleKeyboard}
+          keyboardVisible={keyboardVisible}
+          keysDisabled={!open || composerOpen}
+          // One Pane is when you reach for Split, so never disabled while keys go through.
+          panesDisabled={!open}
+          below={clearance.bottom}
+        /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
+
+        {inputCard && cover.kind !== 'connection-screen' ? (
+          <View
+            style={[styles.top, { bottom: (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) + clearance.bottom + 8 }]}
+            pointerEvents="box-none">
+            {inputCard}
+          </View>
+        ) : null}
+
+        {/* The native Header ends where this content area begins. */}
+        <View style={[styles.top, { top: 0 }]} pointerEvents="box-none">
+          <Presence shown={cover.kind === 'content' && cover.notice.kind === 'banner'}>
+            {cover.kind === 'content' && cover.notice.kind === 'banner' ? (
+              <Banner
+                title={cover.notice.label}
+                leading={{ busy: true }}
+                tone="neutral"
+                appearance={appearance}
+                palette={chrome}
+                accessibilityLabel={cover.notice.label}
+              />
+            ) : null}
+          </Presence>
+
+          <View style={styles.overlay} pointerEvents="none">
+            {state?.trouble ? (
+              // Loud enough to notice over whatever the Session is painting, quiet
+              // enough not to be a Banner: the Connection is fine, one command was
+              // not.
+              <ThemedText
+                type="code"
+                style={[styles.troubleText, { color: chrome.destructive }]}
+                testID="pane-trouble">
+                {state.trouble}
+              </ThemedText>
+            ) : null}
+          </View>
+        </View>
+
+        {cover.kind === 'connection-screen' ? (
+          <ConnectionScreen
+            cover={cover}
+            place={missing === null && place.hostName !== '' ? place : null}
+            palette={chrome}
+            appearance={appearance}
+            onAction={runCoverAction}
+          />
+        ) : null}
+      </View>
+    </TerminalHeader>
   );
 }
 

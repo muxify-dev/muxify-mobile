@@ -597,7 +597,12 @@ _Avoid_: minimap, Pane indicator, thumbnail
 **Header**:
 The native bar at the top of the Terminal Screen, and of the Web View with
 the same title (see Web View). It owns the top safe area,
-with Back on the left, the title in the middle and Options on the right.
+with Back on the left, the title in the middle and Options on the right. The
+bar has no colour of its own. The screen paints the band under it: on the
+Terminal Screen the Theme's terminal background, or the chrome while the
+Connection Screen covers the Surface, and on the Web View the chrome. So
+during a Back Swipe the band moves with its screen, and the screen under it
+comes in with its own colour.
 Back goes to the Host Screen and leaves the Attach alive (ADR 0007). The content area starts
 below the Header. The title is the Session name over the program that runs in
 the active Pane, as tmux's `#{pane_current_command}` names it. For a Session
