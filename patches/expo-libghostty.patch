@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9d3290570750e70b3afaaab1c97f32db8b77a50a 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9d53b5ef3 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -71,7 +71,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9d3290570750e70b3afaaab1c97f32db
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +106,88 @@ export type TerminalViewProps = {
+@@ -52,10 +106,95 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -136,6 +136,13 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..9d3290570750e70b3afaaab1c97f32db
 +     * no band. iOS only.
 +     */
 +    backEdge?: number;
++    /**
++     * Whether a sideways drag may be a swipe. Defaults to true. False makes
++     * every drag a scroll and sends no swipe events, for a view with nothing
++     * to swipe to. Read when a drag begins: a change does not turn a drag in
++     * progress. iOS only.
++     */
++    swipes?: boolean;
 +    /**
 +     * A long press on the terminal with no selection rows to select in. Answer
 +     * with `showSelection`, passing this point as `press`.
@@ -227,7 +234,7 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..96f63abc8255772168def88e89e5e73823dbb3de 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda582be5839e 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
 @@ -1,11 +1,21 @@
@@ -267,7 +274,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..96f63abc8255772168def88e89e5e738
        // PTY output bytes (base64) → terminal grid.
        AsyncFunction("write") { (view: ExpoLibghosttyView, base64: String) in
          guard let data = Data(base64Encoded: base64) else {
-@@ -36,6 +53,68 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +53,74 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -322,21 +329,27 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..96f63abc8255772168def88e89e5e738
 +        view.setShortcutBar(visible: visible ?? true)
 +      }
 +
-+      // Whether the touch scroll gesture belongs to JavaScript rather than to
-+      // ghostty. For terminals whose history lives at the far end.
 +      // A band at the window's left edge where a drag right is the app's back
 +      // swipe, not this view's. Zero leaves every drag to the view.
 +      Prop("backEdge") { (view: ExpoLibghosttyView, edge: Double?) in
 +        view.backEdge = CGFloat(edge ?? 0)
 +      }
 +
++      // Whether a sideways drag may be a swipe. Defaults to true; false makes
++      // every drag a scroll.
++      Prop("swipes") { (view: ExpoLibghosttyView, swipes: Bool?) in
++        view.swipes = swipes ?? true
++      }
++
++      // Whether the touch scroll gesture belongs to JavaScript rather than to
++      // ghostty. For terminals whose history lives at the far end.
 +      Prop("ownsScrollGesture") { (view: ExpoLibghosttyView, owned: Bool?) in
 +        view.scrollGestureOwnedByJS = owned ?? false
 +      }
      }
    }
  }
-@@ -46,6 +125,37 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +131,37 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -375,7 +388,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..96f63abc8255772168def88e89e5e738
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..aa5f6bad67101c08a6433553e223c818555f85a7 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..3e2317fca78a325656105adfc9f204ce0a96a448 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -475,7 +488,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..aa5f6bad67101c08a6433553e223c818
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -39,11 +111,72 @@ class ExpoLibghosttyView: ExpoView {
+@@ -39,11 +111,81 @@ class ExpoLibghosttyView: ExpoView {
          }
        }
      }
@@ -524,6 +537,15 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..aa5f6bad67101c08a6433553e223c818
 +    }
 +  }
 +
++  /// Whether a sideways drag may be a swipe. See `UITerminalView.swipes`.
++  var swipes: Bool = true {
++    didSet {
++      #if !targetEnvironment(macCatalyst)
++        terminalView.swipes = swipes
++      #endif
++    }
++  }
++
 +  private func applyScrollOwnership() {
 +    #if !targetEnvironment(macCatalyst)
 +      terminalView.onScrollDelta =
@@ -548,7 +570,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..aa5f6bad67101c08a6433553e223c818
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +189,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +198,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -570,7 +592,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..aa5f6bad67101c08a6433553e223c818
        }
      )
      self.session = session
-@@ -66,21 +210,280 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +219,280 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -1771,7 +1793,7 @@ index 809e7dd6f1887dc5c2b0267e4c786587c49aec57..2f06e769170b60bf8c676417b758fd1a
          ) -> (key: ghostty_input_key_e, extraModifiers: TerminalInputModifiers)? {
              guard text.count == 1, let char = text.first else { return nil }
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
-index 3f3eeb202351f474526690dc27937df833bdd7e3..c9ea2b6e5cd592344c785cf044ec06f5c3714217 100644
+index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541ce31c56f 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 @@ -14,6 +14,9 @@
@@ -1873,7 +1895,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..c9ea2b6e5cd592344c785cf044ec06f5
 +        func touchPanMayBegin(_ pan: UIPanGestureRecognizer) -> Bool {
 +            let velocity = pan.velocity(in: self)
 +            let sideways = abs(velocity.x) > abs(velocity.y) * Self.horizontalPanRatio
-+            touchPanAxis = onSwipe != nil && sideways ? .horizontal : .vertical
++            touchPanAxis = onSwipe != nil && swipes && sideways ? .horizontal : .vertical
 +            // A sideways drag on an open selection is for a handle.
 +            if textSelectionOpen && sideways { return false }
 +            // A drag right that landed in the back edge band is the host
@@ -2400,7 +2422,7 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..864a339537c31f671ecd99be0376ea5ce0f7dc74 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..7de5c45f25352727de96f0159dd6d8d5f3731c59 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 @@ -7,8 +7,51 @@
@@ -2455,7 +2477,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..864a339537c31f671ecd99be0376ea5c
      @MainActor
      open class UITerminalView: UIView {
          let core = TerminalSurfaceCoordinator()
-@@ -29,6 +72,77 @@
+@@ -29,6 +72,82 @@
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
          var hardwareKeyHandled = false
          let touchScrollMultiplier: CGFloat = 3.0
@@ -2484,6 +2506,11 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..864a339537c31f671ecd99be0376ea5c
 +        /// drag right is not this view's: the host app goes back with it.
 +        /// Zero, the default, leaves every drag to the view.
 +        open var backEdge: CGFloat = 0
++
++        /// Whether a sideways pan may be a swipe. False makes every pan a
++        /// scroll, for a host app that has nothing to swipe to. Read only
++        /// when a pan begins, so a change never turns a pan in progress.
++        open var swipes = true
 +
 +        /// Where the last finger landed, in the window. See `backEdge`.
 +        var touchDownInWindow: CGPoint = .zero
@@ -2533,7 +2560,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..864a339537c31f671ecd99be0376ea5c
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
-@@ -128,6 +242,9 @@
+@@ -128,6 +247,9 @@
              core.onPostRender = { [weak self] in
                  self?.enforceSublayerScale()
              }
@@ -2587,7 +2614,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..fea705598023be92e5d4b93dfd27042df90a581d 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0d69d9acd 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2636,8 +2663,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..fea705598023be92e5d4b93dfd27042d
 +   * Any other name rejects. iOS only.
 +   */
 +  pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
- };
- 
++};
++
 +/** The modifiers held with a key. `cmd` is ghostty's `super`. */
 +export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +
@@ -2653,8 +2680,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..fea705598023be92e5d4b93dfd27042d
 +  cells?: number[];
 +  /** Whether the row runs on into the next one, so a copy joins the two. */
 +  wraps: boolean;
-+};
-+
+ };
+ 
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +
@@ -2664,7 +2691,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..fea705598023be92e5d4b93dfd27042d
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -57,8 +115,76 @@ export type TerminalViewProps = {
+@@ -57,8 +115,83 @@ export type TerminalViewProps = {
     * pass undefined fields to keep ghostty's defaults.
     */
    theme?: TerminalTheme;
@@ -2717,6 +2744,13 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..fea705598023be92e5d4b93dfd27042d
 +   * no band. iOS only.
 +   */
 +  backEdge?: number;
++  /**
++   * Whether a sideways drag may be a swipe. Defaults to true. False makes
++   * every drag a scroll and sends no swipe events, for a view with nothing
++   * to swipe to. Read when a drag begins: a change does not turn a drag in
++   * progress. iOS only.
++   */
++  swipes?: boolean;
 +  /**
 +   * A long press on the terminal with no selection rows to select in. Answer
 +   * with `showSelection`, passing this point as `press`.
