@@ -57,6 +57,7 @@ export function GoToList({
   /** The one item of a folder row's long-press menu. A list that does not pass it gives the folder rows no menu. */
   folderMenu?: { label: string; icon: SFSymbol; onPress: (row: FolderRow) => void };
 }) {
+  const secondaryText = [font({ size: 15 }), foregroundColor(palette.secondaryLabel)];
   return (
     <>
       {reading.kind === 'failed' ? (
@@ -84,7 +85,7 @@ export function GoToList({
                 </VStack>
                 <Spacer />
                 {index === highlighted ? (
-                  <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>↩</Text>
+                  <Text modifiers={secondaryText}>↩</Text>
                 ) : null}
               </HStack>
             </Button>
@@ -104,14 +105,19 @@ export function GoToList({
             </ContextMenu>
           );
         })}
-        {rows.length > 0 ? null : reading.kind === 'reading' ? (
+        {/* After the rows, so no row moves when it comes or goes. Not a Button: no tap and no highlight. */}
+        {reading.kind === 'reading' ? (
           <HStack spacing={10}>
             <ProgressView />
-            <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>Reading folders…</Text>
+            <Text modifiers={secondaryText}>Reading folders…</Text>
           </HStack>
-        ) : (
-          <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>Nothing matches.</Text>
-        )}
+        ) : reading.kind === 'waiting' ? (
+          <Text modifiers={secondaryText}>
+            The Host sent a new list. It shows when you type.
+          </Text>
+        ) : rows.length === 0 ? (
+          <Text modifiers={secondaryText}>Nothing matches.</Text>
+        ) : null}
       </Section>
     </>
   );

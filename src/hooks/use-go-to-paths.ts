@@ -5,8 +5,16 @@ import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceGoToCache, deviceHostStore } from '@/storage/device-store';
 import { rankedSessionPaths } from '@/topics/host-session-paths';
 
-/** Where the read of the paths stands, for the line above the list. */
-export type PathsReading = { kind: 'idle' } | { kind: 'reading' } | { kind: 'failed'; error: string };
+/**
+ * Where the read of the paths stands, for the lines around the list.
+ * `waiting`: the Host has answered, and the answer would move the rows on
+ * show, so it waits until the user types.
+ */
+export type PathsReading =
+  | { kind: 'idle' }
+  | { kind: 'reading' }
+  | { kind: 'waiting' }
+  | { kind: 'failed'; error: string };
 
 const ASK_DEBOUNCE_MS = 150;
 
@@ -20,8 +28,8 @@ const ASK_DEBOUNCE_MS = 150;
  * kept, in the Host's order.
  *
  * A new answer for an empty field is not put under the user's finger: while
- * `still` is true and rows are on show, the answer waits, and it shows when
- * `still` goes false.
+ * `still` is true and the answer would move the rows on show, the answer
+ * waits, and it shows when `still` goes false.
  */
 export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
   const [paths, setPaths] = useState<RankedPaths>({ query: '', rows: [] });
@@ -47,6 +55,7 @@ export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
     if (!still && waiting.current) {
       show(waiting.current);
       waiting.current = null;
+      setReading((now) => (now.kind === 'waiting' ? { kind: 'idle' } : now));
     }
   }, [still, show]);
 
@@ -68,8 +77,12 @@ export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
       if (query === '') void deviceGoToCache().save(hostId, rows);
       if (!current()) return;
       const next = { query, rows };
-      if (query === '' && stillNow.current && shown.current.rows.length > 0) waiting.current = next;
-      else show(next);
+      if (query === '' && stillNow.current && movesRows(shown.current.rows, next.rows)) {
+        waiting.current = next;
+        setReading({ kind: 'waiting' });
+        return;
+      }
+      show(next);
       setReading({ kind: 'idle' });
     } catch (error) {
       if (current()) setReading({ kind: 'failed', error: describeConnectionFailure(error) });
@@ -92,4 +105,10 @@ export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
   }, [enabled, read]);
 
   return { paths, reading, ask };
+}
+
+/** False when nothing is on show, or when the next rows are the same folders in the same order. */
+function movesRows(onShow: RankedPaths['rows'], next: RankedPaths['rows']): boolean {
+  return onShow.length > 0
+    && (onShow.length !== next.length || onShow.some((row, index) => row.directory !== next[index]!.directory));
 }

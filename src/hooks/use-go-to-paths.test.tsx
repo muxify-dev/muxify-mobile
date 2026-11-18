@@ -80,10 +80,12 @@ it('does not move the rows under the finger: a new answer for an empty field wai
   await act(async () => { paths.ask(''); });
 
   expect(shown().names).toEqual(['kept']);
+  expect(paths.reading).toEqual({ kind: 'waiting' });
   expect(mockSave).toHaveBeenCalled();
 
   await setStill(false);
   expect(shown().names).toEqual(['fresh', 'kept']);
+  expect(paths.reading).toEqual({ kind: 'idle' });
 });
 
 it('shows the first answer at once when the phone kept no list', async () => {
