@@ -330,10 +330,7 @@ export function sheetPaletteFor(theme: ThemeId): SheetPalette {
   return SheetPalettes[appearanceFor(theme)];
 }
 
-/**
- * The navigation Header's colours over the app's chrome: every screen's, and
- * the Terminal Screen's while the Connection Screen covers the Surface.
- */
+/** The navigation Header's colours over the app's chrome, for every screen. */
 export function chromeHeaderColors(palette: Appearance) {
   return {
     headerStyle: { backgroundColor: palette.background },

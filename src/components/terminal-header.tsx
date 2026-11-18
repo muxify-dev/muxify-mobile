@@ -4,7 +4,8 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
-import { chromeHeaderColors, type Appearance, type TerminalPalette } from '@/constants/app-theme';
+import { HeaderBand } from '@/components/header-band';
+import type { Appearance, TerminalPalette } from '@/constants/app-theme';
 
 /** What the header says the screen is showing. */
 export type HeaderTitle =
@@ -41,26 +42,22 @@ export interface TerminalHeaderProps {
   chrome: Appearance | null;
   onTitle: () => void;
   options: OptionsItem[];
+  /** The content area: it starts below the Header. */
+  children: ReactNode;
 }
 
-/** The native Header leaves the content area below its top safe area. */
+/** The Header, and the content area below it. */
 export function TerminalHeader({
   title,
   terminal,
   chrome,
   onTitle,
   options,
+  children,
 }: TerminalHeaderProps) {
   return (
-    <>
-      <Stack.Screen options={{
-        headerShown: true,
-        headerTransparent: false,
-        headerBackVisible: true,
-        ...(chrome
-          ? chromeHeaderColors(chrome)
-          : { headerStyle: { backgroundColor: terminal.background }, headerTintColor: terminal.foreground }),
-      }} />
+    <HeaderBand color={chrome ? chrome.background : terminal.background}>
+      <Stack.Screen options={{ headerTintColor: chrome ? chrome.toolbarTint : terminal.foreground }} />
       <HeaderTitleButton title={title} colors={terminal} onTitle={onTitle} />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu icon="ellipsis" accessibilityLabel="Options">
@@ -68,7 +65,8 @@ export function TerminalHeader({
           {renderOptions(options)}
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
-    </>
+      {children}
+    </HeaderBand>
   );
 }
 

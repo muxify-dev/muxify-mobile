@@ -1,7 +1,6 @@
 import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useHeaderHeight } from 'expo-router/react-navigation';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 import type { SearchBarCommands } from 'react-native-screens';
 
 import {
@@ -41,6 +40,7 @@ import {
   type TopicRow,
 } from '@/components/host-screen-row-view';
 import type { RenameParams } from '@/app/rename';
+import { HeaderBand } from '@/components/header-band';
 import { HostWriteRow } from '@/components/host-write-row';
 import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
@@ -443,16 +443,13 @@ export default function HostScreen() {
   const tabSwipe = pickerShown && filling === null;
   useBackSwipe(tabSwipe ? 'edge' : 'anywhere');
 
-  // The Go to field makes the navigation bar translucent, so the screen starts
-  // under the bar. React Native puts the content below the bar, and each
-  // SwiftUI Host ignores its top inset: SwiftUI keeps an old inset when a Host
-  // moves, as when the tab control comes and goes with Go to. The header
-  // height follows the bar, which hides while Go to has the keys.
-  const headerHeight = useHeaderHeight();
-  const belowTheBar = ignoreSafeArea({ regions: 'container', edges: 'top' });
+  // A SwiftUI Host keeps an old top inset when it moves, as when the tab
+  // control comes and goes with Go to. So React Native puts the content below
+  // the bar, and each SwiftUI Host ignores its top inset.
+  const noTopInset = ignoreSafeArea({ regions: 'container', edges: 'top' });
 
   return (
-    <View style={[styles.fill, { paddingTop: barShown ? headerHeight : 0 }]}>
+    <HeaderBand>
       <Stack.Screen
         options={{
           title: picked === undefined ? (host?.displayName ?? 'Host') : `Moving ${picked.label}`,
@@ -522,7 +519,7 @@ export default function HostScreen() {
         header={(shown) =>
           pickerShown ? (
             <Host matchContents={{ vertical: true }}>
-              <VStack modifiers={[...swiftUIColors, belowTheBar]}>
+              <VStack modifiers={[...swiftUIColors, noTopInset]}>
                 <Picker
                   selection={shown}
                   onSelectionChange={(next) => rememberHostScreenTab(id, next)}
@@ -535,7 +532,7 @@ export default function HostScreen() {
         }
         renderTab={(each) => (
           <Host style={styles.fill} matchContents={false}>
-            <VStack spacing={0} modifiers={[...swiftUIColors, belowTheBar]}>
+            <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
               <Form modifiers={[scrollContentBackground('hidden')]}>
                 {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
               </Form>
@@ -544,7 +541,7 @@ export default function HostScreen() {
         )}
       />
       <FillPlaceSheet choices={choices} onPick={fillPlace} onDismiss={() => setFilling(null)} />
-    </View>
+    </HeaderBand>
   );
 }
 
