@@ -43,6 +43,7 @@ import { HostWriteRow } from '@/components/host-write-row';
 import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
+import { hostProblemWords } from '@/domain/cover';
 import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
   firstReadAnswered,
@@ -103,7 +104,7 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const { listing, topics, sessionsOnly, retry: retryHost } = useHostListing(id);
+  const { listing, topics, sessionsOnly, problem, retry: retryHost } = useHostListing(id);
   /** The Topic card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<TopicId | null>(null);
   /** The Open Place the user fills: tapped, until a Topic is picked or the sheet is closed. */
@@ -210,6 +211,7 @@ export default function HostScreen() {
     topics,
     attach: attachedHere === null ? null : { sessionName: attachedHere.sessionName, topic: attachedHere.topic?.id ?? null },
     appearance,
+    problem: problem === null ? null : hostProblemWords(problem, host?.displayName ?? 'the Host'),
   };
   // A move opens the Bench: a card cannot go where the list hides it.
   const movingSections = moving === null ? [] : hostScreen({ ...input, opened: new Set([...opened, 'bench']) });

@@ -233,6 +233,16 @@ export function stopFailure(reason: DisconnectReason, { hostName, session }: Pla
   }
 }
 
+/**
+ * A Host Problem in the words the user reads: the headline and the reason the
+ * Cover would give for the same fault, so a screen and the Cover never word
+ * one fault two ways.
+ */
+export function hostProblemWords(reason: DisconnectReason, hostName: string): { title: string; detail: string | null } {
+  const { title, reason: detail } = stopFailure(reason, { hostName, session: '' });
+  return { title, detail };
+}
+
 /** Where the cold-start visit stopped, in the words the user reads. */
 function lookupFailure(lookup: Extract<Lookup, { kind: 'failed' }>, { hostName, session }: Place): Failure {
   switch (lookup.step) {

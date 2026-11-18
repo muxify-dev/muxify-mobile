@@ -1205,7 +1205,8 @@ export function openAttach(options: AttachOptions): Attach {
     // Not awaited: a Connection that has already ended has nothing to wait
     // for, and a reconnect must not be held up by a socket that will not shut.
     void teardown();
-    change({ phase: { kind: 'disconnected', reason } });
+    // A line of trouble is about a command on this Connection, and the Cover now says why it is over.
+    change({ phase: { kind: 'disconnected', reason }, trouble: null });
     if (source !== null) tryReconnect(source);
   }
 

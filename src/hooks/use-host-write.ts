@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { check, ended, IDLE, reached, send, type HostWrite, type HostWriteEnd, type HostWriteStep } from '@/domain/host-write';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
 import { WriteOutcomeUnknown } from '@/topics/request';

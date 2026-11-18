@@ -1,4 +1,4 @@
-import { answered, refused, type Listing, type ListedSession } from '@/domain/host-listing';
+import { answered, HOST_PROBLEM, refused, type Listing, type ListedSession } from '@/domain/host-listing';
 import type { LiveListing } from '@/ssh/host-listing-feed';
 
 import type { EnvironmentSnapshot } from './environment';
@@ -26,6 +26,8 @@ export type HostTopics =
   /** A Host CLI too old for a Host Server, and the install is updating it. */
   | { kind: 'updating'; last: EnvironmentSnapshot | null }
   | { kind: 'failed'; error: string; last: EnvironmentSnapshot | null }
+  /** The Host could not be used. Its Host Problem says why, so the Topics say nothing. */
+  | { kind: 'host-problem'; last: EnvironmentSnapshot | null }
   | { kind: 'listed'; snapshot: EnvironmentSnapshot }
   /**
    * No Host Server can run on this Connection: the Host Screen shows Sessions
@@ -71,6 +73,7 @@ export function lastSnapshot(topics: HostTopics): EnvironmentSnapshot | null {
       return topics.snapshot;
     case 'loading':
     case 'failed':
+    case 'host-problem':
     case 'updating':
       return topics.last;
     case 'absent':
@@ -96,17 +99,21 @@ export function listedSessions(snapshot: EnvironmentSnapshot): ListedSession[] {
  *   Connection shows no spinner over it; with none, the spinner;
  * - in Sessions only, and while the Host has no `muxify` yet, the Sessions
  *   that tmux lists, `sessions`, and the reason there are no Topics;
- * - `failure`, the Connection that could not be held, as a refusal.
+ * - `problem`, a Host that could not be used: the Host Problem says why, so
+ *   the Listing and the Topics say nothing of it;
+ * - `failure`, any other reason the screen could not ask, as a refusal.
  */
 export function liveReading(input: {
   live: LiveListing | null;
   last: EnvironmentSnapshot | null;
   sessions: Listing;
   failure: string | null;
+  problem: boolean;
   host: string;
 }): { listing: Listing; topics: HostTopics } {
-  const { live, last, sessions, failure, host } = input;
+  const { live, last, sessions, failure, problem, host } = input;
   if (failure !== null) return { listing: refused(failure), topics: { kind: 'failed', error: failure, last } };
+  if (problem) return { listing: HOST_PROBLEM, topics: { kind: 'host-problem', last } };
   if (live?.server.kind === 'sessions-only') {
     return { listing: sessions, topics: { kind: 'unavailable', host, reason: live.server.reason } };
   }

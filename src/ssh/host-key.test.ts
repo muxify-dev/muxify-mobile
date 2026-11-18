@@ -1,4 +1,5 @@
-import { describeConnectionFailure, MissingCredentialError } from './failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
+import { MissingCredentialError } from './failures';
 import { compareHostKey } from './host-key';
 
 describe('compareHostKey', () => {

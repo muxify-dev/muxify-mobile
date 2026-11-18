@@ -36,6 +36,7 @@ import { StyleSheet, useWindowDimensions } from 'react-native';
 
 import { tabAddress, tabLabel, type BrowserTab } from '@/browser/tabs';
 import type { Appearance, SheetPalette } from '@/constants/app-theme';
+import { actionLabel } from '@/domain/cover';
 import type { TitleRow, TitleWindowRow } from '@/domain/title-rows';
 import { HostScreenRowView, rowKey, type TopicRow } from './host-screen-row-view';
 import type { HostScreenSection } from '@/domain/host-screen';
@@ -88,6 +89,7 @@ export interface SheetTopics {
 }
 
 const ROW_HEIGHT = 44;
+const TRY_AGAIN = actionLabel('try-again');
 const TABS_HEADER_HEIGHT = 36;
 
 export function TitleSheet({
@@ -150,10 +152,10 @@ export function TitleSheet({
                   {error}
                 </Text>
               ) : null}
-              {error !== undefined && onRetry ? <Button label="Retry" onPress={onRetry} modifiers={[accessibilityLabel('Retry')]} /> : null}
+              {error !== undefined && onRetry ? <Button label={TRY_AGAIN} onPress={onRetry} modifiers={[accessibilityLabel(TRY_AGAIN)]} /> : null}
               {selectedTab === 'sessions' && <>
                 {sessions.loading && sessions.cards.length === 0 ? <SheetNote palette={palette}>Reading…</SheetNote> : null}
-                {!sessions.loading && sessions.cards.length === 0 ? <SheetNote palette={palette}>No Sessions</SheetNote> : null}
+                {!sessions.loading && sessions.cards.length === 0 && error === undefined ? <SheetNote palette={palette}>No Sessions</SheetNote> : null}
                 <ScrollView>
                   <SessionPreviews
                     cards={sessions.cards}
@@ -165,7 +167,7 @@ export function TitleSheet({
               </>}
               {selectedTab === 'topics' && <ScrollView>
                 <VStack spacing={0} alignment="leading">
-                  {topics && topics.sections.length === 0 ? <SheetNote palette={palette}>No Topics</SheetNote> : null}
+                  {topics && topics.sections.length === 0 && error === undefined ? <SheetNote palette={palette}>No Topics</SheetNote> : null}
                   {topics?.sections.map((section) => <VStack key={section.id} spacing={0} alignment="leading">
                     {section.title ? <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.secondary), padding({ vertical: 8 })]}>{section.title}</Text> : null}
                     {section.rows.map((row, index) => <HStack key={rowKey(row, index)} modifiers={[frame({ minHeight: 56 })]}>

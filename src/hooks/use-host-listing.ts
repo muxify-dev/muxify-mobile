@@ -3,11 +3,12 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
-import { answered, asking, refused, UNASKED, type Listing } from '@/domain/host-listing';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { answered, asking, HOST_PROBLEM, refused, UNASKED, type Listing } from '@/domain/host-listing';
+import { HostProblem } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import type { LiveListing } from '@/ssh/host-listing-feed';
+import { describeConnectionFailure, type DisconnectReason } from '@/tmux/disconnect-reason';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
 import type { EnvironmentSnapshot } from '@/topics/environment';
@@ -30,6 +31,10 @@ const say = speakingAs(deviceLog(), 'host');
  * the Host, tmux lists the Sessions as it did before the Host Server, on
  * focus and when that state begins.
  *
+ * A Host that cannot be used leaves its Host Problem in the Connections,
+ * which `problem` is. The screen holds the Connection again when any use
+ * reaches the Host and clears it.
+ *
  * `retry` holds the Connection again after it could not be held, and lists the
  * Sessions again.
  */
@@ -38,7 +43,7 @@ export function useHostListing(hostId: string) {
   const [sessions, setSessions] = useState<Listing>(UNASKED);
   const [hostName, setHostName] = useState('this Host');
   const [attempt, setAttempt] = useState(0);
-  const { live, listing, topics } = useLiveReading(hostId, { sessions, failure, host: hostName });
+  const { live, listing, topics, problem } = useLiveReading(hostId, { sessions, failure, host: hostName });
 
   const focused = useIsFocused();
   const closed = live?.server.kind === 'closed';
@@ -46,6 +51,7 @@ export function useHostListing(hostId: string) {
   useEffect(() => {
     if (!focused) return;
     let release: (() => void) | null = null;
+    let stopHearing: (() => void) | null = null;
     let left = false;
     void (async () => {
       const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
@@ -65,12 +71,22 @@ export function useHostListing(hostId: string) {
       } catch (error) {
         const message = describeConnectionFailure(error);
         say(`${host.displayName} could not be reached: ${message}`);
-        if (!left) setFailure(message);
+        if (left) return;
+        if (!(error instanceof HostProblem)) {
+          setFailure(message);
+          return;
+        }
+        setFailure(null);
+        const connections = appConnections();
+        stopHearing = connections.subscribeProblem((which) => {
+          if (which === hostId && connections.problem(hostId) === null) setAttempt((count) => count + 1);
+        });
       }
     })();
     return () => {
       left = true;
       release?.();
+      stopHearing?.();
     };
   }, [focused, hostId, closed, attempt]);
 
@@ -95,7 +111,7 @@ export function useHostListing(hostId: string) {
       } catch (error) {
         const message = describeConnectionFailure(error);
         say(`${host.displayName} refused the listing: ${message}`);
-        if (!left) setSessions(refused(message));
+        if (!left) setSessions(error instanceof HostProblem ? HOST_PROBLEM : refused(message));
       }
     })();
     return () => {
@@ -109,6 +125,7 @@ export function useHostListing(hostId: string) {
     topics,
     /** No Host Server runs: Topic Actions, Go to and New Topic are hidden. */
     sessionsOnly: live?.server.kind === 'sessions-only',
+    problem,
     retry,
   };
 }
@@ -119,7 +136,8 @@ export function useHostListing(hostId: string) {
  * from tmux, for Sessions only and while the Host CLI install puts a first
  * `muxify` on the Host, and `failure`, a Connection that could not be had.
  * The latest push stays until the next Connection's first push. The Topics
- * say where the Host CLI install stands.
+ * say where the Host CLI install stands. A Host Problem stands in for both,
+ * and `problem` says why.
  */
 export function useLiveReading(hostId: string, read: { sessions: Listing; failure: string | null; host: string }) {
   const connections = appConnections();
@@ -132,8 +150,9 @@ export function useLiveReading(hostId: string, read: { sessions: Listing; failur
   const [last, setLast] = useState<EnvironmentSnapshot | null>(null);
   const pushed = live?.snapshot ?? null;
   if (pushed !== null && pushed !== last) setLast(pushed);
-  const reading = liveReading({ live, last, ...read });
-  return { live, listing: reading.listing, topics: withHostCli(reading.topics, hostCli) };
+  const problem = useHostProblem(hostId);
+  const reading = liveReading({ live, last, ...read, problem: problem !== null });
+  return { live, listing: reading.listing, topics: withHostCli(reading.topics, hostCli), problem };
 }
 
 /**
@@ -148,5 +167,16 @@ export function useLiveListing(hostId: string): LiveListing | null {
       if (which === hostId) changed();
     }), [connections, hostId]),
     () => connections.listing(hostId),
+  );
+}
+
+/** The Host Problem of one Host, as it changes: why the phone could not use it, or null. */
+export function useHostProblem(hostId: string): DisconnectReason | null {
+  const connections = appConnections();
+  return useSyncExternalStore(
+    useCallback((changed: () => void) => connections.subscribeProblem((which) => {
+      if (which === hostId) changed();
+    }), [connections, hostId]),
+    () => connections.problem(hostId),
   );
 }

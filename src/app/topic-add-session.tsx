@@ -25,7 +25,7 @@ import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/connect-host';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { TopicId } from '@/topics/environment';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
@@ -222,7 +222,7 @@ export default function TopicAddSessionScreen() {
             {paths.kind === 'loading' && <Text>Reading folders…</Text>}
             {paths.kind === 'failed' && <>
               <FieldError error={paths.error} palette={palette} />
-              <Button label="Retry" onPress={() => setReadAttempt((value) => value + 1)} modifiers={[disabled(!choosing)]} />
+              <Button label="Try again" onPress={() => setReadAttempt((value) => value + 1)} modifiers={[disabled(!choosing)]} />
             </>}
             {paths.kind === 'listed' && sections.length === 0 && <Text>No matching folders.</Text>}
           </Section>

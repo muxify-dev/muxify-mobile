@@ -61,7 +61,7 @@ it('keeps the title through a failed Tags read and its retry', async () => {
   delete mockServer.pushes.snapshot;
   await mount('Keep this title');
   mockServer.pushes.snapshot = snapshot;
-  await act(async () => { button('Retry Tags')!.props.onPress(); });
+  await act(async () => { button('Try again')!.props.onPress(); });
   expect(renderer.root.findByType(TextField).props.text.value).toBe('Keep this title');
 });
 

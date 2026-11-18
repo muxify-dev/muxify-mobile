@@ -2,6 +2,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert } from 'react-native';
 
+import { actionLabel } from '@/domain/cover';
 import { ended, IDLE, reached, send, type HostWrite } from '@/domain/host-write';
 import { describeError } from '@/lib/describe-error';
 import { deviceHostStore } from '@/storage/device-store';
@@ -81,7 +82,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
       if (!isCurrent()) return;
       if (feedback) { feedback.onError(error); return; }
       Alert.alert(id === null ? 'Could not open Session' : 'Could not open Topic', describeError(error), [
-        ...(retry ? [{ text: 'Retry Read', onPress: retry }] : []), { text: 'OK' },
+        ...(retry ? [{ text: actionLabel('try-again'), onPress: retry }] : []), { text: 'OK' },
       ]);
     }).finally(() => {
       if (running.current !== operation) return;

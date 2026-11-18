@@ -10,8 +10,10 @@ import type { PreviewCard } from '@/components/picker-sheet';
 import type { TitlePick, TitleSheetProps } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { actionsFor } from '@/domain/cover';
 import { lastAnswer } from '@/domain/host-listing';
 import { topicSections } from '@/domain/host-screen';
+import { titleSheetNotice } from '@/domain/title-sheet-notice';
 import { sessionTitleRows, topicTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useLiveListing } from '@/hooks/use-host-listing';
@@ -80,7 +82,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   const topicsOn = chooserLists.includes('topics');
   const windowsOn = chooserLists.includes('windows');
   const sessionsOn = chooserLists.includes('sessions');
-  const { topics: hostTopics, listing, read: readHost } = useHostReading(hostId ?? '');
+  const { topics: hostTopics, listing, read: readHost, problem } = useHostReading(hostId ?? '');
   const pickerTopics = useMemo(
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
     [topicsOn, hostTopics, appearance],
@@ -297,17 +299,32 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   }, [readHost, beforeOpen]);
   const pickTitleRow = useCallback((pick: TitlePick) => choose(pick, true), [choose]);
 
+  /**
+   * The one Try again for a Host Problem: every read of the Host the sheet
+   * shows, and the Attach too when its Cover would offer the same.
+   */
+  const tryHostAgain = useCallback(() => {
+    void readHost();
+    rereadTopic();
+    const typing = attach?.state().typing;
+    if (typing?.kind === 'stopped' && typing.reason &&
+        actionsFor(typing.reason.kind).some((action) => action === 'reconnect' || action === 'try-again')) {
+      attach?.reconnect();
+    }
+  }, [attach, readHost, rereadTopic]);
+  const notice = titleSheet.open
+    ? titleSheetNotice({ actionError: titleSheet.error, problem, hostName: attach?.hostName ?? 'the Host', topic: topicView })
+    : null;
+
   const sheet: TitleSheetProps = {
     isPresented: titleSheet.open,
     onDismiss: closeChooser,
     lists: titleSheet.open && titleSheet.sessionsOnly ? SESSIONS_ONLY : chooserLists,
     rows: titleRows,
     topic,
-    onRetry: titleSheet.open && titleSheet.error !== undefined ? undefined : rereadTopic,
+    onRetry: notice?.retry === 'host' ? tryHostAgain : notice?.retry === 'topic' ? rereadTopic : undefined,
     loading: titleSheet.open && topicView?.kind === 'loading',
-    error: titleSheet.open
-      ? (titleSheet.error ?? (topicView?.kind === 'failed' ? topicView.error : undefined))
-      : undefined,
+    error: notice?.text,
     sessions: {
       cards: sessionCards.map(withActions),
       loading: sessionsFromHost ? listing.phase === 'reading' : state?.sessions == null,

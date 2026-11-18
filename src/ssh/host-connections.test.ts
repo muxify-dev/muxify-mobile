@@ -1,6 +1,8 @@
 import { createTestClock } from '@/lib/test-clock';
+import { HostProblem } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host } from '@/storage/records';
+import { reasonForConnectFailure } from '@/tmux/disconnect-reason';
 import type { TmuxExecResult, TmuxTransport } from '@/tmux/transport';
 import { INSTALL_TIMEOUT_MS, type HostCliState } from '@/topics/host-cli-install';
 import { sendEnvironment } from '@/topics/host-write-request';
@@ -10,7 +12,6 @@ import { newRequestId, WriteOutcomeUnknown } from '@/topics/request';
 import {
   createHostConnections,
   EXEC_DEADLINE_MS,
-  ExecDeadlineError,
   IDLE_MS,
   type Dialed,
 } from './host-connections';
@@ -298,7 +299,7 @@ describe('the app’s Connections', () => {
       links.forEach((link) => (link.silent = true));
       return ls(transport);
     });
-    const failed = expect(read).rejects.toBeInstanceOf(ExecDeadlineError);
+    const failed = expect(read).rejects.toMatchObject({ reason: { kind: 'host-unreachable', detail: 'The Host did not answer in time.' } });
     await settle();
     clock.advance(EXEC_DEADLINE_MS);
     await settle();
@@ -396,7 +397,7 @@ describe('the app’s Connections', () => {
 
     const read = connections.read(HOST, ls, { onHostKey: () => false });
 
-    await expect(read).rejects.toMatchObject({ code: 'HOST_KEY_REJECTED' });
+    await expect(read).rejects.toMatchObject({ reason: { kind: 'host-key' } });
     await settle();
     expect(links[0]?.disconnected).toBe(true);
     expect(links[0]?.execs).toEqual([]);
@@ -522,15 +523,68 @@ describe('the Host CLI install', () => {
   it('waits for a changed Host key to be accepted, and never runs on a refused one', async () => {
     const { links, connections } = setup({ channels: true, verdict: { kind: 'changed', stored: 'SHA256:old' } });
 
-    await expect(connections.read(HOST, ls, { onHostKey: () => false })).rejects.toMatchObject({
-      code: 'HOST_KEY_REJECTED',
-    });
+    await expect(connections.read(HOST, ls, { onHostKey: () => false })).rejects.toMatchObject({ reason: { kind: 'host-key' } });
     expect(links[0]?.channels).toHaveLength(0);
 
     await connections.read(HOST, ls, { onHostKey: () => true });
     expect(links[1]?.channels).toHaveLength(1);
   });
 });
+
+describe('the Host Problem', () => {
+  it('is the reason a read could not reach the Host, until a read reaches it', async () => {
+    let down = true;
+    const { connections } = setup({ dialFails: () => down });
+    const heard: string[] = [];
+    connections.subscribeProblem((hostId) => heard.push(hostId));
+
+    const failed = await connections.read(HOST, ls).catch((error: unknown) => error);
+
+    expect(failed).toBeInstanceOf(HostProblem);
+    expect(connections.problem(HOST.id)).toEqual({ kind: 'host-unreachable', detail: 'no route to the Host' });
+    down = false;
+    await connections.read(HOST, ls);
+    expect(connections.problem(HOST.id)).toBeNull();
+    expect(heard).toEqual([HOST.id, HOST.id]);
+  });
+
+  it('is told once when two readers meet the same fault', async () => {
+    const { connections } = setup({ dialFails: () => true });
+    const heard: string[] = [];
+    connections.subscribeProblem((hostId) => heard.push(hostId));
+
+    await Promise.all([connections.read(HOST, ls).catch(() => {}), connections.read(HOST, ls).catch(() => {})]);
+
+    expect(heard).toEqual([HOST.id]);
+  });
+
+  it('keeps the kind of the fault, so the Attach can tell a refused sign-in from an unreachable Host', async () => {
+    const { connections } = setup({ dialFails: () => true });
+    const refused = Object.assign(new Error('auth'), { code: 'AUTH_FAILED' });
+    const auth = createHostConnections({
+      dial: () => Promise.reject(refused),
+      store: { rememberFingerprint: () => Promise.resolve() },
+    });
+
+    const failed = await auth.openConnection(HOST).catch((error: unknown) => error);
+
+    expect(reasonForConnectFailure(failed).kind).toBe('authentication');
+    expect(auth.problem(HOST.id)?.kind).toBe('authentication');
+    expect(connections.problem(HOST.id)).toBeNull();
+  });
+
+  it('clears when the Host answers, even when it refuses the command', async () => {
+    let down = true;
+    const { connections } = setup({ dialFails: () => down });
+    await connections.read(HOST, ls).catch(() => {});
+    down = false;
+
+    await connections.read(HOST, () => Promise.reject(new Error('tmux refused'))).catch(() => {});
+
+    expect(connections.problem(HOST.id)).toBeNull();
+  });
+});
+
 
 describe('the Host Server', () => {
   const CAPABLE =

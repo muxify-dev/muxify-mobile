@@ -31,7 +31,9 @@ export interface ListedSession {
 export type Listing =
   | { phase: 'reading'; sessions?: ListedSession[] }
   | { phase: 'read'; sessions: ListedSession[] }
-  | { phase: 'failed'; message: string };
+  | { phase: 'failed'; message: string }
+  /** The Host could not be used. Its Host Problem says why, so the Listing says nothing. */
+  | { phase: 'host-problem' };
 
 /** Before the Host has been asked anything. */
 export const UNASKED: Listing = { phase: 'reading' };
@@ -52,7 +54,10 @@ export function refused(message: string): Listing {
   return { phase: 'failed', message };
 }
 
+/** The Host could not be asked. Like a refusal, it drops the list. */
+export const HOST_PROBLEM: Listing = { phase: 'host-problem' };
+
 /** What the Host last said, or undefined before it has said anything. */
 export function lastAnswer(listing: Listing): ListedSession[] | undefined {
-  return listing.phase === 'failed' ? undefined : listing.sessions;
+  return listing.phase === 'failed' || listing.phase === 'host-problem' ? undefined : listing.sessions;
 }

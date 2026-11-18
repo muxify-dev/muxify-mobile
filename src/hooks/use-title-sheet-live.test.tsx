@@ -64,7 +64,7 @@ jest.mock('@/settings/settings-context', () => ({
   useChooserLists: () => mockLists,
 }));
 jest.mock('@/hooks/use-host-reading', () => ({
-  useHostReading: () => ({ topics: { kind: 'unasked' }, listing: { phase: 'idle' }, read: async () => {} }),
+  useHostReading: () => ({ topics: { kind: 'unasked' }, listing: { phase: 'idle' }, read: async () => {}, problem: null }),
 }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn() }) }));
 const mockHolder = { current: () => mockAttach };
@@ -218,7 +218,7 @@ it('says that the Topic is gone on a null item', async () => {
   await fake.push(topicItem('Ship', 'claude', 'working'));
   await fake.push(null);
   expect(texts()).toContain(TOPIC_GONE);
-  expect(labels()).toContain('Retry');
+  expect(labels()).toContain('Try again');
 });
 
 it('ends the subscription when the screen stops showing the Topic', async () => {

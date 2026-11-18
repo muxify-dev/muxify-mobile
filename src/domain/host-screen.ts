@@ -56,8 +56,10 @@ export type HostScreenRow =
   | SessionRow
   /** The first question to the Host is still in flight, or the Host CLI install is running. */
   | { kind: 'checking'; text: string }
-  /** The Host could not be asked. The screen offers Retry. */
+  /** The Host answered, and refused. The screen offers Try again. */
   | { kind: 'refused'; message: string }
+  /** The Host could not be used: its Host Problem, the one row that says so. The screen offers Try again. */
+  | { kind: 'host-problem'; title: string; detail: string | null }
   | { kind: 'note'; text: string }
   /** A Topic. Dimmed when it has no live Session, and the screen says so. */
   | {
@@ -112,6 +114,8 @@ export interface HostScreenInput {
   opened: ReadonlySet<OpenableRow>;
   /** The appearance the screen is drawn in, which picks each Tag's colour. */
   appearance: ColorAppearance;
+  /** The Host Problem in the words the user reads, or null. */
+  problem: { title: string; detail: string | null } | null;
 }
 
 /**
@@ -122,10 +126,14 @@ export interface HostScreenInput {
  * view: every running Session in the order the Host lists them, with its Topic
  * under the name, and no Bench.
  */
-export function hostScreen({ tab, listing, topics, attach, opened, appearance }: HostScreenInput): HostScreenSection[] {
-  return tab === 'topics'
+export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem }: HostScreenInput): HostScreenSection[] {
+  const sections = tab === 'topics'
     ? topicsList(topics, { opened, appearance, withNoTopic: true, attach })
     : [sessionsList(listing, topics)];
+  if (problem === null) return sections;
+  // One row for the Host Problem, however many reads of the Host met it.
+  const [first, ...rest] = sections;
+  return [{ ...first, rows: [{ kind: 'host-problem', ...problem }, ...first.rows] }, ...rest];
 }
 
 /**
@@ -138,7 +146,7 @@ export function hostScreen({ tab, listing, topics, attach, opened, appearance }:
  * that is no longer saved never gets its Topics read.
  */
 export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'listing' | 'topics'>): boolean {
-  if (listing.phase === 'failed') return true;
+  if (listing.phase === 'failed' || listing.phase === 'host-problem') return true;
   if (listing.sessions === undefined) return false;
   return !(topics.kind === 'loading' && topics.last === null);
 }
@@ -212,6 +220,7 @@ function topicsNotice(topics: HostTopics): HostScreenRow[] {
     case 'absent':
     case 'loading':
     case 'listed':
+    case 'host-problem':
       return [];
   }
 }
@@ -353,19 +362,20 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * Topics tab, when the Host CLI is being installed or updated, or failed.
  */
 function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
-  const rows: HostScreenRow[] = runningSessions(listing, topics)?.map((session) => ({
-    kind: 'session',
-    name: session.name,
-    windowCount: session.windowCount,
-    topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
-    ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
-  })) ?? [unansweredRow(listing)];
+  const running = runningSessions(listing, topics);
+  const rows: HostScreenRow[] = running === undefined
+    ? unansweredRows(listing)
+    : running.length === 0
+      ? [{ kind: 'note', text: 'No Sessions on this Host.' }]
+      : running.map((session) => ({
+        kind: 'session',
+        name: session.name,
+        windowCount: session.windowCount,
+        topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
+        ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
+      }));
   const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
-  return {
-    id: 'sessions',
-    title: null,
-    rows: [...notice, ...(rows.length > 0 ? rows : [{ kind: 'note' as const, text: 'No Sessions on this Host.' }])],
-  };
+  return { id: 'sessions', title: null, rows: [...notice, ...rows] };
 }
 
 /** A running Session of the Listing, joined with what the Host's Topics say of it. */
@@ -401,9 +411,16 @@ export function runningSessions(listing: Listing, topics: HostTopics): RunningSe
  * What stands in for the Host's Sessions while it has no answer: the first
  * question is still in flight, or the Host refused it. A later question is
  * answered from what is already on screen while it is in flight, so it has
- * nothing to show.
+ * nothing to show. A Host that could not be asked has its Host Problem row.
  */
-function unansweredRow(listing: Listing): HostScreenRow {
-  if (listing.phase === 'failed') return { kind: 'refused', message: listing.message };
-  return { kind: 'checking', text: 'Checking Sessions…' };
+function unansweredRows(listing: Listing): HostScreenRow[] {
+  switch (listing.phase) {
+    case 'failed':
+      return [{ kind: 'refused', message: listing.message }];
+    case 'host-problem':
+      return [];
+    case 'reading':
+    case 'read':
+      return [{ kind: 'checking', text: 'Checking Sessions…' }];
+  }
 }

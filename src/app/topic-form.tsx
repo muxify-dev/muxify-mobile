@@ -30,7 +30,7 @@ import { HostWriteRow } from '@/components/host-write-row';
 import { toggled } from '@/lib/toggled';
 import { useHostWrite } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Tag, TopicId } from '@/topics/environment';
 import { createTopic, pushedListing } from '@/topics/host-writes';
@@ -152,7 +152,7 @@ export default function TopicFormScreen() {
             header={<SectionHeader palette={palette}>Tags</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <Text>{tagError ?? 'Reading Tags…'}</Text>
-            {tagError ? <Button label="Retry Tags" onPress={() => setAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
+            {tagError ? <Button label="Try again" onPress={() => setAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
           </Section> : tags.length === 0 ? null : (
             <Section
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}

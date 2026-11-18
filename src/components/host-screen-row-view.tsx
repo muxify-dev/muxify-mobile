@@ -12,6 +12,7 @@ import type { SFSymbol } from 'expo-symbols';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
+import { actionLabel } from '@/domain/cover';
 import type { HostScreenRow, OpenableRow, SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
@@ -134,11 +135,26 @@ export function HostScreenRowView({
             </Text>
             <Spacer />
           </HStack>
-          <Button
-            label="Retry"
-            onPress={actions.onRetry}
-            modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel('Retry')]}
-          />
+          <TryAgain onPress={actions.onRetry} />
+        </VStack>
+      );
+    case 'host-problem':
+      return (
+        <VStack
+          spacing={8}
+          alignment="leading"
+          modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+          <HStack spacing={8}>
+            <Image systemName="exclamationmark.triangle" size={15} color={palette.destructive} />
+            <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundColor(palette.destructive)]}>
+              {row.title}
+            </Text>
+            <Spacer />
+          </HStack>
+          {row.detail ? (
+            <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>{row.detail}</Text>
+          ) : null}
+          <TryAgain onPress={actions.onRetry} />
         </VStack>
       );
     case 'note':
@@ -491,4 +507,9 @@ function SessionRowView({
       <ContextMenu.Trigger>{line}</ContextMenu.Trigger>
     </ContextMenu>
   );
+}
+
+function TryAgain({ onPress }: { onPress: () => void }) {
+  const label = actionLabel('try-again');
+  return <Button label={label} onPress={onPress} modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel(label)]} />;
 }

@@ -77,5 +77,5 @@ export async function connectToHost(
   return { connection, fingerprint, verdict };
 }
 
-export { MissingCredentialError, describeConnectionFailure } from './failures';
+export { MissingCredentialError } from './failures';
 export { compareHostKey, type KeyVerdict } from './host-key';
