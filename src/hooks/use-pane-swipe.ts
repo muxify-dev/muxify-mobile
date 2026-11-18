@@ -31,6 +31,11 @@ export interface PaneSwipe {
   /** The Pane that a swipe is leaving, while it is still on its way out. */
   leaving: string | null;
   /**
+   * Whether the Window has another Pane to go to. Where it has none, a
+   * sideways drag is no swipe: nothing ticks and nothing moves.
+   */
+  swipes: boolean;
+  /**
    * The finger is `translation` points from where a horizontal drag began,
    * on a Pane `width` wide. `ticks` is for a layer that takes the finger
    * before the Surface does: the Surface ticks for its own drag.
@@ -130,7 +135,7 @@ export function usePaneSwipe(options: {
 
   const drag = useCallback(
     (translation: number, width: number, ticks: boolean) => {
-      if (now.current.frozen()) return;
+      if (now.current.frozen() || !hasPaneToSwipeTo(now.current.panes)) return;
       const was = pastCommit(state.current);
       send({ type: 'drag', translation, width });
       if (ticks && pastCommit(state.current) !== was) swipeTick();
@@ -172,7 +177,14 @@ export function usePaneSwipe(options: {
     [],
   );
 
-  return { offset, leaving, drag, swipe, cancel, panePainted, isTransitioning };
+  const swipes = hasPaneToSwipeTo(options.panes);
+
+  return { offset, leaving, swipes, drag, swipe, cancel, panePainted, isTransitioning };
+}
+
+/** Either way finds a Pane when there is one, because the Panes go round. */
+function hasPaneToSwipeTo(panes: Pane[]): boolean {
+  return paneForSwipe(panes, 'left') !== undefined;
 }
 
 function pastCommit(state: PaneSwipeState): boolean {

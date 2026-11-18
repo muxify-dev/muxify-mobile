@@ -563,11 +563,13 @@ zoomed Window the Pane follows the finger: with it up to the commit point,
 more slowly after. On a swipe it goes off the side, and the next Pane comes in
 from the other side when its Surface has been painted. On no swipe it
 springs back. Behind the Pane that moves is the terminal background. In a
-Window that is not zoomed no Pane moves. Every other drag is vertical and
-moves the Scrollback, or is the wheel for a program that listens for the
-mouse. That program gets nothing from a horizontal drag. While a Selection is
-open a horizontal drag is for its handles and changes no Pane. A drag right
-that starts in the edge band is the Back Swipe, not a swipe right.
+Window that is not zoomed no Pane moves. A Window with one Pane has no Pane
+Swipe: a sideways drag there gives no tick and is a vertical drag. Every other
+drag is vertical and moves the Scrollback, or is the wheel for a program that
+listens for the mouse. That program gets nothing from a horizontal drag. While
+a Selection is open a horizontal drag is for its handles and changes no Pane.
+A drag right that starts in the edge band is the Back Swipe, not a swipe
+right.
 
 On iPad, a continuous two-finger scroll on a physical trackpad uses the same
 axis lock and Pane Swipe thresholds. A horizontal gesture cycles from the

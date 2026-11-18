@@ -1763,6 +1763,9 @@ function PaneSurfaceView({
         ownsScrollGesture
         // A drag right from the edge band is the back swipe's, not a Pane Swipe.
         backEdge={BACK_EDGE}
+        // With no other Pane to go to, a sideways drag is a scroll, and does
+        // not tick for a swipe that cannot happen.
+        swipes={swipe.swipes}
         onScroll={({ nativeEvent }) =>
           onScroll(slot.pane.id, own.current, slot.box.height, nativeEvent.points)
         }
@@ -2046,9 +2049,16 @@ function MouseLayer({
           const dx = nativeEvent.locationX - origin.current.x;
           const dy = nativeEvent.locationY - origin.current.y;
           if (Math.hypot(dx, dy) > TAP_SLOP) {
-            axis.current = startsAtBackEdge(originEdge.current, dx) && panAxis(dx, dy) === 'horizontal'
-              ? 'back'
-              : panAxis(dx, dy);
+            const way = panAxis(dx, dy);
+            if (way !== 'horizontal') {
+              axis.current = way;
+            } else if (startsAtBackEdge(originEdge.current, dx)) {
+              axis.current = 'back';
+            } else {
+              // With no other Pane to go to, a sideways drag is the wheel, as
+              // on the Surface.
+              axis.current = swipe.swipes ? 'horizontal' : 'vertical';
+            }
           }
           if (axis.current !== null) stopHolding();
           if (axis.current === 'horizontal') {
