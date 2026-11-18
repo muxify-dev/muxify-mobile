@@ -45,7 +45,6 @@ jest.mock('@/components/tab-swipe', () => ({
     renderTab: (each: string) => React.ReactNode;
   }) => [header(tab), renderTab(tab)],
 }));
-jest.mock('@/navigation/use-back-swipe', () => ({ useBackSwipe: () => {} }));
 jest.mock('expo-router/react-navigation', () => ({ useHeaderHeight: () => 0 }));
 jest.mock('@expo/ui/swift-ui', () => {
   const through = ({ children }: { children?: React.ReactNode }) => children;

@@ -29,8 +29,10 @@ const SLIDE = { duration: 180, easing: Easing.out(Easing.cubic) };
 const SPRING_BACK = { mass: 1, stiffness: 320, damping: 36 };
 
 /**
- * A screen's tabs side by side, and a swipe between them outside every row.
+ * A screen's tabs side by side, and a swipe between them that starts on
+ * `header` or on the screen's bar at the bottom.
  *
+ * The rows keep their own swipe actions, and a drag right on them goes back.
  * The tabs are one strip that follows the finger. Past the commit point the
  * phone ticks and `header` gets the tab the swipe goes to, so a segmented
  * control there changes with the tick. A tap that changes `tab` slides the
@@ -49,7 +51,7 @@ export function TabSwipe<T extends string>({
   /** Whether a swipe may change the tab now. */
   enabled: boolean;
   onSwitch: (next: T) => void;
-  /** What sits above the strip and does not move, given the tab to show as chosen. */
+  /** What sits above the strip and does not move, given the tab to show as chosen. A swipe on it changes the tab. */
   header: (shown: T) => ReactNode;
   renderTab: (each: T) => ReactNode;
 }) {
@@ -117,8 +119,10 @@ export function TabSwipe<T extends string>({
   const strip = useAnimatedStyle(() => ({ transform: [{ translateX: x.get() }] }));
 
   return (
-    <NativeTabSwipe style={styles.fill} enabled={enabled && tabs.length > 1} backEdge={BACK_EDGE} onTabSwipe={onTabSwipe}>
-      {header(shownToward ?? tab)}
+    <View style={styles.fill}>
+      <NativeTabSwipe enabled={enabled && tabs.length > 1} backEdge={BACK_EDGE} onTabSwipe={onTabSwipe}>
+        {header(shownToward ?? tab)}
+      </NativeTabSwipe>
       <View style={styles.window} onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}>
         <Animated.View style={[styles.strip, { width: width * tabs.length }, strip]}>
           {tabs.map((each) => (
@@ -132,7 +136,7 @@ export function TabSwipe<T extends string>({
           ))}
         </Animated.View>
       </View>
-    </NativeTabSwipe>
+    </View>
   );
 }
 
