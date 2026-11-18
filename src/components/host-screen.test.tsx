@@ -3,12 +3,13 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, Picker } from '@expo/ui/swift-ui';
 
 import HostScreen from '@/app/hosts/[id]';
-import { answered } from '@/domain/host-listing';
+import { answered, HOST_PROBLEM } from '@/domain/host-listing';
 import { requestGoTo } from '@/keyboard/go-to-request';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
 import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { EnvironmentSnapshot, SessionId, TopicId } from '@/topics/environment';
+import type { DisconnectReason } from '@/tmux/disconnect-reason';
 import type { HostTopics } from '@/topics/host-topics';
 import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
@@ -23,7 +24,7 @@ const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
-let mockReading: { listing: unknown; topics: HostTopics; sessionsOnly: boolean; retry: jest.Mock };
+let mockReading: { listing: unknown; topics: HostTopics; sessionsOnly: boolean; problem: DisconnectReason | null; retry: jest.Mock };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -108,6 +109,7 @@ async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot()
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
     topics,
     sessionsOnly: topics.kind === 'unavailable',
+    problem: null,
     retry: jest.fn(),
   };
   await act(async () => { renderer = create(<HostScreen />); });
@@ -166,6 +168,24 @@ describe('the tabs', () => {
       'Rename Session…', 'Stop Session…', 'Session api',
       'Rename Session…', 'Remove from Topic', 'Stop Session…', 'Session api/fix-login',
     ]);
+  });
+});
+
+describe('a Host that cannot be reached', () => {
+  it.each(['topics', 'sessions'] as const)('says so once on the %s tab, with one Try again that holds the Host again', async (tab) => {
+    mockSettings = { hostScreenTabs: { host: tab } };
+    await mount();
+    mockReading = {
+      ...mockReading,
+      listing: HOST_PROBLEM,
+      topics: { kind: 'host-problem', last: snapshot() },
+      problem: { kind: 'host-unreachable', detail: 'The Host did not answer in time.' },
+    };
+    await act(async () => renderer.update(<HostScreen />));
+
+    expect(labels().filter((label) => label === 'Try again' || label === 'Retry')).toEqual(['Try again']);
+    await act(async () => row('Try again').props.onPress());
+    expect(mockReading.retry).toHaveBeenCalled();
   });
 });
 

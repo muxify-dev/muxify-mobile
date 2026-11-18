@@ -1,6 +1,6 @@
 import { describeError } from '@/lib/describe-error';
 import type { Settings } from '@/settings/settings';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { LastPlace, Records } from '@/storage/records';
 

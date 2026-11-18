@@ -4,9 +4,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, Picker } from '@expo/ui/swift-ui';
 
 import HostScreen from '@/app/hosts/[id]';
+import { HostProblem } from '@/ssh/failures';
 import { followListing, type ListingFeed } from '@/ssh/host-listing-feed';
 import type { HostServer, HostServerState } from '@/ssh/host-server';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
+import type { DisconnectReason } from '@/tmux/disconnect-reason';
 import type { HostCliState } from '@/topics/host-cli-install';
 
 /**
@@ -145,6 +147,13 @@ let hostCli: HostCliState;
 let read: jest.Mock;
 const listingListeners = new Set<(hostId: string) => void>();
 const listingChanged = () => { for (const listener of [...listingListeners]) listener('host'); };
+let problem: DisconnectReason | null;
+const problemListeners = new Set<(hostId: string) => void>();
+/** The Host Problem as the Connections set and clear it. */
+const setProblem = (reason: DisconnectReason | null) => {
+  problem = reason;
+  for (const listener of [...problemListeners]) listener('host');
+};
 
 /** A new Connection, whose Host Server the registry follows from now on. */
 function connect(initial: HostServerState) {
@@ -164,6 +173,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockFocused = true;
   hostCli = { kind: 'idle' };
+  problem = null;
+  problemListeners.clear();
   read = jest.fn(async () => [{ name: 'api', windowCount: 1 }]);
   mockSend.mockResolvedValue({ kind: 'changed' });
   mockTmuxSend.mockResolvedValue({ kind: 'changed' });
@@ -177,6 +188,11 @@ beforeEach(() => {
     },
     hostCli: () => hostCli,
     subscribeHostCli: () => () => {},
+    problem: () => problem,
+    subscribeProblem: (listener: (hostId: string) => void) => {
+      problemListeners.add(listener);
+      return () => problemListeners.delete(listener);
+    },
     read,
     write: jest.fn(),
   };
@@ -194,6 +210,24 @@ const texts = () => renderer.root.findAllByType('Text' as never).map((node) => n
 const topics = () => labels().filter((label) => label.startsWith('Topic '));
 
 describe('a live Host Screen', () => {
+  it('says once that it cannot reach the Host, and holds it again when any use reaches it', async () => {
+    const unreachable = { kind: 'host-unreachable', detail: 'Connection refused' } as const;
+    connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    (mockConnections.hold as jest.Mock).mockImplementationOnce(async () => {
+      setProblem(unreachable);
+      throw new HostProblem(unreachable);
+    });
+    await mount();
+
+    expect(texts()).toContain('Could not reach Dev Host');
+    expect(labels().filter((label) => label === 'Try again' || label === 'Retry')).toEqual(['Try again']);
+
+    await act(async () => { setProblem(null); });
+
+    expect(mockConnections.hold).toHaveBeenCalledTimes(2);
+    expect(texts()).not.toContain('Could not reach Dev Host');
+  });
+
   it('holds its Connection while focused, draws each pushed snapshot, and reads nothing on focus', async () => {
     const server = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
     await mount();

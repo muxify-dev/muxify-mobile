@@ -28,7 +28,7 @@ import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
 import { useOpenSession } from '@/tmux/attach-context';
@@ -247,7 +247,7 @@ export default function NewTopicScreen() {
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}
               modifiers={[listRowBackground(palette.rowSurface)]}>
               <Text>{tagError ?? 'Reading Tags…'}</Text>
-              {tagError ? <Button label="Retry Tags" onPress={() => setTagsAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
+              {tagError ? <Button label="Try again" onPress={() => setTagsAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
             </Section> : tags.length === 0 ? null : (
               <Section
                 header={<SectionHeader palette={palette}>Tags</SectionHeader>}

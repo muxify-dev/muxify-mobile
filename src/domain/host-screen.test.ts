@@ -1,4 +1,4 @@
-import { answered, asking, refused, UNASKED, type Listing } from './host-listing';
+import { answered, asking, HOST_PROBLEM, refused, UNASKED, type Listing } from './host-listing';
 import {
   firstReadAnswered,
   hostScreen,
@@ -475,7 +475,7 @@ describe('the Topics tab of the Host Screen', () => {
       ],
     },
   ])('$name', ({ topics, attach = null, opened = CLOSED, appearance = 'light', sections }) => {
-    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach, opened, appearance })).toEqual(sections);
+    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach, opened, appearance, problem: null })).toEqual(sections);
   });
 });
 
@@ -490,6 +490,7 @@ describe('the Host Screen, against the snapshot `environment show` gave on the M
       topics: { kind: 'listed', snapshot: mac },
       opened: new Set<OpenableRow>(['bench']),
       appearance: 'dark',
+      problem: null,
     });
     const ids = (cards: Card[]) => cards.map((card) => (card.kind === 'topic' ? card.topic.id : card.kind));
     const rowIds = (rows: HostScreenRow[]) =>
@@ -512,6 +513,7 @@ describe('the Host Screen, against the snapshot `environment show` gave on the M
       attach: null,
       opened: CLOSED,
       appearance: 'light',
+      problem: null,
     });
 
     expect(sessions?.rows.map((row) => ('name' in row ? row.name : row.kind))).toEqual(mac.sessions.map((session) => session.name));
@@ -584,7 +586,7 @@ describe('the tabs of the Host Screen', () => {
 
 describe('the Sessions tab of the Host Screen', () => {
   const sessions = (listing: Listing, topics: HostTopics) =>
-    hostScreen({ tab: 'sessions', listing, topics, attach: null, opened: CLOSED, appearance: 'light' });
+    hostScreen({ tab: 'sessions', listing, topics, attach: null, opened: CLOSED, appearance: 'light', problem: null });
   const withTopics = listed({
     sessions: [
       { ...snapshotSession('$1', 'zeta', 't1'), windows: [] },
@@ -663,7 +665,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
     no_topic: [sid('$2')],
   });
   const benchRows = (attach: AttachPlace | null, opened: OpenableRow[] = []) =>
-    hostScreen({ tab: 'topics', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light' })
+    hostScreen({ tab: 'topics', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light', problem: null })
       .find((shown) => shown.id === 'bench')?.rows;
   const CLOSED_BENCH: HostScreenRow = { kind: 'bench', opened: false };
 
@@ -708,7 +710,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
 
   it('shows the Session of the Attach in No Topic on a Host with an empty Bench', () => {
     const topics = listed({ sessions: [snapshotSession('$2', 'loose', null)], no_topic: [sid('$2')] });
-    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light' }))
+    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light', problem: null }))
       .toEqual([
         section('bench', null, sessionRow('loose')),
         section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
@@ -718,5 +720,28 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
   it('shows no peek in the Topics of the Title Sheet, where the Bench is open', () => {
     const rows = topicSections(host, 'light').flatMap((shown) => shown.rows);
     expect(rows.filter((row) => row.kind === 'session')).toEqual([]);
+  });
+});
+
+describe('the Host Problem on the Host Screen', () => {
+  const problem = { title: 'Could not reach mac', detail: 'The Host did not answer in time.' };
+  const unreachable: HostTopics = { kind: 'host-problem', last: null };
+
+  it.each(['sessions', 'topics'] as const)('is one row on the %s tab, however many reads of the Host met it', (tab) => {
+    const rows = hostScreen({ tab, listing: HOST_PROBLEM, topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem })
+      .flatMap((section) => section.rows);
+
+    expect(rows).toEqual([{ kind: 'host-problem', ...problem }]);
+  });
+
+  it('leaves a refusal from a Host that answered as its own row', () => {
+    const rows = hostScreen({ tab: 'sessions', listing: refused('no server running'), topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem: null })
+      .flatMap((section) => section.rows);
+
+    expect(rows).toEqual([{ kind: 'refused', message: 'no server running' }]);
+  });
+
+  it('counts as the first answer, so the screen draws its row', () => {
+    expect(firstReadAnswered({ listing: HOST_PROBLEM, topics: unreachable })).toBe(true);
   });
 });

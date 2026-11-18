@@ -1,4 +1,4 @@
-import { MissingCredentialError } from '@/ssh/failures';
+import { HostProblem, MissingCredentialError } from '@/ssh/failures';
 
 import type { ClosedCause } from './control-connection';
 import { TmuxError } from './tmux-error';
@@ -45,13 +45,12 @@ export type ReconnectSource = 'foreground' | 'transport-loss';
  * missing tmux, a Session that ended and a close the user asked for are all
  * endings a second attempt would reproduce exactly.
  *
- * Both uses read it, which is why it is named for the fact rather than for
- * either of them. The reconnect policy will not retry automatically when it is
- * false — a Muxify that loops against a Host which is refusing is worse than
- * one that stops and says so — and the Terminal Screen will not offer the
- * button, because a button that cannot work is worse than none. What the
- * policy adds on top is its own rule, and not this one: at most one automatic
- * attempt per source until the next connected phase.
+ * The reconnect policy will not retry by itself when it is false: a Muxify
+ * that loops against a Host which is refusing is worse than one that stops
+ * and says so. The Cover offers a retry more widely (see `actionsFor`),
+ * because the user can see the network come back and the app cannot. What
+ * the policy adds on top is its own rule: at most one automatic attempt per
+ * source until the next connected phase.
  */
 export function retryCouldWork(reason: DisconnectReason): boolean {
   return reason.kind === 'transport-lost';
@@ -86,6 +85,7 @@ export function shortLabel(reason: DisconnectReason): string {
  * differs between versions, the code does not.
  */
 export function reasonForConnectFailure(error: unknown): DisconnectReason {
+  if (error instanceof HostProblem) return error.reason;
   if (error instanceof MissingCredentialError) {
     return { kind: 'authentication', detail: error.message };
   }
@@ -112,6 +112,11 @@ export function reasonForConnectFailure(error: unknown): DisconnectReason {
         detail: detail === '' ? 'Could not reach the Host.' : detail,
       };
   }
+}
+
+/** A connection failure in one line for the user: the words of its reason. */
+export function describeConnectionFailure(error: unknown): string {
+  return reasonForConnectFailure(error).detail;
 }
 
 /**

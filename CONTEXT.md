@@ -224,8 +224,21 @@ Listing whenever it changes on the Host, and the Host Screen draws it at once:
 the answer it holds stays on screen until the next one arrives. Only the first
 Listing of a Connection has nothing to show and a spinner to stand in for it. A
 refusal is the exception and drops the list, because a Host that cannot be
-reached has no Sessions to offer.
+reached has no Sessions to offer. A Host that could not be asked at all drops
+the list too, and the Host Problem says why.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
+
+**Host Problem**:
+Why the phone could not use a Host the last time it tried: the Host did not
+answer, refused the Identity, or presented a key that was refused. One per
+Host. The Connections keep it, because every use of a Host goes through them.
+Any use that reaches the Host clears it, even one the Host refuses. A screen
+shows it in one place with one Try again: a row at the top of the Host Screen,
+and the notice of the Title Sheet. Try again reads the Host again, and the
+reads that met the Host Problem do not show it a second time. On the Terminal
+Screen the Cover says why the Attach stopped. A refusal from a Host that
+answered is not a Host Problem: the screen that asked shows it.
+_Avoid_: connection error, offline, unreachable (which is one kind of it)
 
 **Host Write**:
 One change the user asks of a Host: New Topic, Edit Topic, a Go to pick that
@@ -390,7 +403,7 @@ An error from the Host shows in the sheet, and the sheet stays open (see Host
 Write). A Retry of the same title and Tags, or of the same folder, is the same
 Request. If the Attach fails after the Host made the Session, Retry Attach
 sends no second write. New Topic reads Config Tags when it opens. A failed
-read offers Retry Tags and keeps the entered title. Create does not wait for
+read offers Try again and keeps the entered title. Create does not wait for
 the read: before it answers, no Tag can be chosen.
 
 On a Host CLI that is too old for Go to, New Topic is the sheet from before:

@@ -32,7 +32,7 @@ import { speakingAs } from '@/diagnostics/log';
 import { useHostWrite } from '@/hooks/use-host-write';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/ssh/connect-host';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Tag, TopicId } from '@/topics/environment';
 import { changeTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
@@ -91,7 +91,7 @@ export default function TopicEditScreen() {
   if (configTags === null) return <View style={[styles.fill, styles.center]}>
     <Stack.Screen options={{ title: 'Edit Topic' }} />
     <RNText style={{ color: palette.secondaryLabel }}>{tagError ?? 'Reading Tags…'}</RNText>
-    {tagError ? <Pressable accessibilityLabel="Retry" onPress={() => setAttempt((value) => value + 1)}><RNText style={{ color: palette.controlAccent }}>Retry</RNText></Pressable> : null}
+    {tagError ? <Pressable accessibilityLabel="Try again" onPress={() => setAttempt((value) => value + 1)}><RNText style={{ color: palette.controlAccent }}>Try again</RNText></Pressable> : null}
   </View>;
   return (
     <EditForm

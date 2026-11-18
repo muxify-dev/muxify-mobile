@@ -127,7 +127,7 @@ it('keeps typed entry last and available after a read failure', async () => {
   await mount();
   await type('  ~/folder with spaces  ');
   const buttons = renderer.root.findAllByType(Button);
-  expect(buttons.map((button) => button.props.label)).toEqual(['Retry', 'Use ~/folder with spaces']);
+  expect(buttons.map((button) => button.props.label)).toEqual(['Try again', 'Use ~/folder with spaces']);
   await act(async () => { buttons[1].props.onPress(); });
   expect(mockAdd).not.toHaveBeenCalled();
   await submit();

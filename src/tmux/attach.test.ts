@@ -1717,6 +1717,26 @@ describe('the Panes on screen', () => {
     expect(kit.attach.state().trouble).toBeNull();
   });
 
+  it('takes the line of trouble down when the Connection ends, so only the Cover says what went wrong', async () => {
+    const split = fakeHost();
+    const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+    split.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
+      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
+    ]);
+    const kit = attachOn({ hosts: [split] });
+    await connected(kit);
+    split.refuseCommand('select-pane');
+    kit.attach.selectPane('%2');
+    await settle();
+    expect(kit.attach.state().trouble).toContain('select Pane');
+
+    kit.hosts[0].drop();
+    await settle();
+
+    expect(kit.attach.state()).toMatchObject({ phase: { kind: 'reconnecting' }, trouble: null });
+  });
+
   it('shows no line of trouble from a read made while it was reconnecting', async () => {
     const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
     await connected(kit);

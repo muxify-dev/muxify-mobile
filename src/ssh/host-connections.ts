@@ -1,6 +1,7 @@
 import { attachmentUpload } from '@/composer/host-upload';
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
+import { HostProblem } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
 import { followListing, type ListingFeed, type LiveListing } from '@/ssh/host-listing-feed';
 import { createHostServer, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
@@ -8,6 +9,7 @@ import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { ConnectStep, HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
 import { shellQuote } from '@/tmux/commands';
+import { reasonForConnectFailure, type DisconnectReason } from '@/tmux/disconnect-reason';
 import type { TmuxTransport } from '@/tmux/transport';
 import {
   installHostCli,
@@ -110,6 +112,13 @@ export interface HostConnections {
    * the background.
    */
   hold(host: Host, options?: ScreenOptions): Promise<() => void>;
+  /**
+   * The Host Problem: why the last try to use the Host could not, or null.
+   * Any use that reaches the Host clears it.
+   */
+  problem(hostId: string): DisconnectReason | null;
+  /** Hears every change of a Host's Host Problem. Answers the way to stop hearing. */
+  subscribeProblem(listener: (hostId: string) => void): () => void;
 }
 
 /** An exec that passed its deadline. Its Connection is suspect. */
@@ -170,6 +179,8 @@ export function createHostConnections(options: {
   const listingListeners = new Set<(hostId: string) => void>();
   /** One value, so a reader that compares snapshots sees no change. */
   const NOT_STARTED: HostCliState = { kind: 'idle' };
+  const problems = new Map<string, DisconnectReason>();
+  const problemListeners = new Set<(hostId: string) => void>();
   let backgrounded = false;
 
   function open(host: Host, progress?: (step: ConnectStep) => void): Entry {
@@ -210,6 +221,27 @@ export function createHostConnections(options: {
     );
     entries.set(host.id, entry);
     return entry;
+  }
+
+  /**
+   * Records or clears the Host Problem of `host`. Every use of a Connection
+   * ends here, so each screen reads one account of the Host, and not one per
+   * reader that met the same fault.
+   */
+  function setProblem(host: Host, reason: DisconnectReason | null): void {
+    const held = problems.get(host.id) ?? null;
+    if (held === reason || (held && reason && held.kind === reason.kind && held.detail === reason.detail)) return;
+    if (reason) problems.set(host.id, reason);
+    else problems.delete(host.id);
+    say(`${host.displayName}: ${reason ? `Host Problem: ${reason.kind}: ${reason.detail}` : 'Host Problem cleared'}`);
+    for (const listener of [...problemListeners]) listener(host.id);
+  }
+
+  /** Records `error` as the Host Problem, and answers the error a use throws for it. */
+  function unusable(host: Host, error: unknown): HostProblem {
+    const problem = new HostProblem(reasonForConnectFailure(error));
+    setProblem(host, problem.reason);
+    return problem;
   }
 
   function publish(entry: Entry, state: HostCliState): void {
@@ -326,8 +358,15 @@ export function createHostConnections(options: {
    * then its Host Server and the Host CLI install started on it.
    */
   async function acquireForScreen(host: Host, options: ScreenOptions | undefined): Promise<{ entry: Entry; dialed: Dialed }> {
-    const { entry, dialed } = await acquire(host);
-    checkHostKey(entry, dialed, options);
+    let entry: Entry;
+    let dialed: Dialed;
+    try {
+      ({ entry, dialed } = await acquire(host));
+      checkHostKey(entry, dialed, options);
+    } catch (error) {
+      throw unusable(host, error);
+    }
+    setProblem(host, null);
     begin(entry, dialed);
     return { entry, dialed };
   }
@@ -390,7 +429,7 @@ export function createHostConnections(options: {
     say(`${host.displayName}: the read failed on its Connection; reading again`);
     const second = await attempt(host, work, options);
     if ('value' in second) return second.value;
-    throw second.error;
+    throw second.failedByConnection ? unusable(host, second.error) : second.error;
   }
 
   /**
@@ -408,7 +447,14 @@ export function createHostConnections(options: {
 
   return {
     async openConnection(host: Host, progress?: (step: ConnectStep) => void): Promise<HostConnection> {
-      const { entry, dialed } = await acquire(host, progress);
+      let opened: { entry: Entry; dialed: Dialed };
+      try {
+        opened = await acquire(host, progress);
+      } catch (error) {
+        throw unusable(host, error);
+      }
+      setProblem(host, null);
+      const { entry, dialed } = opened;
       entry.attaches += 1;
       busy(entry);
       const mine = new Set<() => void>();
@@ -487,6 +533,15 @@ export function createHostConnections(options: {
         released = true;
         entry.uses -= 1;
         settle(entry);
+      };
+    },
+
+    problem: (hostId) => problems.get(hostId) ?? null,
+
+    subscribeProblem(listener) {
+      problemListeners.add(listener);
+      return () => {
+        problemListeners.delete(listener);
       };
     },
 

@@ -1,6 +1,6 @@
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';

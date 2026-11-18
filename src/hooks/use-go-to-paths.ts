@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { RankedPaths } from '@/domain/go-to';
-import { describeConnectionFailure } from '@/ssh/failures';
+import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceGoToCache, deviceHostStore } from '@/storage/device-store';
 import { rankedSessionPaths } from '@/topics/host-session-paths';
 
