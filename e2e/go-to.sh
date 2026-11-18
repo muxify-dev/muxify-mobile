@@ -3,6 +3,10 @@
 # Runs Go to and the bar at the bottom of the Host Screen against a sandboxed
 # Muxify on this Mac, the dev Host (see e2e/sandbox.sh).
 #
+# The tab control shows below the navigation bar and takes a tap, also after
+# Go to opened and closed: the rows come back right under it. While Go to has
+# the keys, the navigation bar hides and the Go to list starts at the top.
+#
 # The bar shows only on the Host Screen, and only while no Topic card moves.
 # It takes a tap again after the Terminal and a Topic Screen were on top of
 # it. A pick of a Session Path makes a Session in no Topic there and opens it,
@@ -75,6 +79,52 @@ back_to_host_screen
 open_go_to "after the Topic Screen"
 agent-device press 'label="close"' --settle >/dev/null
 echo "ok: the bar is not on the Topic Screen, and takes a tap after it"
+
+echo "== The tab control and Go to"
+# The top and the bottom of the first node labelled $1, $2…, as "label=top,bottom" lines.
+rects() {
+  agent-device snapshot --json 2>/dev/null | python3 -c '
+import json, sys
+wanted, seen = sys.argv[1:], set()
+for n in json.load(sys.stdin)["data"]["nodes"]:
+    label, r = n.get("label"), n.get("rect")
+    if label in wanted and label not in seen and r:
+        seen.add(label)
+        print("%s=%d,%d" % (label, round(r["y"]), round(r["y"] + r["height"])))
+' "$@"
+}
+# The top or the bottom ($2) of the node labelled $3 in the rects $1.
+edge() { awk -F'[=,]' -v label="$3" -v which="$2" '$1 == label { print (which == "top" ? $2 : $3) }' <<<"$1"; }
+LAYOUT=(Back "Host Screen view" "In Play" "Topic One")
+first=$(rects "${LAYOUT[@]}")
+bar=$(edge "$first" bottom Back)
+control=$(edge "$first" top "Host Screen view")
+under_control=$(edge "$first" bottom "Host Screen view")
+first_row=$(edge "$first" top "In Play")
+[ -n "$bar" ] && [ -n "$control" ] && [ -n "$first_row" ] || fail "no bar, tab control or In Play on the Host Screen: $first"
+[ "$control" -ge "$bar" ] || fail "the tab control (top $control) is under the navigation bar (bottom $bar)"
+[ "$first_row" -ge "$under_control" ] && [ "$((first_row - under_control))" -le 16 ] \
+  || fail "In Play (top $first_row) is not right under the tab control (bottom $under_control)"
+for k in 1 2 3; do
+  open_go_to "time $k"
+  on_screen "Back" && fail "the navigation bar shows while Go to has the keys (time $k)"
+  go_to_top=$(edge "$(rects "Session 0" "Session alpha/one")" top "Session 0")
+  alpha_top=$(edge "$(rects "Session 0" "Session alpha/one")" top "Session alpha/one")
+  [ -n "$go_to_top" ] && [ -n "$alpha_top" ] || fail "no running Sessions in the Go to list (time $k)"
+  [ "$alpha_top" -lt "$go_to_top" ] && go_to_top=$alpha_top
+  [ "$go_to_top" -le "$bar" ] || fail "the Go to list does not start at the top: its first row is at $go_to_top (time $k)"
+  agent-device press 'label="close"' --settle >/dev/null
+  agent-device wait 'label="Host Screen view"' 5000 >/dev/null || fail "no tab control after Go to closed (time $k)"
+  sleep 1
+  now=$(rects "${LAYOUT[@]}")
+  [ "$now" = "$first" ] || fail "after Go to closed (time $k), the layout is $(echo $now), not $(echo $first)"
+done
+agent-device press 'label="Sessions"' --settle >/dev/null
+agent-device wait 'label="Session 0"' 5000 >/dev/null || fail "a tap on Sessions did not change the tab"
+on_screen "Topic One" && fail "Topic One shows on the Sessions tab"
+agent-device press 'label="Topics"' --settle >/dev/null
+agent-device wait 'label="Topic One"' 5000 >/dev/null || fail "a tap on Topics did not change the tab"
+echo "ok: the rows come back right under the tab control after Go to, and a tap changes the tab"
 
 agent-device press 'label="Sessions"' --settle >/dev/null
 agent-device wait 'label="Session 0"' 8000 >/dev/null || fail "no Session 0 on the Sessions tab"

@@ -1,5 +1,6 @@
 import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { Alert, StyleSheet, View } from 'react-native';
 import type { SearchBarCommands } from 'react-native-screens';
 
@@ -20,6 +21,7 @@ import {
   background,
   buttonStyle,
   environment,
+  ignoreSafeArea,
   listRowBackground,
   padding,
   pickerStyle,
@@ -156,12 +158,17 @@ export default function HostScreen() {
     if (hasGoTo) ask('');
   }, [hasGoTo, ask]));
 
-  const closeGoTo = useCallback(() => {
-    search.current?.cancelSearch();
+  // The field's own Cancel button has already ended the search. A second
+  // cancelSearch from its handler leaves the field deaf to the next tap.
+  const goToCancelled = useCallback(() => {
     setGoTo(null);
     setQuery('');
     setHighlighted(0);
   }, []);
+  const closeGoTo = useCallback(() => {
+    search.current?.cancelSearch();
+    goToCancelled();
+  }, [goToCancelled]);
   const entered = useCallback((tab: PlaceTab | null) => {
     closeGoTo();
     // A Topic Place with a Tab: the page, in the Terminal Screen's place.
@@ -436,8 +443,16 @@ export default function HostScreen() {
   const tabSwipe = pickerShown && filling === null;
   useBackSwipe(tabSwipe ? 'edge' : 'anywhere');
 
+  // The Go to field makes the navigation bar translucent, so the screen starts
+  // under the bar. React Native puts the content below the bar, and each
+  // SwiftUI Host ignores its top inset: SwiftUI keeps an old inset when a Host
+  // moves, as when the tab control comes and goes with Go to. The header
+  // height follows the bar, which hides while Go to has the keys.
+  const headerHeight = useHeaderHeight();
+  const belowTheBar = ignoreSafeArea({ regions: 'container', edges: 'top' });
+
   return (
-    <View style={styles.fill}>
+    <View style={[styles.fill, { paddingTop: barShown ? headerHeight : 0 }]}>
       <Stack.Screen
         options={{
           title: picked === undefined ? (host?.displayName ?? 'Host') : `Moving ${picked.label}`,
@@ -482,7 +497,7 @@ export default function HostScreen() {
             onFocus={fieldFocused}
             onChangeText={changeQuery}
             onSearchButtonPress={fieldSubmitted}
-            onCancelButtonPress={closeGoTo}
+            onCancelButtonPress={goToCancelled}
           />
           <Stack.Toolbar placement="bottom">
             <Stack.Toolbar.SearchBarSlot />
@@ -507,7 +522,7 @@ export default function HostScreen() {
         header={(shown) =>
           pickerShown ? (
             <Host matchContents={{ vertical: true }}>
-              <VStack modifiers={swiftUIColors}>
+              <VStack modifiers={[...swiftUIColors, belowTheBar]}>
                 <Picker
                   selection={shown}
                   onSelectionChange={(next) => rememberHostScreenTab(id, next)}
@@ -520,7 +535,7 @@ export default function HostScreen() {
         }
         renderTab={(each) => (
           <Host style={styles.fill} matchContents={false}>
-            <VStack spacing={0} modifiers={swiftUIColors}>
+            <VStack spacing={0} modifiers={[...swiftUIColors, belowTheBar]}>
               <Form modifiers={[scrollContentBackground('hidden')]}>
                 {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
               </Form>
