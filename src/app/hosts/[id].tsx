@@ -70,7 +70,6 @@ import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
-import { useBackSwipe } from '@/navigation/use-back-swipe';
 import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/records';
@@ -439,9 +438,6 @@ export default function HostScreen() {
     tint(palette.controlAccent),
   ];
   const pickerShown = tabs.length > 1 && goTo === null && targets === null && firstReadAnswered(input);
-  // A swipe outside the rows changes the tab, so back is at the edge only.
-  const tabSwipe = pickerShown && filling === null;
-  useBackSwipe(tabSwipe ? 'edge' : 'anywhere');
 
   // A SwiftUI Host keeps an old top inset when it moves, as when the tab
   // control comes and goes with Go to. So React Native puts the content below
@@ -514,7 +510,7 @@ export default function HostScreen() {
       <TabSwipe
         tabs={tabs}
         tab={tab}
-        enabled={tabSwipe}
+        enabled={pickerShown && filling === null}
         onSwitch={(next) => rememberHostScreenTab(id, next)}
         header={(shown) =>
           pickerShown ? (

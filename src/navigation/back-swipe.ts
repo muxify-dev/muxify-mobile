@@ -2,11 +2,12 @@
  * The back swipe, one rule for the whole app: the left edge always goes back.
  *
  * Each screen takes a mode, with `useBackSwipe`. On most screens a drag right from anywhere goes
- * back, as iOS 26 does. A screen that has its own sideways move (the Pane
- * Swipe, the Host Screen's tab swipe) keeps the content for that move and goes
- * back only from a band at the left edge. Each layer on such a screen that has
- * its own sideways drag gives a drag right that starts in the band to back,
- * with `startsAtBackEdge`, so the two never compete. See ADR 0025.
+ * back, as iOS 26 does. A screen whose content is its own sideways move (the
+ * Pane Swipe) keeps the content for that move and goes back only from a band
+ * at the left edge. Each layer that has its own sideways drag (also the Host
+ * Screen's tab swipe, on its tab control and the bar at the bottom) gives a
+ * drag right that starts in the band to back, with `startsAtBackEdge`, so the
+ * two never compete. See ADR 0025.
  */
 
 export type BackSwipe = 'anywhere' | 'edge' | 'off';

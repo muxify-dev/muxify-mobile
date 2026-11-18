@@ -12,9 +12,11 @@
 #      does not go back
 #   4  in a Pane whose program listens for the mouse, a drag from the edge
 #      goes back, and the program gets nothing
-#   5  on the Host Screen, a sideways drag outside the rows changes the tab,
-#      one on a row does not, a drag right on Topics stays on the screen, and
-#      a drag from the edge goes back to Home
+#   5  on the Host Screen, a sideways drag on the tab control or on the bar
+#      at the bottom changes the tab, one on a row does not, a tap on the
+#      control, the Go to field and ＋ still works, a drag right from the
+#      middle of the list goes back to Home, and so does a drag from the edge
+#      on the tab control
 #   6  on Settings, a drag right goes back from the edge and from the middle
 #
 # The Surface renders with Metal, so what it shows is never in the
@@ -129,29 +131,49 @@ expect_window "0 1" "a drag from the edge on the mouse layer"
   || fail "the program got mouse events from the back swipe"
 echo "     the Host Screen is on top, and the program got nothing"
 
-echo "5/6  on the Host Screen, a swipe outside the rows changes the tab, and the edge goes back"
-open_host
-expect_tab sessions "after the Host Screen opened"
-drag 200 760 200 0
-expect_tab topics "a drag right under the rows on Sessions"
-on_host_screen || fail "a drag right under the rows left the Host Screen"
-drag 200 760 200 0
-expect_tab topics "a drag right on Topics"
-on_host_screen || fail "a drag right on Topics left the Host Screen"
-drag 300 760 -200 0
-expect_tab sessions "a drag left under the rows on Topics"
-agent-device wait "label=\"Session $SESSION\"" 5000 >/dev/null 2>&1 || fail "no Session row on Sessions"
-read -r ROW_Y < <(agent-device snapshot --json 2>/dev/null | python3 -c "
+echo "5/6  on the Host Screen, the tab control and the bar change the tab, and the list goes back"
+# The centre of the first node with label $1, or of type $2 when $1 is empty, as "x y".
+centre() {
+  agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 for n in json.load(sys.stdin)['data']['nodes']:
-    if n.get('label') == 'Session $SESSION':
-        r = n['rect']; print(round(r['y'] + r['height'] / 2)); break
-")
-drag 300 "$ROW_Y" 200 0
-expect_tab sessions "a drag right on a Session row"
-drag 2 500 220 0
-on_home || fail "a drag from the left edge did not go back to Home"
-echo "     Sessions → Topics, a rubber band, Topics → Sessions, the row kept it, then Home"
+    if (n.get('label') == sys.argv[1]) if sys.argv[1] else (n.get('type') == sys.argv[2]):
+        r = n['rect']; print(round(r['x'] + r['width'] / 2), round(r['y'] + r['height'] / 2)); break
+" "$1" "${2:-}"
+}
+open_host
+expect_tab sessions "after the Host Screen opened"
+read -r _ CONTROL_Y < <(centre "Host Screen view")
+read -r _ BAR_Y < <(centre "Go to")
+[ -n "${CONTROL_Y:-}" ] && [ -n "${BAR_Y:-}" ] || fail "no tab control or Go to field on the Host Screen"
+drag 100 "$CONTROL_Y" 200 0
+expect_tab topics "a drag right on the tab control on Sessions"
+on_host_screen || fail "a drag right on the tab control left the Host Screen"
+drag 280 "$BAR_Y" -200 0
+expect_tab sessions "a drag left on the Go to field on Topics"
+agent-device press 'label="Topics"' >/dev/null 2>&1
+sleep 1
+expect_tab topics "a tap on Topics"
+read -r _ ROW_Y < <(centre "" Cell)
+[ -n "${ROW_Y:-}" ] || fail "no row on Topics"
+drag 300 "$ROW_Y" -200 0
+expect_tab topics "a drag left on a row on Topics"
+agent-device press 'label="Go to"' >/dev/null 2>&1
+agent-device wait 'role=search' 3000 >/dev/null 2>&1
+agent-device snapshot -i 2>/dev/null | grep -q 'search.*\[focused\]' || fail "a tap on Go to did not give it the keys"
+agent-device press 'label="close"' >/dev/null 2>&1
+agent-device wait 'label="Host Screen view"' 5000 >/dev/null 2>&1 || fail "no tab control after Go to closed"
+agent-device press 'label="New"' >/dev/null 2>&1
+agent-device wait 'label="New Topic"' 3000 >/dev/null 2>&1 || fail "a tap on ＋ did not open its menu"
+agent-device press 200 450 >/dev/null 2>&1
+agent-device wait absent 'label="New Topic"' 3000 >/dev/null 2>&1 || fail "the ＋ menu did not close"
+expect_tab topics "after Go to and ＋"
+drag 150 500 220 0
+on_home || fail "a drag right from the middle of the list did not go back to Home"
+open_host
+drag 2 "$CONTROL_Y" 220 0
+on_home || fail "a drag right from the left edge on the tab control did not go back to Home"
+echo "     the control and the bar changed the tab, the row and the taps kept theirs, the list and the edge went back"
 
 echo "6/6  on Settings, a drag right goes back from the edge and from the middle"
 agent-device press 'role=button label="Settings"' >/dev/null 2>&1
