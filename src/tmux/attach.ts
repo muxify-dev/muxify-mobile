@@ -1014,6 +1014,35 @@ export function openAttach(options: AttachOptions): Attach {
     windowTaken(`a focus change the phone did not make, ${event.kind} ${event.window}`);
   }
 
+  /**
+   * The other screens' control Clients, by name, as last read: those that
+   * attached without `ignore-size`. Read at Attach and each time a Client
+   * comes into a Session, so that a Client's flags are known before it
+   * detaches, when tmux no longer lists it.
+   */
+  let screens = new Set<string>();
+
+  function readScreens(): void {
+    const mine = generation;
+    const current = client;
+    if (!current) return;
+    background(mine, async () => {
+      const read = await current.otherScreens();
+      if (!stale(mine) && client === current) screens = read;
+    });
+  }
+
+  /**
+   * A screen's control Client detaching leaves its Colour Report on the Panes,
+   * so the phone writes its own again. A Listener detaching writes nothing:
+   * nobody acted.
+   */
+  function clientDetached(name: string): void {
+    if (!screens.delete(name)) return;
+    say(`the screen ${name} detached; writing the Theme's colours to the Session again`);
+    reportColours('session');
+  }
+
   /** The first key after another screen took the Window. */
   function reclaimColours(): void {
     say('the phone is in use; writing the Theme\'s colours to the Window again');
@@ -1155,6 +1184,8 @@ export function openAttach(options: AttachOptions): Attach {
             // Before the Topology moves: the Window shown is the one it names.
             if (event.kind === 'window-pane-changed' || event.kind === 'session-window-changed' ||
                 event.kind === 'client-session-changed') focusChanged(event);
+            if (event.kind === 'client-session-changed') readScreens();
+            if (event.kind === 'client-detached') clientDetached(event.client);
             topology?.apply(event);
           },
           // A Connection lost while nobody is looking is the foreground check's
@@ -1265,6 +1296,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (stale(mine)) return;
       refreshSessions();
       reportColours();
+      readScreens();
       await restorePlace(mine);
     } catch (error) {
       if (stale(mine)) return;

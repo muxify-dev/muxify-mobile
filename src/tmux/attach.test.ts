@@ -719,6 +719,10 @@ describe('the order an Attach happens in', () => {
       'list-windows',
       'list-panes',
       'list-sessions',
+      // The phone's own Client name and the other Clients, so a screen's
+      // detach is known for one.
+      'display-message',
+      'list-clients',
     ]);
     // The pre-layout grid never reached tmux.
     expect(kit.hosts[0].commands[1]).toContain("'-C' '49x41'");
@@ -1233,6 +1237,66 @@ describe('the Theme’s colours', () => {
 
     expect(host.commands.filter((line) => line.startsWith("'refresh-client' '-r'") ||
       line.startsWith("'list-panes' '-s'"))).toEqual([]);
+  });
+
+  /** A Host with the phone's own control Client, a screen's and a Listener's. */
+  function withClients(host: ReturnType<typeof fakeHost>, clients: string[]) {
+    host.answering('display-message', (command) => command.includes('#{client_name}')
+      ? ['client-1']
+      : ['0\t0\t0\t100\t49\t41\t0\t1\t1']);
+    host.answering('list-clients', clients);
+  }
+
+  const CLIENTS = [
+    'client-1\t1\tattached,focused,control-mode,UTF-8',
+    'client-2\t1\tattached,focused,control-mode,UTF-8',
+    'client-3\t1\tattached,focused,control-mode,ignore-size,UTF-8',
+  ];
+
+  it('writes every Pane of the Session again when a screen’s control Client detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-2');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+  });
+
+  it('writes nothing when a Listener, a control Client with ignore-size, detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-3');
+    host.notify('%client-detached /dev/ttys004');
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('knows a screen that came into a Session after the Attach when it detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS.slice(0, 1));
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.answering('list-clients', CLIENTS);
+    host.notify('%client-session-changed client-2 $1 other');
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-2');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
   });
 
   it('carries on attached when tmux is too old to take a report', async () => {

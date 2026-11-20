@@ -243,6 +243,29 @@ describe('sizing the Client', () => {
   });
 });
 
+describe('the other screens', () => {
+  const OWN = renderControlCommand(['display-message', '-p', '#{client_name}']);
+  const CLIENTS = renderControlCommand(['list-clients', '-F', '#{client_name}\t#{client_control_mode}\t#{client_flags}']);
+
+  it('names the control Clients other than this one that did not ask for ignore-size', async () => {
+    const { client } = fakeTmux({
+      [OWN]: ['client-7'],
+      [CLIENTS]: [
+        'client-7\t1\tattached,focused,control-mode,UTF-8',
+        'client-8\t1\tattached,focused,control-mode,UTF-8',
+        'client-9\t1\tattached,focused,control-mode,ignore-size,UTF-8',
+        '/dev/ttys004\t0\tattached,focused,UTF-8',
+      ],
+    });
+    expect([...await client.otherScreens()]).toEqual(['client-8']);
+  });
+
+  it('reads a refusal as none', async () => {
+    const { client } = fakeTmux({ [OWN]: ['client-7'], [CLIENTS]: { error: ['unknown command'] } });
+    expect([...await client.otherScreens()]).toEqual([]);
+  });
+});
+
 describe('typing a Batch', () => {
   const token = 'k7f2' as OutboxToken;
   const MARK = "'display-message' '-p' '-t' '%4' '#{@muxify-in-k7f2}:#{pid}:#{pane_pid}:#{pane_current_command}'";

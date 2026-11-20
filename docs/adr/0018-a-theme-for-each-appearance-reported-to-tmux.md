@@ -1,5 +1,10 @@
 # A Theme for each Appearance, reported to tmux
 
+> **Status: changed in part by [ADR 0026](0026-the-screen-in-use-writes-the-themes-colours.md).**
+> The rule that a Pane is told the Theme's colours once per Client and per
+> colours no longer applies: the screen whose user acted last writes them.
+> The rest of this decision still applies.
+
 The user chooses an Appearance (System, Light or Dark), a Light theme and a
 Dark theme. One pure function, `resolveTheme`, gives the Theme in use from
 these settings and the phone's own light or dark setting. The app chrome, the
