@@ -990,17 +990,11 @@ export function openAttach(options: AttachOptions): Attach {
    * phone did not ask for: tmux cannot say which Client made one, and only
    * the phone knows the ones it sent.
    */
-  function focusChanged(
-    event: Extract<ControlEvent, { kind: 'window-pane-changed' | 'session-window-changed' | 'client-session-changed' }>,
-  ): void {
+  function focusChanged(event: Extract<ControlEvent, { kind: 'window-pane-changed' | 'session-window-changed' }>): void {
     if (event.kind === 'window-pane-changed') {
       // tmux tells of every Window on the server.
       if (event.window !== state.topology.activeWindow?.id) return;
     } else if (event.session !== currentSessionId) {
-      return;
-    }
-    if (event.kind === 'client-session-changed') {
-      windowTaken(`${event.client} came into the Session`);
       return;
     }
     const pane = event.kind === 'window-pane-changed' ? event.pane : undefined;
@@ -1030,6 +1024,15 @@ export function openAttach(options: AttachOptions): Attach {
       const read = await current.otherScreens();
       if (!stale(mine) && client === current) screens = read;
     });
+  }
+
+  /**
+   * Another Client came into a Session. Into the one shown, it took the
+   * Window. Either way, its flags are read now, while tmux still lists it.
+   */
+  function clientCameIn(event: Extract<ControlEvent, { kind: 'client-session-changed' }>): void {
+    if (event.session === currentSessionId) windowTaken(`${event.client} came into the Session`);
+    readScreens();
   }
 
   /**
@@ -1182,9 +1185,8 @@ export function openAttach(options: AttachOptions): Attach {
             }
             if (event.kind === 'sessions-changed') refreshSessions();
             // Before the Topology moves: the Window shown is the one it names.
-            if (event.kind === 'window-pane-changed' || event.kind === 'session-window-changed' ||
-                event.kind === 'client-session-changed') focusChanged(event);
-            if (event.kind === 'client-session-changed') readScreens();
+            if (event.kind === 'window-pane-changed' || event.kind === 'session-window-changed') focusChanged(event);
+            if (event.kind === 'client-session-changed') clientCameIn(event);
             if (event.kind === 'client-detached') clientDetached(event.client);
             topology?.apply(event);
           },
