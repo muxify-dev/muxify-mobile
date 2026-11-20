@@ -1044,6 +1044,92 @@ describe('the Theme’s colours', () => {
     expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
   });
 
+  /** An Attach shown a Window of two Panes, %0 and %7, in a Session with %5 elsewhere, told once. */
+  async function twoPanes() {
+    const host = fakeHost();
+    const TWO = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,7]';
+    host.answering('list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5', '%7']
+      : [`0\t%0\tzsh\t1\t/home/user\t${TWO}`, `1\t%7\tzsh\t0\t/home/user\t${TWO}`]);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+    host.commands.length = 0;
+    return { kit, host };
+  }
+
+  it('writes every Pane of the Window again when the phone picks a Pane', async () => {
+    const { kit, host } = await twoPanes();
+
+    expect(kit.attach.selectPane('%7')).toBe(true);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Window again when the phone picks a Pane toward a direction', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.selectPaneToward('down');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Window now shown when the phone picks a Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.answering('list-windows', ['@0\t0\t0\t2\t0\tshell\tzsh', '@3\t3\t1\t1\t0\tlogs\tzsh']);
+    host.answering('list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5', '%7', '%9']
+      : ['0\t%9\tzsh\t1\t/home/user\tb25d,49x41,0,0,9']);
+
+    await kit.attach.selectWindow(3);
+    await settle();
+
+    // Only the Window now shown: %0 and %7 stay as they were.
+    expect([...new Set(reports(host))].sort()).toEqual(['%9 10', '%9 11']);
+  });
+
+  it('writes a Window the phone told before when the phone picks it', async () => {
+    const { kit, host } = await twoPanes();
+
+    await kit.attach.selectWindow(0);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Session switched to, even one told before', async () => {
+    const { kit, host } = await twoPanes();
+
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+
+    expect(host.commands).toContain(`'list-panes' '-s' '-t' 'play:' '-F' '#{pane_id}'`);
+    expect([...new Set(reports(host))].sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Session again when the app comes back with the link alive', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.lifecycleChanged('background');
+    kit.attach.lifecycleChanged('active');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+  });
+
+  it('writes nothing for a pick while the app is in the background', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.lifecycleChanged('background');
+    kit.attach.selectPaneToward('down');
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
   it('carries on attached when tmux is too old to take a report', async () => {
     const host = fakeHost();
     host.refuseCommand('refresh-client');

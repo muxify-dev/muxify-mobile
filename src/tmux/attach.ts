@@ -948,30 +948,44 @@ export function openAttach(options: AttachOptions): Attach {
   /** The Panes the current Client has told tmux the current colours for. */
   let coloured = new Set<string>();
 
+  /** Which Panes a colour report goes to. */
+  type ColourTargets = 'untold' | 'session' | readonly string[];
+
   /**
-   * Tells tmux the Theme's colours for each Pane of the Session that has not
-   * had them from this Client yet. Safe to call at any time: a Pane is told
-   * once per Client and per colours, and nothing goes on the wire while the
-   * app is in the background.
+   * Tells tmux the Theme's colours, without holding anything up. Safe to call
+   * at any time: nothing goes on the wire while the app is in the background,
+   * and a refusal is ignored.
    *
-   * The whole Session and not only the Window on screen, because a program
-   * in another Window reads the colours when it starts, not when it is shown.
+   * `untold`, for a Pane that appears: each Pane of the Session that has not
+   * had the colours from this Client yet. The whole Session and not only the
+   * Window on screen, because a program in another Window reads the colours
+   * when it starts, not when it is shown.
+   *
+   * `session` or a list of Panes, where the phone's user acted: every one of
+   * them, told before or not. Another Client, such as desktop Muxify, writes
+   * its own colours on the same Panes, and tmux answers with the last report
+   * any Client wrote, so the screen in use writes again.
    */
-  function reportColours(): void {
+  function reportColours(targets: ColourTargets = 'untold'): void {
     const mine = generation;
     const current = client;
     const wanted = colours;
     const reported = coloured;
     if (!current || !wanted || suspended) return;
     background(mine, async () => {
-      const ids = await current.sessionPaneIds(currentSessionTarget());
+      const ids = typeof targets === 'string' ? await current.sessionPaneIds(currentSessionTarget()) : targets;
       if (stale(mine) || wanted !== colours || reported !== coloured) return;
-      const fresh = ids.filter((id) => !reported.has(id));
-      if (fresh.length === 0) return;
-      for (const id of fresh) reported.add(id);
-      say(`reporting the Theme's colours to ${fresh.join(' ')}`);
-      await current.reportPaneColours(fresh, wanted);
+      const told = targets === 'untold' ? ids.filter((id) => !reported.has(id)) : ids;
+      if (told.length === 0) return;
+      for (const id of told) reported.add(id);
+      say(`reporting the Theme's colours to ${told.join(' ')}`);
+      await current.reportPaneColours(told, wanted);
     });
+  }
+
+  /** Every Pane of the Window shown, for a pick made on the phone. */
+  function reportWindowColours(): void {
+    reportColours(state.topology.panes.map((pane) => pane.id));
   }
 
   // ------------------------------------------------------------------- Attach
@@ -1367,6 +1381,7 @@ export function openAttach(options: AttachOptions): Attach {
         await model.refresh();
       }
     })();
+    reportWindowColours();
     return true;
   }
 
@@ -1481,6 +1496,7 @@ export function openAttach(options: AttachOptions): Attach {
         if (completedAt !== sessionRevision) {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
+        reportColours('session');
         await restorePlace(mine);
       } finally {
         if (restore && pendingRestore === restore) pendingRestore = null;
@@ -1498,6 +1514,8 @@ export function openAttach(options: AttachOptions): Attach {
       say(`selecting Window ${index}`);
       await current.selectWindow(currentSessionTarget(), index);
       await settleAfterVerb(mine);
+      // The Topology just read is the Window now shown.
+      if (!stale(mine)) reportWindowColours();
     },
 
     selectPane,
@@ -1510,6 +1528,8 @@ export function openAttach(options: AttachOptions): Attach {
       // Settles nothing, as selectPane does not: tmux's notifications carry
       // the new active Pane.
       background(mine, () => current.selectPaneToward(currentSessionTarget(), direction));
+      // Toward a neighbour, so in the Window shown.
+      reportWindowColours();
     },
 
     split: (direction) => runSessionVerb({ kind: 'split', direction }),
@@ -1745,7 +1765,8 @@ export function openAttach(options: AttachOptions): Attach {
       // nothing, and only the thing underneath can say which.
       if (control?.isOpen() ?? false) {
         say('the link survived the background');
-        reportColours();
+        // Whatever another screen wrote meanwhile is not the phone's look.
+        reportColours('session');
         return;
       }
       ended(
