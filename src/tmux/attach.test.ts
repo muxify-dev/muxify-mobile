@@ -1130,6 +1130,111 @@ describe('the Theme’s colours', () => {
     expect(reports(host)).toEqual([]);
   });
 
+  /** A key typed on the phone, into the Pane shown. */
+  const key = (kit: ReturnType<typeof attachOn>) => kit.attach.view('%0').type(new TextEncoder().encode('a'));
+
+  it('writes the Window again on the first key after another screen moves its focus, and only then', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%window-pane-changed @0 %7');
+    await settle();
+    expect(reports(host)).toEqual([]);
+
+    key(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+
+    host.commands.length = 0;
+    key(kit);
+    kit.attach.view('%0').press('Enter');
+    await settle();
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('writes the Window again on the first key after another screen switches the Session’s Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%session-window-changed $1 @0');
+    await settle();
+
+    kit.attach.view('%0').press('Enter');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes the Window again on the first key after another Client comes into the Session', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%client-session-changed /dev/ttys004 $1 work');
+    await settle();
+
+    key(kit);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('leaves alone a focus change on another Session or another Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%window-pane-changed @4 %9');
+    host.notify('%session-window-changed $2 @4');
+    await settle();
+
+    key(kit);
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('does not count the phone’s own pick as another screen’s', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    expect(kit.attach.selectPane('%7')).toBe(true);
+    await settle();
+    host.notify('%window-pane-changed @0 %7');
+    kit.attach.selectPaneToward('up');
+    await settle();
+    host.notify('%window-pane-changed @0 %0');
+    await settle();
+    host.commands.length = 0;
+
+    key(kit);
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('writes the Window again on the first key after another Client resized it', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.notify('%layout-change @0 b25d,115x72,0,0,0 b25d,115x72,0,0,0 *');
+    await settle();
+    host.commands.length = 0;
+
+    key(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11']);
+    expect(host.commands).toContain("'refresh-client' '-C' '49x41'");
+
+    host.commands.length = 0;
+    key(kit);
+    await settle();
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('sends nothing for colours on a key when no other screen acted', async () => {
+    const { kit, host } = await twoPanes();
+
+    key(kit);
+    kit.attach.view('%0').press('Enter');
+    await settle();
+
+    expect(host.commands.filter((line) => line.startsWith("'refresh-client' '-r'") ||
+      line.startsWith("'list-panes' '-s'"))).toEqual([]);
+  });
+
   it('carries on attached when tmux is too old to take a report', async () => {
     const host = fakeHost();
     host.refuseCommand('refresh-client');

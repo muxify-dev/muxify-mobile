@@ -242,6 +242,12 @@ describe('what tmux may send that this app has never seen', () => {
     ]);
   });
 
+  it('reads another client moving into a Session, with a name that contains spaces', () => {
+    expect(parseAll(ascii('%client-session-changed /dev/ttys004 $1 my work\n'))).toEqual([
+      { kind: 'client-session-changed', client: '/dev/ttys004', session: '$1', name: 'my work' },
+    ]);
+  });
+
   it('reads the active Pane of a Window changing', () => {
     expect(parseAll(ascii('%window-pane-changed @2 %9\n'))).toEqual([
       { kind: 'window-pane-changed', window: '@2', pane: '%9' },

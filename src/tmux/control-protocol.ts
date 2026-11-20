@@ -45,6 +45,12 @@ export type ControlEvent =
   | { kind: 'unlinked-window-close'; window: string }
   | { kind: 'unlinked-window-renamed'; window: string; name: string }
   | { kind: 'client-detached'; client: string }
+  /**
+   * Another Client went into a Session, by attaching or switching. tmux tells
+   * the Client that moved `%session-changed` instead, so this is never the
+   * phone's own.
+   */
+  | { kind: 'client-session-changed'; client: string; session: string; name: string }
   /** The control client is finished. Nothing more will arrive. */
   | { kind: 'exit'; reason: string }
   /**
@@ -222,6 +228,10 @@ function notification(name: string, rest: string): ControlEvent | null {
       return fields.length < 1 ? null : { kind: 'pane-mode-changed', pane: fields[0] };
     case '%client-detached':
       return fields.length < 1 ? null : { kind: 'client-detached', client: fields[0] };
+    case '%client-session-changed':
+      return fields.length < 3
+        ? null
+        : { kind: 'client-session-changed', client: fields[0], session: fields[1], name: fields.slice(2).join(' ') };
     case '%layout-change':
       // `<window> <layout> <visible layout> <flags>`. Older tmux sends only the
       // window and one layout, so the rest is filled in from what is there.

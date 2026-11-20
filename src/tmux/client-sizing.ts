@@ -78,9 +78,10 @@ export interface ClientSizing {
   windowSized(grid: Grid): void;
   /**
    * The user did something on the phone. If another Client has the Window,
-   * take it back: the phone is the one in use now.
+   * take it back: the phone is the one in use now. True when it did, so the
+   * caller can take back what goes with the Window, such as its colours.
    */
-  reclaim(): void;
+  reclaim(): boolean;
   /** Nothing more is wanted. Cancels the settle and strands no waiter. */
   dispose(): void;
 }
@@ -299,10 +300,11 @@ export function createClientSizing(
       );
     },
 
-    reclaim(): void {
-      if (disposed || !taken) return;
+    reclaim(): boolean {
+      if (disposed || !taken) return false;
       say('the phone is in use; taking the Window back');
       push(true);
+      return true;
     },
 
     dispose(): void {
