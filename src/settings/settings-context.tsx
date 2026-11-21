@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   appearanceFor,
@@ -15,7 +15,7 @@ import { deviceSettingsStore } from './device-settings';
 import type { HostScreenTab } from '@/domain/host-screen';
 import { DEFAULT_SETTINGS, resolveTheme, chooserListsFor, type ChooserLists, type Settings } from './settings';
 import { describeError } from '@/lib/describe-error';
-import { Alert, useColorScheme } from 'react-native';
+import { Alert, Appearance as NativeAppearance, useColorScheme } from 'react-native';
 
 interface SettingsContextValue {
   settings: Settings;
@@ -89,6 +89,15 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       ...value.chooserListPreferences, [hostId]: lists,
     } }));
   }, [change]);
+
+  // The native chrome (tab bar, search field, keyboard, sheets) takes light or
+  // dark from the window, not from our palette, so a Dark setting on a light
+  // phone has to override the window too. System hands it back to the phone,
+  // which is also what keeps useColorScheme above reporting the phone's own.
+  useLayoutEffect(() => {
+    if (!ready) return;
+    NativeAppearance.setColorScheme(settings.appearance === 'system' ? 'unspecified' : settings.appearance);
+  }, [ready, settings.appearance]);
 
   const theme = resolveTheme(settings, phoneScheme);
   const value = useMemo<SettingsContextValue>(
