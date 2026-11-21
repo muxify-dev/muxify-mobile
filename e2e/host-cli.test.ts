@@ -382,7 +382,7 @@ function frames(text: string): Record<string, unknown>[] {
 
       const state = await until(server, ['live', 'sessions-only']);
       console.log(`${arch} Host Server: ${logged.join('; ')}`);
-      expect(state).toEqual({ kind: 'live', build: oldLine, protocol: 1 });
+      expect(state).toEqual({ kind: 'live', build: oldLine, protocol: 2 });
       expect(channels).toHaveLength(1);
       expect(channels[0]!.command).toBe(`${shellQuote(`${home}/.local/bin/muxify`)} server`);
       const hello = helloOn(channels[0]!);
@@ -402,7 +402,7 @@ function frames(text: string): Record<string, unknown>[] {
     const logged: string[] = [];
     const server = link(home, logged);
     try {
-      expect(await until(server, ['live', 'sessions-only'])).toEqual({ kind: 'live', build: oldLine, protocol: 1 });
+      expect(await until(server, ['live', 'sessions-only'])).toEqual({ kind: 'live', build: oldLine, protocol: 2 });
       expect(channels).toHaveLength(before + 1);
       const first = channels[before]!;
 
@@ -420,7 +420,7 @@ function frames(text: string): Record<string, unknown>[] {
         });
       });
       console.log(`${arch} Host Server: ${logged.join('; ')}`);
-      expect(restarted).toEqual({ kind: 'live', build: newLine, protocol: 1 });
+      expect(restarted).toEqual({ kind: 'live', build: newLine, protocol: 2 });
       expect(frames(first.sent).some((frame) => frame.kind === 'request' && 'shutdown' in (frame.request as object))).toBe(true);
       await first.closed;
       expect(channels).toHaveLength(before + 2);
@@ -433,7 +433,7 @@ function frames(text: string): Record<string, unknown>[] {
       console.log(`${arch} third install: ${third.line}`);
       expect(third.kind).toBe('current');
       server.installAnswered(third);
-      expect(server.state()).toEqual({ kind: 'live', build: newLine, protocol: 1 });
+      expect(server.state()).toEqual({ kind: 'live', build: newLine, protocol: 2 });
       expect(channels).toHaveLength(before + 2);
     } finally {
       server.close();

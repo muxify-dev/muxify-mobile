@@ -8,14 +8,14 @@ import {
   describeEnd,
   HostServerError,
   openHostServerSession,
-  PROTOCOL,
   type HostServerCall,
   type HostServerSession,
+  type OldSide,
   type OpenServerChannel,
   type SessionEnd,
 } from './host-server-channel';
 
-export { HostServerError, type HostServerCall, type OpenServerChannel } from './host-server-channel';
+export { HostServerError, type HostServerCall, type OldSide, type OpenServerChannel } from './host-server-channel';
 
 /** What the phone uses of the Host Server. A server whose `hello` lacks one is too old. */
 export const PHONE_CAPABILITIES = ['request', 'snapshot', 'topic-detail', 'ranked-session-paths', 'browser-tabs'] as const;
@@ -36,19 +36,37 @@ export type HostServerState =
   | { kind: 'starting' }
   /** No `muxify` on the Host yet: it waits for the Host CLI install. */
   | { kind: 'installing' }
-  /** The server answered with every capability the phone uses. */
+  /** The server answered with every capability the phone uses, on `protocol`, the one both sides speak. */
   | { kind: 'live'; build: string; protocol: number }
-  /** No Host Server for the rest of this Connection: the Host Screen says "Topics are unavailable on <Host>: <reason>". */
-  | { kind: 'sessions-only'; reason: string }
+  /** No Host Server for the rest of this Connection. */
+  | ({ kind: 'sessions-only' } & Unavailable)
   /** Its Connection closed. */
   | { kind: 'closed' };
 
-/** Why no Host Server runs, in the Mac's words. */
+/**
+ * Why no Host Server runs: `reason`, which the Host Screen shows as "Topics
+ * are unavailable on <Host>: <reason>", and `tooOld`, the side too old for the
+ * other when that is why.
+ */
+export interface Unavailable {
+  reason: string;
+  tooOld?: OldSide;
+}
+
+/** Why no Host Server runs, in the Mac's words, or the phone's own when the phone is too old. */
 export const unavailable = {
-  notInstalled: (line: string) => `the Host CLI could not be installed (${line})`,
-  tooOld: (build: string) => `the Host's muxify is too old (${build})`,
-  noAnswer: () => 'the Host Server did not answer',
-  stoppedRepeatedly: (line: string) => `the Host Server stopped ${MAX_STOPS} times in a minute (${line})`,
+  notInstalled: (line: string): Unavailable => ({ reason: `the Host CLI could not be installed (${line})` }),
+  tooOld: (side: OldSide, build: string): Unavailable => ({
+    reason:
+      side === 'phone'
+        ? `Muxify Mobile is too old for the Host's muxify (${build}). Update the app.`
+        : `the Host's muxify is too old (${build})`,
+    tooOld: side,
+  }),
+  noAnswer: (): Unavailable => ({ reason: 'the Host Server did not answer' }),
+  stoppedRepeatedly: (line: string): Unavailable => ({
+    reason: `the Host Server stopped ${MAX_STOPS} times in a minute (${line})`,
+  }),
 };
 
 /**
@@ -145,11 +163,11 @@ export function createHostServer(options: HostServerOptions): HostServer {
     old?.close();
   }
 
-  function sessionsOnly(reason: string): void {
+  function sessionsOnly(why: Unavailable): void {
     generation += 1;
     retire();
-    say(`Sessions only: ${reason}`);
-    become({ kind: 'sessions-only', reason });
+    say(`Sessions only: ${why.reason}`);
+    become({ kind: 'sessions-only', ...why });
     failQueued();
   }
 
@@ -191,12 +209,12 @@ export function createHostServer(options: HostServerOptions): HostServer {
         const missing = PHONE_CAPABILITIES.filter((name) => !hello.capabilities.includes(name));
         if (missing.length > 0) {
           say(`${hello.build} lacks the capabilities ${missing.join(', ')}`);
-          sessionsOnly(unavailable.tooOld(hello.build));
+          sessionsOnly(unavailable.tooOld('host', hello.build));
           return;
         }
-        if (hello.build !== lastBuild) say(`${hello.build}, protocol ${PROTOCOL}`);
+        if (hello.build !== lastBuild) say(`${hello.build}, protocol ${hello.protocol}`);
         lastBuild = hello.build;
-        become({ kind: 'live', build: hello.build, protocol: PROTOCOL });
+        become({ kind: 'live', build: hello.build, protocol: hello.protocol });
         for (const entry of queue.splice(0)) forward(entry, opened);
       },
       () => {},
@@ -217,7 +235,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
       if (end.exitCode === USAGE_ERROR) {
         const build = await options.version(path).catch(() => '');
         if (mine !== generation) return;
-        sessionsOnly(unavailable.tooOld(build || 'it prints no build line'));
+        sessionsOnly(unavailable.tooOld('host', build || 'it prints no build line'));
         return;
       }
       if (end.exitCode === NOT_FOUND) {
@@ -229,7 +247,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
         return;
       }
       if (end.cause.kind === 'no-shared-protocol') {
-        sessionsOnly(unavailable.tooOld(end.cause.build));
+        sessionsOnly(unavailable.tooOld(end.cause.tooOld, end.cause.build));
         return;
       }
     }

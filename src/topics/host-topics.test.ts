@@ -24,5 +24,12 @@ describe('what the Host last said about its Topics', () => {
 
   it('says a Host CLI too old for a Host Server is being updated while the install runs', () => {
     expect(withHostCli({ kind: 'unavailable', host: 'Mac', reason: 'x' }, { kind: 'running' })).toEqual({ kind: 'updating', last: null });
+    expect(withHostCli({ kind: 'unavailable', host: 'Mac', reason: 'x', tooOld: 'host' }, { kind: 'running' })).toEqual({ kind: 'updating', last: null });
+  });
+
+  it('keeps the reason of a phone too old for the Host while the install runs: no update of the Host helps it', () => {
+    const phoneTooOld: HostTopics = { kind: 'unavailable', host: 'Mac', reason: 'x', tooOld: 'phone' };
+
+    expect(withHostCli(phoneTooOld, { kind: 'running' })).toEqual(phoneTooOld);
   });
 });

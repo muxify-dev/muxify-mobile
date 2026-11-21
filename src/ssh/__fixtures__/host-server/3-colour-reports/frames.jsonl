@@ -1,0 +1,1 @@
+{"hello":{"build":"muxify 1a2b3c4 1763100000","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs"],"min_protocol":2,"protocol":2},"id":0,"kind":"hello"}

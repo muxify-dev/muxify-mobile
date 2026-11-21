@@ -147,8 +147,8 @@ describe('the Host Server link against a real muxify server', () => {
     const state = await until(server, ['live', 'sessions-only']);
     const version = (await runInShell(`${shellQuote(MUXIFY)} --version`)).stdout.trim();
     console.log(`Host Server: ${logged.join('; ')}`);
-    expect(state).toEqual({ kind: 'live', build: version, protocol: 1 });
-    expect(logged).toEqual([`${version}, protocol 1`]);
+    expect(state).toEqual({ kind: 'live', build: version, protocol: 2 });
+    expect(logged).toEqual([`${version}, protocol 2`]);
 
     await expect(server.request({ ping: {} })).resolves.toEqual({});
 

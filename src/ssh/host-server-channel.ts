@@ -24,8 +24,12 @@ export const MAX_PREAMBLE_BYTES = 64 * 1024;
 export const HELLO_TIMEOUT_MS = 10_000;
 /** A `ping` goes out after this long with nothing sent: the server exits after 45 s of silence. */
 export const PING_AFTER_MS = 15_000;
-/** The protocol the phone speaks. */
-export const PROTOCOL = 1;
+/**
+ * The protocols the phone speaks. Protocol 2 adds only `colours` and `focus`,
+ * for a Mac on a Remote Environment, and the phone uses neither: it writes its
+ * Theme's colours on its own Control Connection.
+ */
+export const PROTOCOLS = { lowest: 1, highest: 2 } as const;
 /** How many of the server's stderr lines are kept for the Log. */
 export const STDERR_LINES = 50;
 
@@ -75,13 +79,17 @@ export type HostServerCall<T> = Promise<T> & {
   cancel(): void;
 };
 
-/** What the server's `hello` said. */
+/** The server's `hello`, as the phone answered it. */
 export interface ServerHello {
+  /** The protocol both sides speak, which the phone's `hello` carries. */
   protocol: number;
   /** The server's `muxify --version` line. Never compared: it goes to the Log and to a reason. */
   build: string;
   capabilities: string[];
 }
+
+/** The side too old for the other: the phone, or the Host's muxify. */
+export type OldSide = 'phone' | 'host';
 
 /** How a channel ended. */
 export type SessionEndCause =
@@ -95,8 +103,8 @@ export type SessionEndCause =
   | { kind: 'no-magic-line'; printed: number; firstLine: string }
   /** No `hello` within 10 s. */
   | { kind: 'no-hello' }
-  /** The server's `hello` offers no protocol the phone speaks. */
-  | { kind: 'no-shared-protocol'; build: string }
+  /** The server's `hello` offers no protocol the phone speaks. `tooOld` is the side whose protocols are all below the other's. */
+  | { kind: 'no-shared-protocol'; build: string; tooOld: OldSide }
   /** A line that is not a frame, or one too long. */
   | { kind: 'protocol'; message: string };
 
@@ -301,12 +309,22 @@ function asError(raw: unknown): HostServerError {
   return new HostServerError(code, message, error.topic_failure);
 }
 
-function readHello(raw: unknown): ServerHello | null {
+/** The server's `hello` as it came: the protocols it speaks, `lowest` to `highest`, and what it is. */
+interface ServerOffer {
+  lowest: number;
+  highest: number;
+  build: string;
+  capabilities: string[];
+}
+
+function readHello(raw: unknown): ServerOffer | null {
   if (!raw || typeof raw !== 'object') return null;
   const hello = raw as { protocol?: unknown; min_protocol?: unknown; build?: unknown; capabilities?: unknown };
   if (typeof hello.protocol !== 'number') return null;
   return {
-    protocol: hello.protocol,
+    // A server with no `min_protocol` speaks `protocol` alone.
+    lowest: typeof hello.min_protocol === 'number' ? hello.min_protocol : hello.protocol,
+    highest: hello.protocol,
     build: typeof hello.build === 'string' ? hello.build : '',
     capabilities: Array.isArray(hello.capabilities)
       ? hello.capabilities.filter((name): name is string => typeof name === 'string')
@@ -314,17 +332,22 @@ function readHello(raw: unknown): ServerHello | null {
   };
 }
 
-/** Whether the server's offered range, `min_protocol`…`protocol`, holds the phone's protocol. */
-function offers(raw: unknown): boolean {
-  const hello = raw as { protocol: number; min_protocol?: unknown };
-  const lowest = typeof hello.min_protocol === 'number' ? hello.min_protocol : hello.protocol;
-  return lowest <= PROTOCOL && PROTOCOL <= hello.protocol;
+/**
+ * The highest protocol that both the phone and the server speak. With none,
+ * the side that is too old: the phone when the server's lowest protocol is
+ * above the phone's highest, else the Host.
+ */
+function agree(server: ServerOffer): { protocol: number } | { tooOld: OldSide } {
+  const protocol = Math.min(server.highest, PROTOCOLS.highest);
+  if (protocol >= Math.max(server.lowest, PROTOCOLS.lowest)) return { protocol };
+  return { tooOld: server.lowest > PROTOCOLS.highest ? 'phone' : 'host' };
 }
 
 /**
  * Opens one channel running `command` and speaks the protocol on it. The
- * phone's `hello` carries protocol 1, `build` and `capabilities`, and no
- * `nonce`: its Control Connection can never be the server's own Client.
+ * phone's `hello` carries the protocol both sides speak, `build` and
+ * `capabilities`, and no `nonce`: its Control Connection can never be the
+ * server's own Client.
  */
 export function openHostServerSession(options: {
   open: OpenServerChannel;
@@ -448,14 +471,16 @@ export function openHostServerSession(options: {
     }
     clock.cancel(helloTimer);
     helloTimer = null;
-    if (!offers(raw)) {
-      abandon({ kind: 'no-shared-protocol', build: server.build });
+    const agreed = agree(server);
+    if ('tooOld' in agreed) {
+      abandon({ kind: 'no-shared-protocol', build: server.build, tooOld: agreed.tooOld });
       return;
     }
-    send({ id: 0, kind: 'hello', hello: { protocol: PROTOCOL, build: options.build, capabilities: options.capabilities } });
+    const { protocol } = agreed;
+    send({ id: 0, kind: 'hello', hello: { protocol, build: options.build, capabilities: options.capabilities } });
     answered = true;
     armPing();
-    settleHello.resolve(server);
+    settleHello.resolve({ protocol, build: server.build, capabilities: server.capabilities });
     for (const entry of queued.splice(0)) dispatch(entry);
   }
 

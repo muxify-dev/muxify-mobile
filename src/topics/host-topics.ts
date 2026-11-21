@@ -1,5 +1,6 @@
 import { answered, HOST_PROBLEM, refused, type Listing, type ListedSession } from '@/domain/host-listing';
 import type { LiveListing } from '@/ssh/host-listing-feed';
+import type { Unavailable } from '@/ssh/host-server';
 
 import type { EnvironmentSnapshot } from './environment';
 import type { HostCliState } from './host-cli-install';
@@ -33,7 +34,7 @@ export type HostTopics =
    * No Host Server can run on this Connection: the Host Screen shows Sessions
    * only and says "Topics are unavailable on <host>: <reason>".
    */
-  | { kind: 'unavailable'; host: string; reason: string };
+  | ({ kind: 'unavailable'; host: string } & Unavailable);
 
 /** Why a Host shows no Topics, in the Mac's words: "Topics are unavailable on <host>: <reason>". */
 export function topicsUnavailable(host: string, reason: string): string {
@@ -48,7 +49,8 @@ export const TOPICS_UNASKED: HostTopics = { kind: 'loading', last: null };
  * Host with none, or one too old for a Host Server, says the install is
  * running, and a Host with none says why it failed. Any other state of the
  * install changes nothing, because one that put a new Host CLI there starts
- * the Host Server again, which pushes the Topics.
+ * the Host Server again, which pushes the Topics. A phone too old for the
+ * Host's muxify keeps its reason: no update of the Host can help it.
  */
 export function withHostCli(topics: HostTopics, hostCli: HostCliState): HostTopics {
   const failure =
@@ -60,7 +62,7 @@ export function withHostCli(topics: HostTopics, hostCli: HostCliState): HostTopi
       return { kind: 'failed', error: `Could not install Muxify on this Host: ${failure}`, last: null };
     case 'unavailable':
       // A Host CLI too old for a Host Server, which the install is updating.
-      return hostCli.kind === 'running' ? { kind: 'updating', last: null } : topics;
+      return hostCli.kind === 'running' && topics.tooOld !== 'phone' ? { kind: 'updating', last: null } : topics;
     default:
       return topics;
   }
@@ -115,7 +117,8 @@ export function liveReading(input: {
   if (failure !== null) return { listing: refused(failure), topics: { kind: 'failed', error: failure, last } };
   if (problem) return { listing: HOST_PROBLEM, topics: { kind: 'host-problem', last } };
   if (live?.server.kind === 'sessions-only') {
-    return { listing: sessions, topics: { kind: 'unavailable', host, reason: live.server.reason } };
+    const { reason, tooOld } = live.server;
+    return { listing: sessions, topics: { kind: 'unavailable', host, reason, tooOld } };
   }
   if (live?.server.kind === 'installing') return { listing: sessions, topics: { kind: 'absent' } };
   const snapshot = live?.snapshot ?? null;

@@ -407,9 +407,19 @@ describe('the Host CLI install', () => {
 
   it('says Muxify is being updated on a Host whose muxify is too old for a Host Server', async () => {
     hostCli = { kind: 'running' };
-    connect({ kind: 'sessions-only', reason: "the Host's muxify is too old (muxify 0)" });
+    connect({ kind: 'sessions-only', reason: "the Host's muxify is too old (muxify 0)", tooOld: 'host' });
     await mount();
 
     expect(texts()).toContain('Updating Muxify on this Host…');
+  });
+
+  it('keeps saying the app is too old, and nothing of an update, on a Host whose muxify is too new for the phone', async () => {
+    hostCli = { kind: 'running' };
+    connect({ kind: 'sessions-only', reason: "Muxify Mobile is too old for the Host's muxify (muxify 3). Update the app.", tooOld: 'phone' });
+    await mount();
+
+    expect(texts()).toContain("Topics are unavailable on Dev Host: Muxify Mobile is too old for the Host's muxify (muxify 3). Update the app.");
+    expect(texts()).not.toContain('Updating Muxify on this Host…');
+    expect(labels()).toEqual(['Session api']);
   });
 });
