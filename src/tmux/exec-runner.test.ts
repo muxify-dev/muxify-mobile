@@ -17,13 +17,13 @@ describe('running a command before there is a Session to attach to', () => {
   it('sends it through a shell, with the tmux binary in front', async () => {
     const { transport, ran } = fakeShell({ exitCode: 0, stdout: 'work\t3\n' });
     await execCommandRunner(transport).run(['list-sessions', '-F', '#{session_name}']);
-    expect(ran).toEqual(["tmux 'list-sessions' '-F' '#{session_name}'"]);
+    expect(ran).toEqual(["tmux -u 'list-sessions' '-F' '#{session_name}'"]);
   });
 
   it('uses the Host’s own tmux when it has one', async () => {
     const { transport, ran } = fakeShell({ exitCode: 0 });
     await execCommandRunner(transport, '/opt/homebrew/bin/tmux').run(['list-sessions']);
-    expect(ran).toEqual(["'/opt/homebrew/bin/tmux' 'list-sessions'"]);
+    expect(ran).toEqual(["'/opt/homebrew/bin/tmux' -u 'list-sessions'"]);
   });
 
   it('reads the output of a command that worked', async () => {
@@ -59,7 +59,7 @@ describe('running a command before there is a Session to attach to', () => {
   it('runs a batch in order, one channel each', async () => {
     const { transport, ran } = fakeShell({ exitCode: 0 });
     await execCommandRunner(transport).runAll([['list-sessions'], ['new-session', '-d']]);
-    expect(ran).toEqual(["tmux 'list-sessions'", "tmux 'new-session' '-d'"]);
+    expect(ran).toEqual(["tmux -u 'list-sessions'", "tmux -u 'new-session' '-d'"]);
   });
 
   it('keeps the reply as bytes as well as text', async () => {
