@@ -53,3 +53,18 @@ it('paints the app and the Surface with the Theme of the phone appearance on Sys
   expect(value!.theme).toBe('gruvbox-dark-hard');
   scheme.mockRestore();
 });
+
+it('draws the native chrome in the chosen appearance, and hands it back to the phone on System', async () => {
+  const setColorScheme = jest.spyOn(ReactNative.Appearance, 'setColorScheme').mockImplementation(() => {});
+  let contents = JSON.stringify({ appearance: 'dark' });
+  mockStore = createSettingsStore({ read: async () => contents, write: async (next) => { contents = next; } });
+  await act(async () => { renderer = create(<SettingsProvider><Probe /></SettingsProvider>); });
+  expect(setColorScheme).toHaveBeenLastCalledWith('dark');
+
+  await act(async () => { value!.update({ appearance: 'light' }); });
+  expect(setColorScheme).toHaveBeenLastCalledWith('light');
+
+  await act(async () => { value!.update({ appearance: 'system' }); });
+  expect(setColorScheme).toHaveBeenLastCalledWith('unspecified');
+  setColorScheme.mockRestore();
+});
