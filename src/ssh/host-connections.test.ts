@@ -800,4 +800,16 @@ describe('the Host Server', () => {
     expect(use).not.toHaveBeenCalled();
     expect(requests(links[0]!.servers[0])).toEqual([]);
   });
+
+  it('says in one sentence that the app is too old when the Host speaks only newer protocols', async () => {
+    const newer = '{"hello":{"build":"muxify next","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs"],"min_protocol":3,"protocol":3},"id":0,"kind":"hello"}';
+    const { connections } = setup({ serverHello: newer });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+
+    await expect(connections.onServer(HOST, jest.fn())).rejects.toEqual(
+      new Error("Topics are unavailable on Mac: Muxify Mobile is too old for the Host's muxify (muxify next). Update the app."),
+    );
+  });
 });

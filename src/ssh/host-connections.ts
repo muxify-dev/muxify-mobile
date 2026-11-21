@@ -503,7 +503,11 @@ export function createHostConnections(options: {
       const { server } = entry;
       if (!server) throw new Error(topicsUnavailable(host.displayName, 'its Connection runs no Host Server.'));
       const state = server.state();
-      if (state.kind === 'sessions-only') throw new Error(`${topicsUnavailable(host.displayName, state.reason)}.`);
+      if (state.kind === 'sessions-only') {
+        const words = topicsUnavailable(host.displayName, state.reason);
+        // A reason of more than one sentence, such as a phone too old for the Host, ends with its own full stop.
+        throw new Error(words.endsWith('.') ? words : `${words}.`);
+      }
       entry.uses += 1;
       busy(entry);
       try {

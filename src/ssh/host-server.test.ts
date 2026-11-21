@@ -12,15 +12,18 @@ import { createFrameReader, HELLO_TIMEOUT_MS, MAX_PREAMBLE_BYTES, PING_AFTER_MS,
  * The frames MuxifyCore's tests pin, copied from
  * `muxify-shell/Packages/MuxifyCore/Tests/MuxifyCoreTests/Fixtures/Protocol`.
  * They are the contract: the phone must read every server frame there and
- * write its own frames the way they are written there.
+ * write its own frames the way they are written there. Of `3-colour-reports`
+ * only the server's protocol 2 `hello` is copied: the phone sends no `colours`
+ * and no `focus`.
  */
-function fixture(name: '1-first-server' | '2-phone'): string[] {
+function fixture(name: '1-first-server' | '2-phone' | '3-colour-reports'): string[] {
   const text = readFileSync(join(__dirname, '__fixtures__', 'host-server', name, 'frames.jsonl'), 'utf8');
   return text.split('\n').filter((line) => line.length > 0);
 }
 
 const FIRST = fixture('1-first-server');
 const PHONE = fixture('2-phone');
+const COLOURS = fixture('3-colour-reports');
 
 /** The fixture's frame on `line` (from 1), with its id changed to `id`, as a line the server sends. */
 function line(frames: string[], at: number, id?: number): string {
@@ -30,6 +33,12 @@ function line(frames: string[], at: number, id?: number): string {
 
 const FIRST_SERVER_HELLO = line(FIRST, 1);
 const SERVER_HELLO = line(PHONE, 1);
+
+/** A server's `hello` with every capability the phone uses, offering `min_protocol`…`protocol`, or `protocol` alone. */
+function offering(protocol: number, min?: number, build = 'muxify next'): string {
+  const hello = { build, capabilities: [...PHONE_CAPABILITIES], ...(min === undefined ? {} : { min_protocol: min }), protocol };
+  return `${JSON.stringify({ hello, id: 0, kind: 'hello' })}\n`;
+}
 const BUILD = 'Muxify 1.0.0 build 1';
 const PATH = '/usr/local/bin/muxify';
 
@@ -196,6 +205,21 @@ describe('the Host Server link', () => {
       expect(phoneHello.hello.capabilities).toEqual([...PHONE_CAPABILITIES]);
     });
 
+    it.each([
+      { offers: '1 to 1', hello: SERVER_HELLO, protocol: 1 },
+      { offers: '2 to 2', hello: line(COLOURS, 1), protocol: 2 },
+      { offers: '1 to 2', hello: offering(2, 1, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
+      { offers: '2 alone, with no min_protocol', hello: offering(2, undefined, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
+      { offers: '1 to 3', hello: offering(3, 1, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
+    ])('is live on the highest protocol both speak, which its hello carries, with a server that offers $offers', async ({ hello, protocol }) => {
+      const { server, channel, logged, answer } = setup();
+      await answer(hello);
+
+      expect(channel().sent[0]).toMatchObject({ id: 0, kind: 'hello', hello: { protocol } });
+      expect(server.state()).toEqual({ kind: 'live', build: 'muxify 1a2b3c4 1763100000', protocol });
+      expect(logged).toEqual([`muxify 1a2b3c4 1763100000, protocol ${protocol}`]);
+    });
+
     it('is live, and logs the server’s build and protocol once', async () => {
       const { server, logged, answer } = setup();
       await answer();
@@ -211,16 +235,32 @@ describe('the Host Server link', () => {
       expect(server.state()).toEqual({
         kind: 'sessions-only',
         reason: "the Host's muxify is too old (muxify 1a2b3c4 1763100000)",
+        tooOld: 'host',
       });
       expect(channel().closed).toBe(true);
       expect(logged).toContain("Sessions only: the Host's muxify is too old (muxify 1a2b3c4 1763100000)");
     });
 
-    it('is too old when the server shares no protocol with the phone', async () => {
-      const { server, answer } = setup();
-      await answer('{"hello":{"build":"muxify next","capabilities":[],"min_protocol":2,"protocol":3},"id":0,"kind":"hello"}\n');
+    it('says the phone is too old when every protocol of the server is above the phone’s', async () => {
+      const { server, channel, logged, answer } = setup();
+      await answer(offering(3, 3));
 
-      expect(server.state()).toEqual({ kind: 'sessions-only', reason: "the Host's muxify is too old (muxify next)" });
+      expect(server.state()).toEqual({
+        kind: 'sessions-only',
+        reason: "Muxify Mobile is too old for the Host's muxify (muxify next). Update the app.",
+        tooOld: 'phone',
+      });
+      expect(channel().sent).toEqual([]);
+      expect(channel().closed).toBe(true);
+      expect(logged).toContain("Sessions only: Muxify Mobile is too old for the Host's muxify (muxify next). Update the app.");
+    });
+
+    it('says the Host’s muxify is too old when every protocol of the server is below the phone’s', async () => {
+      const { server, channel, answer } = setup();
+      await answer(offering(0, 0, 'muxify old'));
+
+      expect(server.state()).toEqual({ kind: 'sessions-only', reason: "the Host's muxify is too old (muxify old)", tooOld: 'host' });
+      expect(channel().sent).toEqual([]);
     });
 
     it('is too old, naming the `--version` line, when `muxify` exits 2 before hello', async () => {
@@ -234,6 +274,7 @@ describe('the Host Server link', () => {
       expect(server.state()).toEqual({
         kind: 'sessions-only',
         reason: "the Host's muxify is too old (muxify 0aa0aa0 1700000000)",
+        tooOld: 'host',
       });
       expect(logged[0]).toContain(`last stderr line: "muxify: unknown command 'server'"`);
     });
