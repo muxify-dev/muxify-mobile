@@ -296,3 +296,25 @@ describe('a sheet', () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe('a Window another Client took', () => {
+  const LAPTOP: Grid = { cols: 115, rows: 72 };
+
+  it('is taken back on the next reclaim, which says so, and only that once', async () => {
+    const { module, sent, clock, land } = sizing();
+    module.attached();
+    module.windowGridReported(REAL, PHONE);
+    clock.advance(GRID_SETTLE_MS * 2);
+    await land();
+    sent.length = 0;
+
+    module.windowSized(REAL);
+    expect(module.reclaim()).toBe(false);
+    expect(sent).toEqual([]);
+
+    module.windowSized(LAPTOP);
+    expect(module.reclaim()).toBe(true);
+    expect(sent).toEqual([REAL]);
+    expect(module.reclaim()).toBe(false);
+  });
+});

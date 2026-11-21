@@ -102,9 +102,12 @@ The colours the Surface paints with. Each Theme is light or dark. The user
 chooses a Light theme (Solarized Light, Gruvbox Light) and a Dark theme
 (Ghostty Default, Dracula, Gruvbox Dark Hard), and the Appearance decides
 which one is in use. A change, in Settings or on the phone, repaints the
-Surface at once and is reported to tmux for every Pane of the Session, so a
-program such as NeoVim that asks for the background gets the Theme's. See
-ADR 0018.
+Surface at once. The Theme's colours are reported to tmux each time the phone
+is the screen in use: at Attach, when the user picks a Pane, Window or
+Session, on the first key after another screen took the Window, and when the
+app comes back from the background. So a program such as NeoVim that asks for
+the background gets the colours of the screen whose user acted last. See
+ADR 0018 and ADR 0026.
 _Avoid_: colour scheme, skin
 
 **Scrollback**:

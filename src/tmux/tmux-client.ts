@@ -9,6 +9,7 @@ import {
   deliverCommands,
   guardsLateLines,
   inputOption,
+  listClientsCommand,
   listPanesCommand,
   listSessionPanesCommand,
   listSessionsCommand,
@@ -19,6 +20,7 @@ import {
   parseSessionOp,
   sessionOpCommand,
   claimWindowCommand,
+  ownClientNameCommand,
   reportPaneColoursCommands,
   resizeClientCommand,
   selectPaneCommand,
@@ -328,6 +330,23 @@ export class TmuxClient {
   async sessionPaneIds(sessionName: string): Promise<string[]> {
     const reply = await this.runner.run(listSessionPanesCommand(sessionName));
     return reply.ok ? reply.text.map((line) => line.trim()).filter((id) => id.length > 0) : [];
+  }
+
+  /**
+   * The names of the other screens on the server: the control Clients other
+   * than this one that attached without `ignore-size`. A Listener, such as
+   * desktop Muxify's or a Host Server's, asks for `ignore-size` and is not a
+   * screen. A refusal reads as none.
+   */
+  async otherScreens(): Promise<Set<string>> {
+    const [own, clients] = await this.runner.runAll([ownClientNameCommand(), listClientsCommand()]);
+    if (!own?.ok || !clients?.ok) return new Set();
+    const self = own.text[0]?.trim();
+    return new Set(clients.text.flatMap((line) => {
+      const [name, control, flags] = line.split('\t');
+      if (!name || name === self || control !== '1') return [];
+      return (flags ?? '').split(',').includes('ignore-size') ? [] : [name];
+    }));
   }
 
   /**

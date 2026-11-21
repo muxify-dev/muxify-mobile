@@ -35,6 +35,7 @@ import {
   type ClosedCause,
   type ControlConnection,
 } from './control-connection';
+import type { ControlEvent } from './control-protocol';
 import {
   retryCouldWork,
   reasonForAttachFailure,
@@ -673,14 +674,14 @@ export function openAttach(options: AttachOptions): Attach {
         captureSelection: (id, start, end) => reading().then((current) => current.captureSelection(id, start, end)),
       },
       // Input is what says the phone is the one in use, so it is what takes
-      // the Window back from a laptop that resized it.
+      // the Window back from a laptop that resized it, and its colours with it.
       {
         type: (bytes, gesture) => {
-          sizing.reclaim();
+          if (sizing.reclaim() || taken) reclaimColours();
           lane.type(bytes, gesture);
         },
         press: (key) => {
-          sizing.reclaim();
+          if (sizing.reclaim() || taken) reclaimColours();
           lane.press(key);
         },
       },
@@ -844,6 +845,7 @@ export function openAttach(options: AttachOptions): Attach {
       const window = placeWindow(state.topology.windows, place.window);
       if (window && !window.active) {
         say(`restoring the Topic Place: Window ${window.index} (${window.id})`);
+        expectFocus({ kind: 'session-window-changed', window: window.id });
         await current.selectWindow(currentSessionTarget(), window.index);
         await settleAfterVerb(mine);
         if (stale(mine)) return;
@@ -949,29 +951,147 @@ export function openAttach(options: AttachOptions): Attach {
   let coloured = new Set<string>();
 
   /**
-   * Tells tmux the Theme's colours for each Pane of the Session that has not
-   * had them from this Client yet. Safe to call at any time: a Pane is told
-   * once per Client and per colours, and nothing goes on the wire while the
-   * app is in the background.
-   *
-   * The whole Session and not only the Window on screen, because a program
-   * in another Window reads the colours when it starts, not when it is shown.
+   * Whether another screen moved the focus on the Session shown, or came
+   * into it, since the phone last wrote the Window's colours. The other half
+   * of the mark is sizing's: a Window at a size the phone did not ask for.
+   * Either makes the next key on the phone write the Window's colours again,
+   * beside the size reclaim.
    */
-  function reportColours(): void {
+  let taken = false;
+
+  /**
+   * The focus changes the phone asked for and tmux has not yet told of.
+   * Their notifications are the phone's own, not another screen acting.
+   * `undefined` matches any Pane or Window: a pick toward a direction does
+   * not know where it lands.
+   */
+  type OwnFocus =
+    | { kind: 'window-pane-changed'; window: string; pane: string | undefined }
+    | { kind: 'session-window-changed'; window: string | undefined };
+  let ownFocus: OwnFocus[] = [];
+  /**
+   * How many to keep. A select that changes nothing is told of by nothing,
+   * and its entry would otherwise wait for good.
+   */
+  const OWN_FOCUS_KEPT = 4;
+
+  function expectFocus(focus: OwnFocus): void {
+    ownFocus.push(focus);
+    if (ownFocus.length > OWN_FOCUS_KEPT) ownFocus.shift();
+  }
+
+  function windowTaken(by: string): void {
+    if (!taken) say(`another screen took the Window (${by}); the next key writes the Theme's colours`);
+    taken = true;
+  }
+
+  /**
+   * Marks the Window taken for a focus change on the Session shown that the
+   * phone did not ask for: tmux cannot say which Client made one, and only
+   * the phone knows the ones it sent.
+   */
+  function focusChanged(event: Extract<ControlEvent, { kind: 'window-pane-changed' | 'session-window-changed' }>): void {
+    if (event.kind === 'window-pane-changed') {
+      // tmux tells of every Window on the server.
+      if (event.window !== state.topology.activeWindow?.id) return;
+    } else if (event.session !== currentSessionId) {
+      return;
+    }
+    const pane = event.kind === 'window-pane-changed' ? event.pane : undefined;
+    const own = ownFocus.findIndex((focus) => focus.kind === event.kind &&
+      (focus.window ?? event.window) === event.window &&
+      (focus.kind !== 'window-pane-changed' || (focus.pane ?? pane) === pane));
+    if (own >= 0) {
+      ownFocus.splice(own, 1);
+      return;
+    }
+    windowTaken(`a focus change the phone did not make, ${event.kind} ${event.window}`);
+  }
+
+  /**
+   * The other screens' control Clients, by name, as last read: those that
+   * attached without `ignore-size`. Read at Attach and each time a Client
+   * comes into a Session, so that a Client's flags are known before it
+   * detaches, when tmux no longer lists it.
+   */
+  let screens = new Set<string>();
+
+  function readScreens(): void {
+    const mine = generation;
+    const current = client;
+    if (!current) return;
+    background(mine, async () => {
+      const read = await current.otherScreens();
+      if (!stale(mine) && client === current) screens = read;
+    });
+  }
+
+  /**
+   * Another Client came into a Session. Into the one shown, it took the
+   * Window. Either way, its flags are read now, while tmux still lists it.
+   */
+  function clientCameIn(event: Extract<ControlEvent, { kind: 'client-session-changed' }>): void {
+    if (event.session === currentSessionId) windowTaken(`${event.client} came into the Session`);
+    readScreens();
+  }
+
+  /**
+   * A screen's control Client detaching leaves its Colour Report on the Panes,
+   * so the phone writes its own again. A Listener detaching writes nothing:
+   * nobody acted.
+   */
+  function clientDetached(name: string): void {
+    if (!screens.delete(name)) return;
+    say(`the screen ${name} detached; writing the Theme's colours to the Session again`);
+    reportColours('session');
+  }
+
+  /** The first key after another screen took the Window. */
+  function reclaimColours(): void {
+    say('the phone is in use; writing the Theme\'s colours to the Window again');
+    reportWindowColours();
+  }
+
+  /** Which Panes a colour report goes to. */
+  type ColourTargets = 'untold' | 'session' | readonly string[];
+
+  /**
+   * Tells tmux the Theme's colours, without holding anything up. Safe to call
+   * at any time: nothing goes on the wire while the app is in the background,
+   * and a refusal is ignored.
+   *
+   * `untold`, for a Pane that appears: each Pane of the Session that has not
+   * had the colours from this Client yet. The whole Session and not only the
+   * Window on screen, because a program in another Window reads the colours
+   * when it starts, not when it is shown.
+   *
+   * `session` or a list of Panes, where the phone's user acted: every one of
+   * them, told before or not. Another Client, such as desktop Muxify, writes
+   * its own colours on the same Panes, and tmux answers with the last report
+   * any Client wrote, so the screen in use writes again.
+   */
+  function reportColours(targets: ColourTargets = 'untold'): void {
     const mine = generation;
     const current = client;
     const wanted = colours;
     const reported = coloured;
     if (!current || !wanted || suspended) return;
+    // A forced write covers the Window shown, which is what a taken mark asks for.
+    if (targets !== 'untold') taken = false;
     background(mine, async () => {
-      const ids = await current.sessionPaneIds(currentSessionTarget());
+      const ids = typeof targets === 'string' ? await current.sessionPaneIds(currentSessionTarget()) : targets;
       if (stale(mine) || wanted !== colours || reported !== coloured) return;
-      const fresh = ids.filter((id) => !reported.has(id));
-      if (fresh.length === 0) return;
-      for (const id of fresh) reported.add(id);
-      say(`reporting the Theme's colours to ${fresh.join(' ')}`);
-      await current.reportPaneColours(fresh, wanted);
+      const told = targets === 'untold' ? ids.filter((id) => !reported.has(id)) : ids;
+      if (told.length === 0) return;
+      for (const id of told) reported.add(id);
+      say(`reporting the Theme's colours to ${told.join(' ')}`);
+      await current.reportPaneColours(told, wanted);
     });
+  }
+
+  /** Every Pane of the Window shown, for a pick made on the phone. */
+  function reportWindowColours(): void {
+    reportColours(state.topology.panes.map((pane) => pane.id));
   }
 
   // ------------------------------------------------------------------- Attach
@@ -1064,6 +1184,10 @@ export function openAttach(options: AttachOptions): Attach {
               if (event.session === currentSessionId) renameCurrentSession(event.name);
             }
             if (event.kind === 'sessions-changed') refreshSessions();
+            // Before the Topology moves: the Window shown is the one it names.
+            if (event.kind === 'window-pane-changed' || event.kind === 'session-window-changed') focusChanged(event);
+            if (event.kind === 'client-session-changed') clientCameIn(event);
+            if (event.kind === 'client-detached') clientDetached(event.client);
             topology?.apply(event);
           },
           // A Connection lost while nobody is looking is the foreground check's
@@ -1174,6 +1298,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (stale(mine)) return;
       refreshSessions();
       reportColours();
+      readScreens();
       await restorePlace(mine);
     } catch (error) {
       if (stale(mine)) return;
@@ -1229,6 +1354,7 @@ export function openAttach(options: AttachOptions): Attach {
     control = null;
     client = null;
     coloured = new Set();
+    ownFocus = [];
     currentSessionId = null;
     topology?.dispose();
     topology = null;
@@ -1355,6 +1481,7 @@ export function openAttach(options: AttachOptions): Attach {
     // Topology arrives in the notifications tmux sends of its own accord. A
     // read here would be a round trip the tap is waiting on for no answer it
     // does not already have.
+    expectFocus({ kind: 'window-pane-changed', window: state.topology.activeWindow?.id ?? '', pane: paneId });
     model.activate(paneId);
     void (async () => {
       try {
@@ -1367,6 +1494,7 @@ export function openAttach(options: AttachOptions): Attach {
         await model.refresh();
       }
     })();
+    reportWindowColours();
     return true;
   }
 
@@ -1481,6 +1609,7 @@ export function openAttach(options: AttachOptions): Attach {
         if (completedAt !== sessionRevision) {
           throw new Error('The Host changed Session before the requested Session opened.');
         }
+        reportColours('session');
         await restorePlace(mine);
       } finally {
         if (restore && pendingRestore === restore) pendingRestore = null;
@@ -1496,8 +1625,13 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) return;
       say(`selecting Window ${index}`);
+      // A Window already shown is selected with no notification at all.
+      const window = state.topology.windows.find((each) => each.index === index);
+      if (!window?.active) expectFocus({ kind: 'session-window-changed', window: window?.id });
       await current.selectWindow(currentSessionTarget(), index);
       await settleAfterVerb(mine);
+      // The Topology just read is the Window now shown.
+      if (!stale(mine)) reportWindowColours();
     },
 
     selectPane,
@@ -1507,9 +1641,15 @@ export function openAttach(options: AttachOptions): Attach {
       const current = client;
       if (!current) return;
       say(`selecting the Pane ${direction}`);
+      const window = state.topology.activeWindow?.id;
+      if (window && state.topology.panes.length > 1) {
+        expectFocus({ kind: 'window-pane-changed', window, pane: undefined });
+      }
       // Settles nothing, as selectPane does not: tmux's notifications carry
       // the new active Pane.
       background(mine, () => current.selectPaneToward(currentSessionTarget(), direction));
+      // Toward a neighbour, so in the Window shown.
+      reportWindowColours();
     },
 
     split: (direction) => runSessionVerb({ kind: 'split', direction }),
@@ -1745,7 +1885,8 @@ export function openAttach(options: AttachOptions): Attach {
       // nothing, and only the thing underneath can say which.
       if (control?.isOpen() ?? false) {
         say('the link survived the background');
-        reportColours();
+        // Whatever another screen wrote meanwhile is not the phone's look.
+        reportColours('session');
         return;
       }
       ended(

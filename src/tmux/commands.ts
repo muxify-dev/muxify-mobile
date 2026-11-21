@@ -340,6 +340,19 @@ export function listSessionPanesCommand(sessionName: string): TmuxArgv {
   return ['list-panes', '-s', '-t', currentPaneTarget(sessionName), '-F', '#{pane_id}'];
 }
 
+/** The name tmux gives the Client that runs it: the phone's own. */
+export function ownClientNameCommand(): TmuxArgv {
+  return ['display-message', '-p', '#{client_name}'];
+}
+
+/**
+ * Every Client on the server: its name, whether it is a control Client, and
+ * its flags, among them `ignore-size` for a Listener.
+ */
+export function listClientsCommand(): TmuxArgv {
+  return ['list-clients', '-F', '#{client_name}\t#{client_control_mode}\t#{client_flags}'];
+}
+
 /**
  * Makes this Client the latest one on its Window, so the size it asks for next
  * is the size the Window takes.

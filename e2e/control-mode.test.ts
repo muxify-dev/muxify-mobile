@@ -31,7 +31,13 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { openAttach, type Attach, type AttachPhase, type HostConnection } from '@/tmux/attach';
-import type { PaneColours } from '@/tmux/commands';
+import {
+  claimWindowCommand,
+  renderControlCommand,
+  reportPaneColoursCommands,
+  resizeClientCommand,
+  type PaneColours,
+} from '@/tmux/commands';
 import type { PaneSurface } from '@/tmux/pane-view';
 import type { SelectionRows } from '@/tmux/selection-rows';
 import type { Host, Records } from '@/storage/records';
@@ -580,6 +586,120 @@ describe('the Attach, against a real tmux', () => {
     await attach.close();
     rmSync(dir, { recursive: true, force: true });
   }, 30000);
+});
+
+describe('the colours of the screen in use, against a real tmux', () => {
+  const SCREENS = 'e2e-screens';
+  const PHONE: PaneColours = { foreground: '#657b83', background: '#fdf6e3' };
+  const MAC: PaneColours = { foreground: '#ebdbb2', background: '#1d2021' };
+  const PHONE_ANSWER = 'rgb:fdfd/f6f6/e3e3';
+  const MAC_ANSWER = 'rgb:1d1d/2020/2121';
+
+  beforeAll(() => {
+    try {
+      tmux(['kill-server']);
+    } catch {
+      // No server to kill, which is the usual case.
+    }
+  });
+
+  afterAll(() => {
+    try {
+      tmux(['kill-server']);
+    } catch {
+      // Already gone.
+    }
+  });
+
+  it('answers a probe with the colours of the screen that acted last, the phone or the Mac', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muxify-screens-'));
+    const asker = join(dir, 'asker.py');
+    const heard = join(dir, 'heard');
+    // The probe: asks for the background over and over, and writes down
+    // every answer.
+    writeFileSync(asker, [
+      'import os, sys, tty, time, select',
+      'tty.setraw(0)',
+      'while True:',
+      "    os.write(1, b'\\x1b]11;?\\x1b\\\\')",
+      '    end = time.time() + 0.2',
+      '    while time.time() < end:',
+      '        if select.select([0], [], [], 0.05)[0]:',
+      "            open(sys.argv[1], 'a').write(repr(os.read(0, 4096)) + '\\n')",
+    ].join('\n'));
+    const shell = tmux(['new-session', '-d', '-s', SCREENS, '-x', '80', '-y', '24', '-P', '-F', '#{pane_id}']).trim();
+    const probe = tmux(['split-window', '-d', '-t', `${SCREENS}:`, '-P', '-F', '#{pane_id}', `python3 ${asker} ${heard}`]).trim();
+    /** The background the probe was last answered with. */
+    const lastAnswer = () => {
+      let text = '';
+      try { text = readFileSync(heard, 'utf8'); } catch { /* not asked yet */ }
+      return [...text.matchAll(/rgb:[0-9a-f/]+/g)].pop()?.[0] ?? null;
+    };
+
+    // A fake Mac terminal: a second control Client that writes its own
+    // colours where its user acts, and takes the Window's size, as desktop
+    // Muxify does.
+    const mac = spawn('/bin/sh', ['-c', `tmux -L ${SOCKET} -C attach -t ${SCREENS}`]);
+    mac.stdin.on('error', () => {});
+    const macRuns = (...commands: string[][]) =>
+      mac.stdin.write(commands.map((argv) => `${renderControlCommand(argv)}\n`).join(''));
+    const macActs = (...first: string[][]) => macRuns(
+      ...first,
+      claimWindowCommand(),
+      resizeClientCommand(100, 30),
+      ...reportPaneColoursCommands(probe, MAC),
+    );
+
+    const { attach } = attachTo({ sessionName: SCREENS, colours: PHONE });
+    try {
+      await reaches(attach, 'connected');
+      await wait(1200);
+      expect(lastAnswer()).toBe(PHONE_ANSWER);
+
+      macActs();
+      await wait(1200);
+      expect(lastAnswer()).toBe(MAC_ANSWER);
+
+      // A phone pick.
+      expect(attach.selectPane(probe)).toBe(true);
+      await wait(1200);
+      expect(lastAnswer()).toBe(PHONE_ANSWER);
+
+      // A Mac key, at a Window the Mac's size already: nothing the phone sees.
+      macActs();
+      await wait(1200);
+      expect(lastAnswer()).toBe(MAC_ANSWER);
+
+      // A phone key takes the size and the colours back.
+      attach.view(probe).type(new TextEncoder().encode('x'));
+      await wait(1200);
+      expect(lastAnswer()).toBe(PHONE_ANSWER);
+      expect(tmux(['display-message', '-p', '-t', SCREENS, '#{window_width}x#{window_height}'])).toContain('40x20');
+
+      // A Mac key that moves the focus, and resizes nothing.
+      macRuns(['select-pane', '-t', shell], ...reportPaneColoursCommands(probe, MAC));
+      await wait(1200);
+      expect(lastAnswer()).toBe(MAC_ANSWER);
+      expect(tmux(['display-message', '-p', '-t', SCREENS, '#{window_width}x#{window_height}'])).toContain('40x20');
+
+      attach.view(probe).type(new TextEncoder().encode('x'));
+      await wait(1200);
+      expect(lastAnswer()).toBe(PHONE_ANSWER);
+
+      // A Mac key that takes the Window's size from the phone.
+      macActs();
+      await wait(1200);
+      expect(lastAnswer()).toBe(MAC_ANSWER);
+
+      attach.view(probe).press('Escape');
+      await wait(1200);
+      expect(lastAnswer()).toBe(PHONE_ANSWER);
+    } finally {
+      mac.kill();
+      await attach.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60000);
 });
 
 describe('typed keys, against a real tmux and a link that breaks', () => {

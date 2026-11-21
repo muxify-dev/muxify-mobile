@@ -719,6 +719,10 @@ describe('the order an Attach happens in', () => {
       'list-windows',
       'list-panes',
       'list-sessions',
+      // The phone's own Client name and the other Clients, so a screen's
+      // detach is known for one.
+      'display-message',
+      'list-clients',
     ]);
     // The pre-layout grid never reached tmux.
     expect(kit.hosts[0].commands[1]).toContain("'-C' '49x41'");
@@ -1041,6 +1045,257 @@ describe('the Theme’s colours', () => {
 
     kit.attach.lifecycleChanged('active');
     await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+  });
+
+  /** An Attach shown a Window of two Panes, %0 and %7, in a Session with %5 elsewhere, told once. */
+  async function twoPanes() {
+    const host = fakeHost();
+    const TWO = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,7]';
+    host.answering('list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5', '%7']
+      : [`0\t%0\tzsh\t1\t/home/user\t${TWO}`, `1\t%7\tzsh\t0\t/home/user\t${TWO}`]);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+    host.commands.length = 0;
+    return { kit, host };
+  }
+
+  it('writes every Pane of the Window again when the phone picks a Pane', async () => {
+    const { kit, host } = await twoPanes();
+
+    expect(kit.attach.selectPane('%7')).toBe(true);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Window again when the phone picks a Pane toward a direction', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.selectPaneToward('down');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Window now shown when the phone picks a Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.answering('list-windows', ['@0\t0\t0\t2\t0\tshell\tzsh', '@3\t3\t1\t1\t0\tlogs\tzsh']);
+    host.answering('list-panes', (command) => command.includes("'-s'")
+      ? ['%0', '%5', '%7', '%9']
+      : ['0\t%9\tzsh\t1\t/home/user\tb25d,49x41,0,0,9']);
+
+    await kit.attach.selectWindow(3);
+    await settle();
+
+    // Only the Window now shown: %0 and %7 stay as they were.
+    expect([...new Set(reports(host))].sort()).toEqual(['%9 10', '%9 11']);
+  });
+
+  it('writes a Window the phone told before when the phone picks it', async () => {
+    const { kit, host } = await twoPanes();
+
+    await kit.attach.selectWindow(0);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Session switched to, even one told before', async () => {
+    const { kit, host } = await twoPanes();
+
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    await settle();
+
+    expect(host.commands).toContain(`'list-panes' '-s' '-t' 'play:' '-F' '#{pane_id}'`);
+    expect([...new Set(reports(host))].sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+  });
+
+  it('writes every Pane of the Session again when the app comes back with the link alive', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.lifecycleChanged('background');
+    kit.attach.lifecycleChanged('active');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
+  });
+
+  it('writes nothing for a pick while the app is in the background', async () => {
+    const { kit, host } = await twoPanes();
+
+    kit.attach.lifecycleChanged('background');
+    kit.attach.selectPaneToward('down');
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  /** A key typed on the phone, into the Pane shown. */
+  const key = (kit: ReturnType<typeof attachOn>) => kit.attach.view('%0').type(new TextEncoder().encode('a'));
+
+  it('writes the Window again on the first key after another screen moves its focus, and only then', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%window-pane-changed @0 %7');
+    await settle();
+    expect(reports(host)).toEqual([]);
+
+    key(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+
+    host.commands.length = 0;
+    key(kit);
+    kit.attach.view('%0').press('Enter');
+    await settle();
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('writes the Window again on the first key after another screen switches the Session’s Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%session-window-changed $1 @0');
+    await settle();
+
+    kit.attach.view('%0').press('Enter');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('writes the Window again on the first key after another Client comes into the Session', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%client-session-changed /dev/ttys004 $1 work');
+    await settle();
+
+    key(kit);
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%7 10', '%7 11']);
+  });
+
+  it('leaves alone a focus change on another Session or another Window', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    host.notify('%window-pane-changed @4 %9');
+    host.notify('%session-window-changed $2 @4');
+    await settle();
+
+    key(kit);
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('does not count the phone’s own pick as another screen’s', async () => {
+    const { kit, host } = await twoPanes();
+    host.notify('%session-changed $1 work');
+    expect(kit.attach.selectPane('%7')).toBe(true);
+    await settle();
+    host.notify('%window-pane-changed @0 %7');
+    kit.attach.selectPaneToward('up');
+    await settle();
+    host.notify('%window-pane-changed @0 %0');
+    await settle();
+    host.commands.length = 0;
+
+    key(kit);
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('writes the Window again on the first key after another Client resized it', async () => {
+    const kit = attachOn({ colours: SOLARIZED });
+    await connected(kit);
+    const host = kit.hosts[0];
+    host.notify('%layout-change @0 b25d,115x72,0,0,0 b25d,115x72,0,0,0 *');
+    await settle();
+    host.commands.length = 0;
+
+    key(kit);
+    await settle();
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11']);
+    expect(host.commands).toContain("'refresh-client' '-C' '49x41'");
+
+    host.commands.length = 0;
+    key(kit);
+    await settle();
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('sends nothing for colours on a key when no other screen acted', async () => {
+    const { kit, host } = await twoPanes();
+
+    key(kit);
+    kit.attach.view('%0').press('Enter');
+    await settle();
+
+    expect(host.commands.filter((line) => line.startsWith("'refresh-client' '-r'") ||
+      line.startsWith("'list-panes' '-s'"))).toEqual([]);
+  });
+
+  /** A Host with the phone's own control Client, a screen's and a Listener's. */
+  function withClients(host: ReturnType<typeof fakeHost>, clients: string[]) {
+    host.answering('display-message', (command) => command.includes('#{client_name}')
+      ? ['client-1']
+      : ['0\t0\t0\t100\t49\t41\t0\t1\t1']);
+    host.answering('list-clients', clients);
+  }
+
+  const CLIENTS = [
+    'client-1\t1\tattached,focused,control-mode,UTF-8',
+    'client-2\t1\tattached,focused,control-mode,UTF-8',
+    'client-3\t1\tattached,focused,control-mode,ignore-size,UTF-8',
+  ];
+
+  it('writes every Pane of the Session again when a screen’s control Client detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-2');
+    await settle();
+
+    expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
+  });
+
+  it('writes nothing when a Listener, a control Client with ignore-size, detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS);
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-3');
+    host.notify('%client-detached /dev/ttys004');
+    await settle();
+
+    expect(reports(host)).toEqual([]);
+  });
+
+  it('knows a screen that came into a Session after the Attach when it detaches', async () => {
+    const host = fakeHost();
+    withClients(host, CLIENTS.slice(0, 1));
+    const kit = attachOn({ hosts: [host], colours: SOLARIZED });
+    await connected(kit);
+    await settle();
+    host.answering('list-clients', CLIENTS);
+    host.notify('%client-session-changed client-2 $1 other');
+    await settle();
+    host.commands.length = 0;
+
+    host.notify('%client-detached client-2');
+    await settle();
+
     expect(reports(host).sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11']);
   });
 
