@@ -94,7 +94,7 @@ describe('opening a Control Connection', () => {
   it('runs tmux in control mode with no PTY asked for', async () => {
     const host = fakeHost();
     await connected(host, 'my work');
-    expect(host.attachCommand).toBe("tmux '-C' 'attach-session' '-t' 'my work'");
+    expect(host.attachCommand).toBe("tmux -u '-C' 'attach-session' '-t' 'my work'");
   });
 
   it('runs the Host’s own tmux when it has one', async () => {
@@ -108,7 +108,7 @@ describe('opening a Control Connection', () => {
     host.accept();
     await opening;
     expect(host.attachCommand).toBe(
-      "'/opt/homebrew/bin/tmux' '-C' 'attach-session' '-t' 'work'",
+      "'/opt/homebrew/bin/tmux' -u '-C' 'attach-session' '-t' 'work'",
     );
   });
 

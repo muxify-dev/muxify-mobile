@@ -80,16 +80,16 @@ describe('rendering an argument list', () => {
   });
 
   it('puts tmux in front for a shell, and only there', () => {
-    expect(renderExecCommand(['list-sessions'])).toBe("tmux 'list-sessions'");
+    expect(renderExecCommand(['list-sessions'])).toBe("tmux -u 'list-sessions'");
     expect(renderExecCommand(['list-sessions'], '/opt/homebrew/bin/tmux')).toBe(
-      "'/opt/homebrew/bin/tmux' 'list-sessions'",
+      "'/opt/homebrew/bin/tmux' -u 'list-sessions'",
     );
   });
 });
 
 describe('attaching', () => {
   it('runs tmux in control mode, attaching to a Session that exists', () => {
-    expect(controlAttachCommand('work')).toBe("tmux '-C' 'attach-session' '-t' 'work'");
+    expect(controlAttachCommand('work')).toBe("tmux -u '-C' 'attach-session' '-t' 'work'");
   });
 
   it('never creates a Session on the way in', () => {

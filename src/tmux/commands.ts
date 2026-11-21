@@ -109,10 +109,17 @@ export function describeCommand(argv: TmuxArgv): string {
   return `send-keys -t ${named} ${argv.slice(target + 2).join(' ')}`;
 }
 
-/** An argument list as one line for a shell, with the tmux binary in front. */
+/**
+ * An argument list as one line for a shell, with the tmux binary in front.
+ *
+ * `-u` says the client reads UTF-8. An SSH channel with no pty often has no
+ * UTF-8 locale, and tmux then replaces every byte it cannot print in a reply
+ * with `_`: the tab between the fields of a `-F` format too. A reply with no
+ * tabs parses to no Windows and no Sessions, and the Attach waits forever.
+ */
 export function renderExecCommand(argv: TmuxArgv, tmuxExecutablePath?: string): string {
   const tmux = tmuxExecutablePath ? shellQuote(tmuxExecutablePath) : 'tmux';
-  return [tmux, ...argv.map(shellQuote)].join(' ');
+  return [tmux, '-u', ...argv.map(shellQuote)].join(' ');
 }
 
 /**
