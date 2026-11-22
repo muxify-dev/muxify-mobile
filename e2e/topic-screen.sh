@@ -3,8 +3,8 @@
 # Runs e2e/topic-screen.ad against two Topics in a sandboxed Muxify on this
 # Mac, the dev Host (see e2e/sandbox.sh): a live one, with a Note, a Tag and
 # one Session, and an Empty one. Both are pinned, so they are at the top of the
-# Topics tab. The sandbox starts the Host Screen on Sessions, so the app's
-# settings get the Topics tab for the run.
+# Board tab. The sandbox starts the Host Screen on Sessions, so the app's
+# settings get the Board tab for the run.
 #
 #   bash e2e/topic-screen.sh
 

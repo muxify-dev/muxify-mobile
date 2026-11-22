@@ -122,8 +122,8 @@ done
 agent-device press 'label="Sessions"' --settle >/dev/null
 agent-device wait 'label="Session 0"' 5000 >/dev/null || fail "a tap on Sessions did not change the tab"
 on_screen "Topic One" && fail "Topic One shows on the Sessions tab"
-agent-device press 'label="Topics"' --settle >/dev/null
-agent-device wait 'label="Topic One"' 5000 >/dev/null || fail "a tap on Topics did not change the tab"
+agent-device press 'label="Board"' --settle >/dev/null
+agent-device wait 'label="Topic One"' 5000 >/dev/null || fail "a tap on Board did not change the tab"
 echo "ok: the rows come back right under the tab control after Go to, and a tap changes the tab"
 
 agent-device press 'label="Sessions"' --settle >/dev/null
@@ -137,7 +137,7 @@ open_go_to "after the Terminal"
 agent-device press 'label="close"' --settle >/dev/null
 echo "ok: the bar is not on the Terminal, and takes a tap after it"
 
-agent-device press 'label="Topics"' --settle >/dev/null
+agent-device press 'label="Board"' --settle >/dev/null
 agent-device longpress 'label="Topic One"' 1000 --settle >/dev/null
 agent-device press 'role=button label="Move…"' --settle >/dev/null || fail "no Move… in the menu of One"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of One did not start"

@@ -147,17 +147,17 @@ read -r _ CONTROL_Y < <(centre "Host Screen view")
 read -r _ BAR_Y < <(centre "Go to")
 [ -n "${CONTROL_Y:-}" ] && [ -n "${BAR_Y:-}" ] || fail "no tab control or Go to field on the Host Screen"
 drag 100 "$CONTROL_Y" 200 0
-expect_tab topics "a drag right on the tab control on Sessions"
+expect_tab board "a drag right on the tab control on Sessions"
 on_host_screen || fail "a drag right on the tab control left the Host Screen"
 drag 280 "$BAR_Y" -200 0
-expect_tab sessions "a drag left on the Go to field on Topics"
-agent-device press 'label="Topics"' >/dev/null 2>&1
+expect_tab sessions "a drag left on the Go to field on Board"
+agent-device press 'label="Board"' >/dev/null 2>&1
 sleep 1
-expect_tab topics "a tap on Topics"
+expect_tab board "a tap on Board"
 read -r _ ROW_Y < <(centre "" Cell)
-[ -n "${ROW_Y:-}" ] || fail "no row on Topics"
+[ -n "${ROW_Y:-}" ] || fail "no row on Board"
 drag 300 "$ROW_Y" -200 0
-expect_tab topics "a drag left on a row on Topics"
+expect_tab board "a drag left on a row on Board"
 agent-device press 'label="Go to"' >/dev/null 2>&1
 agent-device wait 'role=search' 3000 >/dev/null 2>&1
 agent-device snapshot -i 2>/dev/null | grep -q 'search.*\[focused\]' || fail "a tap on Go to did not give it the keys"

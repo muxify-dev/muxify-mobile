@@ -8,9 +8,9 @@ import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**
  * The two views of the Host Screen, which are the two views of the Mac's
- * Sidebar: the Host's Topics, or every running Session.
+ * Sidebar: the Host's Board, or every running Session.
  */
-export type HostScreenTab = 'topics' | 'sessions';
+export type HostScreenTab = 'board' | 'sessions';
 
 /**
  * The tabs the Host Screen shows, in their order. The Host's Config decides,
@@ -22,8 +22,8 @@ export function hostScreenTabs(topics: HostTopics): readonly [HostScreenTab, ...
   const snapshot = lastSnapshot(topics);
   if (snapshot === null || topics.kind === 'updating') return ['sessions'];
   const { sidebar } = snapshot;
-  if (sidebar === null || sidebar.topics === sidebar.sessions) return ['topics', 'sessions'];
-  return sidebar.topics ? ['topics'] : ['sessions'];
+  if (sidebar === null || sidebar.topics === sidebar.sessions) return ['board', 'sessions'];
+  return sidebar.topics ? ['board'] : ['sessions'];
 }
 
 /** The tab to show: the one the user last chose on this Host when it is on show, else the first. */
@@ -121,13 +121,13 @@ export interface HostScreenInput {
 /**
  * The sections of one tab of the Host Screen.
  *
- * The Topics tab is the Mac's Topics view: Pinned, In Play, the Guests, the
+ * The Board tab is the Mac's Board: Pinned, In Play, the Guests, the
  * Bench row, and the No Topic row. The Sessions tab is the Mac's Sessions
  * view: every running Session in the order the Host lists them, with its Topic
  * under the name, and no Bench.
  */
 export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem }: HostScreenInput): HostScreenSection[] {
-  const sections = tab === 'topics'
+  const sections = tab === 'board'
     ? topicsList(topics, { opened, appearance, withNoTopic: true, attach })
     : [sessionsList(listing, topics)];
   if (problem === null) return sections;
@@ -361,7 +361,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * The Sessions tab: every running Session in the order the Host lists them,
  * which is the order the Mac's Sessions view shows. A Host with Topics says
  * which Topic each Session is in. A row above them says why the Host has no
- * Topics tab, when the Host CLI is being installed or updated, or failed.
+ * Board tab, when the Host CLI is being installed or updated, or failed.
  */
 function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
   const running = runningSessions(listing, topics);
@@ -376,7 +376,7 @@ function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
         topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
         ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
       }));
-  const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
+  const notice = hostScreenTabs(topics).includes('board') ? [] : topicsNotice(topics);
   return { id: 'sessions', title: null, rows: [...notice, ...rows] };
 }
 

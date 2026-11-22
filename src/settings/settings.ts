@@ -190,12 +190,15 @@ const DEFAULT_THEME_CHOICE: ThemeChoice = {
   darkTheme: DEFAULT_SETTINGS.darkTheme,
 };
 
-/** The last tab of each Host a saved value names. A tab this version does not know is dropped. */
+/**
+ * The last tab of each Host a saved value names. A tab this version does not
+ * know is dropped. The Board tab was saved as `topics` before it had the
+ * Mac's name.
+ */
 function parseHostScreenTabs(raw: unknown): Record<string, HostScreenTab> | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  const tabs = Object.entries(raw).filter(
-    (entry): entry is [string, HostScreenTab] => entry[1] === 'topics' || entry[1] === 'sessions',
-  );
+  const tabs = Object.entries(raw).flatMap(([host, tab]): [string, HostScreenTab][] =>
+    tab === 'board' || tab === 'topics' ? [[host, 'board']] : tab === 'sessions' ? [[host, 'sessions']] : []);
   return tabs.length > 0 ? Object.fromEntries(tabs) : undefined;
 }
 

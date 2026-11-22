@@ -161,7 +161,7 @@ const focusGoTo = () => act(async () => { searchBar(renderer)!.props.onFocus(); 
 const type = (text: string) => act(async () => { searchBar(renderer)!.props.onChangeText({ nativeEvent: { text } }); });
 
 describe('the tabs', () => {
-  it('opens on Topics, and remembers Sessions for this Host on a tap and on ⌥⌘T', async () => {
+  it('opens on the Board, and remembers Sessions for this Host on a tap and on ⌥⌘T', async () => {
     await mount();
 
     expect(labels()).toEqual(expect.arrayContaining(['Topic Fix login', 'No Topic']));
@@ -184,7 +184,7 @@ describe('the tabs', () => {
 });
 
 describe('a Host that cannot be reached', () => {
-  it.each(['topics', 'sessions'] as const)('says so once on the %s tab, with one Try again that holds the Host again', async (tab) => {
+  it.each(['board', 'sessions'] as const)('says so once on the %s tab, with one Try again that holds the Host again', async (tab) => {
     mockSettings = { hostScreenTabs: { host: tab } };
     await mount();
     mockReading = {

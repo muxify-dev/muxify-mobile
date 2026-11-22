@@ -6,7 +6,7 @@
 #
 # The Topic starts with a Note, #work and #e2eold, a Tag that the Config does
 # not define: the script gives it that Tag through a copy of the Config that
-# defines it. It is pinned, so it is at the top of the Topics tab.
+# defines it. It is pinned, so it is at the top of the Board tab.
 #
 #   bash e2e/edit-topic.sh
 

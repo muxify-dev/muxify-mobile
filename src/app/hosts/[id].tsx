@@ -88,10 +88,10 @@ import type { Drop } from '@/topics/topic-drop';
 import type { SessionAction } from '@/topics/tmux-order';
 import { recordVisit } from '@/topics/visit';
 
-const TAB_NAMES: Record<HostScreenTab, string> = { topics: 'Topics', sessions: 'Sessions' };
+const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
 
 /**
- * A Host: its Topics or its Sessions, as the Mac's Sidebar shows them, and
+ * A Host: its Board or its Sessions, as the Mac's Sidebar shows them, and
  * Go to in the bar at the bottom.
  *
  * It draws the tab that hostScreen returns. While the Go to field has the

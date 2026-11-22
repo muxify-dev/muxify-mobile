@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Puts the Host Screen on the Topics tab for a suite about Topic cards. The
+# Puts the Host Screen on the Board tab for a suite about Topic cards. The
 # sandbox starts it on Sessions, and puts the settings back at the end.
 #
 #   bash e2e/topics-tab.sh
