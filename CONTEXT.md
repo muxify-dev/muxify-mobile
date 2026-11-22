@@ -26,8 +26,8 @@ the Terminal Screen, going Home and backgrounding Muxify all leave it up.
 Muxify holds at most one per Host, and the Attach and the screens share it:
 the Attach's Control Connection and each screen read are channels on it. It
 ends when the transport is lost, when its keepalive goes unanswered for about
-15 s, or a minute after the last screen read once no Attach holds it. See ADR
-0007 and ADR 0012.
+15 s, when tmux does not answer the Attach's probe within 8 s, or a minute
+after the last screen read once no Attach holds it. See ADR 0007 and ADR 0012.
 _Avoid_: SSH session, link, socket
 
 **Host CLI**:
