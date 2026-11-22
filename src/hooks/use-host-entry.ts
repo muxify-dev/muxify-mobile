@@ -3,10 +3,10 @@ import { useCallback, useRef, useState } from 'react';
 import { ActionSheetIOS, Alert } from 'react-native';
 
 import { actionLabel } from '@/domain/cover';
+import type { BoardSessionRow } from '@/domain/host-screen';
 import { ended, IDLE, reached, send, type HostWrite } from '@/domain/host-write';
 import { describeError } from '@/lib/describe-error';
 import { deviceHostStore } from '@/storage/device-store';
-import type { BoardSessionRow } from '@/domain/host-screen';
 import type { Host, PlaceTab } from '@/storage/records';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
@@ -17,12 +17,12 @@ import { wakeBoardSession, type BoardSessionWake } from '@/topics/host-writes';
 import { chooseTopicSession } from '@/topics/open-topic';
 import { readTopic } from '@/topics/read-topic';
 import { newRequestId } from '@/topics/request';
-import type { TopicWrite } from '@/topics/topic-edit';
 import { topicSeedParam, type TopicDetail } from '@/topics/topic-detail';
+import type { TopicWrite } from '@/topics/topic-edit';
 import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
-import { endOfThrow } from './use-host-write';
 import { alertCardWrite } from './use-card-writes';
+import { endOfThrow } from './use-host-write';
 
 interface EntryFeedback {
   isCurrent: () => boolean;
@@ -75,7 +75,10 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     await attachTopic(result.topic, delivery);
   }, [hostId, attachTopic]);
 
-  /** `card` is the key of the card that shows the spinner, or null for a plain Session. */
+  /**
+   * `card` is the card that shows the spinner, by its `cardKey`, and whether
+   * it is a Topic, which the failure alert names. Null for a plain Session.
+   */
   const run = useCallback((card: { key: string; topic: boolean } | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback) => {
     if (running.current || !focused.current) return;
     const operation = Symbol();

@@ -63,12 +63,12 @@ import {
   type SessionRow,
 } from '@/domain/host-screen';
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
+import { useCardWrites } from '@/hooks/use-card-writes';
 import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
 import { useTmuxWrites } from '@/hooks/use-tmux-writes';
-import { useCardWrites } from '@/hooks/use-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';

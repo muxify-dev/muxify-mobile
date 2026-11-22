@@ -108,9 +108,9 @@ export interface FillChoices {
 /**
  * The cards that can fill the Open Place `placeId`, from the sections the
  * Host Screen draws with the Bench opened: the Guest and Benched Topics and
- * Board Sessions, Dormant ones too, as `fill_open_place` takes them. A Pinned
- * card stays in its Pin group. Null when the Open Place is gone from the
- * Listing.
+ * the Guest Board Sessions, Dormant ones too, as `fill_open_place` takes them.
+ * A Board Session is never on the Bench, and a Pinned card stays in its Pin
+ * group. Null when the Open Place is gone from the Listing.
  */
 export function fillChoices(sections: HostScreenSection[], placeId: string): FillChoices | null {
   const places = sections.find((section) => section.id === 'in-play')?.rows.filter(isBoardRow) ?? [];

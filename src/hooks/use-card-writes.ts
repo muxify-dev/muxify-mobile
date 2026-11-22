@@ -53,7 +53,7 @@ export function useCardWrites(hostId: string, sends: CardSends = HOST_SENDS) {
 export function alertCardWrite(label: string, end: HostWrite, look?: { text: string; onPress: () => void }) {
   if (end.kind === 'failed') Alert.alert(`Could not ${label}`, end.reason);
   if (end.kind === 'unsure') {
-    const body = `${end.reason} It may still be working: look at the Topic again in a moment.`;
+    const body = `${end.reason} It may still be working: look again in a moment.`;
     if (look) Alert.alert(`${label} may have happened`, body, [look, { text: 'OK' }]);
     else Alert.alert(`${label} may have happened`, body);
   }

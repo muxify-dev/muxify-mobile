@@ -168,7 +168,7 @@ const TAGS: EnvironmentSnapshot['tags'] = [
 // The Topic's own order, which the Mac does not draw in.
 const TAG_NAMES = ['gone', 'ui', 'odd', 'work'];
 
-describe('the Topics tab of the Host Screen', () => {
+describe('the Board tab of the Host Screen', () => {
   it.each<TopicsCase>([
     {
       name: 'puts the Pinned cards in their own section, and the places in the order they came',
@@ -664,11 +664,11 @@ describe('the Sessions tab of the Host Screen', () => {
       topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
       row: { kind: 'refused', message: 'Could not install Muxify on this Host: neither curl nor wget' },
     },
-  ])('says above the Sessions why the Host has no Topics tab, when $name', ({ topics, row }) => {
+  ])('says above the Sessions why the Host has no Board tab, when $name', ({ topics, row }) => {
     expect(sessions(answered([running('main')]), topics)).toEqual([sessionsSection(row, sessionRow('main', null, 1))]);
   });
 
-  it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Topics tab has the error', () => {
+  it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Board tab has the error', () => {
     expect(sessions(answered([running('main')]), { kind: 'absent' })[0]?.rows).toHaveLength(1);
     expect(sessions(answered([]), { kind: 'failed', error: 'no route', last: snapshot() })[0]?.rows).toEqual([
       note('No Sessions on this Host.'),
