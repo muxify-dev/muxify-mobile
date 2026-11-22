@@ -18,7 +18,7 @@ import {
 export { HostServerError, type HostServerCall, type OldSide, type OpenServerChannel } from './host-server-channel';
 
 /** What the phone uses of the Host Server. A server whose `hello` lacks one is too old. */
-export const PHONE_CAPABILITIES = ['request', 'snapshot', 'topic-detail', 'ranked-session-paths', 'browser-tabs'] as const;
+export const PHONE_CAPABILITIES = ['request', 'snapshot', 'topic-detail', 'ranked-session-paths', 'browser-tabs', 'board'] as const;
 
 /** A server that stops this many times… */
 export const MAX_STOPS = 3;
