@@ -63,11 +63,18 @@ scroll_to() {
 }
 
 # Scrolls the node labelled $1 into sight: it is in the list's top or its bottom.
+# A row under the bar at the bottom is in the tree too, but a touch there goes
+# to the bar, and a drag on the bar changes the tab, so the row must be above it.
 reveal() {
   local end
   for end in "" top bottom; do
     [ -n "$end" ] && scroll_to "$end"
-    snap && python3 -c 'import json, sys; sys.exit(not any(n.get("label") == sys.argv[2] for n in json.load(open(sys.argv[1]))["data"]["nodes"]))' "$SNAPSHOT" "$1" && return 0
+    snap && python3 - "$SNAPSHOT" "$1" <<'PY' && return 0
+import json, sys
+nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
+bar = min((n["rect"]["y"] for n in nodes if n.get("label") in ("Go to", "New")), default=float("inf"))
+sys.exit(not any(n.get("label") == sys.argv[2] and n["rect"]["y"] + n["rect"]["height"] / 2 < bar - 8 for n in nodes))
+PY
   done
   return 1
 }
@@ -90,12 +97,13 @@ new_topic() {
   muxify topic add-session "$MUXIFY_E2E_ROOT/$1" --topic "$id" --json >/dev/null || exit 1
 }
 
-# A new Topic takes a free place, else goes to the top of the Bench.
+# A new Topic is a Guest, and a Benched Topic goes to the top of the Bench.
 for title in PinA PinB B2 B1 G1 P3 P1 AG; do new_topic "$title"; done
 muxify topic pin --topic PinA --json >/dev/null || exit 1
 muxify topic pin --topic PinB --json >/dev/null || exit 1
-muxify topic fill-place 1 --topic P1 --json >/dev/null || exit 1
-muxify topic make-guest --topic G1 --json >/dev/null || exit 1
+muxify topic choose-in-play --topic P1 --json >/dev/null || exit 1
+for title in B1 P3 AG; do muxify topic bench --topic "$title" --json >/dev/null || exit 1; done
+muxify topic fill-place 3 --topic B2 --json >/dev/null || exit 1
 muxify topic mark-unread --topic-only --topic B1 --json >/dev/null || exit 1
 
 # The Mac shows an Agent only in a Pane whose command is the Agent's.

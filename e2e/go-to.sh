@@ -40,6 +40,7 @@ printf 'topics:\n  tags:\n    personal: {}\n    work: {}\nsessions:\n  paths:\n 
 muxify session-paths refresh >/dev/null || exit 1
 id=$(muxify topic new One --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])') || exit 1
 muxify topic add-session "$PROJECTS/alpha" --topic "$id" --json >/dev/null || exit 1
+muxify topic choose-in-play --topic "$id" --json >/dev/null || exit 1
 
 # Whether the screen has a node labelled $1.
 on_screen() { agent-device snapshot -i 2>/dev/null | grep -qF "\"$1\""; }

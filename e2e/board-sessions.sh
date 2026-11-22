@@ -263,6 +263,24 @@ wake_by_tap() {
   agent-device press "label=\"$2\" hittable=true" --settle >/dev/null || fail "no $2 in the sheet of $1"
 }
 
+# Checks that the row of card $2 shows the word Dormant when $1 is yes, and does not when $1 is no.
+dormant_mark() {
+  reveal "$2" || fail "no card $2"
+  for _ in $(seq 10); do
+    agent-device snapshot --json >"$SNAPSHOT" 2>/dev/null && python3 - "$SNAPSHOT" "$2" "$1" <<'PY' && return 0
+import json, sys
+nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
+card = next(n["rect"] for n in nodes if n.get("label") == sys.argv[2])
+inside = lambda r: card["y"] <= r["y"] + r["height"] / 2 <= card["y"] + card["height"]
+marked = any(n.get("label") == "Dormant" and "StaticText" in n.get("type", "") and inside(n["rect"]) for n in nodes)
+sys.exit(marked != (sys.argv[3] == "yes"))
+PY
+    sleep 0.5
+  done
+  [ "$1" = yes ] && fail "the row of $2 does not say Dormant"
+  fail "the row of live $2 says Dormant"
+}
+
 windows_of() { tmux list-windows -t "=$1" -F '#{window_id}' 2>/dev/null | wc -l | tr -d ' '; }
 
 echo "== Setup"
@@ -357,6 +375,8 @@ expect_mac "$DORMANT"
 echo "Mac after the restart: $(mac_listing)"
 open_host_screen "Session bspin"
 expect "$DORMANT"
+for name in bspin bsplace bsguest bsextra; do dormant_mark yes "Session $name"; done
+echo "ok: the row of each Dormant Board Session says Dormant"
 scroll_to top
 scroll_to bottom
 
@@ -400,7 +420,8 @@ wake_by_tap bsextra Reopen
 attaches "Reopen of bsextra" "bsextra"
 expect "bspin~ TopA~ | ${PLACES/bsguest~/open} | bsextra | TopB~"
 tmux has-session -t '=bsextra' || fail "tmux has no Session bsextra"
-echo "ok: the sandbox's tmux server has bsextra again"
+dormant_mark no "Session bsextra"
+echo "ok: the sandbox's tmux server has bsextra again, and its row does not say Dormant"
 
 echo "== Tap a Dormant Pinned card: Start Fresh"
 wake_by_tap bspin "Start Fresh"
