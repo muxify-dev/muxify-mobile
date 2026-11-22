@@ -1,12 +1,12 @@
-import type { TopicId } from '@/topics/environment';
+import { cardKey, type BoardCard } from '@/topics/board-card';
 import type { Drop, DropAnchor } from '@/topics/topic-drop';
 
-import type { HostScreenRow, HostScreenSection } from './host-screen';
+import { rowCard, type CardRow, type HostScreenRow, type HostScreenSection } from './host-screen';
 
 /**
- * one Host Write that the Mac's rules decide: a drop of the card
- * one `muxify topic` command that the Mac's rules decide: a drop of the card
- * next to, onto or into another card, or one of the menu's orders.
+ * What a tap on a target sends: one Host Write that the Mac's rules decide, a
+ * drop of the card next to, onto or into another card, or one of the menu's
+ * orders.
  */
 export type MoveTarget =
   | { kind: 'drop'; drop: Drop }
@@ -32,8 +32,8 @@ export function moveTargetLabel(target: MoveTarget): string {
   }
 }
 
-/** A row that is one card of the Topics list. */
-type CardRow = Extract<HostScreenRow, { kind: 'topic' | 'locked-session' | 'open-place' | 'unknown-card' }>;
+/** A row that is one card of the Board. */
+type BoardRow = Extract<HostScreenRow, { kind: 'topic' | 'board-session' | 'open-place' | 'unknown-card' }>;
 
 /**
  * Cards that a move keeps a card among. A card moves anywhere in its own
@@ -43,23 +43,25 @@ type CardRow = Extract<HostScreenRow, { kind: 'topic' | 'locked-session' | 'open
  */
 interface Group {
   section: HostScreenSection['id'];
-  cards: CardRow[];
+  cards: BoardRow[];
   acrossLines: boolean;
 }
 
 /**
- * The target of every row for the picked Topic card, from the sections the
- * Host Screen draws with the Bench opened. The picked card and a row that no
- * command can name have none. No target is a move that would do nothing.
+ * The target of every row for the picked card, a Topic or a Board Session,
+ * from the sections the Host Screen draws with the Bench opened. The picked
+ * card and a row that no command can name have none. No target is a move
+ * that would do nothing.
  */
-export function moveTargets(sections: HostScreenSection[], picked: TopicId): MoveTargets {
+export function moveTargets(sections: HostScreenSection[], picked: BoardCard): MoveTargets {
   const rows = new Map<HostScreenRow, MoveTarget>();
   const headers = new Map<HostScreenSection['id'], MoveTarget>();
   const groups = sections.flatMap(groupsOf);
-  const home = groups.find((group) => group.cards.some((card) => isPicked(card, picked)));
+  const isPicked = (card: BoardRow) => isCard(card, picked);
+  const home = groups.find((group) => group.cards.some(isPicked));
   if (home === undefined) return { rows, headers };
 
-  const from = home.cards.findIndex((card) => isPicked(card, picked));
+  const from = home.cards.findIndex(isPicked);
   home.cards.forEach((card, index) => {
     const anchor = anchorOf(card);
     if (index === from || anchor === null) return;
@@ -88,34 +90,39 @@ export function moveTargets(sections: HostScreenSection[], picked: TopicId): Mov
   return { rows, headers };
 }
 
-type TopicCard = Extract<HostScreenRow, { kind: 'topic' }>;
+/** The row of `card` among the sections, or undefined once a pushed Listing has dropped it. */
+export function findCardRow(sections: HostScreenSection[], card: BoardCard): CardRow | undefined {
+  return sections
+    .flatMap((section) => section.rows)
+    .find((row): row is CardRow => isCard(row, card));
+}
 
-/** What a tap on an Open Place offers: the Topics that can go in, and the place they fill. */
+/** What a tap on an Open Place offers: the cards that can go in, and the place they fill. */
 export interface FillChoices {
-  /** The Open Place, counted from 1 among the In Play places, as `topic fill-place` takes it. */
+  /** The Open Place, counted from 1 among the In Play places, as `fill_open_place` takes it. */
   place: number;
-  guests: TopicCard[];
-  bench: TopicCard[];
+  guests: CardRow[];
+  bench: CardRow[];
 }
 
 /**
- * The Topic cards that can fill the Open Place `placeId`, from the sections
- * the Host Screen draws with the Bench opened: the Guest and Benched Topics,
- * Dormant ones too, as `topic fill-place` takes them. A Locked Session cannot
- * be named to fill a place, and a Pinned card stays in its Pin group. Null when
- * the Open Place is gone from the Listing.
+ * The cards that can fill the Open Place `placeId`, from the sections the
+ * Host Screen draws with the Bench opened: the Guest and Benched Topics and
+ * Board Sessions, Dormant ones too, as `fill_open_place` takes them. A Pinned
+ * card stays in its Pin group. Null when the Open Place is gone from the
+ * Listing.
  */
 export function fillChoices(sections: HostScreenSection[], placeId: string): FillChoices | null {
-  const places = sections.find((section) => section.id === 'in-play')?.rows.filter(isCard) ?? [];
+  const places = sections.find((section) => section.id === 'in-play')?.rows.filter(isBoardRow) ?? [];
   const index = places.findIndex((card) => card.kind === 'open-place' && card.id === placeId);
   if (index === -1) return null;
-  const topicsOf = (id: HostScreenSection['id']) =>
-    sections.find((section) => section.id === id)?.rows.filter((row): row is TopicCard => row.kind === 'topic') ?? [];
-  return { place: index + 1, guests: topicsOf('guests'), bench: topicsOf('bench') };
+  const cardsOf = (id: HostScreenSection['id']) =>
+    sections.find((section) => section.id === id)?.rows.filter((row): row is CardRow => rowCard(row) !== null) ?? [];
+  return { place: index + 1, guests: cardsOf('guests'), bench: cardsOf('bench') };
 }
 
 function groupsOf(section: HostScreenSection): Group[] {
-  const cards = section.rows.filter(isCard);
+  const cards = section.rows.filter(isBoardRow);
   if (cards.length === 0) return [];
   switch (section.id) {
     case 'pinned':
@@ -129,23 +136,23 @@ function groupsOf(section: HostScreenSection): Group[] {
   }
 }
 
-function isCard(row: HostScreenRow): row is CardRow {
+function isBoardRow(row: HostScreenRow): row is BoardRow {
   return (
-    row.kind === 'topic' || row.kind === 'locked-session' || row.kind === 'open-place' || row.kind === 'unknown-card'
+    row.kind === 'topic' || row.kind === 'board-session' || row.kind === 'open-place' || row.kind === 'unknown-card'
   );
 }
 
-function isPicked(card: CardRow, picked: TopicId): boolean {
-  return card.kind === 'topic' && card.id === picked;
+function isCard(row: HostScreenRow, card: BoardCard): boolean {
+  const its = rowCard(row);
+  return its !== null && cardKey(its) === cardKey(card);
 }
 
-/** The name the Mac's CLI takes for a card, or null for a card this phone does not know. */
-function anchorOf(card: CardRow): DropAnchor | null {
+/** The card a drop names, or null for a card this phone does not know. */
+function anchorOf(card: BoardRow): DropAnchor | null {
   switch (card.kind) {
     case 'topic':
-      return { kind: 'topic', id: card.id };
-    case 'locked-session':
-      return { kind: 'locked-session', session: card.session, name: card.name };
+    case 'board-session':
+      return rowCard(card);
     case 'open-place':
       return { kind: 'open-place', id: card.id };
     case 'unknown-card':

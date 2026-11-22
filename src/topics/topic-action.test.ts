@@ -9,7 +9,7 @@ import {
   TOPIC_ACTION_LABEL,
 } from './topic-action';
 
-const offered = (section: CardSection, mark: Mark | null = null) => menuActions({ section, mark });
+const offered = (section: CardSection, mark: Mark | null = null) => menuActions({ kind: 'topic', section, mark });
 
 describe('what the menu of a Topic card offers', () => {
   it.each<[CardSection, TopicAction[]]>([
@@ -45,6 +45,17 @@ describe('what the menu of a Topic card offers', () => {
   it('offers Unpin, not Pin, on a Pinned card', () => {
     expect(offered('pinned')).toContain('unpin');
     expect(offered('pinned')).not.toContain('pin');
+  });
+});
+
+describe('what the menu of a Board Session card offers', () => {
+  it.each<[CardSection, TopicAction[]]>([
+    ['pinned', ['unpin', 'move-up', 'move-down']],
+    ['in-play', ['pin', 'move-up', 'move-down', 'bench']],
+    ['guests', ['pin', 'move-up', 'move-down', 'bench']],
+  ])('in %s, with no Mark as Read and no Bench on a Pinned card', (section, expected) => {
+    expect(menuActions({ kind: 'board-session', section, mark: null })).toEqual(expected);
+    expect(menuActions({ kind: 'board-session', section, mark: 'unread' })).toEqual(expected);
   });
 });
 

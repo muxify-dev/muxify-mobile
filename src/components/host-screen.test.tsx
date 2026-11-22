@@ -64,9 +64,9 @@ jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
-  openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: jest.fn(), busyTopic: null,
+  openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null,
 }) }));
-jest.mock('@/hooks/use-topic-card-writes', () => ({ useTopicCardWrites: () => ({ order: jest.fn(), writing: () => false }) }));
+jest.mock('@/hooks/use-card-writes', () => ({ useCardWrites: () => ({ order: jest.fn(), close: jest.fn(), writing: () => false }) }));
 jest.mock('@/keyboard/key-commands', () => ({ useScreenKeyboardShortcuts: (handlers: KeyboardHandlers) => { mockKeys = handlers; } }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({
   settings: mockSettings, appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark, rememberHostScreenTab: mockRemember,

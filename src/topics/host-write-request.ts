@@ -4,7 +4,7 @@ import { HostServerError, type HostServer, type HostServerCall } from '@/ssh/hos
 import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';
 
-import type { SessionId, TopicId } from './environment';
+import type { BoardSessionId, SessionId, TopicId } from './environment';
 import { REQUEST_MISMATCH_ERROR, WriteOutcomeUnknown, type RequestId, type UnknownOutcome } from './request';
 
 /** The version of MuxifyCore's `EnvironmentRequest` that the phone sends. */
@@ -13,18 +13,22 @@ const ENVIRONMENT_VERSION = 2;
 /** One case of MuxifyCore's `EnvironmentCommand`, as JSON: `{ "<case>": { … } }`. */
 export type EnvironmentCommand = Readonly<Record<string, unknown>>;
 
-/** A tmux Session or Window that a write acts on, by tmux's own id: `$3` or `@5`. */
-export type TmuxTarget = { session: SessionId } | { window: string };
+/**
+ * What a write acts on, MuxifyCore's `EnvironmentTarget`: an open Topic, a
+ * tmux Session or Window by tmux's own id (`$3`, `@5`), or a Board Session by
+ * its id, which names a Dormant one.
+ */
+export type WriteTarget =
+  | { topic: TopicId }
+  | { session: SessionId }
+  | { window: string }
+  | { board_session: BoardSessionId };
 
 /** One Host Write as the Host Server takes it: the command, what it acts on, and its Request id. */
 export interface EnvironmentWrite {
   command: EnvironmentCommand;
-  /**
-   * The open Topic the command acts on, or the Session or Window. A command
-   * that takes no target, such as `create`, has neither.
-   */
-  topic?: TopicId;
-  tmux?: TmuxTarget;
+  /** None for a command that takes no target, such as `create`. */
+  target?: WriteTarget;
   request: RequestId;
 }
 
@@ -42,11 +46,14 @@ export function environmentRequest(write: EnvironmentWrite): object {
     environment: {
       version: ENVIRONMENT_VERSION,
       command: write.command,
-      ...(write.topic === undefined ? {} : { target: { topic: { id: write.topic } } }),
-      ...(write.tmux === undefined ? {} : { target: write.tmux }),
+      ...(write.target === undefined ? {} : { target: wireTarget(write.target) }),
       request: write.request,
     },
   };
+}
+
+function wireTarget(target: WriteTarget): object {
+  return 'topic' in target ? { topic: { id: target.topic } } : target;
 }
 
 /**

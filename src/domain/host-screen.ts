@@ -1,4 +1,5 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
+import type { BoardCard, BoardSessionCard } from '@/topics/board-card';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
 import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
@@ -76,8 +77,7 @@ export type HostScreenRow =
       /** What the Attach can show before its first Topic read. */
       seed: TopicDetail;
     }
-  /** A Locked Session shown as its own card. */
-  | { kind: 'locked-session'; session: SessionId; name: string; mark: Mark | null; pinned: boolean }
+  | BoardSessionRow
   /** An empty In Play place. */
   | { kind: 'open-place'; id: string }
   /** The In Play Bench, as one row that opens to show its cards. */
@@ -86,6 +86,34 @@ export type HostScreenRow =
   | { kind: 'unknown-card'; text: string }
   /** The Sessions that are in no Topic, as one row that opens to list them. */
   | { kind: 'no-topic'; count: number; opened: boolean };
+
+/**
+ * A Board Session's card: a Session in no Topic, live or Dormant. The card
+ * says which: a live one by its tmux id, a Dormant one by its Board Session
+ * id, and a Dormant one is dimmed.
+ */
+export interface BoardSessionRow {
+  kind: 'board-session';
+  card: BoardSessionCard;
+  name: string;
+  mark: Mark | null;
+  pinned: boolean;
+  /** Where the card sits, which says what its menu offers. */
+  section: CardSection;
+}
+
+/** A row that is a card a write can name: a Topic or a Board Session. */
+export type CardRow = Extract<HostScreenRow, { kind: 'topic' }> | BoardSessionRow;
+
+/** The card of a row, as the writes name it. */
+export function cardOf(row: CardRow): BoardCard {
+  return row.kind === 'topic' ? { kind: 'topic', id: row.id } : row.card;
+}
+
+/** The card a row is, or null for a row that no write can name. */
+export function rowCard(row: HostScreenRow): BoardCard | null {
+  return row.kind === 'topic' || row.kind === 'board-session' ? cardOf(row) : null;
+}
 
 /** The rows that the user can open in place, by the id the screen holds them under. */
 export type OpenableRow = 'no-topic' | 'bench';
@@ -287,7 +315,7 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
 /**
  * What shows of the place the Attach is in while the Bench row hides it, as
  * the Mac shows the card of its Location: the Benched card of the Attach's
- * Topic or Locked Session, or the Attach's Session when it is in No Topic.
+ * Topic or live Board Session, or the Attach's Session when it is in No Topic.
  */
 function benchPeek(
   snapshot: EnvironmentSnapshot,
@@ -346,8 +374,10 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
       const name = names.get(card.sessions[0]);
       return name === undefined
         ? { kind: 'unknown-card', text: card.sessions[0] }
-        : { kind: 'locked-session', session: card.sessions[0], name, mark: card.mark, pinned };
+        : { kind: 'board-session', card: { kind: 'live-session', session: card.sessions[0] }, name, mark: card.mark, pinned, section };
     }
+    case 'dormant_session':
+      return { kind: 'board-session', card: { kind: 'dormant-session', id: card.id }, name: card.name, mark: null, pinned, section };
     case 'open_place':
       return { kind: 'open-place', id: card.id };
     case 'unknown': {

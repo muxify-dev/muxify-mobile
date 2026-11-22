@@ -7,6 +7,7 @@ import HostScreen from '@/app/hosts/[id]';
 import { HostProblem } from '@/ssh/failures';
 import { followListing, type ListingFeed } from '@/ssh/host-listing-feed';
 import type { HostServer, HostServerState } from '@/ssh/host-server';
+import { protocolFrames } from '@/test-support/protocol-frames';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { DisconnectReason } from '@/tmux/disconnect-reason';
 import type { HostCliState } from '@/topics/host-cli-install';
@@ -60,11 +61,12 @@ jest.mock('@/components/tappable-row', () => ({ TAPPABLE_ROW: {} }));
 jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: () => null }));
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
-jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn(), busyTopic: null }) }));
+jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null }) }));
 jest.mock('@/hooks/use-go-to-paths', () => ({ useGoToPaths: () => ({ paths: { query: '', rows: [] }, reading: { kind: 'idle' }, ask: () => {} }) }));
-jest.mock('@/topics/act-on-topic', () => ({
-  ...jest.requireActual('@/topics/act-on-topic'),
-  sendTopicOrder: (...args: unknown[]) => mockSend(...args),
+jest.mock('@/topics/act-on-card', () => ({
+  ...jest.requireActual('@/topics/act-on-card'),
+  sendCardOrder: (...args: unknown[]) => mockSend(...args),
+  closeTopic: (...args: unknown[]) => mockSend(...args),
 }));
 jest.mock('@/topics/tmux-order', () => ({
   ...jest.requireActual('@/topics/tmux-order'),
@@ -121,6 +123,8 @@ function fakeServer(initial: HostServerState) {
     push: (item: unknown) => act(async () => { items[items.length - 1]!(item); }),
   };
 }
+
+const T0 = { kind: 'topic', id: 't0' };
 
 /** A snapshot as the Host Server pushes it: one Session in a Topic In Play for each label. */
 const snapshotItem = (...labels: string[]) => ({
@@ -260,7 +264,7 @@ describe('a live Host Screen', () => {
     await server.push(snapshotItem('Ship', 'Docs'));
 
     await act(async () => { button('Move Down').props.onPress(); });
-    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'move-down' }, expect.any(Function));
+    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ id: 'host' }), T0, { kind: 'action', action: 'move-down' }, expect.any(Function));
     expect(topics()).toEqual(['Topic Ship', 'Topic Docs']);
 
     await server.push(snapshotItem('Docs', 'Ship'));
@@ -279,14 +283,14 @@ describe('a live Host Screen', () => {
     expect(labels()).not.toContain('Unpin');
 
     await act(async () => { button('Pin').props.onPress(); });
-    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'pin' }, expect.any(Function));
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), T0, { kind: 'action', action: 'pin' }, expect.any(Function));
     const pinned = snapshotItem('Ship', 'Docs');
     const [ship, ...rest] = pinned.unpinned.places;
     await server.push({ ...pinned, pinned: [ship], unpinned: { ...pinned.unpinned, places: rest } });
     expect(labels()).toEqual(expect.arrayContaining(['Unpin', 'Pin']));
 
     await act(async () => { button('Unpin').props.onPress(); });
-    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'unpin' }, expect.any(Function));
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), T0, { kind: 'action', action: 'unpin' }, expect.any(Function));
 
     await act(async () => { button('Forget…').props.onPress(); });
     const [title, message, buttons] = alert.mock.calls[0]!;
@@ -295,10 +299,49 @@ describe('a live Host Screen', () => {
     expect((buttons as AlertButton[]).map((choice) => choice.text)).toEqual(['Forget', 'Forget and Stop Sessions', 'Cancel']);
     await act(async () => { (buttons as AlertButton[])[1]!.onPress!(); });
     expect(mockSend).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: 'host' }), 't0', { kind: 'action', action: 'forget-stopping-sessions' }, expect.any(Function));
+      expect.objectContaining({ id: 'host' }), 't0', 'forget-stopping-sessions', expect.any(Function));
 
     await server.push(snapshotItem('Docs'));
     expect(topics()).toEqual(['Topic Docs']);
+  });
+
+  it('draws the Board Sessions of the board fixture at their places, with the menu of each, and writes to the card', async () => {
+    const server = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    await mount();
+    await server.push(protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item);
+
+    expect(labels()).toEqual([
+      'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session docs',
+      'Reopen', 'Start Fresh', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session logs',
+      'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session scratch',
+      'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session notes',
+    ]);
+    expect(texts().filter((text) => text === 'Dormant')).toHaveLength(3);
+
+    await act(async () => { labelled('Bench')[1]!.props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }), { kind: 'dormant-session', id: 's1' }, { kind: 'action', action: 'bench' }, expect.any(Function));
+    await act(async () => { labelled('Unpin')[0]!.props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }), { kind: 'live-session', session: '$6' }, { kind: 'action', action: 'unpin' }, expect.any(Function));
+    await act(async () => { labelled('Reopen')[0]!.props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }), { kind: 'dormant-session', id: 's4' }, { kind: 'wake', wake: 'reopen' }, expect.any(Function));
+  });
+
+  it('moves a Board Session card: a Guest trades with a card In Play', async () => {
+    const server = connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    await mount();
+    await server.push(protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item);
+
+    await act(async () => { labelled('Move…')[3]!.props.onPress(); });
+    await act(async () => { button('Trade scratch').props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }),
+      { kind: 'dormant-session', id: 's1' },
+      { kind: 'drop', drop: { kind: 'trade', with: { kind: 'dormant-session', id: 's2' } } },
+      expect.any(Function),
+    );
   });
 
   it('offers the Session Actions on the Sessions tab and Mark All as Read in Options, sends each as a Host Write, and shows the pushed result', async () => {

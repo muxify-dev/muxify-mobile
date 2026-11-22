@@ -341,7 +341,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   };
 
   /** A Topic picked in the sheet is on its way: the Attach can already be in it. */
-  const openingTopic = hostEntry.busyTopic !== null;
+  const openingTopic = hostEntry.busyCard !== null;
   return { sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic };
 }
 

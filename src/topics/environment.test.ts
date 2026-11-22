@@ -1,5 +1,7 @@
 import inPlay from './__fixtures__/environment-in-play.json';
 import list from './__fixtures__/environment-flat-list.json';
+import { protocolFrames } from '@/test-support/protocol-frames';
+
 import { HostCliTooOld, parseEnvironment, type Card, type EnvironmentSnapshot } from './environment';
 
 /** Every Topic card of a snapshot, in the order the phone draws them. */
@@ -116,7 +118,7 @@ describe('what a newer desktop Muxify may send', () => {
     expect(onlyCard(snapshot)).toMatchObject({ topic: { state: 'live' } });
   });
 
-  it('keeps an Empty Topic and a Locked Session', () => {
+  it('keeps an Empty Topic and a live Board Session', () => {
     const snapshot = parseEnvironment(
       snapshotWith({
         unpinned: inPlayOf([topicCard({ state: 'empty' }), { kind: 'session', mark: 'unread', sessions: ['$3'] }]),
@@ -125,6 +127,26 @@ describe('what a newer desktop Muxify may send', () => {
 
     expect(snapshot.unpinned.places[0]).toMatchObject({ topic: { state: 'empty' } });
     expect(snapshot.unpinned.places[1]).toEqual({ kind: 'session', mark: 'unread', sessions: ['$3'] });
+  });
+});
+
+describe('parsing the snapshot of the board fixture, which MuxifyCore pins', () => {
+  const item = protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item;
+
+  it('keeps a live and a Dormant Board Session among the Pinned cards, and Dormant ones In Play and among the Guests', () => {
+    const snapshot = parseEnvironment(item);
+
+    expect(snapshot.pinned).toEqual([
+      { kind: 'session', mark: null, sessions: ['$6'] },
+      { kind: 'dormant_session', id: 's4', name: 'logs' },
+    ]);
+    expect(snapshot.unpinned.places).toEqual([{ kind: 'dormant_session', id: 's2', name: 'scratch' }]);
+    expect(snapshot.unpinned.guests).toEqual([{ kind: 'dormant_session', id: 's1', name: 'notes' }]);
+  });
+
+  it('fails with the path of a Dormant card with no name', () => {
+    const broken = { ...item, unpinned: { ...item.unpinned, guests: [{ id: 's1', kind: 'dormant_session', sessions: [] }] } };
+    expect(() => parseEnvironment(broken)).toThrow('unpinned.guests[0].name');
   });
 });
 

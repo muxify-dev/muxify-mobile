@@ -743,7 +743,7 @@ describe('the Host Server', () => {
     channel?.frames.filter((frame) => frame.kind === 'request' && !('subscribe' in (frame.request as object))) ?? [];
   /** The Host Server answers a request with this `ok`. */
   const answer = (channel: FakeChannel, id: unknown, ok: unknown) => channel.print(`${JSON.stringify({ end: { ok }, id, kind: 'end' })}\n`);
-  const RENAME = { command: { rename: { title: 'Fix login' } }, topic: 't1' as TopicId, request: newRequestId() };
+  const RENAME = { command: { rename: { title: 'Fix login' } }, target: { topic: 't1' as TopicId }, request: newRequestId() };
   const RENAMED = { environment: { version: 2, command: { rename: { title: 'Fix login' } }, target: { topic: { id: 't1' } }, request: RENAME.request } };
 
   it('runs a request on the Host Server of the Connection, and holds the Connection while it runs', async () => {

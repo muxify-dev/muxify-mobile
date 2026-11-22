@@ -13,6 +13,8 @@ import { parseTagColor, type TagColor } from './tag-color';
 
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type TopicId = string & { readonly __brand: 'TopicId' };
+/** The id of a Board Session's row in the Host's state database. Only a Dormant card carries it. */
+export type BoardSessionId = string & { readonly __brand: 'BoardSessionId' };
 
 export type Mark = 'blocked' | 'failed' | 'unread' | 'done' | 'working';
 
@@ -29,13 +31,15 @@ export interface TopicSummary {
 
 export type Card =
   | { kind: 'topic'; mark: Mark | null; sessions: SessionId[]; topic: TopicSummary }
-  /** A Locked Session: a Session shown as its own card, with no Topic. */
+  /** A live Board Session: a Session in no Topic with its own card, named only by its tmux id. */
   | { kind: 'session'; mark: Mark | null; sessions: [SessionId] }
+  /** A Dormant Board Session: its card stays after a tmux restart, named only by its Board Session id. */
+  | { kind: 'dormant_session'; id: BoardSessionId; name: string }
   | { kind: 'open_place'; id: string }
   /** A kind this phone does not know. Drawn as a plain row, never a failure. */
   | { kind: 'unknown'; sourceKind: string; mark: Mark | null; sessions: SessionId[] };
 
-/** The Topics that are not Pinned: the In Play places, the Guests and the Bench. */
+/** The cards that are not Pinned: the In Play places, the Guests and the Bench. */
 export interface Unpinned {
   limit: number;
   places: Card[];
@@ -189,13 +193,19 @@ function parseCard(value: unknown, at: string): Card {
     }
     case 'session': {
       const sessions = array(card.sessions, `${at}.sessions`);
-      if (sessions.length !== 1) throw new Error(`${at}.sessions: a Locked Session has one Session`);
+      if (sessions.length !== 1) throw new Error(`${at}.sessions: a live Board Session has one Session`);
       return {
         kind: 'session',
         mark: parseMark(card.mark),
         sessions: [sessionId(sessions[0], `${at}.sessions[0]`)],
       };
     }
+    case 'dormant_session':
+      return {
+        kind: 'dormant_session',
+        id: string(card.id, `${at}.id`) as BoardSessionId,
+        name: string(card.name, `${at}.name`),
+      };
     case 'open_place':
       return { kind: 'open_place', id: string(card.id, `${at}.id`) };
     default:

@@ -13,7 +13,9 @@ import {
 } from './host-screen';
 import type { Session } from '@/tmux/tmux-client';
 import type { SessionOnHost } from '@/topics/tmux-order';
+import type { CardSection } from '@/topics/topic-action';
 import type {
+  BoardSessionId,
   Card,
   EnvironmentSnapshot,
   Mark,
@@ -62,6 +64,11 @@ interface TopicsCase {
 
 const sid = (id: string) => id as SessionId;
 const tid = (id: string) => id as TopicId;
+
+const liveBoardSession = (session: string, name: string, section: CardSection, mark: Mark | null = null): HostScreenRow =>
+  ({ kind: 'board-session', card: { kind: 'live-session', session: sid(session) }, name, mark, pinned: section === 'pinned', section });
+const dormantBoardSession = (id: string, name: string, section: CardSection): HostScreenRow =>
+  ({ kind: 'board-session', card: { kind: 'dormant-session', id: id as BoardSessionId }, name, mark: null, pinned: section === 'pinned', section });
 
 const topicCard = (
   id: string,
@@ -288,15 +295,34 @@ describe('the Topics tab of the Host Screen', () => {
       ],
     },
     {
-      name: 'draws a Locked Session as its own card, named from the snapshot, and pinned when it is',
+      name: 'draws a live Board Session as its own card, named from the snapshot, and pinned when it is',
       topics: listed({
-        sessions: [snapshotSession('$1', 'scratch', null), snapshotSession('$2', 'notes', null)],
+        sessions: [snapshotSession('$1', 'scratch', null), snapshotSession('$2', 'notes', null), snapshotSession('$3', 'logs', null)],
         pinned: [{ kind: 'session', mark: 'unread', sessions: [sid('$2')] }],
-        unpinned: inPlay({ places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] }),
+        unpinned: inPlay({
+          places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }],
+          guests: [{ kind: 'session', mark: null, sessions: [sid('$3')] }],
+        }),
       }),
       sections: [
-        section('pinned', 'Pinned', { kind: 'locked-session', session: sid('$2'), name: 'notes', mark: 'unread', pinned: true }),
-        inPlaySection({ kind: 'locked-session', session: sid('$1'), name: 'scratch', mark: null, pinned: false }),
+        section('pinned', 'Pinned', liveBoardSession('$2', 'notes', 'pinned', 'unread')),
+        inPlaySection(liveBoardSession('$1', 'scratch', 'in-play')),
+        section('guests', 'Guests', liveBoardSession('$3', 'logs', 'guests')),
+      ],
+    },
+    {
+      name: 'draws a Dormant Board Session at its place by its name, with no live Session behind it',
+      topics: listed({
+        pinned: [{ kind: 'dormant_session', id: 's4' as BoardSessionId, name: 'logs' }],
+        unpinned: inPlay({
+          places: [{ kind: 'dormant_session', id: 's2' as BoardSessionId, name: 'scratch' }],
+          guests: [{ kind: 'dormant_session', id: 's1' as BoardSessionId, name: 'notes' }],
+        }),
+      }),
+      sections: [
+        section('pinned', 'Pinned', dormantBoardSession('s4', 'logs', 'pinned')),
+        inPlaySection(dormantBoardSession('s2', 'scratch', 'in-play')),
+        section('guests', 'Guests', dormantBoardSession('s1', 'notes', 'guests')),
       ],
     },
     {
@@ -681,10 +707,10 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
     expect(benchRows({ sessionName: 'benched/b2', topic: null })).toEqual([CLOSED_BENCH, topicRow('b2', { section: 'bench' })]);
   });
 
-  it('shows the Benched card of a Locked Session that the Attach is on', () => {
+  it('shows the Benched card of a live Board Session that the Attach is on', () => {
     expect(benchRows({ sessionName: 'locked', topic: null })).toEqual([
       CLOSED_BENCH,
-      { kind: 'locked-session', session: sid('$4'), name: 'locked', mark: null, pinned: false },
+      liveBoardSession('$4', 'locked', 'bench'),
     ]);
   });
 
