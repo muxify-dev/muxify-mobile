@@ -47,10 +47,10 @@ const installDone = (kind: HostCliOutcome, text: string): HostCliState => ({
   result: { kind, text, line: kind === 'failed' || kind === 'skipped' ? `${kind}: ${text}` : `${kind} ${text}` },
 });
 
-const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Topics', rows });
+const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Board', rows });
 const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'sessions', title: null, rows });
 
-// What the Topics list shows before the Host has answered about Topics.
+// What the Board list shows before the Host has answered about Topics.
 const TOPICS = topicsSection({ kind: 'checking', text: 'Checking Topics…' });
 
 interface TopicsCase {

@@ -167,7 +167,7 @@ agent-device press 'label="New"' >/dev/null 2>&1
 agent-device wait 'label="New Topic"' 3000 >/dev/null 2>&1 || fail "a tap on ＋ did not open its menu"
 agent-device press 200 450 >/dev/null 2>&1
 agent-device wait absent 'label="New Topic"' 3000 >/dev/null 2>&1 || fail "the ＋ menu did not close"
-expect_tab topics "after Go to and ＋"
+expect_tab board "after Go to and ＋"
 drag 150 500 220 0
 on_home || fail "a drag right from the middle of the list did not go back to Home"
 open_host

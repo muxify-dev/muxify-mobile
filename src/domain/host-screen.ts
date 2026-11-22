@@ -218,7 +218,7 @@ interface CardsContext {
 }
 
 /**
- * The Topics list. Before a snapshot, it is one Topics section with a row that
+ * The Board list. Before a snapshot, it is one Board section with a row that
  * says why. A failure and a Host CLI update put their row above
  * the last snapshot's cards. A Host Problem drops the list: one empty section
  * with no title, where the Host Screen puts the Host Problem row.
@@ -226,12 +226,12 @@ interface CardsContext {
 function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
   if (topics.kind === 'host-problem') return [topicsSection('topics', null, [])];
   const last = lastSnapshot(topics);
-  if (topics.kind === 'absent') return [topicsSection('topics', 'Topics', [{ kind: 'note', text: 'No Topics on this Host' }])];
+  if (topics.kind === 'absent') return [topicsSection('topics', 'Board', [{ kind: 'note', text: 'No Topics on this Host' }])];
   if (topics.kind === 'loading' && last === null) {
-    return [topicsSection('topics', 'Topics', [{ kind: 'checking', text: 'Checking Topics…' }])];
+    return [topicsSection('topics', 'Board', [{ kind: 'checking', text: 'Checking Topics…' }])];
   }
   const notice = topicsNotice(topics);
-  if (last === null) return [topicsSection('topics', 'Topics', notice)];
+  if (last === null) return [topicsSection('topics', 'Board', notice)];
   const [first, ...rest] = cardSections(last, context);
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
 }

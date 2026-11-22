@@ -340,9 +340,9 @@ echo "ok: Mark as Read reads the done Agent too"
 echo "== Pin and Unpin"
 menu B2 "Mark as Unread|Pin|Move Up|Move Down|Bench" "Pin"
 expect "PinA PinB B2 | G1 open B1 |  | AG(blocked)"
-# An Unpinned Topic goes to the top of the Bench.
+# An Unpinned Topic goes to the end of the Guests.
 menu B2 "Mark as Unread|Unpin|Move Up|Move Down" "Unpin"
-expect "PinA PinB | G1 open B1 |  | B2 AG(blocked)"
+expect "PinA PinB | G1 open B1 | B2 | AG(blocked)"
 
 echo "== Forget"
 # Long-presses card $1, picks Forget…, then presses $2 in the alert.
@@ -353,7 +353,7 @@ forget() {
   agent-device press "role=button label=\"$2\"" --settle >/dev/null || fail "no $2 in the Forget alert of $1"
 }
 forget G1 "Forget"
-expect "PinA PinB | open open B1 |  | B2 AG(blocked)"
+expect "PinA PinB | open open B1 | B2 | AG(blocked)"
 [ "$(sessions_of G1)" -gt 0 ] || fail "Forget stopped the Sessions of G1"
 muxify topic list --json | grep -q '"G1"' && fail "the Mac still has G1"
 echo "ok: Forget keeps the Sessions"
