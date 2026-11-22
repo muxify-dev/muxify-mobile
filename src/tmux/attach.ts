@@ -116,10 +116,10 @@ export type AttachPhase =
   | { kind: 'disconnected'; reason: DisconnectReason }
   | { kind: 'closed' };
 
-/** The parts of the state that belong to the active Pane. See paneFacts. */
 /** What a probe found the link to be. See askTmux. */
 type Link = 'open' | 'silent' | 'closed';
 
+/** The parts of the state that belong to the active Pane. See paneFacts. */
 type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'rowInSight' | 'alternate'>;
 
 /** A Pane no view has said anything about. */
