@@ -127,12 +127,19 @@ scroll_to() {
   fi
 }
 
-# Scrolls the node labelled $1 into sight.
+# Scrolls the node labelled $1 into sight: it is in the list's top or its bottom.
+# A row under the bar at the bottom is in the tree too, but a touch there goes
+# to the bar, and a drag on the bar changes the tab, so the row must be above it.
 reveal() {
   local end
   for end in "" top bottom; do
     [ -n "$end" ] && scroll_to "$end"
-    snap && python3 -c 'import json, sys; sys.exit(not any(n.get("label") == sys.argv[2] for n in json.load(open(sys.argv[1]))["data"]["nodes"]))' "$SNAPSHOT" "$1" && return 0
+    snap && python3 - "$SNAPSHOT" "$1" <<'PY' && return 0
+import json, sys
+nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
+bar = min((n["rect"]["y"] for n in nodes if n.get("label") in ("Go to", "New")), default=float("inf"))
+sys.exit(not any(n.get("label") == sys.argv[2] and n["rect"]["y"] + n["rect"]["height"] / 2 < bar - 8 for n in nodes))
+PY
   done
   return 1
 }
@@ -266,17 +273,26 @@ wake_by_tap() {
 # Checks that the row of card $2 shows the word Dormant when $1 is yes, and does not when $1 is no.
 dormant_mark() {
   reveal "$2" || fail "no card $2"
+  local found=
   for _ in $(seq 10); do
-    agent-device snapshot --json >"$SNAPSHOT" 2>/dev/null && python3 - "$SNAPSHOT" "$2" "$1" <<'PY' && return 0
+    agent-device snapshot --json >"$SNAPSHOT" 2>/dev/null || { sleep 0.5; continue; }
+    python3 - "$SNAPSHOT" "$2" "$1" <<'PY'
 import json, sys
 nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
-card = next(n["rect"] for n in nodes if n.get("label") == sys.argv[2])
+card = next((n["rect"] for n in nodes if n.get("label") == sys.argv[2]), None)
+if card is None:
+    sys.exit(2)
 inside = lambda r: card["y"] <= r["y"] + r["height"] / 2 <= card["y"] + card["height"]
 marked = any(n.get("label") == "Dormant" and "StaticText" in n.get("type", "") and inside(n["rect"]) for n in nodes)
 sys.exit(marked != (sys.argv[3] == "yes"))
 PY
+    case $? in
+      0) return 0 ;;
+      1) found=1 ;;
+    esac
     sleep 0.5
   done
+  [ -n "$found" ] || fail "no row of $2 in the full tree"
   [ "$1" = yes ] && fail "the row of $2 does not say Dormant"
   fail "the row of live $2 says Dormant"
 }
