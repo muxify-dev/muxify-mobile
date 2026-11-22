@@ -174,7 +174,7 @@ expect() {
   fail "the screen shows '$screen', the Mac '$(as_screen "$want")'"
 }
 
-# Relaunches the app on the Host Screen and opens the Bench.
+# Relaunches the app on the Host Screen, waits for $1, and opens the Bench.
 open_host_screen() {
   agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
   for _ in $(seq 30); do
@@ -241,7 +241,7 @@ move_targets() {
   printf '%s\n%s\n' "$top" "$bottom" | grep -v '^$' | LC_ALL=C sort -u | paste -sd '|' -
 }
 
-# Taps card $1 and waits for the Terminal on Session $2, then goes back to the Host Screen.
+# Waits for the Terminal on Session $2 after $1, then goes back to the Host Screen.
 attaches() {
   agent-device wait 'id="pane-command"' 20000 >/dev/null || fail "no Terminal after $1"
   agent-device is text 'id="attached-session"' "$2" >/dev/null 2>&1 || fail "$1 attached to '$(agent-device get text 'id="attached-session"' 2>/dev/null)', not $2"
@@ -331,12 +331,14 @@ PY
 echo "ok: the Fill sheet offers bsplace, bsextra and TopB"
 agent-device press 'label="Session bsplace"' --settle >/dev/null || fail "no bsplace in the Fill sheet"
 agent-device wait absent 'label="Close Fill Open Place"' 5000 >/dev/null || fail "the Fill sheet did not close"
+filled=
 for _ in $(seq 60); do
   case "$(mac_listing)" in
-    "bspin TopA | bsguest bsplace open | bsextra | TopB" | "bspin TopA | bsguest open bsplace | bsextra | TopB") break ;;
+    "bspin TopA | bsguest bsplace open | bsextra | TopB" | "bspin TopA | bsguest open bsplace | bsextra | TopB") filled=1; break ;;
   esac
   sleep 0.25
 done
+[ -n "$filled" ] || fail "the Fill did not put bsplace in a place: $(mac_listing)"
 expect "$(mac_listing)"
 
 echo "== A tap on a live Board Session in a place opens it"

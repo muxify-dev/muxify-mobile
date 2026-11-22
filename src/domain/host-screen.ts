@@ -156,7 +156,7 @@ export interface HostScreenInput {
  */
 export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem }: HostScreenInput): HostScreenSection[] {
   const sections = tab === 'board'
-    ? topicsList(topics, { opened, appearance, withNoTopic: true, attach })
+    ? boardSections(topics, { opened, appearance, withNoTopic: true, attach })
     : [sessionsList(listing, topics)];
   if (problem === null) return sections;
   // One row for the Host Problem, however many reads of the Host met it.
@@ -181,11 +181,11 @@ export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'li
 
 /**
  * The Host's Topics alone, for a list that shows the Host's Sessions itself:
- * every Topic in the sections of the Topics list, and the rows that say why
+ * every Topic in the sections of the Board, and the rows that say why
  * there are none. The Bench is open, because nothing opens in place there.
  */
 export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
-  return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
+  return boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
     .map((section) => ({
       ...section,
       title: SECTION_TITLES[section.id],
@@ -218,12 +218,12 @@ interface CardsContext {
 }
 
 /**
- * The Board list. Before a snapshot, it is one Board section with a row that
+ * The Board. Before a snapshot, it is one Board section with a row that
  * says why. A failure and a Host CLI update put their row above
  * the last snapshot's cards. A Host Problem drops the list: one empty section
  * with no title, where the Host Screen puts the Host Problem row.
  */
-function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
+function boardSections(topics: HostTopics, context: CardsContext): HostScreenSection[] {
   if (topics.kind === 'host-problem') return [topicsSection('topics', null, [])];
   const last = lastSnapshot(topics);
   if (topics.kind === 'absent') return [topicsSection('topics', 'Board', [{ kind: 'note', text: 'No Topics on this Host' }])];

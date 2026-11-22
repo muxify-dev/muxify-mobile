@@ -11,7 +11,7 @@
 #
 #   PATH=~/.local/bin:$PATH bash e2e/topic-actions.sh
 #
-# The cards are taller than the screen, under the Topics and Sessions control,
+# The cards are taller than the screen, under the Board and Sessions control,
 # so the suite reads the list from its top and from its bottom, and scrolls a
 # card into sight before it touches it.
 #
