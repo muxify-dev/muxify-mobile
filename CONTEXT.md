@@ -155,7 +155,7 @@ _Avoid_: last session, resume point, saved state
 
 **Host Screen**:
 The screen of one Host. It has the two views of the Mac's Sidebar as tabs. The
-Topics tab shows Pinned, In Play, the Guests, the Bench row and the No Topic
+Board tab shows Pinned, In Play, the Guests, the Bench row and the No Topic
 row. The Sessions tab shows every running Session in the order tmux lists
 them, with its Topic under the name, and no Bench. The Host's Config decides
 which tabs show, with `sidebar.topics` and `sidebar.sessions`, so the Mac and
@@ -321,12 +321,14 @@ colour, with one value for light and one for dark.
 _Avoid_: label, category, folder, group
 
 **Dormant**:
-An open Topic that has no live Session but remembers Sessions, for example after
-a tmux restart. The Host Screen shows it dimmed, with "No live Sessions". The
-phone offers Reopen, Start Fresh and Cancel when its card is tapped. After a
-successful wake it reads the Topic once and opens a Session. A failed read can
-be retried without another wake. The long-press menu wakes it in place and
-refreshes the Listing.
+An open Topic that has no live Session but remembers Sessions, or a Board
+Session with no live Session, for example after a tmux restart. The Host
+Screen shows it dimmed at its place: a Dormant Topic with "No live Sessions",
+a Dormant Board Session with "Dormant". The phone offers Reopen, Start Fresh
+and Cancel when its card is tapped. After a successful wake of a Topic it reads
+the Topic once and opens a Session; after a wake of a Board Session it opens
+the Session the Host names. A failed read can be retried without another wake.
+The long-press menu wakes it in place and refreshes the Listing.
 _Avoid_: inactive, sleeping, suspended
 
 **Empty**:
@@ -351,7 +353,8 @@ _Avoid_: empty slot, hole, free place
 
 **Guest**:
 A card In Play above the number of places: a Topic with the Guest mark, or a
-Locked Session. It shows in the Guests section, after the places.
+Board Session. It shows in the Guests section, after the places. Unpin puts a
+card at the end of the Guests.
 _Avoid_: visitor, extra slot
 
 **Bench**:
@@ -361,10 +364,10 @@ to show their cards.
 _Avoid_: backlog, hidden Topics, overflow
 
 **Bench peek**:
-What the Topics tab shows of the place the Attach is in while the Bench row
+What the Board tab shows of the place the Attach is in while the Bench row
 hides it, as the Mac shows the card of its Location. While the Bench row is
-closed, the Benched card of the Attach's Topic, or of the Locked Session it is
-on, shows under the row. When the Attach's Session is in No Topic, that
+closed, the Benched card of the Attach's Topic, or of the live Board Session
+it is on, shows under the row. When the Attach's Session is in No Topic, that
 Session shows under the Bench row, also while the Bench is open, until the
 user opens the No Topic row, which lists it.
 _Avoid_: current card, pinned card
@@ -376,7 +379,7 @@ into focus and when the Attach switches Session.
 _Avoid_: auto-read, mark seen
 
 **No Topic**:
-The Sessions on a Host that belong to no Topic. The Topics tab of the Host
+The Sessions on a Host that belong to no Topic. The Board tab of the Host
 Screen shows them in a separate group after the Topics and the Bench. Its No
 Topic row shows the count and opens to list the Sessions. An empty group is
 not shown.
@@ -468,6 +471,21 @@ failed. In New Topic and Add a Session, a Retry of the same input is the same
 Request, unless the Host refused it. A Host CLI that is too old for Request ids gets the change with no id,
 and that change is not sent again. See ADR 0021.
 _Avoid_: retry (for the second send), idempotency key, transaction
+
+**Board**:
+The cards of a Host's open Topics and Board Sessions in one order, as the Mac
+shows them: Pinned, the In Play places, the Guests and the Bench. The Host
+Screen shows it in its Board tab.
+_Avoid_: Topics list, Topics view, Topics tab
+
+**Board Session**:
+A Session in no Topic that has a card on the Board, live or Dormant. Its card
+can be Pinned, take an In Play place or be a Guest, but it is never on the
+Bench. The Host keeps it in its state database, so a tmux restart leaves its
+card at its place as a Dormant card. Its long-press menu has Pin or Unpin,
+Move Up, Move Down and, when it is not Pinned, Bench, which takes the card off
+the Board. A Dormant one also has Reopen and Start Fresh.
+_Avoid_: Locked Session, Lock, Guest Session
 
 ### Terminal
 

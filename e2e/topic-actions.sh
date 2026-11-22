@@ -7,9 +7,11 @@
 # the Mac's order.
 #
 # Mark as Unread sends `topic mark-unread --topic-only`, and a move inside a
-# section sends `topic move --before`. Put a muxify that has both first on the PATH:
+# section sends `topic move --before`. The setup needs a muxify that makes a new
+# Topic a Guest, as muxify master does, and the phone needs one with `board`.
+# Give it to the sandbox with MUXIFY_E2E_MUXIFY:
 #
-#   PATH=~/.local/bin:$PATH bash e2e/topic-actions.sh
+#   MUXIFY_E2E_MUXIFY=<muxify built from master> bash e2e/topic-actions.sh
 #
 # The cards are taller than the screen, under the Board and Sessions control,
 # so the suite reads the list from its top and from its bottom, and scrolls a
