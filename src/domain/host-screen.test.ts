@@ -734,6 +734,23 @@ describe('the Host Problem on the Host Screen', () => {
     expect(rows).toEqual([{ kind: 'host-problem', ...problem }]);
   });
 
+  // The cached snapshot stays in the state, so the Topics come back with no
+  // spinner, but the screen draws none of it.
+  const cached: HostTopics = {
+    kind: 'host-problem',
+    last: snapshot({ pinned: [topicCard('pinned')], unpinned: inPlay({ places: [topicCard('playing')] }) }),
+  };
+
+  it.each(['sessions', 'topics'] as const)('drops the cached Topics on the %s tab, and stands in a section of its own', (tab) => {
+    const sections = hostScreen({ tab, listing: HOST_PROBLEM, topics: cached, attach: null, opened: CLOSED, appearance: 'light', problem });
+
+    expect(sections).toEqual([{ id: tab, title: null, rows: [{ kind: 'host-problem', ...problem }] }]);
+  });
+
+  it('drops the cached Topics from the Title Sheet too', () => {
+    expect(topicSections(cached, 'light')).toEqual([]);
+  });
+
   it('leaves a refusal from a Host that answered as its own row', () => {
     const rows = hostScreen({ tab: 'sessions', listing: refused('no server running'), topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem: null })
       .flatMap((section) => section.rows);

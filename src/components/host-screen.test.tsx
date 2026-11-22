@@ -196,6 +196,7 @@ describe('a Host that cannot be reached', () => {
     await act(async () => renderer.update(<HostScreen />));
 
     expect(labels().filter((label) => label === 'Try again' || label === 'Retry')).toEqual(['Try again']);
+    expect(labels()).not.toContain('Topic Fix login');
     await act(async () => row('Try again').props.onPress());
     expect(mockReading.retry).toHaveBeenCalled();
   });

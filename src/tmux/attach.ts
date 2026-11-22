@@ -5,6 +5,7 @@ import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
+import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host, PlaceTab, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
@@ -114,6 +115,9 @@ export type AttachPhase =
   | { kind: 'reconnecting' }
   | { kind: 'disconnected'; reason: DisconnectReason }
   | { kind: 'closed' };
+
+/** What a probe found the link to be. See askTmux. */
+type Link = 'open' | 'silent' | 'closed';
 
 /** The parts of the state that belong to the active Pane. See paneFacts. */
 type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'rowInSight' | 'alternate'>;
@@ -419,6 +423,8 @@ export function openAttach(options: AttachOptions): Attach {
 
   let connection: HostConnection | null = null;
   let control: ControlConnection | null = null;
+  /** The probe in flight, which a second suspicion waits for. See askTmux. */
+  let probe: { control: ControlConnection; link: Promise<Link> } | null = null;
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
   let currentSessionId: string | null = null;
@@ -1115,7 +1121,7 @@ export function openAttach(options: AttachOptions): Attach {
       }
       connection = opened;
       say(`Connection open; Host key ${opened.verdict.kind}`);
-      opened.suspected?.(() => checkLink(mine));
+      opened.suspected?.(() => checkLink(mine, 'a screen found the Connection slow'));
 
       // Trust on first use: remember the key the first time, and say so loudly
       // when it changes. The Connection is not blocked either way — someone
@@ -1142,7 +1148,16 @@ export function openAttach(options: AttachOptions): Attach {
       // This is Attach: one channel, no PTY, and no Session option touched.
       const opening = await openControlConnection(
         opened.transport,
-        { sessionName: state.sessionName, tmuxExecutablePath: host.tmuxExecutablePath, log },
+        {
+          sessionName: state.sessionName,
+          tmuxExecutablePath: host.tmuxExecutablePath,
+          log,
+          clock,
+          watch: {
+            afterMs: EXEC_DEADLINE_MS,
+            silent: () => checkLink(mine, `a command waited ${EXEC_DEADLINE_MS / 1000} s with no reply`),
+          },
+        },
         {
           // Straight to the Pane it belongs to. A Window that is not zoomed
           // has a view for each of them, and this is the thing an attached
@@ -1193,8 +1208,10 @@ export function openAttach(options: AttachOptions): Attach {
           // A Connection lost while nobody is looking is the foreground check's
           // business rather than the transport-loss policy's: reconnecting
           // into a suspended app costs the Host a Connection nothing draws.
-          onClosed: (detail, cause) =>
-            ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss'),
+          // A `local` close is this Attach's own, made by whatever already said why it ended.
+          onClosed: (detail, cause) => {
+            if (cause !== 'local') ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss');
+          },
         },
       );
       if (stale(mine) || state.phase.kind === 'disconnected') {
@@ -1376,18 +1393,66 @@ export function openAttach(options: AttachOptions): Attach {
     })().catch(() => {});
   }
 
-  /** A screen found the Connection slow. The control channel says whether it is alive. */
-  function checkLink(mine: number): void {
+  /**
+   * Something found the Connection slow. tmux says whether it is alive.
+   *
+   * The library's flags stay true on a link that died without a close, so
+   * they decide only when they say it is closed. See askTmux.
+   */
+  function checkLink(mine: number, sign: string): void {
     if (stale(mine) || state.phase.kind !== 'connected') return;
-    if (control?.isOpen() ?? false) {
-      say('a screen found the Connection slow; the link is still open');
-      return;
-    }
-    ended(
-      mine,
-      { kind: 'transport-lost', detail: 'A read on this Connection did not answer in time' },
-      suspended ? null : 'transport-loss',
-    );
+    void askTmux(sign).then((link) => {
+      if (link === 'open' || stale(mine) || state.phase.kind !== 'connected') return;
+      ended(
+        mine,
+        {
+          kind: 'transport-lost',
+          detail: link === 'silent' ? 'tmux did not answer on this Connection' : 'The Connection to the Host was closed',
+        },
+        suspended ? null : 'transport-loss',
+      );
+    });
+  }
+
+  /**
+   * Sends tmux a command that changes nothing, and answers what became of it.
+   *
+   * `open` when the reply came, an `%error` included. `silent` when the
+   * channel brought nothing at all for EXEC_DEADLINE_MS: a slow link still
+   * carries Pane output ahead of the reply, and each chunk of it starts the
+   * deadline again. `closed` when the channel is gone, at once and with
+   * nothing sent when the library already says so. One probe at a time: a
+   * second caller gets the answer of the probe in flight.
+   */
+  function askTmux(sign: string): Promise<Link> {
+    const current = control;
+    if (!current?.isOpen()) return Promise.resolve('closed');
+    if (probe?.control === current) return probe.link;
+    say(`${sign}; asking tmux`);
+    const started = clock.now();
+    const link = new Promise<Link>((resolve) => {
+      let answered = false;
+      const answer = (found: Link) => {
+        if (answered) return;
+        answered = true;
+        unwatch();
+        if (found === 'open') say(`tmux answered in ${clock.now() - started} ms; the link is open`);
+        else if (found === 'silent') say(`tmux did not answer in ${EXEC_DEADLINE_MS / 1000} s; the link is dead`);
+        // A close this Attach made, or one a newer Connection replaced, is not news.
+        else if (control === current && state.phase.kind === 'connected') say('the channel closed while asking tmux');
+        resolve(found);
+      };
+      const unwatch = current.whenQuiet(EXEC_DEADLINE_MS, () => answer('silent'));
+      current.run(['display-message', '-p', '']).then(
+        () => answer('open'),
+        () => answer('closed'),
+      );
+    });
+    probe = { control: current, link };
+    void link.then(() => {
+      if (probe?.link === link) probe = null;
+    });
+    return link;
   }
 
   /**
@@ -1880,20 +1945,24 @@ export function openAttach(options: AttachOptions): Attach {
         return;
       }
       if (state.phase.kind !== 'connected') return;
-      // Asked of the transport rather than assumed. A Surface that looks
-      // connected after a suspension is a Surface that may be talking to
-      // nothing, and only the thing underneath can say which.
-      if (control?.isOpen() ?? false) {
-        say('the link survived the background');
-        // Whatever another screen wrote meanwhile is not the phone's look.
-        reportColours('session');
-        return;
-      }
-      ended(
-        generation,
-        { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
-        'foreground',
-      );
+      // Asked of tmux rather than assumed. A Surface that looks connected
+      // after a suspension is a Surface that may be talking to nothing, and
+      // only a reply can say which.
+      const mine = generation;
+      void askTmux('back from the background').then((link) => {
+        if (stale(mine) || state.phase.kind !== 'connected') return;
+        if (link === 'open') {
+          say('the link survived the background');
+          // Whatever another screen wrote meanwhile is not the phone's look.
+          reportColours('session');
+          return;
+        }
+        ended(
+          mine,
+          { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
+          'foreground',
+        );
+      });
     },
 
     coloursChanged(next: PaneColours): void {
