@@ -117,6 +117,9 @@ export type AttachPhase =
   | { kind: 'closed' };
 
 /** The parts of the state that belong to the active Pane. See paneFacts. */
+/** What a probe found the link to be. See askTmux. */
+type Link = 'open' | 'silent' | 'closed';
+
 type PaneFacts = Pick<AttachState, 'scrolled' | 'mouseTracking' | 'rowInSight' | 'alternate'>;
 
 /** A Pane no view has said anything about. */
@@ -420,8 +423,8 @@ export function openAttach(options: AttachOptions): Attach {
 
   let connection: HostConnection | null = null;
   let control: ControlConnection | null = null;
-  /** The probe in flight, which a second suspicion waits for. See linkAlive. */
-  let probe: { control: ControlConnection; alive: Promise<boolean> } | null = null;
+  /** The probe in flight, which a second suspicion waits for. See askTmux. */
+  let probe: { control: ControlConnection; link: Promise<Link> } | null = null;
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
   let currentSessionId: string | null = null;
@@ -1149,8 +1152,8 @@ export function openAttach(options: AttachOptions): Attach {
           sessionName: state.sessionName,
           tmuxExecutablePath: host.tmuxExecutablePath,
           log,
+          clock,
           watch: {
-            clock,
             afterMs: EXEC_DEADLINE_MS,
             silent: () => checkLink(mine, `a command waited ${EXEC_DEADLINE_MS / 1000} s with no reply`),
           },
@@ -1394,53 +1397,62 @@ export function openAttach(options: AttachOptions): Attach {
    * Something found the Connection slow. tmux says whether it is alive.
    *
    * The library's flags stay true on a link that died without a close, so
-   * they decide only when they say it is closed. See linkAlive.
+   * they decide only when they say it is closed. See askTmux.
    */
   function checkLink(mine: number, sign: string): void {
     if (stale(mine) || state.phase.kind !== 'connected') return;
-    void linkAlive(sign).then((alive) => {
-      if (alive || stale(mine) || state.phase.kind !== 'connected') return;
+    void askTmux(sign).then((link) => {
+      if (link === 'open' || stale(mine) || state.phase.kind !== 'connected') return;
       ended(
         mine,
-        { kind: 'transport-lost', detail: 'tmux did not answer on this Connection' },
+        {
+          kind: 'transport-lost',
+          detail: link === 'silent' ? 'tmux did not answer on this Connection' : 'The Connection to the Host was closed',
+        },
         suspended ? null : 'transport-loss',
       );
     });
   }
 
   /**
-   * Sends tmux a command that changes nothing and answers whether a reply
-   * came within EXEC_DEADLINE_MS. An `%error` is a reply. A closed channel
-   * answers false at once, with nothing sent. One probe at a time: a second
-   * caller gets the answer of the probe in flight.
+   * Sends tmux a command that changes nothing, and answers what became of it.
+   *
+   * `open` when the reply came, an `%error` included. `silent` when the
+   * channel brought nothing at all for EXEC_DEADLINE_MS: a slow link still
+   * carries Pane output ahead of the reply, and each chunk of it starts the
+   * deadline again. `closed` when the channel is gone, at once and with
+   * nothing sent when the library already says so. One probe at a time: a
+   * second caller gets the answer of the probe in flight.
    */
-  function linkAlive(sign: string): Promise<boolean> {
+  function askTmux(sign: string): Promise<Link> {
     const current = control;
-    if (!current?.isOpen()) return Promise.resolve(false);
-    if (probe?.control === current) return probe.alive;
+    if (!current?.isOpen()) return Promise.resolve('closed');
+    if (probe?.control === current) return probe.link;
     say(`${sign}; asking tmux`);
     const started = clock.now();
-    const alive = new Promise<boolean>((resolve) => {
+    const link = new Promise<Link>((resolve) => {
       let answered = false;
-      const answer = (open: boolean) => {
+      const answer = (found: Link) => {
         if (answered) return;
         answered = true;
-        clock.cancel(timer);
-        say(
-          open
-            ? `tmux answered in ${clock.now() - started} ms; the link is open`
-            : `tmux did not answer in ${EXEC_DEADLINE_MS / 1000} s; the link is dead`,
-        );
-        resolve(open);
+        unwatch();
+        if (found === 'open') say(`tmux answered in ${clock.now() - started} ms; the link is open`);
+        else if (found === 'silent') say(`tmux did not answer in ${EXEC_DEADLINE_MS / 1000} s; the link is dead`);
+        // A close this Attach made, or one a newer Connection replaced, is not news.
+        else if (control === current && state.phase.kind === 'connected') say('the channel closed while asking tmux');
+        resolve(found);
       };
-      const timer = clock.after(EXEC_DEADLINE_MS, () => answer(false));
-      current.run(['display-message', '-p', '']).then(() => answer(true), () => answer(false));
+      const unwatch = current.whenQuiet(EXEC_DEADLINE_MS, () => answer('silent'));
+      current.run(['display-message', '-p', '']).then(
+        () => answer('open'),
+        () => answer('closed'),
+      );
     });
-    probe = { control: current, alive };
-    void alive.then(() => {
-      if (probe?.alive === alive) probe = null;
+    probe = { control: current, link };
+    void link.then(() => {
+      if (probe?.link === link) probe = null;
     });
-    return alive;
+    return link;
   }
 
   /**
@@ -1937,9 +1949,9 @@ export function openAttach(options: AttachOptions): Attach {
       // after a suspension is a Surface that may be talking to nothing, and
       // only a reply can say which.
       const mine = generation;
-      void linkAlive('back from the background').then((alive) => {
+      void askTmux('back from the background').then((link) => {
         if (stale(mine) || state.phase.kind !== 'connected') return;
-        if (alive) {
+        if (link === 'open') {
           say('the link survived the background');
           // Whatever another screen wrote meanwhile is not the phone's look.
           reportColours('session');

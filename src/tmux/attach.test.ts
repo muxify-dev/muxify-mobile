@@ -340,6 +340,15 @@ function fakeHost(server?: ReturnType<typeof fakeServer>, sessions = fakeSession
   };
 }
 
+/** Pane output arriving every 2 s for `ms` of fake time, as a slow link brings a backlog. */
+async function outputFor(kit: ReturnType<typeof attachOn>, ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += 2000) {
+    kit.clock.advance(2000);
+    kit.hosts[0].notify('%output %0 more');
+    await settle();
+  }
+}
+
 /** The tmux command a rendered Control Command line runs, without its quoting. */
 function verbOf(line: string): string {
   return (line.split(' ')[0] ?? '').replace(/'/g, '');
@@ -1635,6 +1644,51 @@ describe('the Connection it shares with the screens', () => {
     expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
   });
 
+  it('keeps a command waiting past the deadline while Pane output keeps coming', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.hosts[0].hold('list-sessions');
+    kit.attach.refreshSessions();
+    await outputFor(kit, 2 * EXEC_DEADLINE_MS + 4000);
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.letGo).toEqual([]);
+    expect(kit.said().join('\n')).not.toContain('asking tmux');
+  });
+
+  it('keeps a probe waiting past the deadline while Pane output keeps coming', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.hosts[0].hold('display-message');
+    kit.suspects[0]?.();
+    await outputFor(kit, 2 * EXEC_DEADLINE_MS + 4000);
+    expect(kit.attach.state().phase.kind).toBe('connected');
+
+    kit.hosts[0].release();
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.letGo).toEqual([]);
+    expect(kit.said()).toContain(`attach: tmux answered in ${2 * EXEC_DEADLINE_MS + 4000} ms; the link is open`);
+  });
+
+  it('says nothing about a dead link when the Attach is closed while it asks tmux', async () => {
+    const kit = attachOn();
+    await connected(kit);
+
+    kit.hosts[0].hold('display-message');
+    kit.suspects[0]?.();
+    await settle();
+    await kit.attach.close();
+    kit.clock.advance(EXEC_DEADLINE_MS);
+    await settle();
+
+    expect(kit.letGo).toEqual(['close']);
+    expect(kit.said().join('\n')).not.toMatch(/did not answer|closed while asking/);
+  });
+
   it('reconnects when a screen finds the Connection slow and the link is gone', async () => {
     const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
     await connected(kit);
@@ -1643,6 +1697,10 @@ describe('the Connection it shares with the screens', () => {
     kit.suspects[0]?.();
     await settle();
 
+    expect(kit.said()).not.toContain('attach: a screen found the Connection slow; asking tmux');
+    expect(kit.said()).toContain(
+      'attach: Connection ended: transport-lost — The Connection to the Host was closed; transport-loss may reconnect',
+    );
     expect(kit.phases()).toContain('disconnected');
     expect(kit.attach.state().phase.kind).toBe('reconnecting');
     expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
@@ -1844,6 +1902,24 @@ describe('the app going away and coming back', () => {
     expect(kit.phases()).toContain('restoring');
     expect(kit.letGo.every((how) => how === 'discard')).toBe(true);
     expect(kit.said()).toContain('attach: tmux did not answer in 8 s; the link is dead');
+  });
+
+  it('carries on when tmux answers after the background behind a long run of Pane output', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+
+    kit.attach.lifecycleChanged('background');
+    kit.hosts[0].hold('display-message');
+    kit.attach.lifecycleChanged('active');
+    await outputFor(kit, 2 * EXEC_DEADLINE_MS + 4000);
+    expect(kit.attach.state().phase.kind).toBe('connected');
+
+    kit.hosts[0].release();
+    await settle();
+
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.opened).toHaveLength(1);
+    expect(kit.said()).toContain('attach: the link survived the background');
   });
 
   it('restores once when the link did not survive', async () => {
