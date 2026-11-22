@@ -1,4 +1,5 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
+import type { Clock, Timer } from '@/lib/clock';
 import { bytesToUtf8 } from '@/lib/utf8';
 
 import {
@@ -93,14 +94,25 @@ export interface ControlConnection extends CommandRunner {
   /** Runs one command and returns its lines, throwing TmuxError on `%error`. */
   command(argv: TmuxArgv): Promise<Uint8Array[]>;
   /**
-   * Whether the channel underneath is still there.
+   * Whether the channel underneath is still there, as the library reports it.
    *
-   * Asked when the app comes back to the foreground, and answered without
-   * sending anything: a round trip to find out whether a round trip is
-   * possible is a round trip that hangs when the answer is no.
+   * Answered without sending anything. False is final. True can be stale: a
+   * link that died without a close keeps its flags, so the Attach asks tmux
+   * before it trusts one.
    */
   isOpen(): boolean;
   close(): Promise<void>;
+}
+
+/**
+ * Hears when tmux has been silent for `afterMs` while a command waits for its
+ * reply. The library's flags do not change when a link dies without a close,
+ * so a command with no reply is the sign the Attach acts on.
+ */
+export interface SilenceWatch {
+  clock: Clock;
+  afterMs: number;
+  silent: () => void;
 }
 
 /** A command that has been written and is waiting for its reply. */
@@ -131,7 +143,7 @@ interface Pending {
  */
 export async function openControlConnection(
   transport: TmuxTransport,
-  options: { sessionName: string; tmuxExecutablePath?: string; log?: Log },
+  options: { sessionName: string; tmuxExecutablePath?: string; log?: Log; watch?: SilenceWatch },
   events: ControlConnectionEvents,
 ): Promise<ControlConnection> {
   const say = speakingAs(options.log ?? silentLog, 'control');
@@ -146,6 +158,8 @@ export async function openControlConnection(
 
   let ready = false;
   let closed: string | null = null;
+  /** Runs from the oldest unanswered write, or from the latest reply while commands wait. */
+  let watchdog: Timer | null = null;
   let channel: ControlChannel | null = null;
   /**
    * What came up the channel that was not protocol, before the attach answered.
@@ -182,12 +196,27 @@ export async function openControlConnection(
       say(`→ ${entry.what}`);
       open.write(new TextEncoder().encode(`${entry.line}\n`));
     }
+    if (watchdog === null) rewatch();
+  }
+
+  /** Starts the silence timer again, or stops it when nothing waits. */
+  function rewatch(): void {
+    const watch = options.watch;
+    if (!watch) return;
+    watch.clock.cancel(watchdog);
+    watchdog = null;
+    if (closed !== null || pending.length === 0) return;
+    watchdog = watch.clock.after(watch.afterMs, () => {
+      watchdog = null;
+      watch.silent();
+    });
   }
 
   /** Ends the Connection, telling everyone still waiting why. */
   function finish(reason: string, cause: ClosedCause): void {
     if (closed !== null) return;
     closed = reason;
+    rewatch();
     const stranded = [...pending, ...waiting];
     pending.length = 0;
     waiting.length = 0;
@@ -241,6 +270,7 @@ export async function openControlConnection(
         return;
       }
       if (entry.take(reply)) pending.shift();
+      rewatch();
       return;
     }
 

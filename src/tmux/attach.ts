@@ -5,6 +5,7 @@ import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
 import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
+import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
 import type { KeyVerdict } from '@/ssh/host-key';
 import type { Host, PlaceTab, TopicPlace } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
@@ -419,6 +420,8 @@ export function openAttach(options: AttachOptions): Attach {
 
   let connection: HostConnection | null = null;
   let control: ControlConnection | null = null;
+  /** The probe in flight, which a second suspicion waits for. See linkAlive. */
+  let probe: { control: ControlConnection; alive: Promise<boolean> } | null = null;
   let client: TmuxClient | null = null;
   let topology: TopologyStore | null = null;
   let currentSessionId: string | null = null;
@@ -1115,7 +1118,7 @@ export function openAttach(options: AttachOptions): Attach {
       }
       connection = opened;
       say(`Connection open; Host key ${opened.verdict.kind}`);
-      opened.suspected?.(() => checkLink(mine));
+      opened.suspected?.(() => checkLink(mine, 'a screen found the Connection slow'));
 
       // Trust on first use: remember the key the first time, and say so loudly
       // when it changes. The Connection is not blocked either way — someone
@@ -1142,7 +1145,16 @@ export function openAttach(options: AttachOptions): Attach {
       // This is Attach: one channel, no PTY, and no Session option touched.
       const opening = await openControlConnection(
         opened.transport,
-        { sessionName: state.sessionName, tmuxExecutablePath: host.tmuxExecutablePath, log },
+        {
+          sessionName: state.sessionName,
+          tmuxExecutablePath: host.tmuxExecutablePath,
+          log,
+          watch: {
+            clock,
+            afterMs: EXEC_DEADLINE_MS,
+            silent: () => checkLink(mine, `a command waited ${EXEC_DEADLINE_MS / 1000} s with no reply`),
+          },
+        },
         {
           // Straight to the Pane it belongs to. A Window that is not zoomed
           // has a view for each of them, and this is the thing an attached
@@ -1193,8 +1205,10 @@ export function openAttach(options: AttachOptions): Attach {
           // A Connection lost while nobody is looking is the foreground check's
           // business rather than the transport-loss policy's: reconnecting
           // into a suspended app costs the Host a Connection nothing draws.
-          onClosed: (detail, cause) =>
-            ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss'),
+          // A `local` close is this Attach's own, made by whatever already said why it ended.
+          onClosed: (detail, cause) => {
+            if (cause !== 'local') ended(mine, reasonForClosure(cause, detail), suspended ? null : 'transport-loss');
+          },
         },
       );
       if (stale(mine) || state.phase.kind === 'disconnected') {
@@ -1376,18 +1390,57 @@ export function openAttach(options: AttachOptions): Attach {
     })().catch(() => {});
   }
 
-  /** A screen found the Connection slow. The control channel says whether it is alive. */
-  function checkLink(mine: number): void {
+  /**
+   * Something found the Connection slow. tmux says whether it is alive.
+   *
+   * The library's flags stay true on a link that died without a close, so
+   * they decide only when they say it is closed. See linkAlive.
+   */
+  function checkLink(mine: number, sign: string): void {
     if (stale(mine) || state.phase.kind !== 'connected') return;
-    if (control?.isOpen() ?? false) {
-      say('a screen found the Connection slow; the link is still open');
-      return;
-    }
-    ended(
-      mine,
-      { kind: 'transport-lost', detail: 'A read on this Connection did not answer in time' },
-      suspended ? null : 'transport-loss',
-    );
+    void linkAlive(sign).then((alive) => {
+      if (alive || stale(mine) || state.phase.kind !== 'connected') return;
+      ended(
+        mine,
+        { kind: 'transport-lost', detail: 'tmux did not answer on this Connection' },
+        suspended ? null : 'transport-loss',
+      );
+    });
+  }
+
+  /**
+   * Sends tmux a command that changes nothing and answers whether a reply
+   * came within EXEC_DEADLINE_MS. An `%error` is a reply. A closed channel
+   * answers false at once, with nothing sent. One probe at a time: a second
+   * caller gets the answer of the probe in flight.
+   */
+  function linkAlive(sign: string): Promise<boolean> {
+    const current = control;
+    if (!current?.isOpen()) return Promise.resolve(false);
+    if (probe?.control === current) return probe.alive;
+    say(`${sign}; asking tmux`);
+    const started = clock.now();
+    const alive = new Promise<boolean>((resolve) => {
+      let answered = false;
+      const answer = (open: boolean) => {
+        if (answered) return;
+        answered = true;
+        clock.cancel(timer);
+        say(
+          open
+            ? `tmux answered in ${clock.now() - started} ms; the link is open`
+            : `tmux did not answer in ${EXEC_DEADLINE_MS / 1000} s; the link is dead`,
+        );
+        resolve(open);
+      };
+      const timer = clock.after(EXEC_DEADLINE_MS, () => answer(false));
+      current.run(['display-message', '-p', '']).then(() => answer(true), () => answer(false));
+    });
+    probe = { control: current, alive };
+    void alive.then(() => {
+      if (probe?.alive === alive) probe = null;
+    });
+    return alive;
   }
 
   /**
@@ -1880,20 +1933,24 @@ export function openAttach(options: AttachOptions): Attach {
         return;
       }
       if (state.phase.kind !== 'connected') return;
-      // Asked of the transport rather than assumed. A Surface that looks
-      // connected after a suspension is a Surface that may be talking to
-      // nothing, and only the thing underneath can say which.
-      if (control?.isOpen() ?? false) {
-        say('the link survived the background');
-        // Whatever another screen wrote meanwhile is not the phone's look.
-        reportColours('session');
-        return;
-      }
-      ended(
-        generation,
-        { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
-        'foreground',
-      );
+      // Asked of tmux rather than assumed. A Surface that looks connected
+      // after a suspension is a Surface that may be talking to nothing, and
+      // only a reply can say which.
+      const mine = generation;
+      void linkAlive('back from the background').then((alive) => {
+        if (stale(mine) || state.phase.kind !== 'connected') return;
+        if (alive) {
+          say('the link survived the background');
+          // Whatever another screen wrote meanwhile is not the phone's look.
+          reportColours('session');
+          return;
+        }
+        ended(
+          mine,
+          { kind: 'transport-lost', detail: 'The Connection did not survive the background' },
+          'foreground',
+        );
+      });
     },
 
     coloursChanged(next: PaneColours): void {

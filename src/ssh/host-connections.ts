@@ -26,6 +26,14 @@ export const IDLE_MS = 60_000;
 /** How long one screen exec may take before its Connection is suspect. */
 export const EXEC_DEADLINE_MS = 8_000;
 
+/** How the Log names each connect step a dial reports. */
+const STEP_WORDS: Record<ConnectStep, string> = {
+  connecting: 'connecting',
+  'checking-host-key': 'checking the Host key',
+  'signing-in': 'signing in',
+  attaching: 'attaching',
+};
+
 /** A new SSH Connection to a Host, as the registry needs it. */
 export interface Dialed {
   transport: TmuxTransport;
@@ -184,12 +192,28 @@ export function createHostConnections(options: {
   let backgrounded = false;
 
   function open(host: Host, progress?: (step: ConnectStep) => void): Entry {
-    say(`${host.displayName}: connecting`);
+    say(`${host.displayName}: connecting to ${host.address}:${host.port}`);
     let self: Entry | undefined;
     const dialed = (async () => {
-      const opened = await dial(host, () => {
-        if (self) void drop(self, 'the keepalive found it dead');
-      }, progress);
+      const started = clock.now();
+      let reached: ConnectStep = 'connecting';
+      let opened: Dialed;
+      try {
+        opened = await dial(host, () => {
+          if (self) void drop(self, 'the keepalive found it dead');
+        }, (step) => {
+          reached = step;
+          if (step !== 'connecting') say(`${host.displayName}: ${STEP_WORDS[step]}`);
+          progress?.(step);
+        });
+      } catch (error) {
+        const seconds = ((clock.now() - started) / 1000).toFixed(1);
+        say(
+          `${host.displayName}: the dial failed after ${seconds} s at ${STEP_WORDS[reached]}: ` +
+            reasonForConnectFailure(error).detail,
+        );
+        throw error;
+      }
       if (opened.verdict.kind === 'first-sight') {
         await store.rememberFingerprint(host.id, opened.fingerprint);
       }

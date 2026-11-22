@@ -80,7 +80,9 @@ function setup(options: {
         return Promise.resolve();
       },
     },
-    dial: (_host, dropped): Promise<Dialed> => {
+    dial: (_host, dropped, progress): Promise<Dialed> => {
+      progress?.('checking-host-key');
+      progress?.('signing-in');
       if (options.dialFails?.()) return Promise.reject(new Error('no route to the Host'));
       const link: FakeLink = {
         execs: [],
@@ -179,6 +181,40 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const ls = (transport: TmuxTransport) => transport.exec('tmux ls');
 
 describe('the app’s Connections', () => {
+  it('dials a new Connection once the Attach discards the one it held', async () => {
+    const { links, connections } = setup();
+    const held = await connections.openConnection(HOST);
+
+    await held.discard?.();
+    await connections.read(HOST, ls);
+
+    expect(links).toHaveLength(2);
+    expect(links[0]?.disconnected).toBe(true);
+  });
+
+  it('tells the Attach and the Log each connect step of a dial', async () => {
+    const { logged, connections } = setup();
+    const steps: string[] = [];
+
+    await connections.openConnection(HOST, (step) => steps.push(step));
+
+    expect(steps).toEqual(['checking-host-key', 'signing-in']);
+    expect(logged).toEqual(expect.arrayContaining([
+      'connections: Mac: connecting to 10.0.0.1:22',
+      'connections: Mac: checking the Host key',
+      'connections: Mac: signing in',
+    ]));
+  });
+
+  it('logs the step a failed dial reached, and why it failed', async () => {
+    const { logged, connections } = setup({ dialFails: () => true });
+
+    await expect(connections.read(HOST, ls)).rejects.toBeInstanceOf(HostProblem);
+
+    const reason = reasonForConnectFailure(new Error('no route to the Host')).detail;
+    expect(logged).toContain(`connections: Mac: the dial failed after 0.0 s at signing in: ${reason}`);
+  });
+
   it('runs two reads on one Connection', async () => {
     const { links, connections } = setup();
 
