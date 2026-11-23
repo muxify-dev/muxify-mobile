@@ -70,9 +70,11 @@ export interface HostStore {
   /**
    * Deletes each Session Place of the Host whose Session is not in `had`: the
    * names of every Session that a complete read found live or as a Dormant
-   * Board Session. Topic Places stay.
+   * Board Session. Topic Places stay, and so does a Session Place written at
+   * or after `readAt`, the time of that read: its Session can be newer than
+   * the read.
    */
-  pruneSessionPlaces(hostId: string, had: ReadonlySet<string>): Promise<void>;
+  pruneSessionPlaces(hostId: string, had: ReadonlySet<string>, readAt: Date): Promise<void>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -282,11 +284,14 @@ export function createHostStore(
       });
     },
 
-    pruneSessionPlaces(hostId: string, had: ReadonlySet<string>): Promise<void> {
+    pruneSessionPlaces(hostId: string, had: ReadonlySet<string>, readAt: Date): Promise<void> {
       return exclusive(async () => {
         const records = await load();
         const places = records.places.filter((candidate) =>
-          candidate.hostId !== hostId || candidate.owner.kind !== 'session' || had.has(candidate.owner.session));
+          candidate.hostId !== hostId
+          || candidate.owner.kind !== 'session'
+          || had.has(candidate.owner.session)
+          || Date.parse(candidate.at) >= readAt.getTime());
         if (places.length === records.places.length) return;
         await save({ ...records, places });
       });

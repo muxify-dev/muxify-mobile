@@ -305,8 +305,14 @@ export function createHostConnections(options: {
       say: (line) => say(`${host.displayName}: Host Server: ${line}`),
     });
     const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`));
-    /** The Sessions the last prune kept Places for, so a push that changes none of them writes nothing. */
+    /** The Sessions the last prune that succeeded kept Places for, so a push that changes none of them writes nothing. */
     let prunedFor: string | null = null;
+    /**
+     * When the phone received the current snapshot. The snapshot carries no
+     * time of its own, and a change of Host Server state calls `changed` again
+     * with the same snapshot, so the time is taken when a new one is first seen.
+     */
+    let seen: { snapshot: object; at: Date } | null = null;
     const changed = () => {
       // A Connection that a newer one replaced has nothing to say.
       if (feeds.get(host.id)?.feed !== feed) return;
@@ -315,13 +321,14 @@ export function createHostConnections(options: {
       // so a Session it does not name is gone, and so is its Session Place.
       const { snapshot } = feed.current();
       if (!snapshot) return;
+      if (seen?.snapshot !== snapshot) seen = { snapshot, at: new Date(clock.now()) };
       const had = sessionNamesHad(snapshot);
       const key = [...had].sort().join('\n');
       if (key === prunedFor) return;
-      prunedFor = key;
-      store.pruneSessionPlaces(host.id, had).catch((error: unknown) => {
-        say(`${host.displayName}: could not prune Session Places: ${describeError(error)}`);
-      });
+      store.pruneSessionPlaces(host.id, had, seen.at).then(
+        () => { prunedFor = key; },
+        (error: unknown) => { say(`${host.displayName}: could not prune Session Places: ${describeError(error)}`); },
+      );
     };
     feeds.set(host.id, { entry, feed });
     feed.onChange(changed);

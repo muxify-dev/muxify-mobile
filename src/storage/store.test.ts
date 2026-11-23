@@ -425,6 +425,8 @@ describe('Places', () => {
   });
   const sessionPlace = (over: Partial<Place> = {}): Place =>
     place({ owner: { kind: 'session', session: 'work' }, ...over });
+  /** A read after every Place above was written. */
+  const readLater = new Date('2026-11-15T11:00:00.000Z');
 
   it('keeps one per owner of each Host, a Topic or a Session, and reads it back after a relaunch', async () => {
     const storage = fakeStorage();
@@ -508,9 +510,23 @@ describe('Places', () => {
     const topic = place({ session: 'killed' });
     for (const each of [sessionPlace(), notes, killed, elsewhere, topic]) await store.rememberPlace(each);
 
-    await store.pruneSessionPlaces('host1', new Set(['work', 'notes']));
+    await store.pruneSessionPlaces('host1', new Set(['work', 'notes']), readLater);
 
     expect((await store.load()).places).toEqual([sessionPlace(), notes, elsewhere, topic]);
+  });
+
+  it('keeps a Session Place written at or after the read, whose Session the read was too early to see', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    const readAt = new Date('2026-11-15T10:00:00.000Z');
+    const before = sessionPlace({ owner: { kind: 'session', session: 'old' }, session: 'old', at: '2026-11-15T09:59:59.999Z' });
+    const same = sessionPlace({ owner: { kind: 'session', session: 'same' }, session: 'same', at: '2026-11-15T10:00:00.000Z' });
+    const after = sessionPlace({ owner: { kind: 'session', session: 'new' }, session: 'new', at: '2026-11-15T10:00:00.001Z' });
+    for (const each of [before, same, after]) await store.rememberPlace(each);
+
+    await store.pruneSessionPlaces('host1', new Set(['work']), readAt);
+
+    expect((await store.load()).places).toEqual([same, after]);
   });
 
   it('writes nothing when a prune finds nothing to delete', async () => {
@@ -521,7 +537,7 @@ describe('Places', () => {
     let writes = 0;
     const counted = createHostStore({ read: storage.file.read, write: async (next) => { writes += 1; await storage.file.write(next); } }, storage.secrets);
 
-    await counted.pruneSessionPlaces('host1', new Set(['work']));
+    await counted.pruneSessionPlaces('host1', new Set(['work']), readLater);
 
     expect(writes).toBe(0);
     expect(storage.written()).toBe(before);
@@ -538,7 +554,7 @@ describe('Places', () => {
     const gone = sessionPlace({ owner: { kind: 'session', session: 'gone' }, session: 'gone' });
     await store.rememberPlace(gone);
 
-    await Promise.all([store.pruneSessionPlaces('host1', new Set(['work'])), store.rememberPlace(sessionPlace())]);
+    await Promise.all([store.pruneSessionPlaces('host1', new Set(['work']), readLater), store.rememberPlace(sessionPlace())]);
 
     expect((await store.load()).places).toEqual([sessionPlace()]);
   });
