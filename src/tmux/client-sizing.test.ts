@@ -80,12 +80,11 @@ describe('believing a grid', () => {
     expect(sent).toEqual([]);
   });
 
-  it('hands Attach the first settled grid rather than the first reported one', async () => {
-    const { module, clock } = sizing();
-    let settled: Grid | null = null;
-    void module.settledGrid().then((grid) => {
-      settled = grid;
-    });
+  it('sends nothing when the Attach comes up with no settled grid, and the first grid once it settles', async () => {
+    const { module, sent, clock } = sizing();
+    module.attached();
+    await flush();
+    expect(sent).toEqual([]);
 
     module.windowGridReported(PRE_LAYOUT, PHONE);
     clock.advance(6);
@@ -93,15 +92,7 @@ describe('believing a grid', () => {
     clock.advance(GRID_SETTLE_MS * 2);
     await flush();
 
-    expect(settled).toEqual(REAL);
-  });
-
-  it('answers a grid that has already settled without waiting again', async () => {
-    const { module, clock } = sizing();
-    module.windowGridReported(REAL, PHONE);
-    clock.advance(GRID_SETTLE_MS * 2);
-
-    await expect(module.settledGrid()).resolves.toEqual(REAL);
+    expect(sent).toEqual([REAL]);
   });
 });
 

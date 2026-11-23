@@ -384,11 +384,14 @@ export interface AttachOptions {
  * a transport that was lost and could not be restored. See ADR 0007.
  *
  * **The order of an Attach is a property of this module.** Connect, read the
- * key verdict, wait for a grid that has stopped moving, open the Control
- * Connection with no PTY, make the Client and the Topology store, *size
- * first*, apply Zoom, read the Topology, read the Session list. Size first
- * because the capture that follows must be of a Pane the size of the Surface;
- * that used to be a comment above five lines in a component.
+ * key verdict, open the Control Connection with no PTY, make the Client and
+ * the Topology store, *size first*, apply Zoom, read the Topology, read the
+ * Session list. Size first because the capture that follows must be of a Pane
+ * the size of the Surface; that used to be a comment above five lines in a
+ * component. The Attach never waits for a Surface: a Place's Web View can be
+ * on screen with no Terminal Screen under it. Until a Surface reports a grid
+ * that has stopped moving, the Client says no size, and tmux leaves the Window
+ * at the size it has.
  *
  * **Cancellation is one number.** Every async step remembers the generation it
  * began in and does nothing if the Attach has been closed or replaced since.
@@ -1140,14 +1143,11 @@ export function openAttach(options: AttachOptions): Attach {
         keyChanged: opened.verdict.kind === 'changed',
       });
 
-      // Sized from a grid that has stopped moving, not merely the latest. The
-      // Surface reports one while the Key Row's glass is still being measured
-      // and a smaller one once the Key Row has taken its height; the first
-      // would leave tmux drawing a taller Window than the Surface has.
-      if (!sizing.stableGrid()) say('waiting for a grid that has stopped moving');
-      const settled = await sizing.settledGrid();
-      if (stale(mine)) return;
-      say(`opening the Control Connection at ${settled.cols}x${settled.rows}`);
+      // No Surface is waited for: a Place's Web View can stand where the
+      // Terminal Screen would be. A Client that has said no size leaves the
+      // Window at its own size, and the size goes out once a Surface settles.
+      const stable = sizing.stableGrid();
+      say(`opening the Control Connection${stable ? ` at ${stable.cols}x${stable.rows}` : ', to be sized once a Surface settles'}`);
 
       // This is Attach: one channel, no PTY, and no Session option touched.
       const opening = await openControlConnection(
@@ -1296,8 +1296,9 @@ export function openAttach(options: AttachOptions): Attach {
       followTopic();
       if (visitWaiting) visitTopic();
 
-      // Size first, so the capture that follows is of a Pane the size of the
-      // Surface rather than of whatever the last Client left it.
+      // Size first when a grid has settled, so the capture that follows is of
+      // a Pane the size of the Surface. With none, the first settled grid
+      // resizes the Window later, and the resize resyncs every Pane.
       sizing.attached();
       // Each Pane with keys from before this Connection reads its mark now,
       // and sends, holds or discards them on the answer.

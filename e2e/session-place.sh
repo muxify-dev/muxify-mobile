@@ -17,8 +17,14 @@
 #      Window, with no page, although the Mac moved tmux's active Window
 #   5  a Session picked in the Web View's Title Sheet goes to the Terminal
 #      Screen of that Session
-#   6  a Tab that the Host lists no more leaves the reopened Session on its
-#      Pane, and the Session Place forgets the Tab
+#   6  after a relaunch, the Session opened from the Sessions tab, with no
+#      Attach up, has its page on top with no Terminal Screen first: one
+#      Client attaches, it is in the Place's Window, and the tmux Window keeps
+#      its size, because no Surface has said one
+#   7  the same on a cold start with Reconnect on start
+#   8  a Tab that the Host lists no more leaves the reopened Session on its
+#      Pane, the Session Place forgets the Tab, and the tmux Window takes the
+#      phone's size once the Terminal Screen is shown
 #
 # The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
 # stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
@@ -63,6 +69,15 @@ tabs() {
 }
 
 window_now() { on_host "tmux display-message -p -t '$SESSION' '#{window_index}'"; }
+# A size that no phone has, for Window 1, which a Client with no size leaves as
+# it is. resize-window sets window-size to manual, so that is unset again.
+MAC_SIZE=123x41
+mac_sized() {
+  on_host "tmux resize-window -t '$SESSION:1' -x 123 -y 41 && tmux set-option -w -t '$SESSION:1' -u window-size" \
+    || fail "could not size Window 1"
+  [ "$(window_size)" = "$MAC_SIZE" ] || fail "Window 1 is $(window_size), not $MAC_SIZE"
+}
+window_size() { on_host "tmux display-message -p -t '$SESSION:1' '#{window_width}x#{window_height}'"; }
 # The phone's Clients on the Session. A Listener, such as the Host Server's,
 # asks for ignore-size and is no one's Client, as tmux-client.ts counts them.
 clients() { on_host "tmux list-clients -t '$SESSION' -F '#{client_flags}'" | grep -vc ignore-size; }
@@ -85,6 +100,19 @@ elsewhere() {
   open_session "$OTHER"
   terminal_on "$OTHER" "$OTHER did not attach"
   back_to_host
+}
+
+# The page is on top of a fresh Attach of $SESSION, and no Terminal Screen has
+# been under it: one Client, Window 1, and Window 1 at the size it had.
+fresh_page() {
+  page_on_top "$1"
+  agent-device is exists 'id="pane-command"' >/dev/null 2>&1 && fail "a Terminal Screen is on screen under the page"
+  for _ in $(seq 20); do [ "$(clients)" = 1 ] && break; sleep 0.5; done
+  [ "$(clients)" = 1 ] || fail "$SESSION has $(clients) Clients, not 1, with the page on top"
+  # The Attach restores the Place after it attaches; give it a moment.
+  sleep 3
+  [ "$(window_now)" = 1 ] || fail "the Session is in Window $(window_now), not in Window 1 of its Place"
+  [ "$(window_size)" = "$MAC_SIZE" ] || fail "Window 1 is $(window_size): the phone sized it with only the page on top"
 }
 
 # Opens a Session from a row of the Sessions tab and waits for it to attach.
@@ -127,7 +155,7 @@ for place in records.get("places", []):
 PY
 }
 
-echo "0/6  two Sessions with no Topic, the first with two Windows, and a page at this Mac's Tailscale address"
+echo "0/8  two Sessions with no Topic, the first with two Windows, and a page at this Mac's Tailscale address"
 ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
 [ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
 PORT=$(python3 -c 'import socket, sys; s = socket.socket(); s.bind((sys.argv[1], 0)); print(s.getsockname()[1])' "$ADDRESS")
@@ -157,7 +185,7 @@ agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&
 agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
 agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
 
-echo "1/6  a Tab takes the Terminal Screen's place, and Back goes to the Host Screen"
+echo "1/8  a Tab takes the Terminal Screen's place, and Back goes to the Host Screen"
 open_session "$SESSION"
 terminal_on "$SESSION" "$SESSION did not attach"
 open_title_sheet header-title
@@ -170,7 +198,7 @@ agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "one Back 
 [ "$(clients)" = 1 ] || fail "$SESSION is not attached under the Host Screen"
 echo "     the page, then the Host Screen in one Back, with $SESSION attached"
 
-echo "2/6  $SESSION opened again from the Sessions tab has its page on top, in the Window the phone was in"
+echo "2/8  $SESSION opened again from the Sessions tab has its page on top, in the Window the phone was in"
 elsewhere
 on_host "tmux select-window -t '$SESSION:1'"
 open_session "$SESSION"
@@ -179,7 +207,7 @@ sleep 1
 [ "$(window_now)" = 0 ] || fail "the reopened Session is in Window $(window_now), not in Window 0 where the phone left it"
 echo "     the page, and Window 0 under it"
 
-echo "3/6  $SESSION opened from Go to has its page on top"
+echo "3/8  $SESSION opened from Go to has its page on top"
 elsewhere
 on_host "tmux select-window -t '$SESSION:1'"
 agent-device press 'label="Go to"' >/dev/null 2>&1
@@ -192,7 +220,7 @@ sleep 1
 [ "$(window_now)" = 0 ] || fail "the Session opened from Go to is in Window $(window_now), not in Window 0"
 echo "     the page, and Window 0 under it"
 
-echo "4/6  a Window picked from the page goes to the terminal, and the Session forgets the page"
+echo "4/8  a Window picked from the page goes to the terminal, and the Session forgets the page"
 open_title_sheet web-view-title
 agent-device press 'label="Windows"' >/dev/null 2>&1
 agent-device wait 'label="second"' 15000 >/dev/null 2>&1 || fail "the Web View's Title Sheet does not list the Windows"
@@ -208,7 +236,7 @@ agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Session o
 [ "$(window_now)" = 1 ] || fail "the reopened Session is in Window $(window_now), not in Window 1 that was picked"
 echo "     the terminal in Window 1, and no page, although the Mac had gone to Window 0"
 
-echo "5/6  a Session picked from the page goes to that Session's terminal"
+echo "5/8  a Session picked from the page goes to that Session's terminal"
 open_title_sheet header-title
 agent-device wait "label=\"Tab $URL\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab again"
 agent-device press "label=\"Tab $URL\"" >/dev/null 2>&1
@@ -221,8 +249,40 @@ agent-device press "label=\"$OTHER\"" >/dev/null 2>&1
 terminal_on "$OTHER" "the Session pick did not go to the Terminal Screen of $OTHER"
 echo "     $OTHER on the Terminal Screen"
 
-echo "6/6  a Tab the Host lists no more leaves $SESSION on its Pane, and its Place forgets the Tab"
+echo "6/8  after a relaunch, $SESSION opens on its page with no Terminal Screen first, and does not resize the Window"
 [ "$(saved_place)" = "1 $URL" ] || fail "the Session Place of $SESSION is \"$(saved_place)\", not Window 1 with the page"
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+mac_sized
+on_host "tmux select-window -t '$SESSION:0'"
+[ "$(clients)" = 0 ] || fail "$SESSION still has a Client after the app was stopped"
+agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
+agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
+open_session "$SESSION"
+fresh_page "the Session opened after a relaunch did not show its page"
+echo "     the page, one Client, Window 1, and Window 1 still $MAC_SIZE"
+
+echo "7/8  a cold start with Reconnect on start opens $SESSION on its page, the same way"
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+python3 - "$DATA/muxify-settings.json" "$DATA/muxify-records.json" "$SESSION" <<'PY'
+import json, sys
+settings_path, records_path, session = sys.argv[1:]
+settings = json.load(open(settings_path))
+settings["reconnectOnStart"] = True
+json.dump(settings, open(settings_path, "w"))
+last = json.load(open(records_path)).get("lastPlace") or {}
+assert last.get("session") == session and last.get("topicId") is None, f"the Last Place is {last}"
+PY
+[ $? = 0 ] || fail "the Last Place is not $SESSION with no Topic"
+mac_sized
+on_host "tmux select-window -t '$SESSION:0'"
+agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
+fresh_page "the cold start did not show the page of $SESSION"
+echo "     the page, one Client, Window 1, and Window 1 still $MAC_SIZE"
+
+echo "8/8  a Tab the Host lists no more leaves $SESSION on its Pane, its Place forgets the Tab, and the terminal sizes the Window"
 tabs ""
 back_to_host
 open_session "$SESSION"
@@ -231,7 +291,8 @@ terminal_on "$SESSION" "$SESSION did not attach on its Pane"
 sleep 4
 agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View opened a Tab the Host lists no more"
 [ "$(saved_place)" = "1 none" ] || fail "the Session Place of $SESSION is \"$(saved_place)\", not Window 1 with no Tab"
-echo "     the Pane, no Web View, and a Session Place with no Tab"
+[ "$(window_size)" != "$MAC_SIZE" ] || fail "Window 1 is still $MAC_SIZE with the Terminal Screen shown"
+echo "     the Pane, no Web View, a Session Place with no Tab, and Window 1 at $(window_size)"
 
 agent-device close >/dev/null 2>&1
 echo
@@ -239,5 +300,7 @@ echo "PASS: a Session with no Topic opened again is where it was left, its page"
 echo "      included, from the Sessions tab and from Go to, after Back from the"
 echo "      page went to the Host Screen in one step; a Window picked from the"
 echo "      page goes to the terminal and forgets the page; a Session picked from"
-echo "      the page goes to its terminal; and a Tab the Host lists no more"
-echo "      leaves the Pane on top."
+echo "      the page goes to its terminal; with no Attach up, after a relaunch"
+echo "      and on a cold start, the page shows with no Terminal Screen first"
+echo "      and does not resize the Mac's Window; and a Tab the Host lists no"
+echo "      more leaves the Pane on top."

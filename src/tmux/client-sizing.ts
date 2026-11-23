@@ -53,16 +53,11 @@ export interface ClientSizing {
   sheetPresented(open: boolean): void;
   /** The Client is pointed at another Session, whose Window is somebody else's shape. */
   sessionSwitched(): void;
-  /** The Attach is up and wants its first size. */
-  attached(): void;
   /**
-   * Resolves with the first grid that has stopped moving.
-   *
-   * What Attach waits on instead of polling a ref. Resolves immediately when
-   * one has already settled, so a reconnect does not wait for the Surface to
-   * say anything it has already said.
+   * The Attach is up and wants its first size. With no settled grid yet, such
+   * as under a Place's Web View, nothing goes out until a Surface settles.
    */
-  settledGrid(): Promise<Grid>;
+  attached(): void;
   /**
    * The last grid that stood still.
    *
@@ -82,7 +77,7 @@ export interface ClientSizing {
    * caller can take back what goes with the Window, such as its colours.
    */
   reclaim(): boolean;
-  /** Nothing more is wanted. Cancels the settle and strands no waiter. */
+  /** Nothing more is wanted. Cancels the settle. */
   dispose(): void;
 }
 
@@ -124,7 +119,9 @@ export interface ClientSizing {
  * **Nothing is sent before Attach.** Grids reported before `attached()` are
  * remembered and settled; the first size goes out when Attach asks for it, in
  * the order Attach needs — size first, so the capture that follows is of a
- * Pane the size of the Surface.
+ * Pane the size of the Surface. Attach does not wait for one: with no settled
+ * grid when it asks, the Client says no size, which tmux takes as "leave the
+ * Window as it is", and the first grid to settle goes out then.
  */
 export function createClientSizing(
   send: (grid: Grid) => Promise<void>,
@@ -158,7 +155,6 @@ export function createClientSizing(
   let settling: Grid | null = null;
   /** How many settle windows the current grid has been moving through. */
   let tries = 0;
-  const waiting: ((grid: Grid) => void)[] = [];
 
   /** The grid the Client should be, from what is on screen right now. */
   function currentGrid(): Grid | null {
@@ -180,12 +176,10 @@ export function createClientSizing(
     scheduler.request(next, force);
   }
 
-  /** Believes a grid: wakes Attach, and sends it. */
+  /** Believes a grid, and sends it. */
   function adopt(grid: Grid): void {
     stable = grid;
     say(`settled on ${grid.cols}x${grid.rows}`);
-
-    for (const wake of waiting.splice(0)) wake(grid);
     options.onSettled?.(grid);
     push(false);
   }
@@ -279,13 +273,6 @@ export function createClientSizing(
       push(true);
     },
 
-    settledGrid(): Promise<Grid> {
-      if (stable) return Promise.resolve(stable);
-      return new Promise<Grid>((resolve) => {
-        waiting.push(resolve);
-      });
-    },
-
     stableGrid: () => stable,
 
     windowSized(grid: Grid): void {
@@ -311,7 +298,6 @@ export function createClientSizing(
       disposed = true;
       clock.cancel(settleTimer);
       settleTimer = null;
-      waiting.length = 0;
     },
   };
 }

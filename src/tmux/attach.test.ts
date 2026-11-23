@@ -693,14 +693,8 @@ describe('the cursor and the Panes it has painted', () => {
 });
 
 describe('the order an Attach happens in', () => {
-  it('connects, checks the key, settles the grid, opens, sizes, zooms, reads', async () => {
+  it('connects, checks the key, opens, sizes, zooms, reads', async () => {
     const kit = attachOn();
-
-    // Nothing is opened until a grid has stopped moving: the Window must not
-    // be laid out for a Surface that is still being measured.
-    await settle();
-    expect(kit.hosts[0].attachCommand).toBe('');
-
     kit.attach.windowGridReported({ cols: 32, rows: 11 }, PHONE);
     kit.clock.advance(6);
     kit.attach.windowGridReported(GRID, PHONE);
@@ -736,6 +730,28 @@ describe('the order an Attach happens in', () => {
     ]);
     // The pre-layout grid never reached tmux.
     expect(kit.hosts[0].commands[1]).toContain("'-C' '49x41'");
+  });
+
+  it('waits for no Surface, and says its size only once a Surface reports a grid that has stopped moving', async () => {
+    const kit = attachOn();
+    await settle();
+    expect(kit.hosts[0].attachCommand).toContain('-C');
+
+    kit.hosts[0].accept();
+    await settle();
+    expect(kit.attach.state().phase.kind).toBe('connected');
+    expect(kit.hosts[0].verbs()).toContain('list-panes');
+    // No size said: tmux leaves the Window at the size it has.
+    expect(kit.hosts[0].verbs()).not.toContain('refresh-client');
+
+    kit.attach.windowGridReported({ cols: 32, rows: 11 }, PHONE);
+    kit.clock.advance(6);
+    kit.attach.windowGridReported(GRID, PHONE);
+    kit.clock.advance(GRID_SETTLE_MS * 2);
+    await settle();
+
+    const resizes = kit.hosts[0].commands.filter((command) => command.startsWith("'refresh-client'"));
+    expect(resizes).toEqual([expect.stringContaining("'-C' '49x41'")]);
   });
 
   it('publishes connecting and then connected', async () => {
@@ -3585,6 +3601,23 @@ describe('the Place', () => {
     await settle();
     expect(where(noTopic)).toBe('@0 %0');
     expect(written(noTopic).at(-1)).toBe('Session play play @0 %0 no Tab');
+  });
+
+  it('opens at a Place with a Tab, of a Topic or a Session, when no Surface has mounted', async () => {
+    // The Web View stands in the Terminal Screen's place, so nothing reports a grid.
+    for (const kit of [
+      attachOn({ hosts: [twoWindows()], topicId: 'a', restore: place({ tab: TAB }) }),
+      attachOn({ hosts: [twoWindows()], restore: sessionPlace('work', { tab: TAB }) }),
+    ]) {
+      await settle();
+      kit.hosts[0].accept();
+      await settle();
+
+      expect(kit.attach.state().phase.kind).toBe('connected');
+      expect(where(kit)).toBe('@1 %3');
+      expect(kit.attach.takeTabToRestore()?.tab).toEqual(TAB);
+      expect(kit.hosts[0].verbs()).not.toContain('refresh-client');
+    }
   });
 
   it('goes back to the Session Place of the Session it holds, its Tab included', async () => {
