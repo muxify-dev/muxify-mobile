@@ -14,12 +14,18 @@ public class PhysicalKeyboardModule: Module {
 
     OnStartObserving { [weak self] in
       guard let self else { return }
-      self.observers = [Notification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect].map { name in
-        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-          self?.reportPresence()
-        }
-      }
-      self.reportPresence()
+      // All keyboards are one coalesced GCKeyboard, so a disconnect is posted
+      // only when the last one goes. The notification is the answer:
+      // `coalesced` can still hold the leaving keyboard while it is posted.
+      self.observers = [
+        NotificationCenter.default.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] _ in
+          self?.report(connected: true, cause: "connect")
+        },
+        NotificationCenter.default.addObserver(forName: .GCKeyboardDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+          self?.report(connected: false, cause: "disconnect")
+        },
+      ]
+      self.report(connected: GCKeyboard.coalesced != nil, cause: "check")
     }
 
     OnStopObserving { [weak self] in
@@ -27,7 +33,7 @@ public class PhysicalKeyboardModule: Module {
     }
 
     OnAppBecomesActive { [weak self] in
-      self?.reportPresence()
+      self?.report(connected: GCKeyboard.coalesced != nil, cause: "check")
     }
 
     OnDestroy { [weak self] in
@@ -35,8 +41,8 @@ public class PhysicalKeyboardModule: Module {
     }
   }
 
-  private func reportPresence() {
-    sendEvent("onChange", ["connected": GCKeyboard.coalesced != nil])
+  private func report(connected: Bool, cause: String) {
+    sendEvent("onChange", ["connected": connected, "cause": cause])
   }
 
   private func stopObserving() {
