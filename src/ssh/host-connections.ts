@@ -118,8 +118,8 @@ export interface HostConnections {
    * A screen that shows the Host holds its Connection, opening one when none
    * is open, until it calls what this answers. The Connection does not close
    * for idle while it is held, and its idle minute starts when it is let go.
-   * Unlike an Attach, a hold does not keep the Connection over a return from
-   * the background.
+   * Unlike an Attach, a hold keeps the Connection over a return from the
+   * background only when its Host Server answers a `ping`.
    */
   hold(host: Host, options?: ScreenOptions): Promise<() => void>;
   /**
@@ -166,7 +166,8 @@ interface Entry {
  * Attach holds it and no screen has used it for IDLE_MS, when the library's
  * keepalive finds it dead, when a screen exec passes EXEC_DEADLINE_MS with no
  * Attach on it, and when the app comes back from the background with no
- * Attach on it. The Attach decides about a Connection it holds.
+ * Attach on it and its Host Server does not answer a `ping` within
+ * EXEC_DEADLINE_MS. The Attach decides about a Connection it holds. See ADR 0031.
  */
 export function createHostConnections(options: {
   dial: Dial;
@@ -304,28 +305,21 @@ export function createHostConnections(options: {
       clock,
       say: (line) => say(`${host.displayName}: Host Server: ${line}`),
     });
-    const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`));
+    const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`), clock);
     /** The Sessions the last prune that succeeded kept Places for, so a push that changes none of them writes nothing. */
     let prunedFor: string | null = null;
-    /**
-     * When the phone received the current snapshot. The snapshot carries no
-     * time of its own, and a change of Host Server state calls `changed` again
-     * with the same snapshot, so the time is taken when a new one is first seen.
-     */
-    let seen: { snapshot: object; at: Date } | null = null;
     const changed = () => {
       // A Connection that a newer one replaced has nothing to say.
       if (feeds.get(host.id)?.feed !== feed) return;
       for (const listener of [...listingListeners]) listener(host.id);
       // A snapshot is the Host's whole state, live Sessions and Board alike,
       // so a Session it does not name is gone, and so is its Session Place.
-      const { snapshot } = feed.current();
-      if (!snapshot) return;
-      if (seen?.snapshot !== snapshot) seen = { snapshot, at: new Date(clock.now()) };
-      const had = sessionNamesHad(snapshot);
+      const { received } = feed.current();
+      if (!received) return;
+      const had = sessionNamesHad(received.snapshot);
       const key = [...had].sort().join('\n');
       if (key === prunedFor) return;
-      store.pruneSessionPlaces(host.id, had, seen.at).then(
+      store.pruneSessionPlaces(host.id, had, new Date(received.at)).then(
         () => { prunedFor = key; },
         (error: unknown) => { say(`${host.displayName}: could not prune Session Places: ${describeError(error)}`); },
       );
@@ -357,6 +351,39 @@ export function createHostConnections(options: {
       publish(entry, { kind: 'done', result });
       return result;
     });
+  }
+
+  /**
+   * After a return from the background: a Connection with no Attach stays
+   * when its Host Server answers a `ping` in time, and its Listing is read
+   * again on it, one round trip in place of a new dial. See ADR 0031.
+   */
+  function askAfterReturn(entry: Entry, server: HostServer): void {
+    const { host } = entry;
+    say(`${host.displayName}: asking its Host Server after the return`);
+    const answered = new Promise<boolean>((resolve) => {
+      const timer = clock.after(EXEC_DEADLINE_MS, () => resolve(false));
+      const settled = (ok: boolean) => () => {
+        clock.cancel(timer);
+        resolve(ok);
+      };
+      server.request({ ping: {} }).then(settled(true), settled(false));
+    });
+    void answered.then((ok) => {
+      if (entry.gone) return;
+      if (!ok) {
+        void drop(entry, 'its Host Server did not answer after the app came back from the background');
+        return;
+      }
+      say(`${host.displayName}: its Host Server answered after the return; reading the Listing again`);
+      feedOf(entry)?.refresh();
+    });
+  }
+
+  /** The Listing feed that follows this Connection's Host Server, or null when a newer Connection's replaced it. */
+  function feedOf(entry: Entry): ListingFeed | null {
+    const latest = feeds.get(entry.host.id);
+    return latest?.entry === entry ? latest.feed : null;
   }
 
   /** Closes the Connection. Answers when the socket is shut. */
@@ -605,15 +632,20 @@ export function createHostConnections(options: {
     lifecycleChanged(phase: LifecyclePhase): void {
       if (phase === 'background') {
         backgrounded = true;
+        // From now no list on screen is known to be the Host's.
+        for (const { feed } of feeds.values()) feed.pause();
         return;
       }
       if (phase !== 'active' || !backgrounded) return;
       backgrounded = false;
+      for (const { feed } of feeds.values()) feed.resume();
       // Keepalives stop while iOS suspends the app, so a Connection may have
       // died with nothing to say so. One that an Attach holds is the Attach's
-      // to check.
+      // to check; if the Attach drops it, the next Connection's feed replaces this one.
       for (const entry of [...entries.values()]) {
-        if (entry.attaches === 0) void drop(entry, 'the app came back from the background');
+        if (entry.attaches > 0) feedOf(entry)?.refresh();
+        else if (entry.server?.state().kind === 'live') askAfterReturn(entry, entry.server);
+        else void drop(entry, 'the app came back from the background');
       }
     },
   };

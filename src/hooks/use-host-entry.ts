@@ -10,9 +10,10 @@ import { deviceHostStore } from '@/storage/device-store';
 import type { Host, PlaceTab } from '@/storage/records';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
+import { appConnections } from '@/tmux/ssh-connection';
 import { sendCardOrder } from '@/topics/act-on-card';
 import { cardKey } from '@/topics/board-card';
-import type { TopicId } from '@/topics/environment';
+import { hasTopic, type TopicId } from '@/topics/environment';
 import { wakeBoardSession, type BoardSessionWake } from '@/topics/host-writes';
 import { chooseTopicSession } from '@/topics/open-topic';
 import { readTopic } from '@/topics/read-topic';
@@ -77,10 +78,13 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   }, [hostId, attachTopic]);
 
   /**
-   * `card` is the card that shows the spinner, by its `cardKey`, and whether
-   * it is a Topic, which the failure alert names. Null for a plain Session.
+   * `card` is the card that shows the spinner, by its `cardKey`, and the Topic
+   * it is, which the failure alert names. Null for a plain Session.
+   *
+   * A Topic tapped on a list that was old may be gone from the Host by now. A
+   * failure then says so, when the newest snapshot no longer has the Topic.
    */
-  const run = useCallback((card: { key: string; topic: boolean } | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback) => {
+  const run = useCallback((card: { key: string; topic: TopicDetail | null } | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback) => {
     if (running.current || !focused.current) return;
     const operation = Symbol();
     const revision = focusRevision.current;
@@ -91,6 +95,11 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     void work(delivery).catch((error) => {
       if (!isCurrent()) return;
       if (feedback) { feedback.onError(error); return; }
+      const newest = appConnections().listing(hostId)?.received?.snapshot;
+      if (card?.topic && newest && !hasTopic(newest, card.topic.id)) {
+        Alert.alert('Could not open Topic', `${card.topic.label} was closed on the Mac.`);
+        return;
+      }
       Alert.alert(card?.topic ? 'Could not open Topic' : 'Could not open Session', describeError(error), [
         ...(retry ? [{ text: actionLabel('try-again'), onPress: retry }] : []), { text: 'OK' },
       ]);
@@ -99,7 +108,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
       running.current = null;
       setBusyCard(null);
     });
-  }, [holder]);
+  }, [holder, hostId]);
 
   /** The action sheet of a tap on a Dormant card: Reopen, Start Fresh or Cancel. A screen left meanwhile hears nothing. */
   const askWake = useCallback((title: string, message: string, onWake: (wake: Wake) => void) => {
@@ -122,7 +131,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
         seed: topicSeedParam(topic), ...(fromAttach ? { fromAttach: '1' } : {}) } });
       return;
     }
-    const card = { key: topic.id, topic: true };
+    const card = { key: topic.id, topic };
     const retryRead = () => run(card, (delivery) => readAndAttach(topic.id, delivery), retryRead);
     if (topic.state === 'dormant') {
       askWake(topic.label, 'This Topic remembers Sessions but has none running.', (wake) => {
@@ -162,11 +171,11 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   const openBoardSession = useCallback((row: BoardSessionRow) => {
     const { card } = row;
     if (card.kind === 'live-session') {
-      run({ key: cardKey(card), topic: false }, (delivery) => attachSession(row.name, delivery));
+      run({ key: cardKey(card), topic: null }, (delivery) => attachSession(row.name, delivery));
       return;
     }
     askWake(row.name, 'This Board Session has no live Session.', (wake) => {
-      run({ key: cardKey(card), topic: false }, async (delivery) => {
+      run({ key: cardKey(card), topic: null }, async (delivery) => {
         const { end, session } = await wakeOnce(hostId, (host, sending) =>
           wakeBoardSession(host, card.id, wake, newRequestId(), sending));
         if (!delivery.isCurrent()) return;

@@ -1,7 +1,7 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { BoardCard, BoardSessionCard } from '@/topics/board-card';
 import { openTopics, type Card, type EnvironmentSnapshot, type Mark, type SessionId, type SnapshotSession, type TopicId } from '@/topics/environment';
-import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
+import { lastSnapshot, topicsUnavailable, type Freshness, type HostTopics } from '@/topics/host-topics';
 import type { CardSection, MenuCard } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
 import type { SessionOnHost } from '@/topics/session-action';
@@ -55,10 +55,12 @@ export interface SessionRow {
 /** One row of a Host Screen section. A section with no Session rows has one of the others. */
 export type HostScreenRow =
   | SessionRow
-  /** The first question to the Host is still in flight, or the Host CLI install is running. */
+  /** The first question to the Host is still in flight, the Host CLI install is running, or an old list is updating. */
   | { kind: 'checking'; text: string }
   /** The Host answered, and refused. The screen offers Try again. */
   | { kind: 'refused'; message: string }
+  /** The list on screen, last known to be the Host's `at`, could not be updated, and `message` says why. The screen offers Retry. */
+  | { kind: 'not-updated'; at: number; message: string }
   /** The Host could not be used: its Host Problem, the one row that says so. The screen offers Try again. */
   | { kind: 'host-problem'; title: string; detail: string | null }
   | { kind: 'note'; text: string }
@@ -154,6 +156,8 @@ export interface HostScreenInput {
   appearance: ColorAppearance;
   /** The Host Problem in the words the user reads, or null. */
   problem: { title: string; detail: string | null } | null;
+  /** Whether the list on screen is the Host's now. */
+  freshness: Freshness;
 }
 
 /**
@@ -164,10 +168,10 @@ export interface HostScreenInput {
  * view: every running Session in the order the Host lists them, with its Topic
  * under the name, and no Bench.
  */
-export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem }: HostScreenInput): HostScreenSection[] {
+export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem, freshness }: HostScreenInput): HostScreenSection[] {
   const sections = tab === 'board'
-    ? boardSections(topics, { opened, appearance, withNoTopic: true, attach })
-    : [sessionsList(listing, topics)];
+    ? boardSections(topics, { opened, appearance, withNoTopic: true, attach, freshness })
+    : [sessionsList(listing, topics, freshness)];
   if (problem === null) return sections;
   // One row for the Host Problem, however many reads of the Host met it.
   const [first, ...rest] = sections;
@@ -195,7 +199,7 @@ export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'li
  * there are none. The Bench is open, because nothing opens in place there.
  */
 export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
-  return boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
+  return boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null, freshness: { kind: 'current' } })
     .map((section) => ({
       ...section,
       title: SECTION_TITLES[section.id],
@@ -225,6 +229,7 @@ interface CardsContext {
   withNoTopic: boolean;
   /** Where the Attach is, or null when the list has no Bench peek. */
   attach: AttachPlace | null;
+  freshness: Freshness;
 }
 
 /**
@@ -240,10 +245,28 @@ function boardSections(topics: HostTopics, context: CardsContext): HostScreenSec
   if (topics.kind === 'loading' && last === null) {
     return [topicsSection('topics', 'Board', [{ kind: 'checking', text: 'Checking Topics…' }])];
   }
-  const notice = topicsNotice(topics);
+  const said = freshnessRows(context.freshness);
+  const notice = said.length > 0 ? said : topicsNotice(topics);
   if (last === null) return [topicsSection('topics', 'Board', notice)];
   const [first, ...rest] = cardSections(last, context);
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
+}
+
+/**
+ * The row that says the list on screen may be old, above it. A failed update
+ * says so in place of its refusal row: the list it keeps is the reason to say
+ * how old it is.
+ */
+function freshnessRows(freshness: Freshness): HostScreenRow[] {
+  switch (freshness.kind) {
+    case 'updating':
+      return [{ kind: 'checking', text: 'Updating…' }];
+    case 'not-updated':
+      return [{ kind: 'not-updated', at: freshness.at, message: freshness.error }];
+    case 'current':
+    case 'quiet':
+      return [];
+  }
 }
 
 /** The row that says why the Topics are not as the Host has them now: an install or update, a failure, or no Host Server. */
@@ -403,7 +426,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * which Topic each Session is in. A row above them says why the Host has no
  * Board tab, when the Host CLI is being installed or updated, or failed.
  */
-function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
+function sessionsList(listing: Listing, topics: HostTopics, freshness: Freshness): HostScreenSection {
   const running = runningSessions(listing, topics);
   const rows: HostScreenRow[] = running === undefined
     ? unansweredRows(listing)
@@ -416,8 +439,10 @@ function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
         topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
         ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
       }));
+  // A failed update drops the Sessions for its refusal row, so only an update on its way has an old list to speak of.
+  const updating = freshness.kind === 'updating' && running !== undefined ? freshnessRows(freshness) : [];
   const notice = hostScreenTabs(topics).includes('board') ? [] : topicsNotice(topics);
-  return { id: 'sessions', title: null, rows: [...notice, ...rows] };
+  return { id: 'sessions', title: null, rows: [...updating, ...notice, ...rows] };
 }
 
 /** A running Session of the Listing, joined with what the Host's Topics say of it. */

@@ -10,7 +10,7 @@ import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { EnvironmentSnapshot, SessionId, TopicId } from '@/topics/environment';
 import type { DisconnectReason } from '@/tmux/disconnect-reason';
-import type { HostTopics } from '@/topics/host-topics';
+import type { Freshness, HostTopics, Shown } from '@/topics/host-topics';
 import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockRouter = { push: jest.fn() };
@@ -24,7 +24,7 @@ const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
-let mockReading: { listing: unknown; topics: HostTopics; sessionsOnly: boolean; problem: DisconnectReason | null; retry: jest.Mock };
+let mockReading: { listing: unknown; topics: HostTopics; freshness: Freshness; sessionsOnly: boolean; problem: DisconnectReason | null; retry: jest.Mock };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -101,13 +101,15 @@ const snapshot = (): EnvironmentSnapshot => ({
   unpinned: { limit: 3, places: [topicCard('t1', 'Fix login')], guests: [], bench: [] },
   no_topic: [sid('$1')],
 });
+const got = (shown: EnvironmentSnapshot): Shown => ({ received: { snapshot: shown, at: 0 }, doubt: null });
 const path = (name: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
-async function mount(topics: HostTopics = { kind: 'listed', snapshot: snapshot() }) {
+async function mount(topics: HostTopics = { kind: 'listed', ...got(snapshot()) }) {
   mockReading = {
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
     topics,
+    freshness: { kind: 'current' },
     sessionsOnly: topics.kind === 'unavailable',
     problem: null,
     retry: jest.fn(),
@@ -190,7 +192,7 @@ describe('a Host that cannot be reached', () => {
     mockReading = {
       ...mockReading,
       listing: HOST_PROBLEM,
-      topics: { kind: 'host-problem', last: snapshot() },
+      topics: { kind: 'host-problem', last: got(snapshot()) },
       problem: { kind: 'host-unreachable', detail: 'The Host did not answer in time.' },
     };
     await act(async () => renderer.update(<HostScreen />));

@@ -37,7 +37,12 @@ jest.mock('@/storage/device-store', () => ({
 }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings: { zoomMultipaneWindows: true }, terminal: { foreground: '#e6e6e6', background: '#11131a' } }) }));
 jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpenAttach(...args) }));
-jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ openConnection: jest.fn(), lifecycleChanged: jest.fn() }) }));
+let mockNewest: unknown = null;
+jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({
+  openConnection: jest.fn(),
+  lifecycleChanged: jest.fn(),
+  listing: () => (mockNewest === null ? null : { received: { snapshot: mockNewest, at: 0 } }),
+}) }));
 jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => mockReadTopic(...args) }));
 jest.mock('@/topics/act-on-card', () => ({ sendCardOrder: jest.fn() }));
 jest.mock('@/topics/unread-on-visit', () => ({
@@ -65,6 +70,7 @@ function Screen({ fromAttach = false }: { fromAttach?: boolean }) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockBlur = undefined;
+  mockNewest = null;
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   mockLoad.mockResolvedValue(records);
   mockPlaceFor.mockResolvedValue(null);
@@ -113,6 +119,35 @@ it('reads an Empty Topic when its card opens Add a Session, as a visit to its pa
   await act(async () => { actions.openTopic({ ...topic, state: 'empty', sessions: [] }); });
   expect(mockMarkTopicRead).toHaveBeenCalledWith('host', topic.id);
   expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/topic-add-session' }));
+});
+
+describe('a Topic tapped on a list that was old', () => {
+  const board = (...ids: string[]) => ({
+    sessions: [], tags: [], pinned: [], no_topic: [], sidebar: null,
+    unpinned: { limit: 3, guests: [], bench: [], places: ids.map((id) => ({
+      kind: 'topic', mark: null, sessions: [], topic: { id, label: id, note: null, tags: [], state: 'live' },
+    })) },
+  });
+
+  it('says the Topic was closed when the newest snapshot no longer has it', async () => {
+    mockNewest = board('other');
+    mockReadTopic.mockResolvedValue({ kind: 'failed', error: 'This Topic no longer exists on the Host.' });
+    await mount();
+
+    await act(async () => { actions.openTopic({ ...topic, sessions: [] }); });
+
+    expect(Alert.alert).toHaveBeenCalledWith('Could not open Topic', 'Topic was closed on the Mac.');
+  });
+
+  it('gives the Host’s reason when the newest snapshot still has the Topic', async () => {
+    mockNewest = board('topic');
+    mockReadTopic.mockResolvedValue({ kind: 'failed', error: 'muxify exited with status 1' });
+    await mount();
+
+    await act(async () => { actions.openTopic({ ...topic, sessions: [] }); });
+
+    expect(Alert.alert).toHaveBeenCalledWith('Could not open Topic', 'muxify exited with status 1', expect.any(Array));
+  });
 });
 
 it('marks an Empty Topic form opened from the Terminal for origin capture', async () => {
