@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Runs e2e/new-topic.ad on the Topics tab, against a sandboxed Muxify on this
+# Runs e2e/new-topic.ad on the Board tab, against a sandboxed Muxify on this
 # Mac, the dev Host (see e2e/sandbox.sh), then checks that the Topic it made
 # has its title and the Tag #work: New Topic is in the ＋ menu of the Go to
 # bar, which the Host Server serves. Then turns the Host Server off and runs

@@ -132,8 +132,12 @@ describe('parseSettings', () => {
   });
 
   it('keeps the last Host Screen tab of each Host, and drops a tab it does not know', () => {
-    expect(parseSettings({ hostScreenTabs: { host1: 'sessions', host2: 'topics', host3: 'recent', host4: 7 } }).hostScreenTabs)
-      .toEqual({ host1: 'sessions', host2: 'topics' });
+    expect(parseSettings({ hostScreenTabs: { host1: 'sessions', host2: 'board', host3: 'recent', host4: 7 } }).hostScreenTabs)
+      .toEqual({ host1: 'sessions', host2: 'board' });
+  });
+
+  it('reads the Board tab saved under its old name', () => {
+    expect(parseSettings({ hostScreenTabs: { host1: 'topics' } }).hostScreenTabs).toEqual({ host1: 'board' });
   });
 
   it('carries over none of the Host Screen lists of Configure panels', () => {

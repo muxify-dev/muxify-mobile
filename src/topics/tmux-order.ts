@@ -5,7 +5,7 @@ import { speakingAs } from '@/diagnostics/log';
 import type { Host } from '@/storage/records';
 
 import type { SessionId } from './environment';
-import { sendEnvironment, type EnvironmentCommand, type TmuxTarget } from './host-write-request';
+import { sendEnvironment, type EnvironmentCommand, type WriteTarget } from './host-write-request';
 import { newRequestId } from './request';
 import type { TopicWrite } from './topic-edit';
 
@@ -91,18 +91,18 @@ export function endAlert(action: Extract<TmuxOrderKind, 'stop-session' | 'close-
 }
 
 /** The `environment` command of an order, and the Session or Window it targets. Mark All as Read targets none. */
-export function tmuxWrite(order: TmuxOrder): { command: EnvironmentCommand; tmux?: TmuxTarget } {
+export function tmuxWrite(order: TmuxOrder): { command: EnvironmentCommand; target?: WriteTarget } {
   switch (order.kind) {
     case 'rename-session':
-      return { command: { rename_session: { name: order.name } }, tmux: { session: order.session } };
+      return { command: { rename_session: { name: order.name } }, target: { session: order.session } };
     case 'remove-from-topic':
-      return { command: { remove_from_topic: {} }, tmux: { session: order.session } };
+      return { command: { remove_from_topic: {} }, target: { session: order.session } };
     case 'stop-session':
-      return { command: { kill_session: {} }, tmux: { session: order.session } };
+      return { command: { kill_session: {} }, target: { session: order.session } };
     case 'rename-window':
-      return { command: { rename_window: { name: order.name } }, tmux: { window: order.window } };
+      return { command: { rename_window: { name: order.name } }, target: { window: order.window } };
     case 'close-window':
-      return { command: { kill_window: {} }, tmux: { window: order.window } };
+      return { command: { kill_window: {} }, target: { window: order.window } };
     case 'mark-all-read':
       return { command: { mark_all_read: {} } };
   }

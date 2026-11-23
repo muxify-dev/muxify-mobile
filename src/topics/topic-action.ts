@@ -29,6 +29,9 @@ export type TopicAction =
   | 'forget'
   | 'forget-stopping-sessions';
 
+/** The orders any card can take. Settle and Forget close a Topic, so they take a Topic alone. */
+export type CardAction = Exclude<TopicAction, 'settle' | 'settle-stopping-sessions' | 'forget' | 'forget-stopping-sessions'>;
+
 /** The Mac's words for each action. */
 export const TOPIC_ACTION_LABEL: Record<TopicAction, string> = {
   'mark-read': 'Mark as Read',
@@ -87,7 +90,7 @@ export function closeAlert(close: 'settle' | 'forget', topic: string): {
       };
 }
 
-/** The section of the Host Screen that a Topic card sits in. */
+/** The section of the Host Screen that a card sits in. */
 export type CardSection = 'pinned' | 'in-play' | 'guests' | 'bench';
 
 /**
@@ -96,11 +99,12 @@ export type CardSection = 'pinned' | 'in-play' | 'guests' | 'bench';
  * Benched or made a Guest. A Benched card becomes a Guest. A card in a place
  * or among the Guests goes to the Bench. Move Up and Move Down are always offered: the Mac decides at the
  * edges, and a refusal shows its reason. A Pinned card offers Unpin, any other
- * Pin, as the Mac's `pinButton` does.
+ * Pin, as the Mac's `pinButton` does. Only a Topic has a mark to read: a Board
+ * Session's menu has no Mark as Read.
  */
-export function menuActions(card: { section: CardSection; mark: Mark | null }): TopicAction[] {
-  const actions: TopicAction[] = [];
-  const read = readAction(card.mark);
+export function menuActions(card: { kind: 'topic' | 'board-session'; section: CardSection; mark: Mark | null }): CardAction[] {
+  const actions: CardAction[] = [];
+  const read = card.kind === 'topic' ? readAction(card.mark) : null;
   if (read !== null) actions.push(read);
   actions.push(card.section === 'pinned' ? 'unpin' : 'pin');
   actions.push('move-up', 'move-down');
@@ -113,7 +117,7 @@ export function menuActions(card: { section: CardSection; mark: Mark | null }): 
  * The one button of a Topic card's trailing swipe. A full swipe runs the
  * button, so only Read allows it.
  */
-export type SwipeAction = Extract<TopicAction, 'mark-read' | 'mark-unread'>;
+export type SwipeAction = Extract<CardAction, 'mark-read' | 'mark-unread'>;
 
 export function swipeAction(mark: Mark | null): SwipeAction | null {
   return readAction(mark);

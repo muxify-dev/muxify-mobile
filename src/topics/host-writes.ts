@@ -8,14 +8,15 @@ import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';
 
 import { parseAddedSession, type AddSessionRead } from './add-session';
-import { parseEnvironment, type EnvironmentSnapshot, type TopicId } from './environment';
+import { cardRef, cardTarget, type BoardCard } from './board-card';
+import { parseEnvironment, type BoardSessionId, type EnvironmentSnapshot, type TopicId } from './environment';
 import { array, object } from './json-shape';
 import { firstPush, sendEnvironment, type EnvironmentAnswer, type EnvironmentCommand, type ServerConnections } from './host-write-request';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import type { RequestId } from './request';
-import type { TopicAction } from './topic-action';
+import type { CardAction, TopicAction } from './topic-action';
 import { parseTopicDetail, TOPIC_GONE, type TopicDetail } from './topic-detail';
-import type { Drop, DropAnchor } from './topic-drop';
+import type { Drop } from './topic-drop';
 import type { TopicChange, TopicWrite } from './topic-edit';
 import type { Wake } from './wake-topic';
 
@@ -46,15 +47,11 @@ const CLOSING: Record<ClosingAction, { close: 'settle' | 'forget'; stopSessions:
   'forget-stopping-sessions': { close: 'forget', stopSessions: true },
 };
 
-export function isClosing(action: TopicAction): action is ClosingAction {
-  return action in CLOSING;
-}
-
 /**
  * The command of a menu order that needs nothing from the Host first. Mark as
  * Read reads the whole Topic; Mark as Unread changes only its Topic mark.
  */
-export function actionCommand(action: Exclude<TopicAction, ClosingAction>): EnvironmentCommand {
+export function actionCommand(action: CardAction): EnvironmentCommand {
   switch (action) {
     case 'mark-read':
       return { mark_read: { change: 'read', scope: 'topic' } };
@@ -118,18 +115,6 @@ export function dropCommand(drop: Drop): EnvironmentCommand {
       return { move_card: { move: { trade: { card: cardRef(drop.with) } } } };
     case 'fill':
       return { fill_open_place: { place: drop.place } };
-  }
-}
-
-/** A card on the wire, MuxifyCore's `TopicListRef`. */
-function cardRef(anchor: DropAnchor): object {
-  switch (anchor.kind) {
-    case 'topic':
-      return { topic: { ref: { id: anchor.id } } };
-    case 'locked-session':
-      return { lock: { session: anchor.session } };
-    case 'open-place':
-      return { openPlace: { id: anchor.id } };
   }
 }
 
@@ -199,18 +184,36 @@ export async function changeTopic(
   request: RequestId,
   sending?: () => void,
 ): Promise<TopicWrite> {
-  return changed(await sendEnvironment(host, { command: changeCommand(change), topic, request }, sending));
+  return changed(await sendEnvironment(host, { command: changeCommand(change), target: { topic }, request }, sending));
 }
 
-/** Sends one write for a Topic card whose command is known. */
-export async function writeTopic(
+/** Sends one write for a card whose command is known. */
+export async function writeCard(
   host: Host,
-  topic: TopicId,
+  card: BoardCard,
   command: EnvironmentCommand,
   request: RequestId,
   sending?: () => void,
 ): Promise<TopicWrite> {
-  return changed(await sendEnvironment(host, { command, topic, request }, sending));
+  return changed(await sendEnvironment(host, { command, target: cardTarget(card), request }, sending));
+}
+
+/** How a wake of a Dormant Board Session ended: the name of the Session the Host made, or why there is none. */
+export type BoardSessionWake = { kind: 'woke'; session: string } | Exclude<EnvironmentAnswer, { kind: 'answered' }>;
+
+/**
+ * Reopens or Starts Fresh a Dormant Board Session. The Host answers with the
+ * name of its Session, which the phone attaches to: there is no Topic to read.
+ */
+export async function wakeBoardSession(
+  host: Host,
+  id: BoardSessionId,
+  wake: Wake,
+  request: RequestId,
+  sending?: () => void,
+): Promise<BoardSessionWake> {
+  const answer = await sendEnvironment(host, { command: wakeCommand(wake), target: { board_session: id }, request }, sending);
+  return answered(answer, (value) => ({ kind: 'woke', session: parseAddedSession(value) }));
 }
 
 /**
@@ -244,7 +247,7 @@ export async function addSession(
 ): Promise<AddSessionRead> {
   const command = addSessionCommand({ ...folder, directory: await onHost(host, folder.directory) }, options);
   if ('error' in command) return { kind: 'failed', error: String(command.error) };
-  const answer = await sendEnvironment(host, { command, topic, request }, sending);
+  const answer = await sendEnvironment(host, { command, target: { topic }, request }, sending);
   return answered(answer, (value) => ({ kind: 'added', session: parseAddedSession(value) }));
 }
 

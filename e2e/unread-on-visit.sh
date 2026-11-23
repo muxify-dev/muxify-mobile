@@ -79,7 +79,7 @@ back_to_host() {
   agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back did not reach the Host Screen"
 }
 
-# The Host Screen on the Topics tab, and a Title Sheet with the Topics, as in e2e/topic-place.sh.
+# The Host Screen on the Board tab, and a Title Sheet with the Topics, as in e2e/topic-place.sh.
 python3 - "$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents/muxify-settings.json" <<'PY'
 import json, sys
 path = sys.argv[1]

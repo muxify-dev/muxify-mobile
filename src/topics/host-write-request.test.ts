@@ -11,7 +11,7 @@ jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: (tag:
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => { throw new Error('the tests give their own Connections'); } }));
 
 const HOST: Host = { id: 'h1', displayName: 'Mac', address: '10.0.0.1', port: 22, identityId: 'i1' };
-const WRITE: EnvironmentWrite = { command: { rename: { title: 'Fix login' } }, topic: 't1' as TopicId, request: newRequestId() };
+const WRITE: EnvironmentWrite = { command: { rename: { title: 'Fix login' } }, target: { topic: 't1' as TopicId }, request: newRequestId() };
 const SENT = { environment: { version: 2, command: { rename: { title: 'Fix login' } }, target: { topic: { id: 't1' } }, request: WRITE.request } };
 
 /**

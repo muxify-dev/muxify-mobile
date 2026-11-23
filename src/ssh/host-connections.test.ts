@@ -624,7 +624,7 @@ describe('the Host Problem', () => {
 
 describe('the Host Server', () => {
   const CAPABLE =
-    '{"hello":{"build":"muxify 7593671 1794697369","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs"],"protocol":1},"id":0,"kind":"hello"}';
+    '{"hello":{"build":"muxify 7593671 1794697369","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs","board"],"protocol":1},"id":0,"kind":"hello"}';
   const BARE = '{"hello":{"build":"muxify 1a2b3c4 1763100000","capabilities":[],"protocol":1},"id":0,"kind":"hello"}';
 
   it('starts when the Connection opens, with the probed muxify, and the Log names its build', async () => {
@@ -743,7 +743,7 @@ describe('the Host Server', () => {
     channel?.frames.filter((frame) => frame.kind === 'request' && !('subscribe' in (frame.request as object))) ?? [];
   /** The Host Server answers a request with this `ok`. */
   const answer = (channel: FakeChannel, id: unknown, ok: unknown) => channel.print(`${JSON.stringify({ end: { ok }, id, kind: 'end' })}\n`);
-  const RENAME = { command: { rename: { title: 'Fix login' } }, topic: 't1' as TopicId, request: newRequestId() };
+  const RENAME = { command: { rename: { title: 'Fix login' } }, target: { topic: 't1' as TopicId }, request: newRequestId() };
   const RENAMED = { environment: { version: 2, command: { rename: { title: 'Fix login' } }, target: { topic: { id: 't1' } }, request: RENAME.request } };
 
   it('runs a request on the Host Server of the Connection, and holds the Connection while it runs', async () => {
@@ -838,7 +838,7 @@ describe('the Host Server', () => {
   });
 
   it('says in one sentence that the app is too old when the Host speaks only newer protocols', async () => {
-    const newer = '{"hello":{"build":"muxify next","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs"],"min_protocol":3,"protocol":3},"id":0,"kind":"hello"}';
+    const newer = '{"hello":{"build":"muxify next","capabilities":["request","snapshot","topic-detail","ranked-session-paths","browser-tabs","board"],"min_protocol":3,"protocol":3},"id":0,"kind":"hello"}';
     const { connections } = setup({ serverHello: newer });
     await connections.hold(HOST);
     await settle();

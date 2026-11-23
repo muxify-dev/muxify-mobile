@@ -1,11 +1,12 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { ActionSheetIOS, Alert } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { Records } from '@/storage/records';
 import { AttachProvider, useAttachHolder } from '@/tmux/attach-context';
 import type { AttachHolder } from '@/tmux/attach-holder';
-import type { TopicId, SessionId } from '@/topics/environment';
+import type { BoardSessionRow } from '@/domain/host-screen';
+import type { BoardSessionId, TopicId, SessionId } from '@/topics/environment';
 import type { TopicDetail, TopicRead } from '@/topics/topic-detail';
 
 import { useHostEntry } from './use-host-entry';
@@ -16,6 +17,7 @@ const mockOpenAttach = jest.fn();
 const mockLoad = jest.fn();
 const mockReadTopic = jest.fn();
 const mockTopicPlaceFor = jest.fn();
+const mockWakeBoardSession = jest.fn();
 let mockBlur: (() => void) | undefined;
 
 jest.mock('expo-router', () => ({
@@ -36,7 +38,8 @@ jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ settings
 jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpenAttach(...args) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ openConnection: jest.fn(), lifecycleChanged: jest.fn() }) }));
 jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => mockReadTopic(...args) }));
-jest.mock('@/topics/act-on-topic', () => ({ sendTopicOrder: jest.fn() }));
+jest.mock('@/topics/act-on-card', () => ({ sendCardOrder: jest.fn() }));
+jest.mock('@/topics/host-writes', () => ({ wakeBoardSession: (...args: unknown[]) => mockWakeBoardSession(...args) }));
 
 const host = { id: 'host', displayName: 'Host', address: 'host', port: 22, identityId: 'key' };
 const records: Records = { hosts: [host], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, topicPlaces: [] };
@@ -162,4 +165,58 @@ it('opens a Topic in the Session of its Topic Place, and asks the Attach to go b
   expect(mockOpenAttach).toHaveBeenCalledWith(expect.objectContaining({
     destination: { sessionName: 'play', topic: { id: topic.id, seed: two }, restore: place },
   }));
+});
+
+describe('a tap on a Board Session card', () => {
+  const dormant: BoardSessionRow = {
+    kind: 'board-session', card: { kind: 'dormant-session', id: 's1' as BoardSessionId }, name: 'notes', mark: null, pinned: false, section: 'guests',
+  };
+  let pick: (index: number) => void;
+
+  beforeEach(() => {
+    jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation((_options, callback) => { pick = callback; });
+    mockOpenAttach.mockReturnValue({ state: () => ({ phase: { kind: 'connecting' }, sessionName: 'notes', topic: null }) });
+  });
+
+  it('opens the Session of a live one', async () => {
+    await mount();
+    await act(async () => { actions.openBoardSession({ ...dormant, card: { kind: 'live-session', session: '$4' as SessionId } }); });
+    expect(ActionSheetIOS.showActionSheetWithOptions).not.toHaveBeenCalled();
+    expect(mockOpenAttach).toHaveBeenCalledWith(expect.objectContaining({ destination: { sessionName: 'notes', topic: null } }));
+  });
+
+  it.each([[0, 'reopen'], [1, 'start-fresh']] as const)(
+    'offers Reopen, Start Fresh and Cancel for a Dormant one, wakes it with choice %i, and opens the Session the Host names',
+    async (index, wake) => {
+      mockWakeBoardSession.mockResolvedValue({ kind: 'woke', session: 'notes+2' });
+      await mount();
+      await act(async () => { actions.openBoardSession(dormant); });
+      expect(ActionSheetIOS.showActionSheetWithOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'notes', options: ['Reopen', 'Start Fresh', 'Cancel'], cancelButtonIndex: 2 }), expect.any(Function));
+
+      await act(async () => { pick(index); });
+
+      expect(mockWakeBoardSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'host' }), 's1', wake, expect.any(String), expect.any(Function));
+      expect(mockReadTopic).not.toHaveBeenCalled();
+      expect(mockOpenAttach).toHaveBeenCalledWith(expect.objectContaining({ destination: { sessionName: 'notes+2', topic: null } }));
+      expect(mockEntered).toHaveBeenCalledWith(null);
+    },
+  );
+
+  it("shows the Host's reason when it refuses the wake, and opens nothing", async () => {
+    mockWakeBoardSession.mockResolvedValue({ kind: 'failed', error: 'The Board Session s1 is gone.' });
+    await mount();
+    await act(async () => { actions.openBoardSession(dormant); });
+    await act(async () => { pick(0); });
+
+    expect(Alert.alert).toHaveBeenCalledWith('Could not Reopen', 'The Board Session s1 is gone.');
+    expect(mockOpenAttach).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing on Cancel', async () => {
+    await mount();
+    await act(async () => { actions.openBoardSession(dormant); });
+    await act(async () => { pick(2); });
+    expect(mockWakeBoardSession).not.toHaveBeenCalled();
+  });
 });

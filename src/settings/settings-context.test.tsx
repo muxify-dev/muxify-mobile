@@ -24,13 +24,13 @@ it('keeps two Host edits and a global edit issued before React renders again', a
   const editor = value!;
   await act(async () => {
     editor.rememberHostScreenTab('one', 'sessions');
-    editor.rememberHostScreenTab('two', 'topics');
+    editor.rememberHostScreenTab('two', 'board');
     editor.updateChooserLists('one', ['windows', 'sessions']);
     editor.updateChooserLists('two', ['topics']);
     editor.update({ darkTheme: 'dracula' });
   });
   const saved = await mockStore.load();
-  expect(saved.hostScreenTabs).toEqual({ one: 'sessions', two: 'topics' });
+  expect(saved.hostScreenTabs).toEqual({ one: 'sessions', two: 'board' });
   expect(saved.darkTheme).toBe('dracula');
   expect(chooserListsFor(saved, 'one')).toEqual(['windows', 'sessions']);
   expect(chooserListsFor(saved, 'two')).toEqual(['topics']);

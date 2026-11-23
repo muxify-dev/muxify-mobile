@@ -1,8 +1,10 @@
-import { fakeHostServer, snapshotPush, topicPush } from '@/test-support/fake-host-server';
+import { fakeHostServer, refused, snapshotPush, topicPush, type SentWrite } from '@/test-support/fake-host-server';
+import { protocolFrames } from '@/test-support/protocol-frames';
 import type { Host } from '@/storage/records';
 
-import { sendTopicOrder, type TopicOrder } from './act-on-topic';
-import type { SessionId, TopicId } from './environment';
+import { closeTopic, sendCardOrder, type CardOrder } from './act-on-card';
+import type { BoardCard } from './board-card';
+import type { BoardSessionId, SessionId, TopicId } from './environment';
 import {
   addSession,
   addSessionCommand,
@@ -11,6 +13,7 @@ import {
   newSession,
   pushedListing,
   pushedTopic,
+  wakeBoardSession,
 } from './host-writes';
 import { newRequestId } from './request';
 
@@ -108,8 +111,9 @@ describe('the writes of the sheets', () => {
 });
 
 describe('the orders of a Topic card', () => {
-  const LOCK = '$4' as SessionId;
-  it.each<[TopicOrder, object]>([
+  const CARD = { kind: 'topic', id: TOPIC } as const;
+  const LIVE = '$4' as SessionId;
+  it.each<[CardOrder, object]>([
     [{ kind: 'action', action: 'mark-read' }, { mark_read: { change: 'read', scope: 'topic' } }],
     [{ kind: 'action', action: 'mark-unread' }, { mark_read: { change: 'unread', scope: 'topic_mark' } }],
     [{ kind: 'action', action: 'move-up' }, { move_card: { move: { up: {} } } }],
@@ -123,7 +127,7 @@ describe('the orders of a Topic card', () => {
       { move_card: { move: { before: { card: { topic: { ref: { id: 't2' } } } } } } },
     ],
     [
-      { kind: 'drop', drop: { kind: 'place', side: 'after', anchor: { kind: 'locked-session', session: LOCK, name: 'scratch' } } },
+      { kind: 'drop', drop: { kind: 'place', side: 'after', anchor: { kind: 'live-session', session: LIVE } } },
       { move_card: { move: { after: { card: { lock: { session: '$4' } } } } } },
     ],
     [
@@ -131,14 +135,14 @@ describe('the orders of a Topic card', () => {
       { move_card: { move: { before: { card: { openPlace: { id: 'open-place-2' } } } } } },
     ],
     [
-      { kind: 'drop', drop: { kind: 'trade', with: { kind: 'locked-session', session: LOCK, name: 'scratch' } } },
+      { kind: 'drop', drop: { kind: 'trade', with: { kind: 'live-session', session: LIVE } } },
       { move_card: { move: { trade: { card: { lock: { session: '$4' } } } } } },
     ],
     [{ kind: 'drop', drop: { kind: 'fill', place: 2 } }, { fill_open_place: { place: 2 } }],
     [{ kind: 'wake', wake: 'reopen' }, { reopen: {} }],
     [{ kind: 'wake', wake: 'start-fresh' }, { start_fresh: {} }],
   ])('%j sends %j on the Topic, and nothing else', async (order, command) => {
-    await expect(sendTopicOrder(HOST, TOPIC, order, () => {})).resolves.toEqual({ kind: 'changed' });
+    await expect(sendCardOrder(HOST, CARD, order, () => {})).resolves.toEqual({ kind: 'changed' });
     expect(mockServer.requests).toEqual([{ environment: { version: 2, command, target: { topic: { id: 't1' } }, request: expect.any(String) } }]);
   });
 
@@ -149,7 +153,7 @@ describe('the orders of a Topic card', () => {
     const offered = { id: '$1', name: 'api/fix', disposition: 'kill', worktree: null, remove_worktree: false };
     mockServer.answer = (payload) => ('topic_choices' in payload ? { sessions: [offered] } : { changed: { topic_id: 't1' } });
 
-    await sendTopicOrder(HOST, TOPIC, { kind: 'action', action }, () => {});
+    await closeTopic(HOST, TOPIC, action, () => {});
 
     expect(mockServer.requests[0]).toEqual({ topic_choices: { action: 'settle', target: { topic: { id: 't1' } } } });
     expect(mockServer.writes()).toEqual([{
@@ -167,7 +171,7 @@ describe('the orders of a Topic card', () => {
     const offered = { id: '$1', name: 'api/fix', disposition: 'keep', worktree: { repository_path: '/r', path: '/w', branch: 'b' }, remove_worktree: false };
     mockServer.answer = (payload) => ('topic_choices' in payload ? { sessions: [offered] } : { changed: { topic_id: 't1' } });
 
-    await expect(sendTopicOrder(HOST, TOPIC, { kind: 'action', action }, () => {})).resolves.toEqual({ kind: 'changed' });
+    await expect(closeTopic(HOST, TOPIC, action, () => {})).resolves.toEqual({ kind: 'changed' });
 
     expect(mockServer.requests[0]).toEqual({ topic_choices: { action: 'forget', target: { topic: { id: 't1' } } } });
     expect(mockServer.writes()).toEqual([{
@@ -179,11 +183,70 @@ describe('the orders of a Topic card', () => {
   });
 
   it('has its own Request id for each tap', async () => {
-    await sendTopicOrder(HOST, TOPIC, { kind: 'action', action: 'move-up' }, () => {});
-    await sendTopicOrder(HOST, TOPIC, { kind: 'action', action: 'move-up' }, () => {});
+    await sendCardOrder(HOST, CARD, { kind: 'action', action: 'move-up' }, () => {});
+    await sendCardOrder(HOST, CARD, { kind: 'action', action: 'move-up' }, () => {});
 
     const [first, second] = mockServer.writes();
     expect(first!.request).not.toBe(second!.request);
+  });
+});
+
+describe('the orders of a Board Session card, as MuxifyCore pins them', () => {
+  /** The `environment` request of each request frame of the `5-board` fixture, by the command it sends. */
+  const pinned = protocolFrames('5-board')
+    .flatMap((frame) => (frame.kind === 'request' && 'environment' in frame.request ? [frame.request.environment as SentWrite] : []));
+  const frameOf = (command: string) => pinned.find((write) => command in write.command)!;
+  const DORMANT = { kind: 'dormant-session', id: 's1' as BoardSessionId } as const;
+
+  it.each<[string, BoardCard, CardOrder]>([
+    ['reopen', DORMANT, { kind: 'wake', wake: 'reopen' }],
+    ['start_fresh', DORMANT, { kind: 'wake', wake: 'start-fresh' }],
+    ['pin', { kind: 'dormant-session', id: 's2' as BoardSessionId }, { kind: 'action', action: 'pin' }],
+    ['unpin', { kind: 'dormant-session', id: 's3' as BoardSessionId }, { kind: 'action', action: 'unpin' }],
+    [
+      'move_card',
+      { kind: 'dormant-session', id: 's2' as BoardSessionId },
+      { kind: 'drop', drop: { kind: 'place', side: 'after', anchor: DORMANT } },
+    ],
+  ])('sends %s on a Dormant one as the fixture has it, with its Request id', async (command, card, order) => {
+    await sendCardOrder(HOST, card, order, () => {});
+
+    const { request, ...sentWrite } = mockServer.writes()[0]!;
+    expect(sentWrite).toEqual(frameOf(command));
+    expect(request).toEqual(expect.any(String));
+  });
+
+  it.each<[string, BoardCard, CardOrder, object, object]>([
+    ['Bench on a live one', { kind: 'live-session', session: '$6' as SessionId }, { kind: 'action', action: 'bench' },
+      { bench_topic: {} }, { session: '$6' }],
+    ['Bench on a Dormant one', DORMANT, { kind: 'action', action: 'bench' }, { bench_topic: {} }, { board_session: 's1' }],
+    ['Fill on a Dormant one', DORMANT, { kind: 'drop', drop: { kind: 'fill', place: 2 } }, { fill_open_place: { place: 2 } }, { board_session: 's1' }],
+    ['Fill on a live one', { kind: 'live-session', session: '$6' as SessionId }, { kind: 'drop', drop: { kind: 'fill', place: 1 } },
+      { fill_open_place: { place: 1 } }, { session: '$6' }],
+    ['a Trade of a live one with a Dormant one', { kind: 'live-session', session: '$6' as SessionId },
+      { kind: 'drop', drop: { kind: 'trade', with: DORMANT } }, { move_card: { move: { trade: { card: { board_session: { id: 's1' } } } } } },
+      { session: '$6' }],
+    ['a move of a Dormant one before a live one', DORMANT,
+      { kind: 'drop', drop: { kind: 'place', side: 'before', anchor: { kind: 'live-session', session: '$6' as SessionId } } },
+      { move_card: { move: { before: { card: { lock: { session: '$6' } } } } } }, { board_session: 's1' }],
+  ])('sends %s with the target of the card', async (_name, card, order, command, target) => {
+    await sendCardOrder(HOST, card, order, () => {});
+    expect(sent()).toEqual({ command, target });
+  });
+
+  it('wakes a Dormant one, and answers the Session the Host made, which there is no Topic to read for', async () => {
+    const answer = protocolFrames('5-board').find((frame) => frame.kind === 'end' && frame.id === 2)!.end.ok;
+    mockServer.answer = () => answer;
+
+    await expect(wakeBoardSession(HOST, 's1' as BoardSessionId, 'reopen', newRequestId())).resolves.toEqual({ kind: 'woke', session: 'notes' });
+    expect(sent()).toEqual({ command: { reopen: {} }, target: { board_session: 's1' } });
+  });
+
+  it('answers the refusal of a wake with the Host’s reason', async () => {
+    mockServer.answer = () => { throw refused('The Board Session s1 is gone.', 'topic_unavailable'); };
+
+    await expect(wakeBoardSession(HOST, 's1' as BoardSessionId, 'start-fresh', newRequestId()))
+      .resolves.toEqual({ kind: 'failed', error: 'The Board Session s1 is gone.' });
   });
 });
 

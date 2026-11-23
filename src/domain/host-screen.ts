@@ -1,4 +1,5 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
+import type { BoardCard, BoardSessionCard } from '@/topics/board-card';
 import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
 import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection } from '@/topics/topic-action';
@@ -8,9 +9,9 @@ import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**
  * The two views of the Host Screen, which are the two views of the Mac's
- * Sidebar: the Host's Topics, or every running Session.
+ * Sidebar: the Host's Board, or every running Session.
  */
-export type HostScreenTab = 'topics' | 'sessions';
+export type HostScreenTab = 'board' | 'sessions';
 
 /**
  * The tabs the Host Screen shows, in their order. The Host's Config decides,
@@ -22,8 +23,8 @@ export function hostScreenTabs(topics: HostTopics): readonly [HostScreenTab, ...
   const snapshot = lastSnapshot(topics);
   if (snapshot === null || topics.kind === 'updating') return ['sessions'];
   const { sidebar } = snapshot;
-  if (sidebar === null || sidebar.topics === sidebar.sessions) return ['topics', 'sessions'];
-  return sidebar.topics ? ['topics'] : ['sessions'];
+  if (sidebar === null || sidebar.topics === sidebar.sessions) return ['board', 'sessions'];
+  return sidebar.topics ? ['board'] : ['sessions'];
 }
 
 /** The tab to show: the one the user last chose on this Host when it is on show, else the first. */
@@ -76,8 +77,7 @@ export type HostScreenRow =
       /** What the Attach can show before its first Topic read. */
       seed: TopicDetail;
     }
-  /** A Locked Session shown as its own card. */
-  | { kind: 'locked-session'; session: SessionId; name: string; mark: Mark | null; pinned: boolean }
+  | BoardSessionRow
   /** An empty In Play place. */
   | { kind: 'open-place'; id: string }
   /** The In Play Bench, as one row that opens to show its cards. */
@@ -86,6 +86,34 @@ export type HostScreenRow =
   | { kind: 'unknown-card'; text: string }
   /** The Sessions that are in no Topic, as one row that opens to list them. */
   | { kind: 'no-topic'; count: number; opened: boolean };
+
+/**
+ * A Board Session's card: a Session in no Topic, live or Dormant. The card
+ * says which: a live one by its tmux id, a Dormant one by its Board Session
+ * id, and a Dormant one is dimmed.
+ */
+export interface BoardSessionRow {
+  kind: 'board-session';
+  card: BoardSessionCard;
+  name: string;
+  mark: Mark | null;
+  pinned: boolean;
+  /** Where the card sits, which says what its menu offers. */
+  section: CardSection;
+}
+
+/** A row that is a card a write can name: a Topic or a Board Session. */
+export type CardRow = Extract<HostScreenRow, { kind: 'topic' }> | BoardSessionRow;
+
+/** The card of a row, as the writes name it. */
+export function cardOf(row: CardRow): BoardCard {
+  return row.kind === 'topic' ? { kind: 'topic', id: row.id } : row.card;
+}
+
+/** The card a row is, or null for a row that no write can name. */
+export function rowCard(row: HostScreenRow): BoardCard | null {
+  return row.kind === 'topic' || row.kind === 'board-session' ? cardOf(row) : null;
+}
 
 /** The rows that the user can open in place, by the id the screen holds them under. */
 export type OpenableRow = 'no-topic' | 'bench';
@@ -121,14 +149,14 @@ export interface HostScreenInput {
 /**
  * The sections of one tab of the Host Screen.
  *
- * The Topics tab is the Mac's Topics view: Pinned, In Play, the Guests, the
+ * The Board tab is the Mac's Board: Pinned, In Play, the Guests, the
  * Bench row, and the No Topic row. The Sessions tab is the Mac's Sessions
  * view: every running Session in the order the Host lists them, with its Topic
  * under the name, and no Bench.
  */
 export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem }: HostScreenInput): HostScreenSection[] {
-  const sections = tab === 'topics'
-    ? topicsList(topics, { opened, appearance, withNoTopic: true, attach })
+  const sections = tab === 'board'
+    ? boardSections(topics, { opened, appearance, withNoTopic: true, attach })
     : [sessionsList(listing, topics)];
   if (problem === null) return sections;
   // One row for the Host Problem, however many reads of the Host met it.
@@ -153,11 +181,11 @@ export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'li
 
 /**
  * The Host's Topics alone, for a list that shows the Host's Sessions itself:
- * every Topic in the sections of the Topics list, and the rows that say why
+ * every Topic in the sections of the Board, and the rows that say why
  * there are none. The Bench is open, because nothing opens in place there.
  */
 export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
-  return topicsList(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
+  return boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null })
     .map((section) => ({
       ...section,
       title: SECTION_TITLES[section.id],
@@ -190,20 +218,20 @@ interface CardsContext {
 }
 
 /**
- * The Topics list. Before a snapshot, it is one Topics section with a row that
+ * The Board. Before a snapshot, it is one Board section with a row that
  * says why. A failure and a Host CLI update put their row above
  * the last snapshot's cards. A Host Problem drops the list: one empty section
  * with no title, where the Host Screen puts the Host Problem row.
  */
-function topicsList(topics: HostTopics, context: CardsContext): HostScreenSection[] {
+function boardSections(topics: HostTopics, context: CardsContext): HostScreenSection[] {
   if (topics.kind === 'host-problem') return [topicsSection('topics', null, [])];
   const last = lastSnapshot(topics);
-  if (topics.kind === 'absent') return [topicsSection('topics', 'Topics', [{ kind: 'note', text: 'No Topics on this Host' }])];
+  if (topics.kind === 'absent') return [topicsSection('topics', 'Board', [{ kind: 'note', text: 'No Topics on this Host' }])];
   if (topics.kind === 'loading' && last === null) {
-    return [topicsSection('topics', 'Topics', [{ kind: 'checking', text: 'Checking Topics…' }])];
+    return [topicsSection('topics', 'Board', [{ kind: 'checking', text: 'Checking Topics…' }])];
   }
   const notice = topicsNotice(topics);
-  if (last === null) return [topicsSection('topics', 'Topics', notice)];
+  if (last === null) return [topicsSection('topics', 'Board', notice)];
   const [first, ...rest] = cardSections(last, context);
   return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
 }
@@ -287,7 +315,7 @@ function cardSections(snapshot: EnvironmentSnapshot, context: CardsContext): Hos
 /**
  * What shows of the place the Attach is in while the Bench row hides it, as
  * the Mac shows the card of its Location: the Benched card of the Attach's
- * Topic or Locked Session, or the Attach's Session when it is in No Topic.
+ * Topic or live Board Session, or the Attach's Session when it is in No Topic.
  */
 function benchPeek(
   snapshot: EnvironmentSnapshot,
@@ -346,8 +374,10 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
       const name = names.get(card.sessions[0]);
       return name === undefined
         ? { kind: 'unknown-card', text: card.sessions[0] }
-        : { kind: 'locked-session', session: card.sessions[0], name, mark: card.mark, pinned };
+        : { kind: 'board-session', card: { kind: 'live-session', session: card.sessions[0] }, name, mark: card.mark, pinned, section };
     }
+    case 'dormant_session':
+      return { kind: 'board-session', card: { kind: 'dormant-session', id: card.id }, name: card.name, mark: null, pinned, section };
     case 'open_place':
       return { kind: 'open-place', id: card.id };
     case 'unknown': {
@@ -361,7 +391,7 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * The Sessions tab: every running Session in the order the Host lists them,
  * which is the order the Mac's Sessions view shows. A Host with Topics says
  * which Topic each Session is in. A row above them says why the Host has no
- * Topics tab, when the Host CLI is being installed or updated, or failed.
+ * Board tab, when the Host CLI is being installed or updated, or failed.
  */
 function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
   const running = runningSessions(listing, topics);
@@ -376,7 +406,7 @@ function sessionsList(listing: Listing, topics: HostTopics): HostScreenSection {
         topicLabel: session.topicLabel === undefined ? null : session.topicLabel ?? 'No Topic',
         ...(session.onHost === undefined ? {} : { onHost: session.onHost }),
       }));
-  const notice = hostScreenTabs(topics).includes('topics') ? [] : topicsNotice(topics);
+  const notice = hostScreenTabs(topics).includes('board') ? [] : topicsNotice(topics);
   return { id: 'sessions', title: null, rows: [...notice, ...rows] };
 }
 

@@ -48,11 +48,13 @@ import type { Appearance } from '@/constants/app-theme';
 import { hostProblemWords } from '@/domain/cover';
 import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
+  cardOf,
   firstReadAnswered,
   hostScreen,
   hostScreenTabs,
   runningSessions,
   tabOnShow,
+  type CardRow,
   type HostScreenInput,
   type HostScreenRow,
   type HostScreenSection,
@@ -60,13 +62,13 @@ import {
   type OpenableRow,
   type SessionRow,
 } from '@/domain/host-screen';
-import { fillChoices, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
+import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
+import { useCardWrites } from '@/hooks/use-card-writes';
 import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
 import { useTmuxWrites } from '@/hooks/use-tmux-writes';
-import { useTopicCardWrites } from '@/hooks/use-topic-card-writes';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
@@ -74,7 +76,7 @@ import { useSettings } from '@/settings/settings-context';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
-import type { TopicId } from '@/topics/environment';
+import type { BoardCard } from '@/topics/board-card';
 import { lastSnapshot } from '@/topics/host-topics';
 import {
   closeAlert,
@@ -82,16 +84,16 @@ import {
   swipeAction,
   TOPIC_ACTION_ICON,
   TOPIC_ACTION_LABEL,
-  type TopicAction,
+  type CardAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
 import type { SessionAction } from '@/topics/tmux-order';
 import { recordVisit } from '@/topics/visit';
 
-const TAB_NAMES: Record<HostScreenTab, string> = { topics: 'Topics', sessions: 'Sessions' };
+const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
 
 /**
- * A Host: its Topics or its Sessions, as the Mac's Sidebar shows them, and
+ * A Host: its Board or its Sessions, as the Mac's Sidebar shows them, and
  * Go to in the bar at the bottom.
  *
  * It draws the tab that hostScreen returns. While the Go to field has the
@@ -106,9 +108,9 @@ export default function HostScreen() {
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
   const { listing, topics, sessionsOnly, problem, retry: retryHost } = useHostListing(id);
-  /** The Topic card the user moves: picked from its menu, until a target or Cancel is tapped. */
-  const [moving, setMoving] = useState<TopicId | null>(null);
-  /** The Open Place the user fills: tapped, until a Topic is picked or the sheet is closed. */
+  /** The card the user moves: picked from its menu, until a target or Cancel is tapped. */
+  const [moving, setMoving] = useState<BoardCard | null>(null);
+  /** The Open Place the user fills: tapped, until a card is picked or the sheet is closed. */
   const [filling, setFilling] = useState<string | null>(null);
 
   /**
@@ -222,12 +224,10 @@ export default function HostScreen() {
   // A move opens the Bench: a card cannot go where the list hides it.
   const movingSections = moving === null ? [] : hostScreen({ ...input, opened: new Set([...opened, 'bench']) });
   // A Listing pushed during the move can drop the picked card, and the move ends with it.
-  const picked = movingSections
-    .flatMap((section) => section.rows)
-    .find((row): row is TopicRow => row.kind === 'topic' && row.id === moving);
-  const targets = picked === undefined ? null : moveTargets(movingSections, picked.id);
+  const picked = moving === null ? undefined : findCardRow(movingSections, moving);
+  const targets = picked === undefined ? null : moveTargets(movingSections, cardOf(picked));
   const sections = targets === null ? hostScreen({ ...input, opened }) : movingSections;
-  // The Benched Topics are choices even while the Bench row is closed. A Listing pushed while the sheet is open can fill the place, and the sheet closes with it.
+  // The Benched cards are choices even while the Bench row is closed. A Listing pushed while the sheet is open can fill the place, and the sheet closes with it.
   const choices = filling === null ? null : fillChoices(hostScreen({ ...input, opened: new Set([...opened, 'bench']) }), filling);
   // The bar mounts again each time this screen comes back. The Go to field
   // that expo-router puts back in the toolbar after a push and a pop no longer
@@ -252,27 +252,27 @@ export default function HostScreen() {
 
   const toggleOpened = (row: OpenableRow) => setOpened((shown) => toggled(shown, row));
 
-  const cardWrites = useTopicCardWrites(id);
-  const actFromMenu = (topic: TopicId, action: TopicAction) => cardWrites.order(topic, { kind: 'action', action });
-  const dropOnHost = (topic: TopicId, drop: Drop) => cardWrites.order(topic, { kind: 'drop', drop });
+  const cardWrites = useCardWrites(id);
+  const actFromMenu = (card: BoardCard, action: CardAction) => cardWrites.order(card, { kind: 'action', action });
+  const dropOnHost = (card: BoardCard, drop: Drop) => cardWrites.order(card, { kind: 'drop', drop });
   // The targets come from the newest Listing the Host Server pushed.
-  const startMove = (row: TopicRow) => setMoving(row.id);
-  const sendMove = (topic: TopicId, target: MoveTarget) => {
+  const startMove = (row: CardRow) => setMoving(cardOf(row));
+  const sendMove = (card: BoardCard, target: MoveTarget) => {
     setMoving(null);
-    void (target.kind === 'drop' ? dropOnHost(topic, target.drop) : actFromMenu(topic, target.action));
+    void (target.kind === 'drop' ? dropOnHost(card, target.drop) : actFromMenu(card, target.action));
   };
 
-  const fillPlace = (topic: TopicRow) => {
+  const fillPlace = (row: CardRow) => {
     if (choices === null) return;
     setFilling(null);
-    void dropOnHost(topic.id, { kind: 'fill', place: choices.place });
+    void dropOnHost(cardOf(row), { kind: 'fill', place: choices.place });
   };
 
   const askClose = (close: 'settle' | 'forget') => (row: TopicRow) => {
     const alert = closeAlert(close, row.label);
     Alert.alert(alert.title, alert.message, [
-      { text: TOPIC_ACTION_LABEL[alert.keep], onPress: () => void actFromMenu(row.id, alert.keep) },
-      { text: TOPIC_ACTION_LABEL[alert.stop], style: 'destructive', onPress: () => void actFromMenu(row.id, alert.stop) },
+      { text: TOPIC_ACTION_LABEL[alert.keep], onPress: () => void cardWrites.close(row.id, alert.keep) },
+      { text: TOPIC_ACTION_LABEL[alert.stop], style: 'destructive', onPress: () => void cardWrites.close(row.id, alert.stop) },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
@@ -292,10 +292,11 @@ export default function HostScreen() {
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
-    isBusy: (busy) => hostEntry.busyTopic === busy || cardWrites.writing(busy as TopicId) || tmuxWrites.writing(busy),
+    onOpenBoardSession: hostEntry.openBoardSession,
+    isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || tmuxWrites.writing(busy),
     onSessionAction: actOnSession,
-    onWake: (row, wake) => void cardWrites.order(row.id, { kind: 'wake', wake }),
-    onTopicAction: (row, action) => void actFromMenu(row.id, action),
+    onWake: (row, wake) => void cardWrites.order(cardOf(row), { kind: 'wake', wake }),
+    onCardAction: (row, action) => void actFromMenu(cardOf(row), action),
     onMove: startMove,
     onSettle: askClose('settle'),
     onForget: askClose('forget'),
@@ -319,7 +320,7 @@ export default function HostScreen() {
     const target = targets.rows.get(row);
     return target === undefined
       ? { kind: 'none' }
-      : { kind: 'target', label: moveTargetLabel(target), onPress: () => sendMove(picked.id, target) };
+      : { kind: 'target', label: moveTargetLabel(target), onPress: () => sendMove(cardOf(picked), target) };
   };
 
   const renderRow = (row: HostScreenRow, index: number) => {
@@ -337,7 +338,7 @@ export default function HostScreen() {
               <Button
                 label={SWIPE_LABEL[swipe]}
                 systemImage={TOPIC_ACTION_ICON[swipe]}
-                onPress={() => void actFromMenu(row.id, swipe)}
+                onPress={() => void actFromMenu(cardOf(row), swipe)}
                 modifiers={[accessibilityLabel(`${TOPIC_ACTION_LABEL[swipe]} ${row.label}`)]}
               />
             </SwipeActions.Actions>
@@ -389,7 +390,7 @@ export default function HostScreen() {
             title={section.title}
             palette={palette}
             target={targets?.headers.get(section.id)}
-            onPress={(target) => picked !== undefined && sendMove(picked.id, target)}
+            onPress={(target) => picked !== undefined && sendMove(cardOf(picked), target)}
           />
         )
       }
@@ -448,7 +449,7 @@ export default function HostScreen() {
     <HeaderBand>
       <Stack.Screen
         options={{
-          title: picked === undefined ? (host?.displayName ?? 'Host') : `Moving ${picked.label}`,
+          title: picked === undefined ? (host?.displayName ?? 'Host') : `Moving ${picked.kind === 'topic' ? picked.label : picked.name}`,
         }}
       />
 

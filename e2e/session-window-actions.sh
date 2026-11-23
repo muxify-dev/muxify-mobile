@@ -141,7 +141,7 @@ echo "== Mark All as Read"
 agent-device press 'label="Host Options"' --settle >/dev/null
 agent-device press 'label="Mark All as Read"' --settle >/dev/null || fail "no Mark All as Read in Host Options"
 until_true '[ "$(unread_topics)" = 0 ]' || fail "the Mac still has an Unread Topic"
-agent-device press 'label="Topics"' --settle >/dev/null || fail "no Topics tab"
+agent-device press 'label="Board"' --settle >/dev/null || fail "no Board tab"
 menu "Topic Ship" "Mark as Unread" "Mark as Unread"
 until_true '[ "$(unread_topics)" = 1 ]' || fail "Mark as Unread did not reach the Mac"
 echo "ok: Mark All as Read, and the card's menu follows"

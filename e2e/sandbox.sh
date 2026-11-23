@@ -20,7 +20,7 @@
 #   with no Fingerprint, no Recent Sessions, no Last Place and no Topic Places,
 #   because the sandbox is a Host the app has never seen. Its Host Screen
 #   starts on the Sessions tab, where Session 0 is. A suite about Topic cards
-#   takes hostScreenTabs out of the settings, which gives the Topics tab.
+#   takes hostScreenTabs out of the settings, which gives the Board tab.
 #   The sshd takes the keys in your ~/.ssh/authorized_keys. With
 #   MUXIFY_E2E_AUTHORIZED_KEY, the path of a public key such as the one of
 #   the app's Dev Host identity, it takes that key too, and the identity logs

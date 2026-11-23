@@ -14,9 +14,10 @@ import { createFrameReader, HELLO_TIMEOUT_MS, MAX_PREAMBLE_BYTES, PING_AFTER_MS,
  * They are the contract: the phone must read every server frame there and
  * write its own frames the way they are written there. Of `3-colour-reports`
  * only the server's protocol 2 `hello` is copied: the phone sends no `colours`
- * and no `focus`.
+ * and no `focus`. `5-board` adds the capability `board`, which the phone
+ * requires since it shows Board Sessions.
  */
-function fixture(name: '1-first-server' | '2-phone' | '3-colour-reports'): string[] {
+function fixture(name: '1-first-server' | '2-phone' | '3-colour-reports' | '5-board'): string[] {
   const text = readFileSync(join(__dirname, '__fixtures__', 'host-server', name, 'frames.jsonl'), 'utf8');
   return text.split('\n').filter((line) => line.length > 0);
 }
@@ -24,6 +25,7 @@ function fixture(name: '1-first-server' | '2-phone' | '3-colour-reports'): strin
 const FIRST = fixture('1-first-server');
 const PHONE = fixture('2-phone');
 const COLOURS = fixture('3-colour-reports');
+const BOARD = fixture('5-board');
 
 /** The fixture's frame on `line` (from 1), with its id changed to `id`, as a line the server sends. */
 function line(frames: string[], at: number, id?: number): string {
@@ -31,8 +33,15 @@ function line(frames: string[], at: number, id?: number): string {
   return `${JSON.stringify(id === undefined ? frame : { ...frame, id })}\n`;
 }
 
+/** A server `hello` that also declares `board`, as a Host CLI from `5-board` on does. */
+function withBoard(hello: string): string {
+  const frame = JSON.parse(hello) as { hello: { capabilities: string[] } };
+  return `${JSON.stringify({ ...frame, hello: { ...frame.hello, capabilities: [...frame.hello.capabilities, 'board'] } })}\n`;
+}
+
 const FIRST_SERVER_HELLO = line(FIRST, 1);
-const SERVER_HELLO = line(PHONE, 1);
+/** The `2-phone` server's protocol 1 `hello`, from a Host CLI that also has `board`. */
+const SERVER_HELLO = withBoard(line(PHONE, 1));
 
 /** A server's `hello` with every capability the phone uses, offering `min_protocol`…`protocol`, or `protocol` alone. */
 function offering(protocol: number, min?: number, build = 'muxify next'): string {
@@ -196,7 +205,7 @@ describe('the Host Server link', () => {
       const { channel, answer } = setup();
       await answer();
 
-      const phoneHello = JSON.parse(line(PHONE, 2)) as { hello: { capabilities: string[] } };
+      const phoneHello = JSON.parse(withBoard(line(PHONE, 2))) as { hello: { capabilities: string[] } };
       expect(channel().sent[0]).toEqual({
         id: 0,
         kind: 'hello',
@@ -207,7 +216,8 @@ describe('the Host Server link', () => {
 
     it.each([
       { offers: '1 to 1', hello: SERVER_HELLO, protocol: 1 },
-      { offers: '2 to 2', hello: line(COLOURS, 1), protocol: 2 },
+      { offers: '2 to 2', hello: line(BOARD, 1), protocol: 2 },
+      { offers: '2 to 2, with the colour reports', hello: withBoard(line(COLOURS, 1)), protocol: 2 },
       { offers: '1 to 2', hello: offering(2, 1, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
       { offers: '2 alone, with no min_protocol', hello: offering(2, undefined, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
       { offers: '1 to 3', hello: offering(3, 1, 'muxify 1a2b3c4 1763100000'), protocol: 2 },
@@ -226,6 +236,14 @@ describe('the Host Server link', () => {
 
       expect(server.state()).toEqual({ kind: 'live', build: 'muxify 1a2b3c4 1763100000', protocol: 1 });
       expect(logged).toEqual(['muxify 1a2b3c4 1763100000, protocol 1']);
+    });
+
+    it('is Sessions only, too old, with a server from before `board`, which shows no Board Sessions', async () => {
+      const { server, logged, answer } = setup();
+      await answer(line(PHONE, 1));
+
+      expect(server.state()).toMatchObject({ kind: 'sessions-only', tooOld: 'host' });
+      expect(logged).toContain('muxify 1a2b3c4 1763100000 lacks the capabilities board');
     });
 
     it('is Sessions only, too old, when the server lacks a capability the phone uses', async () => {
@@ -557,7 +575,7 @@ describe('the Host Server link', () => {
       old.print(line(FIRST, 6, 1));
       await settle();
       expect(old.closed).toBe(true);
-      await answer(line(PHONE, 1));
+      await answer(SERVER_HELLO);
       expect(server.state()).toMatchObject({ kind: 'live', build: 'muxify 1a2b3c4 1763100000' });
     });
 

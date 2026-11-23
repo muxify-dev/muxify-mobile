@@ -176,7 +176,7 @@ describe('the Host Server link against a real muxify server', () => {
     const write = async (command: EnvironmentCommand | { error: string }, topic?: TopicId) => {
       if ('error' in command) throw new Error(String(command.error));
       try {
-        return { ok: await server.request(environmentRequest({ command, topic, request: newRequestId() })) };
+        return { ok: await server.request(environmentRequest({ command, ...(topic === undefined ? {} : { target: { topic } }), request: newRequestId() })) };
       } catch (error) {
         if (!(error instanceof HostServerError)) throw error;
         return { code: error.code, kind: (error.topic_failure as { kind?: string } | undefined)?.kind, message: error.message };
@@ -220,10 +220,10 @@ describe('the Host Server link against a real muxify server', () => {
     for (const action of ['mark-read', 'mark-unread', 'move-up', 'move-down', 'make-guest', 'bench'] as const) {
       decoded(await write(actionCommand(action), topic));
     }
-    const lock = '$0' as never;
+    const live = '$0' as never;
     for (const drop of [
       { kind: 'place' as const, side: 'before' as const, anchor: { kind: 'open-place' as const, id: 'open-place-1' } },
-      { kind: 'place' as const, side: 'after' as const, anchor: { kind: 'locked-session' as const, session: lock, name: '0' } },
+      { kind: 'place' as const, side: 'after' as const, anchor: { kind: 'live-session' as const, session: live } },
       { kind: 'trade' as const, with: { kind: 'topic' as const, id: topic } },
       { kind: 'fill' as const, place: 1 },
     ]) {
@@ -331,7 +331,7 @@ async function goToRows(server: HostServer, folder: string) {
   const topic = request as unknown as TopicId;
   const add = addSessionCommand({ directory: folder, worktree: null }, { chosenName: 'goto' });
   if ('error' in add) throw new Error(String(add.error));
-  await expect(server.request(environmentRequest({ command: add, topic, request: newRequestId() })))
+  await expect(server.request(environmentRequest({ command: add, target: { topic }, request: newRequestId() })))
     .resolves.toMatchObject({ changed: expect.anything() });
   const choices = await topicSessionPaths(HOST, topic, connections);
   expect(choices).toContainEqual(expect.objectContaining({ directory: folder, inThisTopic: true }));

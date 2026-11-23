@@ -13,7 +13,9 @@ import {
 } from './host-screen';
 import type { Session } from '@/tmux/tmux-client';
 import type { SessionOnHost } from '@/topics/tmux-order';
+import type { CardSection } from '@/topics/topic-action';
 import type {
+  BoardSessionId,
   Card,
   EnvironmentSnapshot,
   Mark,
@@ -45,10 +47,10 @@ const installDone = (kind: HostCliOutcome, text: string): HostCliState => ({
   result: { kind, text, line: kind === 'failed' || kind === 'skipped' ? `${kind}: ${text}` : `${kind} ${text}` },
 });
 
-const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Topics', rows });
+const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Board', rows });
 const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'sessions', title: null, rows });
 
-// What the Topics list shows before the Host has answered about Topics.
+// What the Board list shows before the Host has answered about Topics.
 const TOPICS = topicsSection({ kind: 'checking', text: 'Checking Topics…' });
 
 interface TopicsCase {
@@ -62,6 +64,11 @@ interface TopicsCase {
 
 const sid = (id: string) => id as SessionId;
 const tid = (id: string) => id as TopicId;
+
+const liveBoardSession = (session: string, name: string, section: CardSection, mark: Mark | null = null): HostScreenRow =>
+  ({ kind: 'board-session', card: { kind: 'live-session', session: sid(session) }, name, mark, pinned: section === 'pinned', section });
+const dormantBoardSession = (id: string, name: string, section: CardSection): HostScreenRow =>
+  ({ kind: 'board-session', card: { kind: 'dormant-session', id: id as BoardSessionId }, name, mark: null, pinned: section === 'pinned', section });
 
 const topicCard = (
   id: string,
@@ -161,7 +168,7 @@ const TAGS: EnvironmentSnapshot['tags'] = [
 // The Topic's own order, which the Mac does not draw in.
 const TAG_NAMES = ['gone', 'ui', 'odd', 'work'];
 
-describe('the Topics tab of the Host Screen', () => {
+describe('the Board tab of the Host Screen', () => {
   it.each<TopicsCase>([
     {
       name: 'puts the Pinned cards in their own section, and the places in the order they came',
@@ -288,15 +295,34 @@ describe('the Topics tab of the Host Screen', () => {
       ],
     },
     {
-      name: 'draws a Locked Session as its own card, named from the snapshot, and pinned when it is',
+      name: 'draws a live Board Session as its own card, named from the snapshot, and pinned when it is',
       topics: listed({
-        sessions: [snapshotSession('$1', 'scratch', null), snapshotSession('$2', 'notes', null)],
+        sessions: [snapshotSession('$1', 'scratch', null), snapshotSession('$2', 'notes', null), snapshotSession('$3', 'logs', null)],
         pinned: [{ kind: 'session', mark: 'unread', sessions: [sid('$2')] }],
-        unpinned: inPlay({ places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }] }),
+        unpinned: inPlay({
+          places: [{ kind: 'session', mark: null, sessions: [sid('$1')] }],
+          guests: [{ kind: 'session', mark: null, sessions: [sid('$3')] }],
+        }),
       }),
       sections: [
-        section('pinned', 'Pinned', { kind: 'locked-session', session: sid('$2'), name: 'notes', mark: 'unread', pinned: true }),
-        inPlaySection({ kind: 'locked-session', session: sid('$1'), name: 'scratch', mark: null, pinned: false }),
+        section('pinned', 'Pinned', liveBoardSession('$2', 'notes', 'pinned', 'unread')),
+        inPlaySection(liveBoardSession('$1', 'scratch', 'in-play')),
+        section('guests', 'Guests', liveBoardSession('$3', 'logs', 'guests')),
+      ],
+    },
+    {
+      name: 'draws a Dormant Board Session at its place by its name, with no live Session behind it',
+      topics: listed({
+        pinned: [{ kind: 'dormant_session', id: 's4' as BoardSessionId, name: 'logs' }],
+        unpinned: inPlay({
+          places: [{ kind: 'dormant_session', id: 's2' as BoardSessionId, name: 'scratch' }],
+          guests: [{ kind: 'dormant_session', id: 's1' as BoardSessionId, name: 'notes' }],
+        }),
+      }),
+      sections: [
+        section('pinned', 'Pinned', dormantBoardSession('s4', 'logs', 'pinned')),
+        inPlaySection(dormantBoardSession('s2', 'scratch', 'in-play')),
+        section('guests', 'Guests', dormantBoardSession('s1', 'notes', 'guests')),
       ],
     },
     {
@@ -475,7 +501,7 @@ describe('the Topics tab of the Host Screen', () => {
       ],
     },
   ])('$name', ({ topics, attach = null, opened = CLOSED, appearance = 'light', sections }) => {
-    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach, opened, appearance, problem: null })).toEqual(sections);
+    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach, opened, appearance, problem: null })).toEqual(sections);
   });
 });
 
@@ -484,7 +510,7 @@ describe('the Host Screen, against the snapshot `environment show` gave on the M
 
   it('draws the sections and cards in the order the Mac sent them', () => {
     const sections = hostScreen({
-      tab: 'topics',
+      tab: 'board',
       listing: UNASKED,
       attach: null,
       topics: { kind: 'listed', snapshot: mac },
@@ -562,25 +588,25 @@ describe('the tabs of the Host Screen', () => {
   const withSidebar = (sidebar: EnvironmentSnapshot['sidebar']) => listed({ sidebar });
 
   it.each<{ name: string; topics: HostTopics; tabs: string[] }>([
-    { name: 'shows both for a Host CLI that does not say', topics: withSidebar(null), tabs: ['topics', 'sessions'] },
-    { name: 'shows both when the Config has both on', topics: withSidebar({ topics: true, sessions: true }), tabs: ['topics', 'sessions'] },
-    { name: 'shows only Topics when the Config has Sessions off', topics: withSidebar({ topics: true, sessions: false }), tabs: ['topics'] },
+    { name: 'shows both for a Host CLI that does not say', topics: withSidebar(null), tabs: ['board', 'sessions'] },
+    { name: 'shows both when the Config has both on', topics: withSidebar({ topics: true, sessions: true }), tabs: ['board', 'sessions'] },
+    { name: 'shows only the Board when the Config has Sessions off', topics: withSidebar({ topics: true, sessions: false }), tabs: ['board'] },
     { name: 'shows only Sessions when the Config has Topics off', topics: withSidebar({ topics: false, sessions: true }), tabs: ['sessions'] },
-    { name: 'shows both when the Config has both off, which leaves no view', topics: withSidebar({ topics: false, sessions: false }), tabs: ['topics', 'sessions'] },
+    { name: 'shows both when the Config has both off, which leaves no view', topics: withSidebar({ topics: false, sessions: false }), tabs: ['board', 'sessions'] },
     { name: 'shows only Sessions on a Host with no Host CLI', topics: { kind: 'absent' }, tabs: ['sessions'] },
     { name: 'shows only Sessions while the Host CLI is installed', topics: { kind: 'installing' }, tabs: ['sessions'] },
     { name: 'shows only Sessions while an old Host CLI is updated', topics: { kind: 'updating', last: snapshot() }, tabs: ['sessions'] },
     { name: 'shows only Sessions when the Topics read failed and there is no snapshot', topics: { kind: 'failed', error: 'no route', last: null }, tabs: ['sessions'] },
-    { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: snapshot() }, tabs: ['topics', 'sessions'] },
-    { name: 'keeps the tabs of the last snapshot while it reads again', topics: { kind: 'loading', last: lastSnapshot(withSidebar({ topics: true, sessions: false })) }, tabs: ['topics'] },
+    { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: snapshot() }, tabs: ['board', 'sessions'] },
+    { name: 'keeps the tabs of the last snapshot while it reads again', topics: { kind: 'loading', last: lastSnapshot(withSidebar({ topics: true, sessions: false })) }, tabs: ['board'] },
   ])('$name', ({ topics, tabs }) => {
     expect(hostScreenTabs(topics)).toEqual(tabs);
   });
 
   it('opens on the tab the user last chose on this Host, when it is on show', () => {
-    expect(tabOnShow('sessions', ['topics', 'sessions'])).toBe('sessions');
-    expect(tabOnShow(undefined, ['topics', 'sessions'])).toBe('topics');
-    expect(tabOnShow('topics', ['sessions'])).toBe('sessions');
+    expect(tabOnShow('sessions', ['board', 'sessions'])).toBe('sessions');
+    expect(tabOnShow(undefined, ['board', 'sessions'])).toBe('board');
+    expect(tabOnShow('board', ['sessions'])).toBe('sessions');
   });
 });
 
@@ -638,11 +664,11 @@ describe('the Sessions tab of the Host Screen', () => {
       topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
       row: { kind: 'refused', message: 'Could not install Muxify on this Host: neither curl nor wget' },
     },
-  ])('says above the Sessions why the Host has no Topics tab, when $name', ({ topics, row }) => {
+  ])('says above the Sessions why the Host has no Board tab, when $name', ({ topics, row }) => {
     expect(sessions(answered([running('main')]), topics)).toEqual([sessionsSection(row, sessionRow('main', null, 1))]);
   });
 
-  it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Topics tab has the error', () => {
+  it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Board tab has the error', () => {
     expect(sessions(answered([running('main')]), { kind: 'absent' })[0]?.rows).toHaveLength(1);
     expect(sessions(answered([]), { kind: 'failed', error: 'no route', last: snapshot() })[0]?.rows).toEqual([
       note('No Sessions on this Host.'),
@@ -665,7 +691,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
     no_topic: [sid('$2')],
   });
   const benchRows = (attach: AttachPlace | null, opened: OpenableRow[] = []) =>
-    hostScreen({ tab: 'topics', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light', problem: null })
+    hostScreen({ tab: 'board', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light', problem: null })
       .find((shown) => shown.id === 'bench')?.rows;
   const CLOSED_BENCH: HostScreenRow = { kind: 'bench', opened: false };
 
@@ -681,10 +707,10 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
     expect(benchRows({ sessionName: 'benched/b2', topic: null })).toEqual([CLOSED_BENCH, topicRow('b2', { section: 'bench' })]);
   });
 
-  it('shows the Benched card of a Locked Session that the Attach is on', () => {
+  it('shows the Benched card of a live Board Session that the Attach is on', () => {
     expect(benchRows({ sessionName: 'locked', topic: null })).toEqual([
       CLOSED_BENCH,
-      { kind: 'locked-session', session: sid('$4'), name: 'locked', mark: null, pinned: false },
+      liveBoardSession('$4', 'locked', 'bench'),
     ]);
   });
 
@@ -710,7 +736,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
 
   it('shows the Session of the Attach in No Topic on a Host with an empty Bench', () => {
     const topics = listed({ sessions: [snapshotSession('$2', 'loose', null)], no_topic: [sid('$2')] });
-    expect(hostScreen({ tab: 'topics', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light', problem: null }))
+    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light', problem: null }))
       .toEqual([
         section('bench', null, sessionRow('loose')),
         section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
@@ -727,7 +753,7 @@ describe('the Host Problem on the Host Screen', () => {
   const problem = { title: 'Could not reach mac', detail: 'The Host did not answer in time.' };
   const unreachable: HostTopics = { kind: 'host-problem', last: null };
 
-  it.each(['sessions', 'topics'] as const)('is one row on the %s tab, however many reads of the Host met it', (tab) => {
+  it.each(['sessions', 'board'] as const)('is one row on the %s tab, however many reads of the Host met it', (tab) => {
     const rows = hostScreen({ tab, listing: HOST_PROBLEM, topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem })
       .flatMap((section) => section.rows);
 
@@ -741,10 +767,10 @@ describe('the Host Problem on the Host Screen', () => {
     last: snapshot({ pinned: [topicCard('pinned')], unpinned: inPlay({ places: [topicCard('playing')] }) }),
   };
 
-  it.each(['sessions', 'topics'] as const)('drops the cached Topics on the %s tab, and stands in a section of its own', (tab) => {
+  it.each(['sessions', 'board'] as const)('drops the cached Topics on the %s tab, and stands in a section of its own', (tab) => {
     const sections = hostScreen({ tab, listing: HOST_PROBLEM, topics: cached, attach: null, opened: CLOSED, appearance: 'light', problem });
 
-    expect(sections).toEqual([{ id: tab, title: null, rows: [{ kind: 'host-problem', ...problem }] }]);
+    expect(sections).toEqual([{ id: tab === 'board' ? 'topics' : tab, title: null, rows: [{ kind: 'host-problem', ...problem }] }]);
   });
 
   it('drops the cached Topics from the Title Sheet too', () => {

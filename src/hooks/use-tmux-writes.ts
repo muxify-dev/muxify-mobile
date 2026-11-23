@@ -9,7 +9,7 @@ import {
 } from '@/topics/tmux-order';
 
 import { useHostWrites } from './use-host-write';
-import { alertCardWrite } from './use-topic-card-writes';
+import { alertCardWrite } from './use-card-writes';
 
 /**
  * The Session and Window Actions a row or a picker sends, and Mark All as
