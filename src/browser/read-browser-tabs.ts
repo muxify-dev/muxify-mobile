@@ -20,7 +20,7 @@ const say = speakingAs(deviceLog(), 'browser');
 
 /**
  * One read of a Window's Browser Tabs from its Host, for the Title Sheet and
- * a Topic Place's restore: `browserTabsOn` for the saved Host with this id.
+ * a Place's restore: `browserTabsOn` for the saved Host with this id.
  */
 export async function readBrowserTabs(hostId: string, window: string): Promise<BrowserTabsRead> {
   const host = (await deviceHostStore().load()).hosts.find((candidate) => candidate.id === hostId);
@@ -53,7 +53,7 @@ export async function browserTabsOn(
 }
 
 /**
- * What reopening a Topic does with its Topic Place's Tab at `url`, after one
+ * What reopening a Topic or Session does with its Place's Tab at `url`, after one
  * read of the Tabs of the Window it opened on. With no active Window there is
  * nothing to read, and the Tab shows as on a failed read.
  */

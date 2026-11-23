@@ -48,7 +48,7 @@ export interface TitleSheetOptions {
   onOpenTab: (tab: BrowserTab) => void;
   /**
    * The user went to another Window, Session or Topic from the sheet, which
-   * has closed. `tab` is the Tab of the Topic Place of a Topic opened there.
+   * has closed. `tab` is the Tab of the Place of a Topic or Session opened there.
    */
   onMoved?: (tab: PlaceTab | null) => void;
   /** The sheet is about to open: a screen closes its other sheets. */

@@ -5,7 +5,7 @@ import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
 import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { Host, TopicPlace } from '@/storage/records';
+import type { Host, Place } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
 import { attachmentUpload } from '@/composer/host-upload';
@@ -356,7 +356,7 @@ function verbOf(line: string): string {
 
 function fakeStore() {
   const wrote: string[] = [];
-  const places: TopicPlace[] = [];
+  const places: Place[] = [];
   let saved = HOST;
   const store: HostStore = {
     load: () =>
@@ -366,7 +366,7 @@ function fakeStore() {
         fingerprints: [],
         recentSessions: [],
         lastPlace: null,
-        topicPlaces: [],
+        places: [],
       }),
     saveHost: () => Promise.reject(new Error('not used here')),
     removeHost: () => Promise.resolve(),
@@ -387,8 +387,8 @@ function fakeStore() {
       return Promise.resolve();
     },
     forgetLastPlace: () => Promise.resolve(),
-    topicPlaceFor: () => Promise.resolve(null),
-    rememberTopicPlace: (place) => {
+    placeFor: () => Promise.resolve(null),
+    rememberPlace: (place) => {
       places.push(place);
       return Promise.resolve();
     },
@@ -413,7 +413,7 @@ function attachOn(
     failLink?: () => unknown;
     sessionName?: string;
     topicId?: string;
-    restore?: TopicPlace;
+    restore?: Place;
     followTopic?: AttachOptions['followTopic'];
     markTopicRead?: AttachOptions['markTopicRead'];
     zoomed?: boolean;
@@ -1719,7 +1719,7 @@ function heldOn(options: Parameters<typeof attachOn>[0]) {
 }
 
 /** What a Topic card or the Host Screen asks the holder for. */
-function opening(options: { sessionName?: string; topicId?: string; restore?: TopicPlace } = {}): AttachRequest {
+function opening(options: { sessionName?: string; topicId?: string; restore?: Place } = {}): AttachRequest {
   return {
     host: HOST,
     destination: { sessionName: options.sessionName ?? 'work',
@@ -3357,7 +3357,7 @@ describe('a split or New Window across a break', () => {
   });
 });
 
-describe('the Topic Place', () => {
+describe('the Place', () => {
   /**
    * A Session with two Windows of two Panes each, `@0` (shell: %0 %1) and
    * `@1` (editor: %2 %3), whose active Window and Panes follow what the
@@ -3393,9 +3393,9 @@ describe('the Topic Place', () => {
     return host;
   }
 
-  const place = (over: Partial<TopicPlace> = {}): TopicPlace => ({
+  const place = (over: Partial<Place> = {}): Place => ({
     hostId: HOST.id,
-    topicId: 'a',
+    owner: { kind: 'topic', topicId: 'a' },
     session: 'work',
     window: { id: '@1', index: 1, name: 'editor' },
     pane: '%3',
@@ -3403,13 +3403,17 @@ describe('the Topic Place', () => {
     at: '2026-11-15T10:00:00.000Z',
     ...over,
   });
+  const sessionPlace = (session: string, over: Partial<Place> = {}): Place =>
+    place({ owner: { kind: 'session', session }, session, ...over });
   const TAB = { url: 'http://100.64.0.1:3000/', page: 'http://100.64.0.1:3000/docs', scrollY: 420 };
   const where = (kit: ReturnType<typeof attachOn>) => {
     const { topology } = kit.attach.state();
     return `${topology.activeWindow?.id} ${topology.activePane?.id}`;
   };
   const written = (kit: ReturnType<typeof attachOn>) =>
-    kit.places.map((each) => `${each.topicId} ${each.session} ${each.window?.id} ${each.pane} ${each.tab?.page ?? 'no Tab'}`);
+    kit.places.map((each) => `${ownerOf(each)} ${each.session} ${each.window?.id} ${each.pane} ${each.tab?.page ?? 'no Tab'}`);
+
+  const ownerOf = (each: Place) => (each.owner.kind === 'topic' ? each.owner.topicId : `Session ${each.owner.session}`);
 
   it('opens a Topic at the Window and Pane it was left at, and writes only where it ended', async () => {
     const kit = attachOn({ hosts: [twoWindows()], topicId: 'a', restore: place() });
@@ -3487,9 +3491,9 @@ describe('the Topic Place', () => {
     kit.attach.leaveTab(token);
     await settle();
 
-    const lastFor = (topicId: string) => kit.places.filter((each) => each.topicId === topicId).at(-1);
+    const lastFor = (owner: string) => kit.places.filter((each) => ownerOf(each) === owner).at(-1);
     expect(lastFor('a')?.tab).toEqual(TAB);
-    expect(kit.places.filter((each) => each.topicId === 'b').map((each) => each.tab)).toEqual([null]);
+    expect(kit.places.filter((each) => ownerOf(each) === 'b').map((each) => each.tab)).toEqual([null]);
   });
 
   it('ignores a stale token once another Tab is shown', async () => {
@@ -3528,7 +3532,7 @@ describe('the Topic Place', () => {
 
     // Back from the Web View kept the Tab, and the Host Screen opens the same Topic.
     await kit.attach.switchSession({ sessionName: 'play', topic: { id: 'b' as TopicId, seed: null },
-      restore: place({ topicId: 'b', session: 'play', tab: TAB }) });
+      restore: place({ owner: { kind: 'topic', topicId: 'b' }, session: 'play', tab: TAB }) });
     await settle();
     expect(where(kit)).toBe('@1 %3');
     expect(kit.attach.takeTabToRestore()?.tab).toEqual(TAB);
@@ -3537,6 +3541,78 @@ describe('the Topic Place', () => {
     await settle();
     expect(where(kit)).toBe('@1 %3');
     expect(kit.attach.state().topic?.id).toBe('a');
+  });
+
+  it('writes a Session Place for an Attach with no Topic as the user moves, and the Tab the Web View shows', async () => {
+    const kit = attachOn({ hosts: [twoWindows()] });
+    await connected(kit);
+    await settle();
+    await kit.attach.selectWindow(1);
+    await settle();
+    const token = kit.attach.showTab({ url: TAB.url, page: TAB.url, scrollY: 0 });
+    kit.attach.updateTab(token, { page: TAB.page, scrollY: 420 });
+    await settle();
+
+    expect(written(kit)).toEqual([
+      'Session work work @0 %0 no Tab',
+      'Session work work @1 %2 no Tab',
+      'Session work work @1 %2 http://100.64.0.1:3000/',
+      'Session work work @1 %2 http://100.64.0.1:3000/docs',
+    ]);
+  });
+
+  it('opens a Session with no Topic at its Session Place, and asks the screen for its Tab', async () => {
+    const kit = attachOn({ hosts: [twoWindows()], restore: sessionPlace('work', { tab: TAB }) });
+    await connected(kit);
+    await settle();
+
+    expect(where(kit)).toBe('@1 %3');
+    expect(kit.attach.state().tabToRestore?.tab).toEqual(TAB);
+    expect(written(kit)).toEqual(['Session work work @1 %3 http://100.64.0.1:3000/docs']);
+  });
+
+  it('ignores a Place whose owner is not what the Attach holds', async () => {
+    const inTopic = attachOn({ hosts: [twoWindows()], topicId: 'a', restore: sessionPlace('work', { tab: TAB }) });
+    const noTopic = attachOn({ hosts: [twoWindows()], restore: place({ tab: TAB }) });
+    for (const kit of [inTopic, noTopic]) {
+      await connected(kit);
+      await settle();
+      expect(where(kit)).toBe('@0 %0');
+      expect(kit.attach.state().tabToRestore).toBeNull();
+    }
+
+    await noTopic.attach.switchSession({ sessionName: 'play', topic: null, restore: sessionPlace('work') });
+    await settle();
+    expect(where(noTopic)).toBe('@0 %0');
+    expect(written(noTopic).at(-1)).toBe('Session play play @0 %0 no Tab');
+  });
+
+  it('goes back to the Session Place of the Session it holds, its Tab included', async () => {
+    const kit = attachOn({ hosts: [twoWindows()] });
+    await connected(kit);
+    await settle();
+
+    // Back from the Web View kept the Tab, and the Sessions tab opens the same Session.
+    await kit.attach.switchSession({ sessionName: 'work', topic: null, restore: sessionPlace('work', { tab: TAB }) });
+    await settle();
+    expect(where(kit)).toBe('@1 %3');
+    expect(kit.attach.takeTabToRestore()?.tab).toEqual(TAB);
+  });
+
+  it('keeps the Tab of the Session the user left when the Web View goes after the switch', async () => {
+    const kit = attachOn({ hosts: [twoWindows()] });
+    await connected(kit);
+    await settle();
+    const token = kit.attach.showTab(TAB);
+    await settle();
+
+    await kit.attach.switchSession({ sessionName: 'play', topic: null });
+    kit.attach.leaveTab(token);
+    await settle();
+
+    const lastFor = (owner: string) => kit.places.filter((each) => ownerOf(each) === owner).at(-1);
+    expect(lastFor('Session work')?.tab).toEqual(TAB);
+    expect(kit.places.filter((each) => ownerOf(each) === 'Session play').map((each) => each.tab)).toEqual([null]);
   });
 });
 

@@ -20,7 +20,7 @@ import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 
 const say = speakingAs(deviceLog(), 'browser');
 
-/** How long the page rests before where it is goes into the Topic Place. */
+/** How long the page rests before where it is goes into the Place. */
 const SCROLL_SETTLE_MS = 400;
 
 interface ShownPage {
@@ -41,11 +41,11 @@ interface ShownPage {
  * the Session as it was. See ADR 0007.
  *
  * It has the Terminal Header's title and the same Title Sheet. While it is on
- * top, the Attach keeps its Tab in the Topic Place. In a Topic it stands in
- * the Terminal Screen's place, over the Host Screen: Back and the swipe from
- * the edge go there and leave the Tab in the Place, so opening the Topic again
- * opens the page again, and a pick in the Title Sheet puts the Terminal Screen
- * back. A Session's page goes over its Terminal Screen. See ADR 0020.
+ * top, the Attach keeps its Tab in the Place of its Topic, or of its Session
+ * when it holds no Topic. It stands in the Terminal Screen's place, over the
+ * Host Screen: Back and the swipe from the edge go there and leave the Tab in
+ * the Place, so opening the Topic or Session again opens the page again, and a
+ * pick in the Title Sheet puts the Terminal Screen back. See ADR 0020.
  */
 export default function WebViewScreen() {
   const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string; restored?: string }>();
@@ -66,11 +66,11 @@ export default function WebViewScreen() {
   /** Why the last load failed; null while the page loads or shows. */
   const [failure, setFailure] = useState<string | null>(null);
 
-  // The Attach's token for this Tab. Going away gives it back, which clears
-  // the Tab from the Topic Place, unless the Topic changed first. Back in a
-  // Topic keeps it: see `keepsTab`.
+  // The Attach's token for this Tab. Back keeps the Tab in the Place; a pick
+  // that leaves the page (see `leaving`) gives the token back, which clears the
+  // Tab from the Place, unless the owner changed first.
   const token = useRef<number | null>(null);
-  const keepsTab = useRef(false);
+  const leaving = useRef(false);
   const where = useRef({ page: shown.page, scrollY: shown.scrollY });
   const scrolled = useRef(false);
   useEffect(() => {
@@ -80,11 +80,11 @@ export default function WebViewScreen() {
     where.current = { page: shown.page, scrollY: shown.scrollY };
     scrolled.current = shown.scrollY === 0;
     return () => {
-      if (keepsTab.current) {
-        attach.updateTab(mine, where.current);
-        say('Back: to the Host Screen, and the Topic keeps its page');
-      } else {
+      if (leaving.current) {
         attach.leaveTab(mine);
+      } else {
+        attach.updateTab(mine, where.current);
+        say('Back: to the Host Screen, and the Place keeps its page');
       }
       if (token.current === mine) token.current = null;
     };
@@ -98,25 +98,16 @@ export default function WebViewScreen() {
     if (token.current !== null) attach?.updateTab(token.current, where.current);
   }, [attach]);
 
-  // In a Topic, the page sits right over the Host Screen, in the Terminal
-  // Screen's place, so Back and the swipe from the edge are the stack's own
-  // and go to the Host Screen, and the Topic keeps the page. A pick in the
-  // Title Sheet gives the place back to the Terminal Screen. Without a Topic,
-  // the page sits over the Session's Terminal Screen, and Back goes there.
+  // The page sits right over the Host Screen, in the Terminal Screen's place,
+  // so Back and the swipe from the edge are the stack's own and go to the Host
+  // Screen, and the Place keeps the page. A pick in the Title Sheet gives the
+  // place back to the Terminal Screen.
   const hostId = attach?.hostId;
-  const inTopic = state?.topic != null;
   const [release, setRelease] = useState<(() => void) | null>(null);
-  const leaving = useRef(false);
-  useEffect(() => {
-    keepsTab.current = inTopic && !leaving.current;
-  }, [inTopic]);
   const leave = useCallback(() => {
     if (leaving.current || !navigation.isFocused()) return;
     leaving.current = true;
-    keepsTab.current = false;
-    const stack = navigation.getState();
-    const underIsTerminal = stack !== undefined && stack.routes[stack.index - 1]?.name === 'terminal';
-    setRelease(() => () => (underIsTerminal ? router.back() : router.replace('/terminal')));
+    setRelease(() => () => router.replace('/terminal'));
   }, [navigation, router]);
   useEffect(() => release?.(), [release]);
 
@@ -126,7 +117,7 @@ export default function WebViewScreen() {
     setShown({ url: tab.url, page: tab.url, scrollY: 0, title: tab.title });
   }, []);
   /**
-   * A pick in the Title Sheet. A Topic whose Topic Place has a Tab shows that
+   * A pick in the Title Sheet. A Topic or Session whose Place has a Tab shows that
    * page in place of this one, in one move; any other pick goes to the
    * Terminal Screen under it.
    */
@@ -137,12 +128,11 @@ export default function WebViewScreen() {
     }
     if (leaving.current) return;
     leaving.current = true;
-    keepsTab.current = false;
     setRelease(() => () => router.replace(placeTabRoute(tab)));
   }, [leave, router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved });
 
-  // A page that a Topic Place opened: once the Attach is back in the Place's
+  // A page that a Place opened: once the Attach is back in the Place's
   // Window, the Host must still list the Tab. A Tab closed on the Mac sends the
   // user to the Pane, and the Place forgets it. A read that fails says nothing,
   // and the page stays.
@@ -157,7 +147,7 @@ export default function WebViewScreen() {
       const read = window ? await readBrowserTabs(hostId, window) : { kind: 'failed' as const, error: 'no active Window' };
       const restore = tabRestoreOf(read, wanted.tab.url);
       if (restore.kind === 'gone') {
-        say(`the Topic Place's Tab ${wanted.tab.url} is no longer listed; going to the Pane`);
+        say(`the Place's Tab ${wanted.tab.url} is no longer listed; going to the Pane`);
         leave();
       } else if (restore.unread !== null) {
         say(`the Tabs of ${window} did not read (${restore.unread}); keeping ${wanted.tab.url}`);

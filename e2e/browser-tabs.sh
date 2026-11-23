@@ -11,8 +11,10 @@
 #      Tabs are not listed
 #   3  a tap on a Tab loads its page in the Web View, and the page's title is
 #      the screen's title
-#   4  Back from the Web View finds the Session still attached. Each Back is
-#      also the check on a crash: the Surface under the Web View is freed and
+#   4  Back from the Web View goes to the Host Screen with the Session still
+#      attached, and the Session opened again has the page on top again; a
+#      Window pick there goes to the Terminal Screen. Each way back to the
+#      Terminal Screen is also the check on a crash: the Surface is freed and
 #      built again, and a layer left over from the freed one took the app down
 #      on about one Back in ten (see onSurfaceFreed in the libghostty patch)
 #   5  a page that does not answer shows the reason, and Try again loads it
@@ -46,6 +48,7 @@ ROOT=$MUXIFY_E2E_ROOT
 MARKER=browser-tabs-e2e-marker
 PAGE_TITLE="E2E Tailscale page"
 FAKE_NAME=e2e.tail0000.ts.net
+WINDOW_NAME=browser-tabs-window
 
 on_host() { sh -c "$*" 2>/dev/null; }
 
@@ -87,10 +90,26 @@ open_title_sheet() {
   agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Title Sheet never opened"
 }
 
-# Back from the Web View to the Session under it.
+# The phone's Clients on the Session. A Listener, such as the Host Server's,
+# asks for ignore-size and is no one's Client, as tmux-client.ts counts them.
+clients() { on_host "tmux list-clients -t '$SESSION' -F '#{client_flags}'" | grep -vc ignore-size; }
+
+# Back from the Web View to the Host Screen, then the Session again, whose
+# Session Place has the page on top, then the Window in the Title Sheet, which
+# goes to the Terminal Screen.
 back() {
   agent-device press 'id="BackButton"' >/dev/null 2>&1
-  agent-device wait 'id="pane-command"' 5000 >/dev/null 2>&1 || fail "Back did not find the Session attached"
+  agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back from the Web View did not go to the Host Screen"
+  [ "$(clients)" = 1 ] || fail "the Session is not attached under the Host Screen after Back from the Web View"
+  agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
+  agent-device wait "text=\"$MARKER\"" 20000 >/dev/null 2>&1 || fail "the Session opened again did not show its page"
+  sleep 1.5
+  agent-device press 'id="web-view-title"' >/dev/null 2>&1
+  agent-device wait 'label="Close Choose"' 8000 >/dev/null 2>&1 || fail "the Web View's Title Sheet never opened"
+  sleep 1
+  # The list around the rows has the first Window's name too.
+  agent-device press "role=button label=\"$WINDOW_NAME\"" >/dev/null 2>&1
+  agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 || fail "the Window pick did not go to the Terminal Screen"
 }
 
 # Presses a Tab's row and waits for its page, then goes Back to the Session.
@@ -123,6 +142,7 @@ PUBLIC=https://example.com/
 OTHER_WINDOW_TAB=https://other-window.example.com/
 on_host "tmux kill-window -a -t '$SESSION:0' 2>/dev/null; true" || fail "could not reach the dev Host"
 WINDOW=$(on_host "tmux display-message -p -t '$SESSION:0' '#{window_id}'")
+on_host "tmux rename-window -t '$SESSION:0' $WINDOW_NAME" || fail "could not name $WINDOW"
 stored-tabs "$WINDOW" 1 http://localhost:3000/ "$BY_ADDRESS" "$BY_NAME" "$PUBLIC" "$DOWN" http://192.168.1.10:8080/ \
   || fail "could not store the Tabs of $WINDOW"
 # A second Window, behind the first, whose Tab the Title Sheet must not list.
@@ -162,8 +182,8 @@ else
   echo "     SKIP: this Mac has no *.ts.net name that resolves, so plain http at a name is not checked"
 fi
 
-echo "4/6  the Session stayed attached under the Web View"
-CLIENTS=$(on_host "tmux list-clients -t '$SESSION'" | wc -l | tr -d ' ')
+echo "4/6  Back went to the Host Screen, and the Session stayed attached"
+CLIENTS=$(clients)
 [ "$CLIENTS" = 1 ] || fail "the Host has $CLIENTS Client(s) on Session $SESSION after the Web View, not 1"
 echo "     one Client on the Host, as before"
 
@@ -195,6 +215,7 @@ agent-device close >/dev/null 2>&1
 echo
 echo "PASS: the Title Sheet lists the Window's Browser Tabs that the phone can"
 echo "      reach and no other, a tap loads the page in the Web View with the"
-echo "      page's title, Back finds the Session attached, a page that is down"
+echo "      page's title, Back goes to the Host Screen with the Session attached"
+echo "      and the Session opened again shows the page again, a page that is down"
 echo "      shows the reason and loads on Try again, and a Window with no Browser"
 echo "      has no Browser tabs section."

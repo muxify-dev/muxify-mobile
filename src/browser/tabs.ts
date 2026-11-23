@@ -110,8 +110,8 @@ function webHost(url: string): string | null {
 }
 
 /**
- * What reopening a Topic does with the Browser Tab its Topic Place has, given
- * a read of the Window's Tabs. A Tab the Host lists no more is closed, so the
+ * What reopening a Topic or Session does with the Browser Tab its Place has,
+ * given a read of the Window's Tabs. A Tab the Host lists no more is closed, so the
  * Pane is where the user goes. A read that failed says nothing about the Tab,
  * and the phone loads the URL by itself, so the Web View opens anyway.
  */

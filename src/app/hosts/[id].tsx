@@ -172,7 +172,7 @@ export default function HostScreen() {
   }, [goToCancelled]);
   const entered = useCallback((tab: PlaceTab | null) => {
     closeGoTo();
-    // A Topic Place with a Tab: the page, in the Terminal Screen's place.
+    // A Place with a Tab: the page, in the Terminal Screen's place.
     router.push(tab ? placeTabRoute(tab) : '/terminal');
   }, [closeGoTo, router]);
   const hostEntry = useHostEntry(id, entered);

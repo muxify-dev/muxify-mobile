@@ -60,7 +60,7 @@ import {
   type SessionVisit,
 } from '@/domain/reconnect';
 import { deviceHostStore } from '@/storage/device-store';
-import type { Host, PlaceTab } from '@/storage/records';
+import { placeOwner, sameOwner, type Host, type PlaceTab } from '@/storage/records';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
@@ -247,11 +247,10 @@ export default function TerminalScreen() {
         return;
       }
       setMissing(null);
-      // The Last Place's Topic opens at its Topic Place, a Browser Tab included:
-      // the Web View goes on top once the Attach is there to show it.
-      const place = requested.topicId
-        ? records.topicPlaces.find((each) => each.hostId === host.id && each.topicId === requested.topicId && each.session === requested.session)
-        : undefined;
+      // The Last Place's Topic or Session opens at its Place, a Browser Tab
+      // included: the Web View goes on top once the Attach is there to show it.
+      const owner = placeOwner(requested.topicId || null, requested.session!);
+      const place = records.places.find((each) => each.hostId === host.id && sameOwner(each.owner, owner) && each.session === requested.session);
       const request = {
         host,
         destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null,
@@ -328,17 +327,13 @@ export default function TerminalScreen() {
   const forgetLookup = useCallback(() => setLookup(null), []);
   /**
    * A Tab picked in the Title Sheet: its page in the Web View. The Attach
-   * stays up. In a Topic, the page takes this screen's place, so Back from it
-   * goes to the Host Screen, as Back from here does. A Session's page goes
-   * over this screen, and Back comes back here.
+   * stays up. The page takes this screen's place, so Back from it goes to the
+   * Host Screen, as Back from here does, and the Place keeps the page.
    */
-  const inTopic = state?.topic != null;
   const showTab = useCallback((tab: BrowserTab) => {
-    const page = { pathname: '/web-view', params: { url: tab.url, title: tab.title } } as const;
-    if (inTopic) router.replace(page);
-    else router.push(page);
-  }, [router, inTopic]);
-  /** A Topic opened from the Title Sheet whose Topic Place has a Tab: its page, in this screen's place. */
+    router.replace({ pathname: '/web-view', params: { url: tab.url, title: tab.title } });
+  }, [router]);
+  /** A Topic or Session opened from the Title Sheet whose Place has a Tab: its page, in this screen's place. */
   const moved = useCallback((tab: PlaceTab | null) => {
     if (tab) router.replace(placeTabRoute(tab));
   }, [router]);

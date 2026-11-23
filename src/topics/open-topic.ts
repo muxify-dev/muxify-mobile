@@ -1,4 +1,4 @@
-import type { RecentSession, TopicPlace } from '@/storage/records';
+import type { Place, RecentSession } from '@/storage/records';
 import type { TopicDetail, TopicSession } from './topic-detail';
 
 /**
@@ -9,7 +9,7 @@ export function chooseTopicSession(
   topic: TopicDetail,
   hostId: string,
   recent: readonly RecentSession[],
-  place: TopicPlace | null = null,
+  place: Place | null = null,
 ): TopicSession | null {
   const placed = place && topic.sessions.find((session) => session.name === place.session);
   if (placed) return placed;

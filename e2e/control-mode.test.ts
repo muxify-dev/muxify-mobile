@@ -74,7 +74,7 @@ const host = (over: Partial<Host> = {}): Host => ({
 /** Everything the Attach writes down, kept in memory. */
 function memoryStore() {
   const wrote: string[] = [];
-  const records: Records = { hosts: [host()], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, topicPlaces: [] };
+  const records: Records = { hosts: [host()], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, places: [] };
   const store: HostStore = {
     load: () => Promise.resolve(records),
     saveHost: () => Promise.reject(new Error('not used by this check')),
@@ -90,8 +90,8 @@ function memoryStore() {
     recentSessionsFor: () => Promise.resolve([]),
     rememberLastPlace: () => Promise.resolve(),
     forgetLastPlace: () => Promise.resolve(),
-    topicPlaceFor: () => Promise.resolve(null),
-    rememberTopicPlace: () => Promise.resolve(),
+    placeFor: () => Promise.resolve(null),
+    rememberPlace: () => Promise.resolve(),
   };
   return { store, wrote };
 }

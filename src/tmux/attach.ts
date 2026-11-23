@@ -7,7 +7,7 @@ import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
 import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { Host, PlaceTab, TopicPlace } from '@/storage/records';
+import { placeOwner, sameOwner, type Host, type Place, type PlaceOwner, type PlaceTab } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
@@ -22,10 +22,11 @@ export interface SessionDestination {
   /** Null is a plain Session pick. An origin explicitly selects that Topic. */
   topic: TopicOrigin | null;
   /**
-   * Set when a Topic is opened: its Topic Place, to go back to once the Session
-   * is attached. Only for this Topic and this Session; anything else is ignored.
+   * Set when a Topic, or a Session with no Topic, is opened from the Host
+   * Screen: its Place, to go back to once the Session is attached. Only for
+   * the owner the Attach then holds and this Session; anything else is ignored.
    */
-  restore?: TopicPlace | null;
+  restore?: Place | null;
 }
 export interface AttachedTopic { id: TopicId; view: TopicView }
 
@@ -194,7 +195,7 @@ export interface AttachState {
    */
   input: InputNotice[];
   /**
-   * The Topic Place's Browser Tab, which a Topic opened just now had on top.
+   * The Place's Browser Tab, which a Topic or Session opened just now had on top.
    * The Web View that the opener pushed with it checks it, once, against the
    * Tabs the Host lists: see takeTabToRestore.
    */
@@ -298,14 +299,14 @@ export interface Attach {
    */
   discardedInput(paneId: string, action: 'dismiss' | 'compose'): boolean;
 
-  // The Web View's Browser Tab, which the Topic Place keeps.
+  // The Web View's Browser Tab, which the Place keeps.
   /** The Web View shows this Tab now. Answers the token for the other two. */
   showTab(tab: PlaceTab): number;
   /** Where the page is now. Does nothing for a stale token. */
   updateTab(token: number, at: Pick<PlaceTab, 'page' | 'scrollY'>): void;
   /**
    * The Web View has gone: the user chose the Pane under it. Does nothing for
-   * a stale token: another Tab was shown since, or the Topic changed.
+   * a stale token: another Tab was shown since, or the owner changed.
    */
   leaveTab(token: number): void;
   /** The Tab a restore asks to show, handed out once. */
@@ -769,7 +770,7 @@ export function openAttach(options: AttachOptions): Attach {
 
   /**
    * The Attach's writes to the records: a Recent Session, the Last Place a
-   * cold start goes back to, and the Topic Place. One after the other, because
+   * cold start goes back to, and the Place. One after the other, because
    * each rewrites the whole records file and two at once would lose one of them.
    */
   let arrivalWrites = Promise.resolve();
@@ -794,32 +795,34 @@ export function openAttach(options: AttachOptions): Attach {
   }
 
   /**
-   * The Tab the Web View shows for the current Topic. A Topic change drops it
-   * with no write, so the Web View that the change dismisses finds its token
-   * stale, and the Topic the user left keeps its Tab.
+   * The Tab the Web View shows for the current owner. A change of owner drops
+   * it with no write, so the Web View that the change dismisses finds its token
+   * stale, and the Topic or Session the user left keeps its Tab.
    */
   let shownTab: ShownTab | null = null;
   let tabTokens = 0;
-  /** A Topic Place to go back to once the Session is attached. See restorePlace. */
-  let pendingRestore: TopicPlace | null = options.destination.restore?.topicId === options.destination.topic?.id
-    ? options.destination.restore ?? null
-    : null;
+  /** A Place to go back to once the Session is attached. See restorePlace. */
+  let pendingRestore: Place | null = restoreFor(options.destination);
   let restoring = false;
-  /** The Topic Place last written, so that a change which moves nothing writes nothing. */
+  /** The Place last written, so that a change which moves nothing writes nothing. */
   let writtenPlace = '';
 
+  /** Whose Place the Attach writes now: its Topic, else its Session. */
+  function ownerNow(): PlaceOwner {
+    return placeOwner(state.topic?.id ?? null, state.sessionName);
+  }
+
   /**
-   * Writes the Topic Place when the user moved in the Topic. Not during a
-   * Session switch or a restore: the Topology then shows a Window that the
-   * user is only passing through.
+   * Writes the Place when the user moved in the Topic or the Session. Not
+   * during a Session switch or a restore: the Topology then shows a Window
+   * that the user is only passing through.
    */
   function notePlace(): void {
-    const topic = state.topic;
     const window = state.topology.activeWindow;
-    if (closed || !topic || !window || state.phase.kind !== 'connected' || pendingSwitch || pendingRestore || restoring) return;
+    if (closed || !window || state.phase.kind !== 'connected' || pendingSwitch || pendingRestore || restoring) return;
     const place = {
       hostId: host.id,
-      topicId: topic.id,
+      owner: ownerNow(),
       session: state.sessionName,
       window: { id: window.id, index: window.index, name: window.name },
       pane: state.topology.activePane?.id ?? null,
@@ -829,20 +832,20 @@ export function openAttach(options: AttachOptions): Attach {
     if (written === writtenPlace) return;
     writtenPlace = written;
     const at = new Date(clock.now()).toISOString();
-    arrivalWrites = arrivalWrites.then(() => store.rememberTopicPlace({ ...place, at })).catch(() => {});
+    arrivalWrites = arrivalWrites.then(() => store.rememberPlace({ ...place, at })).catch(() => {});
   }
 
   /**
-   * Goes back to the Topic Place of a Topic just opened: its Window, then its
-   * Pane. The Tab is the Terminal Screen's to show, so it waits in the state.
+   * Goes back to the Place of a Topic or Session just opened: its Window, then
+   * its Pane. The Tab is the Terminal Screen's to show, so it waits in the state.
    */
   async function restorePlace(mine: number): Promise<void> {
     const place = pendingRestore;
     const current = client;
     if (!place || !current || stale(mine)) return;
     pendingRestore = null;
-    if (state.topic?.id !== place.topicId || state.sessionName !== place.session) {
-      say(`not restoring the Topic Place of ${place.topicId}: the Attach is in ${state.sessionName} now`);
+    if (!sameOwner(ownerNow(), place.owner) || state.sessionName !== place.session) {
+      say(`not restoring the Place of ${describeOwner(place.owner)}: the Attach is in ${state.sessionName} now`);
       notePlace();
       return;
     }
@@ -850,20 +853,20 @@ export function openAttach(options: AttachOptions): Attach {
     try {
       const window = placeWindow(state.topology.windows, place.window);
       if (window && !window.active) {
-        say(`restoring the Topic Place: Window ${window.index} (${window.id})`);
+        say(`restoring the Place: Window ${window.index} (${window.id})`);
         expectFocus({ kind: 'session-window-changed', window: window.id });
         await current.selectWindow(currentSessionTarget(), window.index);
         await settleAfterVerb(mine);
         if (stale(mine)) return;
       } else if (!window && place.window) {
-        say(`the Topic Place's Window ${place.window.id} is gone; staying in tmux's active Window`);
+        say(`the Place's Window ${place.window.id} is gone; staying in tmux's active Window`);
       }
       if (place.pane && place.pane !== state.topology.activePane?.id &&
           state.topology.panes.some((pane) => pane.id === place.pane)) {
-        say(`restoring the Topic Place: Pane ${place.pane}`);
+        say(`restoring the Place: Pane ${place.pane}`);
         selectPane(place.pane);
       }
-      if (place.tab && state.topic?.id === place.topicId) {
+      if (place.tab && sameOwner(ownerNow(), place.owner)) {
         // The Web View that the opener pushed with the Place's Tab can be up
         // already: its token stays the one that counts.
         if (shownTab?.tab.url !== place.tab.url) shownTab = { token: ++tabTokens, tab: place.tab };
@@ -901,11 +904,12 @@ export function openAttach(options: AttachOptions): Attach {
   function acceptDestination(destination: SessionDestination): void {
     const topic = destination.topic;
     const otherTopic = (topic?.id ?? null) !== (state.topic?.id ?? null);
+    const otherOwner = !sameOwner(placeOwner(topic?.id ?? null, destination.sessionName), ownerNow());
     const moved = otherTopic || destination.sessionName !== state.sessionName;
-    if (otherTopic) shownTab = null;
+    if (otherOwner) shownTab = null;
     // The Topic followed now keeps its view: its subscription pushes each change.
     const followed = topic !== null && !otherTopic && state.topic !== null && topicFeed?.id === topic.id;
-    change({ ...(otherTopic ? { tabToRestore: null } : {}), sessionName: destination.sessionName, topic: topic
+    change({ ...(otherOwner ? { tabToRestore: null } : {}), sessionName: destination.sessionName, topic: topic
       ? (followed ? state.topic : { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) })
       : null });
     followTopic();
@@ -1624,12 +1628,10 @@ export function openAttach(options: AttachOptions): Attach {
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
-      // Also for the Topic held now: Back from a Web View leaves its Tab in the
-      // Place, and opening the Topic again from the Host Screen shows it again.
-      const restore = destination.restore && destination.topic?.id === destination.restore.topicId
-        ? destination.restore : null;
-      if (destination.topic === null) {
-        if (destination.sessionName === state.sessionName) return;
+      if (destination.topic === null && destination.sessionName === state.sessionName) {
+        // The Session held now: only its Session Place can move the user.
+        if (state.topic || !destination.restore) return;
+      } else if (destination.topic === null) {
         const topic = state.topic && lastTopic(state.topic.view);
         if (state.topic && !topic) {
           throw new Error('The current Topic has not loaded. Retry after it loads.');
@@ -1638,6 +1640,9 @@ export function openAttach(options: AttachOptions): Attach {
           destination = { ...destination, topic: { id: topic.id, seed: topic } };
         }
       }
+      // Also for the Topic or Session held now: Back from a Web View leaves its
+      // Tab in the Place, and opening it again from the Host Screen shows it again.
+      const restore = restoreFor(destination);
       if (destination.sessionName === state.sessionName) {
         pendingRestore = restore;
         acceptDestination(destination);
@@ -2001,8 +2006,18 @@ export function openAttach(options: AttachOptions): Attach {
   return attach;
 }
 
-/** The Topic Place's Window: by tmux's id, else by index and name, as Reopen makes it again. */
-function placeWindow(windows: readonly Window[], wanted: TopicPlace['window']): Window | undefined {
+/** The Place a destination asks to go back to, when it is for the owner the destination names. */
+function restoreFor(destination: SessionDestination): Place | null {
+  const restore = destination.restore ?? null;
+  return restore && sameOwner(restore.owner, placeOwner(destination.topic?.id ?? null, destination.sessionName)) ? restore : null;
+}
+
+function describeOwner(owner: PlaceOwner): string {
+  return owner.kind === 'topic' ? `Topic ${owner.topicId}` : `Session ${owner.session}`;
+}
+
+/** The Place's Window: by tmux's id, else by index and name, as Reopen makes it again. */
+function placeWindow(windows: readonly Window[], wanted: Place['window']): Window | undefined {
   if (!wanted) return undefined;
   return windows.find((window) => window.id === wanted.id)
     ?? windows.find((window) => window.index === wanted.index && window.name === wanted.name);

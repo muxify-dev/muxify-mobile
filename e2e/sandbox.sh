@@ -17,7 +17,7 @@
 #   TMUX_PANE, which would send tmux to your server.
 # - The app, over SSH: a private sshd on a free port sets the same variables
 #   with SetEnv. The app's saved Dev Host is pointed at that port for the run,
-#   with no Fingerprint, no Recent Sessions, no Last Place and no Topic Places,
+#   with no Fingerprint, no Recent Sessions, no Last Place and no Places,
 #   because the sandbox is a Host the app has never seen. Its Host Screen
 #   starts on the Sessions tab, where Session 0 is. A suite about Topic cards
 #   takes hostScreenTabs out of the settings, which gives the Board tab.
@@ -201,7 +201,10 @@ records["fingerprints"] = [f for f in records["fingerprints"] if f["hostId"] not
 records["recentSessions"] = [s for s in records["recentSessions"] if s["hostId"] not in ids]
 if (records.get("lastPlace") or {}).get("hostId") in ids:
     del records["lastPlace"]
-records["topicPlaces"] = [p for p in records.get("topicPlaces", []) if p.get("hostId") not in ids]
+# topicPlaces is the name a build before Session Places gave them.
+for key in ("places", "topicPlaces"):
+    if key in records:
+        records[key] = [p for p in records[key] if p.get("hostId") not in ids]
 json.dump(records, open(path, "w"))
 settings = json.load(open(settings_path))
 settings["hostScreenTabs"] = {**settings.get("hostScreenTabs", {}), **{host: "sessions" for host in ids}}

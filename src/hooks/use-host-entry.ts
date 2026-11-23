@@ -35,8 +35,8 @@ interface Delivery {
 }
 
 /**
- * `onAttached` gets the Tab of the Topic Place the Attach goes back to, when it
- * has one: the screen then shows the Terminal Screen and the Web View in one move.
+ * `onAttached` gets the Tab of the Place the Attach goes back to, when it has
+ * one: the screen then shows the Terminal Screen and the Web View in one move.
  */
 export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) => void, fromAttach = false) {
   const router = useRouter();
@@ -58,7 +58,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
 
   const attachTopic = useCallback(async (topic: TopicDetail, delivery: Delivery) => {
     const store = deviceHostStore();
-    const [recent, place] = await Promise.all([store.recentSessionsFor(hostId), store.topicPlaceFor(hostId, topic.id)]);
+    const [recent, place] = await Promise.all([store.recentSessionsFor(hostId), store.placeFor(hostId, { kind: 'topic', topicId: topic.id })]);
     if (!delivery.isCurrent()) return;
     const session = chooseTopicSession(topic, hostId, recent, place);
     if (!session) throw new Error('This Topic has no live Session. Return Home and read it again.');
@@ -140,8 +140,11 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   }, [hostId, router, run, attachTopic, readAndAttach, fromAttach, askWake]);
 
   const attachSession = useCallback(async (sessionName: string, delivery: Delivery) => {
-    await deliverSession({ hostId, destination: { sessionName, topic: null }, ...delivery });
-    if (delivery.isCurrent()) onAttached(null);
+    const place = await deviceHostStore().placeFor(hostId, { kind: 'session', session: sessionName });
+    if (!delivery.isCurrent()) return;
+    const attach = await deliverSession({ hostId, destination: { sessionName, topic: null, restore: place }, ...delivery });
+    // A Topic held now that lists the Session keeps it, and the Session Place does not apply.
+    if (delivery.isCurrent()) onAttached(attach.state().topic === null ? place?.tab ?? null : null);
   }, [hostId, deliverSession, onAttached]);
 
   const openSession = useCallback((sessionName: string) => {

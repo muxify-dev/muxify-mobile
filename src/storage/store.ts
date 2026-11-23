@@ -5,10 +5,12 @@ import {
   type Identity,
   type LastPlace,
   parseLastPlace,
-  parseTopicPlaces,
+  parsePlaces,
+  type Place,
+  type PlaceOwner,
   type RecentSession,
   type Records,
-  type TopicPlace,
+  sameOwner,
 } from './records';
 
 /** Where the JSON lives. The one seam between the store and the filesystem. */
@@ -60,10 +62,10 @@ export interface HostStore {
   rememberLastPlace(place: LastPlace): Promise<void>;
   /** Forgets it, so the next cold start opens the Hosts list. */
   forgetLastPlace(): Promise<void>;
-  /** Where the user was in this Topic on this phone, or null when it has not been opened here. */
-  topicPlaceFor(hostId: string, topicId: string): Promise<TopicPlace | null>;
-  /** Replaces the Topic's Topic Place. A Disconnect keeps them: see forgetLastPlace. */
-  rememberTopicPlace(place: TopicPlace): Promise<void>;
+  /** Where the user was in this Topic, or this Session with no Topic, on this phone; null when it has not been here. */
+  placeFor(hostId: string, owner: PlaceOwner): Promise<Place | null>;
+  /** Replaces its owner's Place. A Disconnect keeps them: see forgetLastPlace. */
+  rememberPlace(place: Place): Promise<void>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -99,7 +101,7 @@ export function createHostStore(
         fingerprints: parsed.fingerprints ?? [],
         recentSessions: parsed.recentSessions ?? [],
         lastPlace: parseLastPlace(parsed.lastPlace),
-        topicPlaces: parseTopicPlaces(parsed.topicPlaces),
+        places: parsePlaces(parsed.places, (parsed as { topicPlaces?: unknown }).topicPlaces),
       };
     } catch {
       // Unreadable records are treated as none rather than as a crash on
@@ -160,7 +162,7 @@ export function createHostStore(
           (candidate) => candidate.hostId !== hostId,
         ),
         lastPlace: records.lastPlace?.hostId === hostId ? null : records.lastPlace,
-        topicPlaces: records.topicPlaces.filter((candidate) => candidate.hostId !== hostId),
+        places: records.places.filter((candidate) => candidate.hostId !== hostId),
       });
       if (!stillUsed) {
         await secrets.remove(credentialKey(host.identityId));
@@ -234,26 +236,23 @@ export function createHostStore(
       await save({ ...records, lastPlace: null });
     },
 
-    async topicPlaceFor(hostId: string, topicId: string): Promise<TopicPlace | null> {
+    async placeFor(hostId: string, owner: PlaceOwner): Promise<Place | null> {
       const records = await load();
-      return records.topicPlaces.find((candidate) => sameTopic(candidate, hostId, topicId)) ?? null;
+      return records.places.find((candidate) => samePlace(candidate, hostId, owner)) ?? null;
     },
 
-    async rememberTopicPlace(place: TopicPlace): Promise<void> {
+    async rememberPlace(place: Place): Promise<void> {
       const records = await load();
       await save({
         ...records,
-        topicPlaces: [
-          ...records.topicPlaces.filter((candidate) => !sameTopic(candidate, place.hostId, place.topicId)),
-          place,
-        ],
+        places: [...records.places.filter((candidate) => !samePlace(candidate, place.hostId, place.owner)), place],
       });
     },
   };
 }
 
-function sameTopic(candidate: TopicPlace, hostId: string, topicId: string): boolean {
-  return candidate.hostId === hostId && candidate.topicId === topicId;
+function samePlace(candidate: Place, hostId: string, owner: PlaceOwner): boolean {
+  return candidate.hostId === hostId && sameOwner(candidate.owner, owner);
 }
 
 function sameSession(candidate: RecentSession, hostId: string, name: string): boolean {
