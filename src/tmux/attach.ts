@@ -773,8 +773,9 @@ export function openAttach(options: AttachOptions): Attach {
 
   /**
    * The Attach's writes to the records: a Recent Session, the Last Place a
-   * cold start goes back to, and the Place. One after the other, because
-   * each rewrites the whole records file and two at once would lose one of them.
+   * cold start goes back to, and the Place. Kept on one chain so that close
+   * can wait for all of them. The store, not this chain, keeps two writes from
+   * running at once.
    */
   let arrivalWrites = Promise.resolve();
   let sessionRevision = 0;
