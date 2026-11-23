@@ -15,7 +15,8 @@ import { TitleSheet } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { coverOf } from '@/domain/cover';
-import { useCoverAction, useRouteSession, type RouteSession } from '@/hooks/use-route-session';
+import { useCoverAction } from '@/hooks/use-cover-action';
+import { useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
 import { useSettings } from '@/settings/settings-context';
 import type { PlaceTab } from '@/storage/records';
@@ -181,17 +182,17 @@ export default function WebViewScreen() {
   // leaves the page as it is, as on a page opened from the Host Screen.
   const [pageShownFor, setPageShownFor] = useState<Attach | null>(null);
   if (attach && attach !== pageShownFor && state?.typing.kind === 'open') setPageShownFor(attach);
+  const place = {
+    hostName: attach?.hostName ?? opening.hostName,
+    session: state?.sessionName ?? opening.session,
+  };
   const cover = coverOf({
     missing: opening.missing,
     lookup: opening.lookup,
     attach: state ? { typing: state.typing, step: state.step, paintedOnce: attach === pageShownFor } : null,
-    place: { hostName: attach?.hostName ?? opening.hostName, session: state?.sessionName ?? opening.session },
+    place,
   });
-  const goHost = useCallback(() => {
-    if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
-    else router.dismissTo('/');
-  }, [hostId, router]);
-  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly: chooser.openSessionsOnly, goHost, say });
+  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly: chooser.openSessionsOnly, say });
 
   const pageTitle = title || shown.page;
   const headerTitle = useMemo((): HeaderTitle | null => {
@@ -268,7 +269,7 @@ export default function WebViewScreen() {
       {coldStart && cover.kind === 'connection-screen' ? (
         <ConnectionScreen
           cover={cover}
-          place={opening.missing === null && opening.hostName !== '' ? { hostName: opening.hostName, session: opening.session } : null}
+          place={opening.missing === null && place.hostName !== '' ? place : null}
           palette={palette}
           appearance={appearance}
           onAction={runCoverAction}

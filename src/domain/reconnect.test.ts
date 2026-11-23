@@ -3,7 +3,7 @@ import type { Host, Place } from '@/storage/records';
 import type { KeyVerdict } from '@/ssh/host-key';
 
 import { coverOf } from './cover';
-import { coldStartRoute, placeToReconnect, reconnect, type Lookup, type SessionVisit } from './reconnect';
+import { placeOfLastPlace, placeToReconnect, reconnect, type Lookup, type SessionVisit } from './reconnect';
 
 const HOST: Host = {
   id: 'host1',
@@ -30,39 +30,30 @@ describe('placeToReconnect', () => {
   });
 });
 
-describe('coldStartRoute', () => {
+describe('placeOfLastPlace', () => {
   const TAB = { url: 'http://localhost:3000/', page: 'http://localhost:3000/docs', scrollY: 120 };
   const at = (overrides: Partial<Place>): Place => ({
     hostId: 'host1', owner: { kind: 'session', session: 'main' }, session: 'main',
     window: { id: '@2', index: 1, name: 'web' }, pane: '%3', tab: null, at: '2026-11-23T10:00:00.000Z', ...overrides,
   });
 
-  it('opens the Web View of a Session Place with a Tab, and no Terminal Screen', () => {
-    expect(coldStartRoute({ places: [at({ tab: TAB })] }, PLACE)).toEqual({
-      pathname: '/web-view',
-      params: { url: TAB.url, page: TAB.page, scrollY: '120', restored: '1', hostId: 'host1', session: 'main', reconnect: '1' },
-    });
+  it('is the Session Place of a Last Place with no Topic', () => {
+    const place = at({ tab: TAB });
+    expect(placeOfLastPlace({ places: [place] }, PLACE)).toBe(place);
   });
 
-  it('opens the Web View of a Topic Place with a Tab, with the Topic', () => {
+  it('is the Topic Place of a Last Place in a Topic', () => {
     const topicPlace = at({ owner: { kind: 'topic', topicId: 't1' }, tab: TAB });
-    expect(coldStartRoute({ places: [topicPlace] }, { ...PLACE, topicId: 't1' })).toEqual({
-      pathname: '/web-view',
-      params: { url: TAB.url, page: TAB.page, scrollY: '120', restored: '1', hostId: 'host1', session: 'main', topicId: 't1', reconnect: '1' },
-    });
+    expect(placeOfLastPlace({ places: [topicPlace] }, { ...PLACE, topicId: 't1' })).toBe(topicPlace);
   });
 
   it.each([
-    ['the Place has no Tab', [at({})], PLACE],
     ['there is no Place', [], PLACE],
-    ['the Tab is in the Place of another Session', [at({ owner: { kind: 'session', session: 'other' }, session: 'other', tab: TAB })], PLACE],
+    ['the Place is of another Session', [at({ owner: { kind: 'session', session: 'other' }, session: 'other', tab: TAB })], PLACE],
     ['the Topic Place is in another Session of the Topic', [at({ owner: { kind: 'topic', topicId: 't1' }, session: 'other', tab: TAB })], { ...PLACE, topicId: 't1' }],
-    ['the Tab is on another Host', [at({ hostId: 'host2', tab: TAB })], PLACE],
-  ])('opens the Terminal Screen when %s', (_, places, last) => {
-    expect(coldStartRoute({ places }, last)).toEqual({
-      pathname: '/terminal',
-      params: { hostId: 'host1', session: 'main', ...(last.topicId ? { topicId: last.topicId } : {}), reconnect: '1' },
-    });
+    ['the Place is on another Host', [at({ hostId: 'host2', tab: TAB })], PLACE],
+  ])('is null when %s', (_, places, last) => {
+    expect(placeOfLastPlace({ places }, last)).toBeNull();
   });
 });
 

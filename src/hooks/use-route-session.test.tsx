@@ -28,18 +28,20 @@ const place: Place = {
 const records: Records = { hosts: [host], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, places: [place] };
 const COLD_START: RouteSession = { hostId: 'host', session: 'work', reconnect: '1' };
 
-let opening: RouteSessionState;
+const openingRef: { current: RouteSessionState | null } = { current: null };
 let renderer: ReactTestRenderer;
 const said: string[] = [];
 
-function Screen({ route, shows }: { route: RouteSession | null; shows: RouteShows }) {
-  opening = useRouteSession(route, shows, (line) => said.push(line));
+function Screen({ route, shows, seenRef }: { route: RouteSession | null; shows: RouteShows; seenRef: typeof openingRef }) {
+  const opening = useRouteSession(route, shows, (line) => said.push(line));
+  React.useEffect(() => { seenRef.current = opening; });
   return null;
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   said.length = 0;
+  openingRef.current = null;
   mockLoad.mockResolvedValue(records);
   mockOpen.mockResolvedValue({});
   mockRead.mockImplementation(async (_host: unknown, _list: unknown, { onHostKey }: { onHostKey: (verdict: unknown, fingerprint: string) => boolean }) => {
@@ -54,7 +56,7 @@ afterEach(async () => {
 });
 
 async function mount(route: RouteSession | null, shows: RouteShows) {
-  await act(async () => { renderer = create(<Screen route={route} shows={shows} />); });
+  await act(async () => { renderer = create(<Screen route={route} shows={shows} seenRef={openingRef} />); });
 }
 
 it('opens a cold start on the Web View at the whole Place, its Tab included', async () => {
@@ -62,8 +64,8 @@ it('opens a cold start on the Web View at the whole Place, its Tab included', as
 
   expect(mockOpen).toHaveBeenCalledTimes(1);
   expect(mockOpen.mock.calls[0][0].destination).toEqual({ sessionName: 'work', topic: null, restore: place });
-  expect(opening.lookup).toEqual({ kind: 'found' });
-  expect(opening.hostName).toBe('Mac');
+  expect(openingRef.current?.lookup).toEqual({ kind: 'found' });
+  expect(openingRef.current?.hostName).toBe('Mac');
   expect(mockSetParams).toHaveBeenCalledWith({ hostId: '', session: '', topicId: '', reconnect: '' });
 });
 
@@ -78,7 +80,7 @@ it('asks for no Attach when the visit does not find the Session', async () => {
   await mount(COLD_START, 'page');
 
   expect(mockOpen).not.toHaveBeenCalled();
-  expect(opening.lookup).toEqual({ kind: 'failed', step: 'looking-for-session', reason: null });
+  expect(openingRef.current?.lookup).toEqual({ kind: 'failed', step: 'looking-for-session', reason: null });
   expect(mockSetParams).not.toHaveBeenCalled();
 });
 
@@ -87,6 +89,6 @@ it('does nothing for a screen that was not opened for a Session', async () => {
 
   expect(mockLoad).not.toHaveBeenCalled();
   expect(mockOpen).not.toHaveBeenCalled();
-  expect(opening).toMatchObject({ missing: null, lookup: null });
+  expect(openingRef.current).toMatchObject({ missing: null, lookup: null });
   expect(said).toEqual([]);
 });

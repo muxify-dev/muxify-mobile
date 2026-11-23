@@ -52,7 +52,8 @@ import type { BrowserTab } from '@/browser/tabs';
 import {
   topicSeedParam,
 } from '@/topics/topic-detail';
-import { useCoverAction, useRouteSession, type RouteSession } from '@/hooks/use-route-session';
+import { useCoverAction, useGoHost } from '@/hooks/use-cover-action';
+import { useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import type { PlaceTab } from '@/storage/records';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
@@ -157,10 +158,7 @@ export default function TerminalScreen() {
   const opening = useRouteSession(routeSession, 'terminal', say);
   const { missing, lookup, forgetLookup } = opening;
 
-  const goHost = useCallback(() => {
-    if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
-    else router.dismissTo('/');
-  }, [hostId, router]);
+  const goHost = useGoHost(hostId);
 
   useLayoutEffect(() => {
     if (!hostId) return;
@@ -1116,7 +1114,7 @@ export default function TerminalScreen() {
     place,
   });
 
-  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly, goHost, say });
+  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly, say });
 
   return (
     <TerminalHeader

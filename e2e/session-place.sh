@@ -22,14 +22,14 @@
 #      Client attaches, it is in the Place's Window, and the tmux Window keeps
 #      its size, because no Surface has said one
 #   7  the same on a cold start with Reconnect on start
+#   8  a Tab that the Host lists no more leaves the reopened Session on its
+#      Pane, the Session Place forgets the Tab, and the tmux Window takes the
+#      phone's size once the Terminal Screen is shown
 #
 # Steps 6 and 7 run over a slow link (e2e/slow-launch.sh), so that a Terminal
 # Screen mounted under the page would have its grid before the Attach is up,
 # and they read the app's own log: no Terminal Screen opened, and no size went
 # to tmux, while only the page was shown.
-#   8  a Tab that the Host lists no more leaves the reopened Session on its
-#      Pane, the Session Place forgets the Tab, and the tmux Window takes the
-#      phone's size once the Terminal Screen is shown
 #
 # The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
 # stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
