@@ -766,6 +766,10 @@ hardware keyboard. While the Composer is open,
 or while Typing is not open, the keys are disabled. The strip and key frames stay
 fixed during touch. A physical keyboard hides the row. iOS supplies its
 initial state, connection changes, and a fresh state on foreground entry.
+That state can stay "connected" after a Bluetooth keyboard goes, so the full
+software keyboard overrules it: iOS shows that keyboard only when no physical
+keyboard is in use, and the row comes back with it until a keyboard connects
+again or iOS shrinks its keyboard to the bar it shows for a physical one.
 Hiding the software keyboard alone does not hide the row. Hiding the row
 clears armed modifiers and stops arrow repeat. Options keeps Panes and
 Keyboard available. Software keyboard clearance belongs to the Terminal
