@@ -1,11 +1,8 @@
 #!/bin/bash
 #
 # Runs the Board Session cards on the Host Screen against a sandboxed Muxify on
-# this Mac, the dev Host (see e2e/sandbox.sh): live and Dormant Board Session
-# cards in Pinned, In Play and the Guests, their long-press menus, the move
-# mode, the Fill sheet, a tap that opens a live one, a restart of the sandbox's
-# tmux server, Reopen, Start Fresh, Bench and Unpin of the Dormant cards, and
-# Rename Session and Kill Session on a live card.
+# this Mac, the dev Host (see e2e/sandbox.sh): their menus, moves and writes,
+# and Move to Topic from the Terminal's Session menu.
 # After each write it waits until the Mac, asked through the CLI, has the
 # change, and then checks that the Host Screen shows the Mac's order.
 #
@@ -336,16 +333,16 @@ expect "TopA bspin | bsplace open open | bsguest bsextra | TopB"
 scroll_to top
 
 echo "== Live Board Sessions: menus and moves"
-menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Kill Session…" "Move Up"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Move to Topic…|Kill Session…" "Move Up"
 expect "bspin TopA | bsplace open open | bsguest bsextra | TopB"
-menu "Session bsguest" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
+menu "Session bsguest" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsguest did not start"
 targets=$(move_targets)
 [ "$targets" = "Fill Open Place|Move below bsextra|Trade TopB|Trade bsplace" ] || fail "the targets of bsguest are '$targets'"
 echo "ok: the targets of Guest bsguest are $targets, none on a Pinned card"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
-menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsplace did not start"
 reveal "Trade bsguest" || fail "no Trade bsguest target"
 agent-device press 'label="Trade bsguest"' --settle >/dev/null || fail "no Trade bsguest"
@@ -453,17 +450,17 @@ menu "Session bsplace" "Reopen|Start Fresh|Pin|Move Up|Move Down|Bench|Move…" 
 LIVE_PLACES=$(python3 -c 'import sys; print(sys.argv[1].replace("bsguest~", "open").replace("bsplace~", "bsplace"))' "$PLACES")
 expect "bspin TopA~ | $LIVE_PLACES | bsextra | TopB~"
 tmux has-session -t '=bsplace' || fail "tmux has no Session bsplace"
-menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Move…"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
 echo "ok: live bsplace shows in its place, with the menu of a live card"
 
 echo "== Unpin puts the card at the end of the Guests"
-menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Kill Session…" "Unpin"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Move to Topic…|Kill Session…" "Unpin"
 expect "TopA~ | $LIVE_PLACES | bsextra bspin | TopB~"
 
 echo "== Bench a live Board Session: it leaves the Board and stays a Session"
-menu "Session bspin" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Bench"
+menu "Session bspin" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Bench"
 expect_mac "TopA~ | $LIVE_PLACES | bsextra | TopB~"
 # The app is still attached to bspin, which is now in No Topic: the Bench
 # shows it as the Attach's peek, above the Benched cards.
@@ -480,7 +477,7 @@ echo "ok: bspin left the Board and its Session runs"
 
 echo "== Rename Session… and Kill Session… on a live Board Session's card"
 scroll_to top
-menu "Session bsextra" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Rename Session…"
+menu "Session bsextra" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Rename Session…"
 agent-device wait 'label="Session name"' 8000 >/dev/null || fail "the name sheet did not open"
 agent-device fill 'label="Session name"' "bsrenamed" >/dev/null || fail "could not type the name"
 agent-device press 'label="Save"' --settle >/dev/null || fail "no Save on the name sheet"
@@ -488,13 +485,43 @@ for _ in $(seq 40); do tmux has-session -t '=bsrenamed' 2>/dev/null && break; sl
 tmux has-session -t '=bsrenamed' 2>/dev/null || fail "tmux has no Session bsrenamed"
 reveal "Session bsrenamed" || fail "the card does not show the new name"
 echo "ok: Rename Session renamed bsextra's Session, and its card shows bsrenamed"
-menu "Session bsrenamed" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Kill Session…"
+menu "Session bsrenamed" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Move to Topic…|Kill Session…" "Kill Session…"
 agent-device wait 'role=button label="Kill Session"' 5000 >/dev/null || fail "Kill Session… did not ask first"
 tmux has-session -t '=bsrenamed' 2>/dev/null || fail "tmux killed the Session before the confirm"
 agent-device press 'role=button label="Kill Session"' --settle >/dev/null
 for _ in $(seq 40); do tmux has-session -t '=bsrenamed' 2>/dev/null || break; sleep 0.25; done
 tmux has-session -t '=bsrenamed' 2>/dev/null && fail "tmux still has the Session bsrenamed"
 echo "ok: Kill Session asked first, then ended the Session"
+
+echo "== Move to Topic… from the Terminal's Session menu: the Attach holds the new Topic"
+new_board_session bsmove
+reveal "Session bsmove" || fail "no card bsmove"
+agent-device press 'label="Session bsmove"' --settle >/dev/null
+agent-device wait 'id="pane-command"' 20000 >/dev/null || fail "bsmove did not attach"
+sleep 1.5
+agent-device press 'label="Options"' >/dev/null
+agent-device wait 'label="Session" role=button' 8000 >/dev/null || fail "Options has no Session menu on a Board Session"
+agent-device press 'label="Session" role=button' >/dev/null
+agent-device wait 'label="Move to Topic…" role=button' 8000 >/dev/null || fail "the Session menu has no Move to Topic…"
+agent-device press 'label="Move to Topic…" role=button' >/dev/null
+agent-device wait 'label="New Topic…"' 8000 >/dev/null || fail "the Move to Topic sheet did not open"
+agent-device press 'label="New Topic…"' --settle >/dev/null
+agent-device wait 'label="Topic title"' 8000 >/dev/null || fail "New Topic… asked for no title"
+agent-device fill 'label="Topic title"' "Moved" >/dev/null || fail "could not type the title"
+agent-device press 'label="Create"' --settle >/dev/null || fail "no Create"
+moved_topic() {
+  muxify environment show --json | python3 -c '
+import json, sys
+e = json.load(sys.stdin)
+u = e["unpinned"]
+labels = {c["topic"]["id"]: c["topic"]["label"] for c in e["pinned"] + u["places"] + u["guests"] + u["bench"] if c["kind"] == "topic"}
+print(next((labels.get(s["topic"], "none") for s in e["sessions"] if s["name"].startswith("bsmove")), "gone"))'
+}
+for _ in $(seq 40); do [ "$(moved_topic)" = Moved ] && break; sleep 0.25; done
+[ "$(moved_topic)" = Moved ] || fail "the Mac has bsmove in '$(moved_topic)', not in Moved"
+agent-device wait 'id="topic-title"' 15000 >/dev/null || fail "the Terminal does not show the Topic bsmove moved into"
+echo "ok: bsmove is in the new Topic Moved, and the Terminal shows the Topic"
+agent-device back >/dev/null 2>&1
 
 scroll_to top
 agent-device close >/dev/null 2>&1

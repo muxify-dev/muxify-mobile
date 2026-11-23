@@ -9,7 +9,7 @@ import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
 import type { KeyVerdict } from '@/ssh/host-key';
 import { placeOwner, sameOwner, type Host, type Place, type PlaceOwner, type PlaceTab } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
-import type { TopicId } from '@/topics/environment';
+import type { SessionId, TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
 
 import { toDraftText, type InputNotice, type Key } from './input-lane';
@@ -245,6 +245,13 @@ export interface Attach {
    * while it keeps focus. Returns the call that says it lost focus.
    */
   terminalFocused(): () => void;
+  /**
+   * The Host moved a Session, which had the name `from`, into a Topic. When
+   * it is the Session the Attach is on, the Attach holds that Topic from now
+   * on, as if the Topic had been opened on it. The Session is known by tmux's
+   * id, or by `from` while the Attach is not connected.
+   */
+  movedIntoTopic(session: SessionId, from: string, topic: TopicId): void;
   selectWindow(index: number): Promise<void>;
   /**
    * Optimistic: moves the Pane here first and puts it back if refused.
@@ -943,7 +950,8 @@ export function openAttach(options: AttachOptions): Attach {
     visitShownPanes();
   }
 
-  function acceptDestination(destination: SessionDestination): void {
+  /** `arrive: false` leaves the arrival to the rename that is on its way. */
+  function acceptDestination(destination: SessionDestination, { arrive = true } = {}): void {
     const topic = destination.topic;
     const otherTopic = (topic?.id ?? null) !== (state.topic?.id ?? null);
     const otherOwner = !sameOwner(placeOwner(topic?.id ?? null, destination.sessionName), ownerNow());
@@ -955,7 +963,7 @@ export function openAttach(options: AttachOptions): Attach {
       ? (followed ? state.topic : { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) })
       : null });
     followTopic();
-    if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
+    if (arrive && state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
     if (moved) enterVisit();
   }
 
@@ -1674,6 +1682,13 @@ export function openAttach(options: AttachOptions): Attach {
     },
 
     refreshTopic,
+
+    movedIntoTopic(session: SessionId, from: string, topic: TopicId): void {
+      const here = currentSessionId === null ? state.sessionName === from : session === currentSessionId;
+      if (closed || !here || state.topic?.id === topic) return;
+      // The Host renames a Session it moves. Until tmux says so, the Attach has the old name, which is no arrival.
+      acceptDestination({ sessionName: state.sessionName, topic: { id: topic, seed: null } }, { arrive: state.sessionName !== from });
+    },
 
     terminalFocused(): () => void {
       const blur = paneVisit.focus();

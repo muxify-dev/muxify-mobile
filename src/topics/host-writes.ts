@@ -9,9 +9,10 @@ import { appConnections } from '@/tmux/ssh-connection';
 
 import { parseAddedSession, type AddSessionRead } from './add-session';
 import { cardRef, cardTarget, type BoardCard } from './board-card';
-import { parseEnvironment, type BoardSessionId, type EnvironmentSnapshot, type TopicId } from './environment';
+import { parseEnvironment, type BoardSessionId, type EnvironmentSnapshot, type SessionId, type TopicId } from './environment';
 import { array, object } from './json-shape';
 import { firstPush, sendEnvironment, type EnvironmentAnswer, type EnvironmentCommand, type ServerConnections } from './host-write-request';
+import { parseMoved, type MoveDestination, type Moved } from './move-to-topic';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import type { RequestId } from './request';
 import { isReadable, READ_SCOPES, type CardAction, type TopicAction } from './topic-action';
@@ -123,6 +124,14 @@ export function wakeCommand(wake: Wake): EnvironmentCommand {
   return wake === 'reopen' ? { reopen: {} } : { start_fresh: {} };
 }
 
+/**
+ * `move` of a Session into an open Topic, or into a new Topic with this
+ * title. The Session keeps running, and the Host renames it for the Topic.
+ */
+export function moveCommand(to: MoveDestination): EnvironmentCommand {
+  return { move: { to: to.kind === 'topic' ? { topic: { ref: { id: to.topic } } } : { new_topic: { title: to.title } } } };
+}
+
 /** A folder to add a Session at, as a row of the Host's Session Paths gives it, or as the user typed it. */
 export interface SessionFolder {
   /** Absolute on the Host. */
@@ -215,6 +224,21 @@ export async function wakeBoardSession(
 ): Promise<BoardSessionWake> {
   const answer = await sendEnvironment(host, { command: wakeCommand(wake), target: { board_session: id }, request }, sending);
   return answered(answer, (value) => ({ kind: 'woke', session: parseAddedSession(value) }));
+}
+
+/** How a Move to Topic ended: where the Session is now, or why it did not move. */
+export type SessionMove = ({ kind: 'moved' } & Moved) | Exclude<EnvironmentAnswer, { kind: 'answered' }>;
+
+/** Moves a Session into a Topic. A refusal fails with the Host's reason, and the Host moves nothing. */
+export async function moveSession(
+  host: Host,
+  session: SessionId,
+  to: MoveDestination,
+  request: RequestId,
+  sending?: () => void,
+): Promise<SessionMove> {
+  const answer = await sendEnvironment(host, { command: moveCommand(to), target: { session }, request }, sending);
+  return answered(answer, (value) => ({ kind: 'moved', ...parseMoved(value) }));
 }
 
 /**

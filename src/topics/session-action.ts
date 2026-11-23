@@ -3,7 +3,7 @@ import type { SFSymbol } from 'expo-symbols';
 import type { SessionId } from './environment';
 
 /** The Actions of a Session's menu. */
-export type SessionAction = 'rename-session' | 'remove-from-topic' | 'kill-session';
+export type SessionAction = 'rename-session' | 'move-to-topic' | 'remove-from-topic' | 'kill-session';
 
 /** The Actions of a Window's menu. */
 export type WindowAction = 'rename-window' | 'close-window';
@@ -26,7 +26,9 @@ export interface SessionOnHost {
  * Topic only for a Session in a Topic.
  */
 export function sessionActions(session: SessionOnHost): SessionAction[] {
-  return session.inTopic ? ['rename-session', 'remove-from-topic', 'kill-session'] : ['rename-session', 'kill-session'];
+  return session.inTopic
+    ? ['rename-session', 'move-to-topic', 'remove-from-topic', 'kill-session']
+    : ['rename-session', 'move-to-topic', 'kill-session'];
 }
 
 export const WINDOW_ACTIONS: readonly WindowAction[] = ['rename-window', 'close-window'];
@@ -37,6 +39,7 @@ export const WINDOW_ACTIONS: readonly WindowAction[] = ['rename-window', 'close-
  */
 export const MENU_ITEM: Record<SessionAction | WindowAction, { label: string; icon: SFSymbol; destructive: boolean }> = {
   'rename-session': { label: 'Rename Session…', icon: 'pencil', destructive: false },
+  'move-to-topic': { label: 'Move to Topic…', icon: 'rectangle.stack.badge.plus', destructive: false },
   'remove-from-topic': { label: 'Remove from Topic', icon: 'minus.circle', destructive: false },
   'kill-session': { label: 'Kill Session…', icon: 'stop.circle', destructive: true },
   'rename-window': { label: 'Rename Window…', icon: 'pencil', destructive: false },

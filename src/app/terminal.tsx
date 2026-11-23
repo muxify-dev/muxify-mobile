@@ -46,6 +46,7 @@ import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
+import { MENU_ITEM } from '@/topics/session-action';
 import { fieldsParam } from '@/topics/topic-edit';
 import { placeTabRoute } from '@/browser/place-tab-route';
 import type { BrowserTab } from '@/browser/tabs';
@@ -228,7 +229,7 @@ export default function TerminalScreen() {
   }, [router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
     onReplacingStopped: forgetLookup });
-  const { closeChooser, openTitleSheet, openSessionsOnly, topic } = chooser;
+  const { closeChooser, openTitleSheet, openSessionsOnly, topic, attachedSession, actOnAttachedSession } = chooser;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
 
   const fontSize = fontSizeInForce(settings.fontSize);
@@ -1026,6 +1027,16 @@ export default function TerminalScreen() {
           }),
         ],
       }] : []),
+      ...(attachedSession ? [{
+        kind: 'menu' as const, id: 'session', label: 'Session', systemImage: 'terminal' as const,
+        items: attachedSession.actions.map((each) => action(
+          each,
+          MENU_ITEM[each].label,
+          MENU_ITEM[each].icon,
+          () => actOnAttachedSession(attachedSession.session, each),
+          { destructive: MENU_ITEM[each].destructive },
+        )),
+      }] : []),
       {
         kind: 'toggle',
         id: 'zoom',
@@ -1082,6 +1093,8 @@ export default function TerminalScreen() {
   }, [
     topic,
     state?.topic,
+    attachedSession,
+    actOnAttachedSession,
     hostId,
     router,
     composerOpen,

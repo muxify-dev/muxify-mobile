@@ -420,8 +420,7 @@ field and the Session Paths, Worktrees and typed folder of the Go to list,
 which the sheet read when it opened. A tap adds a Session at that folder to
 the Topic and opens it. A long press offers In a new Worktree. Add later
 closes the sheet and leaves the Empty Topic on the Host. The list has no
-running Session, because the Host CLI has no command that moves a Session into
-a Topic.
+running Session: Move to Topic… on a Session moves one into a Topic.
 
 An error from the Host shows in the sheet, and the sheet stays open (see Host
 Write). A Retry of the same title and Tags, or of the same folder, is the same
@@ -504,14 +503,33 @@ Bench. The Host keeps it in its state database, so a tmux restart leaves its
 card at its place as a Dormant card. Its long-press menu has Pin or Unpin,
 Move Up, Move Down and, when it is not Pinned, Bench, which takes the card off
 the Board. A Dormant one also has Reopen and Start Fresh. A live one also has
-Rename Session… and Kill Session…, which asks first, as a Session row does,
-and Mark as Read when its card shows a done or failed mark, and Mark as Unread
+Rename Session…, Move to Topic… and Kill Session…, which asks first, as the
+Mac's card does, and Mark as Read when its card shows a done or failed mark, and Mark as Unread
 when it shows no mark, in the menu and in a trailing swipe as on a Topic card.
 It has no mark of its own, so both act on the Agents of its Session: Read
 clears their Unread, and Unread makes each Agent that is not working Unread.
 The Host Screen cannot see whether the Session has such an Agent, so Mark as
 Unread can change nothing.
 _Avoid_: Locked Session, Lock, Guest Session
+
+**Session Actions**:
+The Actions in every menu of a live Session, in the Mac's order: Rename
+Session…, Move to Topic…, Remove from Topic for a Session in a Topic, and Kill
+Session…, which asks first. A live Board Session's card, a row of the
+Sessions tab, a Session card in the Title Sheet and Options > Session all
+offer them, once the Host Server's Listing has the Session.
+_Avoid_: tmux actions, Session commands
+
+**Move to Topic**:
+The sheet that the Session Action Move to Topic… opens. A New Topic… row asks
+for a title, then the open Topics but the Session's own follow in Board
+order. A tap moves the Session as one Host Write: the Session keeps running,
+the Host renames it for the Topic, and a new Topic made from a Board Session
+takes its place on the Board. An Attach on the
+Session then holds the Topic, so the Terminal Screen shows it and writes its
+Topic Place. A refusal keeps the sheet open with Retry, and an unsure move
+offers Check, which looks for the Session in the Topic in the Listing.
+_Avoid_: Add to Topic, Assign
 
 **Session Place**:
 Where the user was in one Session with no Topic on this phone: its Window, Pane
@@ -742,7 +760,8 @@ _Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:
 The Header's ⋯ menu starts with Compose. For an Attach with a Topic, Topic
-follows with Edit Topic and Add a Session. Then come Zoom Pane, New Window, Split
+follows with Edit Topic and Add a Session. Session follows, with the Session
+Actions of the Session the Attach is on. Then come Zoom Pane, New Window, Split
 Pane (Split → and Split ↓), Font size − and +, Copy Pane text, then Copy log
 and Disconnect. Font size changes the setting live, and the Surfaces reflow to
 it. Copy Pane text puts the active Pane's text on the clipboard, plain and

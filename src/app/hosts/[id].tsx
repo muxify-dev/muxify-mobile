@@ -39,7 +39,6 @@ import {
   type RowActions,
   type TopicRow,
 } from '@/components/host-screen-row-view';
-import type { RenameParams } from '@/app/rename';
 import { HeaderBand } from '@/components/header-band';
 import { HostWriteRow } from '@/components/host-write-row';
 import { TabSwipe } from '@/components/tab-swipe';
@@ -69,7 +68,7 @@ import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
-import { useTmuxWrites } from '@/hooks/use-tmux-writes';
+import { useSessionActions, type SessionSheet } from '@/hooks/use-session-actions';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
@@ -89,7 +88,6 @@ import {
   type CardAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
-import type { NamedSession, SessionAction } from '@/topics/session-action';
 import { recordVisit } from '@/topics/visit';
 
 const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
@@ -279,22 +277,14 @@ export default function HostScreen() {
     ]);
   };
 
-  const tmuxWrites = useTmuxWrites(id);
-  // Rename opens the name sheet, Kill asks first, and Remove from Topic goes at once.
-  const actOnSession = ({ id: session, name }: NamedSession, action: SessionAction) => {
-    if (action === 'rename-session') {
-      const params: RenameParams = { hostId: id, kind: 'session', id: session, name };
-      router.push({ pathname: '/rename', params });
-    } else if (action === 'kill-session') tmuxWrites.confirm({ kind: 'kill-session', session }, name);
-    else void tmuxWrites.order({ kind: 'remove-from-topic', session });
-  };
+  const sessionActions = useSessionActions(id, useCallback((sheet: SessionSheet) => router.push(sheet), [router]));
 
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
     onOpenBoardSession: hostEntry.openBoardSession,
-    isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || tmuxWrites.writing(busy),
-    onSessionAction: actOnSession,
+    isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || sessionActions.writing(busy),
+    onSessionAction: sessionActions.act,
     onWake: (row, wake) => void cardWrites.order(cardOf(row), { kind: 'wake', wake }),
     onCardAction: (row, action) => void actFromMenu(cardOf(row), action),
     onMove: startMove,
@@ -473,7 +463,7 @@ export default function HostScreen() {
           <Stack.Toolbar.MenuAction
             hidden={!hasGoTo}
             icon="envelope.open"
-            onPress={() => void tmuxWrites.order({ kind: 'mark-all-read' })}>
+            onPress={() => void sessionActions.order({ kind: 'mark-all-read' })}>
             Mark All as Read
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/chooser-lists', params: { hostId: id } })}>

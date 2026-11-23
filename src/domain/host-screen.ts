@@ -1,6 +1,6 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { BoardCard, BoardSessionCard } from '@/topics/board-card';
-import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
+import { openTopics, type Card, type EnvironmentSnapshot, type Mark, type SessionId, type SnapshotSession, type TopicId } from '@/topics/environment';
 import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection, MenuCard } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
@@ -434,10 +434,7 @@ export interface RunningSession {
 export function runningSessions(listing: Listing, topics: HostTopics): RunningSession[] | undefined {
   const snapshot = lastSnapshot(topics);
   const bySession = new Map(snapshot?.sessions.map((session) => [session.name, session]));
-  const labels = new Map(
-    snapshot === null ? [] : [...snapshot.pinned, ...snapshot.unpinned.places, ...snapshot.unpinned.guests, ...snapshot.unpinned.bench]
-      .flatMap((card): [TopicId, string][] => (card.kind === 'topic' ? [[card.topic.id, card.topic.label]] : [])),
-  );
+  const labels = new Map(snapshot === null ? [] : openTopics(snapshot).map((topic) => [topic.id, topic.label]));
   return lastAnswer(listing)?.map((live) => {
     const known = bySession.get(live.name);
     return {

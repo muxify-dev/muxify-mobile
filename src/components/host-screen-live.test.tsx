@@ -311,7 +311,7 @@ describe('a live Host Screen', () => {
     await server.push(protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item);
 
     expect(labels()).toEqual([
-      'Mark as Unread', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Rename Session…', 'Kill Session…', 'Session docs', 'Mark as Unread docs',
+      'Mark as Unread', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Rename Session…', 'Move to Topic…', 'Kill Session…', 'Session docs', 'Mark as Unread docs',
       'Reopen', 'Start Fresh', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session logs',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session scratch',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session notes',
@@ -333,6 +333,8 @@ describe('a live Host Screen', () => {
 
     await act(async () => { button('Rename Session…').props.onPress(); });
     expect(mockRouter.push).toHaveBeenLastCalledWith({ pathname: '/rename', params: { hostId: 'host', kind: 'session', id: '$6', name: 'docs' } });
+    await act(async () => { button('Move to Topic…').props.onPress(); });
+    expect(mockRouter.push).toHaveBeenLastCalledWith({ pathname: '/move-to-topic', params: { hostId: 'host', session: '$6', name: 'docs' } });
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     await act(async () => { button('Kill Session…').props.onPress(); });
     const [title, , buttons] = alert.mock.calls[0]!;
@@ -372,8 +374,8 @@ describe('a live Host Screen', () => {
     await server.push(withScratch('ship'));
     // Remove from Topic only for the Session in a Topic.
     expect(labels()).toEqual([
-      'Rename Session…', 'Remove from Topic', 'Kill Session…', 'Session ship',
-      'Rename Session…', 'Kill Session…', 'Session scratch',
+      'Rename Session…', 'Move to Topic…', 'Remove from Topic', 'Kill Session…', 'Session ship',
+      'Rename Session…', 'Move to Topic…', 'Kill Session…', 'Session scratch',
     ]);
 
     await act(async () => { button('Remove from Topic').props.onPress(); });

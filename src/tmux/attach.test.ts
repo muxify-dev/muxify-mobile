@@ -1,5 +1,5 @@
 import { lastTopic, type TopicDetail, type TopicRead } from '@/topics/topic-detail';
-import type { TopicId } from '@/topics/environment';
+import type { SessionId, TopicId } from '@/topics/environment';
 import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
@@ -3673,6 +3673,50 @@ describe('the Place', () => {
     const lastFor = (owner: string) => kit.places.filter((each) => ownerOf(each) === owner).at(-1);
     expect(lastFor('Session work')?.tab).toEqual(TAB);
     expect(kit.places.filter((each) => ownerOf(each) === 'Session play').map((each) => each.tab)).toEqual([null]);
+  });
+});
+
+describe('a Session moved into a Topic', () => {
+  it('holds the Topic when the Host moved the Session it is on, and keeps the name the Host gives it', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].notify('%session-changed $1 work');
+    await settle();
+    const commands = kit.hosts[0].commands.length;
+
+    kit.attach.movedIntoTopic('$2' as SessionId, 'other', 'dock' as TopicId);
+    expect(kit.attach.state().topic).toBeNull();
+    kit.hosts[0].notify('%session-renamed $1 work/ship');
+    await settle();
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    await settle();
+
+    expect(kit.attach.state().topic?.id).toBe('ship');
+    expect(kit.attach.state().sessionName).toBe('work/ship');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work/ship ship');
+    expect(kit.hosts[0].commands.slice(commands).some((line) => line.startsWith("'switch-client'"))).toBe(false);
+  });
+
+  it('records where it arrived under the new name when the Host answers before tmux says it renamed the Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].notify('%session-changed $1 work');
+    await settle();
+    const before = kit.wrote.length;
+
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('ship');
+    kit.hosts[0].notify('%session-renamed $1 work/ship');
+    await settle();
+
+    expect(kit.wrote.slice(before)).toEqual(['session host-1 work/ship', 'last place host-1 work/ship ship']);
+  });
+
+  it('holds the Topic of a Session moved while it was not connected, known by its name', async () => {
+    const kit = attachOn();
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    expect(kit.attach.state().topic?.id).toBe('ship');
   });
 });
 

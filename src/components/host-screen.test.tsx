@@ -177,8 +177,8 @@ describe('the tabs', () => {
 
     // Remove from Topic only for the Session in a Topic.
     expect(labels()).toEqual([
-      'Rename Session…', 'Kill Session…', 'Session api',
-      'Rename Session…', 'Remove from Topic', 'Kill Session…', 'Session api/fix-login',
+      'Rename Session…', 'Move to Topic…', 'Kill Session…', 'Session api',
+      'Rename Session…', 'Move to Topic…', 'Remove from Topic', 'Kill Session…', 'Session api/fix-login',
     ]);
   });
 });

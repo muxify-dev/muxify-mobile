@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { check, ended, IDLE, reached, send, type HostWrite, type HostWriteEnd, type HostWriteStep } from '@/domain/host-write';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
@@ -78,55 +78,58 @@ export function useHostWrites(hostId: string, now: () => number = Date.now): Hos
     void loadHost(hostId).then((host) => { if (present.current && host) setHostName(host.displayName); });
   }, [hostId]);
 
-  const move = (target: string, next: HostWrite) => {
-    const all = new Map(current.current);
-    if (next.kind === 'idle') all.delete(target);
-    else all.set(target, next);
-    current.current = all;
-    if (present.current) setStates(all);
-  };
+  // One object while nothing changes, so a screen can hold its writes in a memoized menu.
+  return useMemo((): HostWrites => {
+    const move = (target: string, next: HostWrite) => {
+      const all = new Map(current.current);
+      if (next.kind === 'idle') all.delete(target);
+      else all.set(target, next);
+      current.current = all;
+      if (present.current) setStates(all);
+    };
 
-  const run = async <T,>(
-    target: string,
-    begin: HostWrite | null,
-    attempt: (run: HostWriteRun) => Promise<T>,
-  ): Promise<{ end: HostWrite; value?: T } | undefined> => {
-    if (begin === null) return undefined;
-    move(target, begin);
-    const at = () => current.current.get(target) ?? IDLE;
-    let end: HostWriteEnd;
-    let value: T | undefined;
-    try {
-      const host = await loadHost(hostId);
-      if (!host) throw new Refusal('This Host is no longer saved.');
-      value = await attempt({
-        host,
-        step: (next) => move(target, reached(at(), next)),
-        refuse: (reason, fields) => { throw new Refusal(reason, fields); },
-        unsure: (reason) => { throw new InDoubt(reason); },
-      });
-      end = { kind: 'done' };
-    } catch (error) {
-      end = endOfThrow(error);
-    }
-    const last = ended(at(), end);
-    move(target, last);
-    return present.current ? { end: last, value } : undefined;
-  };
+    const run = async <T,>(
+      target: string,
+      begin: HostWrite | null,
+      attempt: (run: HostWriteRun) => Promise<T>,
+    ): Promise<{ end: HostWrite; value?: T } | undefined> => {
+      if (begin === null) return undefined;
+      move(target, begin);
+      const at = () => current.current.get(target) ?? IDLE;
+      let end: HostWriteEnd;
+      let value: T | undefined;
+      try {
+        const host = await loadHost(hostId);
+        if (!host) throw new Refusal('This Host is no longer saved.');
+        value = await attempt({
+          host,
+          step: (next) => move(target, reached(at(), next)),
+          refuse: (reason, fields) => { throw new Refusal(reason, fields); },
+          unsure: (reason) => { throw new InDoubt(reason); },
+        });
+        end = { kind: 'done' };
+      } catch (error) {
+        end = endOfThrow(error);
+      }
+      const last = ended(at(), end);
+      move(target, last);
+      return present.current ? { end: last, value } : undefined;
+    };
 
-  const valueOf = <T,>(result: { end: HostWrite; value?: T } | undefined) => (result?.end.kind === 'idle' ? result.value : undefined);
+    const valueOf = <T,>(result: { end: HostWrite; value?: T } | undefined) => (result?.end.kind === 'idle' ? result.value : undefined);
 
-  return {
-    state: (target) => states.get(target) ?? IDLE,
-    hostName,
-    send: async (target, attempt) => valueOf(await run(target, send(current.current.get(target) ?? IDLE, now()), attempt)),
-    check: async (target, probe) => valueOf(await run(target, check(current.current.get(target) ?? IDLE, now()), probe)),
-    sendAndReport: async (target, attempt) => {
-      const result = await run(target, send(current.current.get(target) ?? IDLE, now()), attempt);
-      if (result) move(target, IDLE);
-      return result?.end;
-    },
-  };
+    return {
+      state: (target) => states.get(target) ?? IDLE,
+      hostName,
+      send: async (target, attempt) => valueOf(await run(target, send(current.current.get(target) ?? IDLE, now()), attempt)),
+      check: async (target, probe) => valueOf(await run(target, check(current.current.get(target) ?? IDLE, now()), probe)),
+      sendAndReport: async (target, attempt) => {
+        const result = await run(target, send(current.current.get(target) ?? IDLE, now()), attempt);
+        if (result) move(target, IDLE);
+        return result?.end;
+      },
+    };
+  }, [states, hostName, hostId, now]);
 }
 
 const ONE = 'one';

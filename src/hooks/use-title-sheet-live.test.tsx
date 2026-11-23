@@ -314,8 +314,8 @@ describe('the Session and Window Actions', () => {
     mockLists = ['sessions'];
     await mount(fakeAttach([{ name: 'game/ship', windowCount: 1 }, { name: 'app', windowCount: 2 }]));
     expect(labels().filter((label: string) => label !== 'Close Choose')).toEqual([
-      'Rename Session…', 'Remove from Topic', 'Kill Session…', 'game/ship',
-      'Rename Session…', 'Kill Session…', 'app',
+      'Rename Session…', 'Move to Topic…', 'Remove from Topic', 'Kill Session…', 'game/ship',
+      'Rename Session…', 'Move to Topic…', 'Kill Session…', 'app',
     ]);
 
     await act(async () => { button('Remove from Topic').props.onPress(); });
