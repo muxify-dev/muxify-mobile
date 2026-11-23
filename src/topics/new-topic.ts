@@ -1,4 +1,4 @@
-import { topicId, type EnvironmentSnapshot, type TopicId } from './environment';
+import { openTopics, topicId, type EnvironmentSnapshot, type TopicId } from './environment';
 import { object } from './json-shape';
 import type { UnknownOutcome } from './request';
 
@@ -19,9 +19,5 @@ export function parseNewTopic(json: unknown): TopicId {
  * checks a create the Host did not answer: a new Topic is Empty.
  */
 export function emptyTopicTitled(snapshot: EnvironmentSnapshot, title: string): TopicId | undefined {
-  const { pinned, unpinned } = snapshot;
-  for (const card of [...pinned, ...unpinned.places, ...unpinned.guests, ...unpinned.bench]) {
-    if (card.kind === 'topic' && card.topic.state === 'empty' && card.topic.label === title) return card.topic.id;
-  }
-  return undefined;
+  return openTopics(snapshot).find((topic) => topic.state === 'empty' && topic.label === title)?.id;
 }

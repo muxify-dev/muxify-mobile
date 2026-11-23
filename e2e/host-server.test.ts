@@ -218,7 +218,7 @@ describe('the Host Server link against a real muxify server', () => {
 
     // The card's menu orders and drops: each decodes, though the Host may refuse one where the card is.
     for (const action of ['mark-read', 'mark-unread', 'move-up', 'move-down', 'make-guest', 'bench'] as const) {
-      decoded(await write(actionCommand(action), topic));
+      decoded(await write(actionCommand(action, 'topic'), topic));
     }
     const live = '$0' as never;
     for (const drop of [

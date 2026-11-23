@@ -45,7 +45,7 @@ export function orderLabel(order: CardOrder): string {
  * Request id.
  */
 export function sendCardOrder(host: Host, card: BoardCard, order: CardOrder, sending: () => void): Promise<TopicWrite> {
-  return logged(host, orderLabel(order), () => writeCard(host, card, orderCommand(order), newRequestId(), sending));
+  return logged(host, orderLabel(order), () => writeCard(host, card, orderCommand(card, order), newRequestId(), sending));
 }
 
 /**
@@ -58,10 +58,10 @@ export function closeTopic(host: Host, topic: TopicId, action: ClosingAction, se
     writeCard(host, { kind: 'topic', id: topic }, await closingCommand(host, topic, action), newRequestId(), sending));
 }
 
-function orderCommand(order: CardOrder): EnvironmentCommand {
+function orderCommand(card: BoardCard, order: CardOrder): EnvironmentCommand {
   switch (order.kind) {
     case 'action':
-      return actionCommand(order.action);
+      return actionCommand(order.action, card.kind);
     case 'drop':
       return dropCommand(order.drop);
     case 'wake':

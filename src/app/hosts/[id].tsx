@@ -39,7 +39,6 @@ import {
   type RowActions,
   type TopicRow,
 } from '@/components/host-screen-row-view';
-import type { RenameParams } from '@/app/rename';
 import { HeaderBand } from '@/components/header-band';
 import { HostWriteRow } from '@/components/host-write-row';
 import { TabSwipe } from '@/components/tab-swipe';
@@ -49,9 +48,11 @@ import { hostProblemWords } from '@/domain/cover';
 import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
   cardOf,
+  cardTitle,
   firstReadAnswered,
   hostScreen,
   hostScreenTabs,
+  menuCard,
   runningSessions,
   tabOnShow,
   type CardRow,
@@ -60,7 +61,6 @@ import {
   type HostScreenSection,
   type HostScreenTab,
   type OpenableRow,
-  type SessionRow,
 } from '@/domain/host-screen';
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useCardWrites } from '@/hooks/use-card-writes';
@@ -68,7 +68,7 @@ import { useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
-import { useTmuxWrites } from '@/hooks/use-tmux-writes';
+import { useSessionActions, type SessionSheet } from '@/hooks/use-session-actions';
 import { takeGoToRequest } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
@@ -79,15 +79,15 @@ import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach
 import type { BoardCard } from '@/topics/board-card';
 import { lastSnapshot } from '@/topics/host-topics';
 import {
+  allowsFullSwipe,
   closeAlert,
+  readAction,
   SWIPE_LABEL,
-  swipeAction,
   TOPIC_ACTION_ICON,
   TOPIC_ACTION_LABEL,
   type CardAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
-import type { SessionAction } from '@/topics/tmux-order';
 import { recordVisit } from '@/topics/visit';
 
 const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
@@ -277,24 +277,14 @@ export default function HostScreen() {
     ]);
   };
 
-  const tmuxWrites = useTmuxWrites(id);
-  // Rename opens the name sheet, Stop asks first, and Remove from Topic goes at once.
-  const actOnSession = (row: SessionRow, action: SessionAction) => {
-    const session = row.onHost?.id;
-    if (session === undefined) return;
-    if (action === 'rename-session') {
-      const params: RenameParams = { hostId: id, kind: 'session', id: session, name: row.name };
-      router.push({ pathname: '/rename', params });
-    } else if (action === 'stop-session') tmuxWrites.confirm({ kind: 'stop-session', session }, row.name);
-    else void tmuxWrites.order({ kind: 'remove-from-topic', session });
-  };
+  const sessionActions = useSessionActions(id, useCallback((sheet: SessionSheet) => router.push(sheet), [router]));
 
   const actions: RowActions = {
     onOpenSession: hostEntry.openSession,
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
     onOpenBoardSession: hostEntry.openBoardSession,
-    isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || tmuxWrites.writing(busy),
-    onSessionAction: actOnSession,
+    isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || sessionActions.writing(busy),
+    onSessionAction: sessionActions.act,
     onWake: (row, wake) => void cardWrites.order(cardOf(row), { kind: 'wake', wake }),
     onCardAction: (row, action) => void actFromMenu(cardOf(row), action),
     onMove: startMove,
@@ -328,18 +318,18 @@ export default function HostScreen() {
     if (targets !== null) {
       return <HostScreenRowView key={key} row={row} palette={palette} actions={movingActions} move={moveRole(row)} />;
     }
-    if (row.kind === 'topic') {
-      const swipe = swipeAction(row.mark);
+    if (row.kind === 'topic' || row.kind === 'board-session') {
+      const swipe = readAction(menuCard(row));
       if (swipe !== null) {
         return (
           <SwipeActions key={key}>
             <HostScreenRowView row={row} palette={palette} actions={actions} />
-            <SwipeActions.Actions allowsFullSwipe={swipe === 'mark-read'}>
+            <SwipeActions.Actions allowsFullSwipe={allowsFullSwipe(swipe)}>
               <Button
                 label={SWIPE_LABEL[swipe]}
                 systemImage={TOPIC_ACTION_ICON[swipe]}
                 onPress={() => void actFromMenu(cardOf(row), swipe)}
-                modifiers={[accessibilityLabel(`${TOPIC_ACTION_LABEL[swipe]} ${row.label}`)]}
+                modifiers={[accessibilityLabel(`${TOPIC_ACTION_LABEL[swipe]} ${cardTitle(row)}`)]}
               />
             </SwipeActions.Actions>
           </SwipeActions>
@@ -473,7 +463,7 @@ export default function HostScreen() {
           <Stack.Toolbar.MenuAction
             hidden={!hasGoTo}
             icon="envelope.open"
-            onPress={() => void tmuxWrites.order({ kind: 'mark-all-read' })}>
+            onPress={() => void sessionActions.order({ kind: 'mark-all-read' })}>
             Mark All as Read
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="list.bullet" onPress={() => router.push({ pathname: '/chooser-lists', params: { hostId: id } })}>

@@ -309,18 +309,18 @@ describe('the Session and Window Actions', () => {
     expect(writes()).toEqual([]);
   });
 
-  it('offers Remove from Topic only on a Session in a Topic, and asks before Stop Session', async () => {
+  it('offers Remove from Topic only on a Session in a Topic, and asks before Kill Session', async () => {
     mockListing = live();
     mockLists = ['sessions'];
     await mount(fakeAttach([{ name: 'game/ship', windowCount: 1 }, { name: 'app', windowCount: 2 }]));
     expect(labels().filter((label: string) => label !== 'Close Choose')).toEqual([
-      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'game/ship',
-      'Rename Session…', 'Stop Session…', 'app',
+      'Rename Session…', 'Move to Topic…', 'Remove from Topic', 'Kill Session…', 'game/ship',
+      'Rename Session…', 'Move to Topic…', 'Kill Session…', 'app',
     ]);
 
     await act(async () => { button('Remove from Topic').props.onPress(); });
-    await act(async () => { button('Stop Session…', 1).props.onPress(); });
-    await confirmed('Stop app?');
+    await act(async () => { button('Kill Session…', 1).props.onPress(); });
+    await confirmed('Kill app?');
     expect(writes()).toEqual([
       { version: 2, command: { remove_from_topic: {} }, target: { session: '$1' }, request: expect.any(String) },
       { version: 2, command: { kill_session: {} }, target: { session: '$2' }, request: expect.any(String) },

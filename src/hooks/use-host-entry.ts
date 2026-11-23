@@ -19,6 +19,7 @@ import { readTopic } from '@/topics/read-topic';
 import { newRequestId } from '@/topics/request';
 import { topicSeedParam, type TopicDetail } from '@/topics/topic-detail';
 import type { TopicWrite } from '@/topics/topic-edit';
+import { markTopicRead } from '@/topics/unread-on-visit';
 import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
 import { alertCardWrite } from './use-card-writes';
@@ -115,6 +116,8 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   const openTopic = useCallback((topic: TopicDetail, feedback?: EntryFeedback) => {
     if (running.current || !focused.current) return;
     if (topic.state === 'empty') {
+      // Add a Session is the phone's Empty Topic page: opening it is the Mac's visit to that page.
+      markTopicRead(hostId, topic.id);
       router.push({ pathname: '/topic-add-session', params: { hostId, topicId: topic.id,
         seed: topicSeedParam(topic), ...(fromAttach ? { fromAttach: '1' } : {}) } });
       return;

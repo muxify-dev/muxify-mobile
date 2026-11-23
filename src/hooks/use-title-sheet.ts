@@ -1,7 +1,6 @@
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { RenameParams } from '@/app/rename';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
 import type { PlaceTab } from '@/storage/records';
@@ -18,7 +17,7 @@ import { sessionTitleRows, topicTitleRows, type TitleRow, type TitleWindowRow } 
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useLiveListing } from '@/hooks/use-host-listing';
 import { useHostReading } from '@/hooks/use-host-reading';
-import { useTmuxWrites } from '@/hooks/use-tmux-writes';
+import { useSessionActions, type SessionSheet } from '@/hooks/use-session-actions';
 import { describeError } from '@/lib/describe-error';
 import { deviceHostStore } from '@/storage/device-store';
 import type { ChooserLists } from '@/settings/settings';
@@ -27,14 +26,7 @@ import type { Attach, AttachState } from '@/tmux/attach';
 import { useAttachHolder } from '@/tmux/attach-context';
 import { trimPreview } from '@/tmux/preview';
 import { lastTopic } from '@/topics/topic-detail';
-import {
-  sessionActions,
-  TMUX_MENU_LABEL,
-  TMUX_ORDER_ICON,
-  type SessionAction,
-  type SessionOnHost,
-  type WindowAction,
-} from '@/topics/tmux-order';
+import { MENU_ITEM, sessionActions, type SessionAction, type SessionOnHost, type WindowAction } from '@/topics/session-action';
 
 const say = speakingAs(deviceLog(), 'screen');
 
@@ -132,31 +124,29 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     () => new Map<string, SessionOnHost>(served?.sessions.map((session) => [session.name, { id: session.id, inTopic: session.topic !== null }])),
     [served],
   );
-  const tmuxWrites = useTmuxWrites(hostId ?? '');
-  const rename = useCallback((params: Omit<RenameParams, 'hostId'>) => {
-    if (!hostId) return;
+  // A sheet opens once the Title Sheet has closed.
+  const openSheet = useCallback((sheet: SessionSheet) => {
     handOver(() => {
-      if (navigation.isFocused()) router.push({ pathname: '/rename', params: { hostId, ...params } });
+      if (navigation.isFocused()) router.push(sheet);
     });
-  }, [handOver, hostId, navigation, router]);
+  }, [handOver, navigation, router]);
+  const sessionMenu = useSessionActions(hostId ?? '', openSheet);
   const actOnSession = (name: string, action: string) => {
     const session = onHost.get(name)?.id;
-    if (session === undefined) return;
-    switch (action as SessionAction) {
-      case 'rename-session':
-        rename({ kind: 'session', id: session, name });
-        break;
-      case 'remove-from-topic':
-        void tmuxWrites.order({ kind: 'remove-from-topic', session });
-        break;
-      case 'stop-session':
-        tmuxWrites.confirm({ kind: 'stop-session', session }, name);
-        break;
-    }
+    if (session !== undefined) sessionMenu.act({ id: session, name }, action as SessionAction);
   };
+  /** The Session the Attach is on, with the Actions its menu offers, once the live Listing knows it. */
+  const attachedName = state?.sessionName;
+  const attachedSession = useMemo(() => {
+    const session = attachedName === undefined ? undefined : onHost.get(attachedName);
+    return attachedName === undefined || session === undefined
+      ? null
+      : { session: { id: session.id, name: attachedName }, actions: sessionActions(session) };
+  }, [onHost, attachedName]);
   const actOnWindow = (row: TitleWindowRow, action: WindowAction) => {
-    if (action === 'rename-window') rename({ kind: 'window', id: row.id, name: row.name });
-    else tmuxWrites.confirm({ kind: 'close-window', window: row.id }, row.name);
+    if (!hostId) return;
+    if (action === 'rename-window') openSheet({ pathname: '/rename', params: { hostId, kind: 'window', id: row.id, name: row.name } });
+    else sessionMenu.confirm({ kind: 'close-window', window: row.id }, row.name);
   };
   /** A Session card with its menu, and its spinner while one of its Actions runs. A card's id is its Session's name. */
   const withActions = (card: PreviewCard): PreviewCard => {
@@ -164,9 +154,9 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     if (session === undefined) return card;
     return {
       ...card,
-      busy: card.busy || tmuxWrites.writing(session.id),
+      busy: card.busy || sessionMenu.writing(session.id),
       menu: sessionActions(session).map((action) => ({
-        id: action, label: TMUX_MENU_LABEL[action], systemImage: TMUX_ORDER_ICON[action], destructive: action === 'stop-session',
+        id: action, label: MENU_ITEM[action].label, systemImage: MENU_ITEM[action].icon, destructive: MENU_ITEM[action].destructive,
       })),
     };
   };
@@ -350,7 +340,10 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
 
   /** A Topic picked in the sheet is on its way: the Attach can already be in it. */
   const openingTopic = hostEntry.busyCard !== null;
-  return { sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic };
+  return {
+    sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic,
+    attachedSession, actOnAttachedSession: sessionMenu.act,
+  };
 }
 
 /** How long a sheet takes to leave, so the next one can be presented. */

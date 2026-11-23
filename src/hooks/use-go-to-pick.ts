@@ -6,7 +6,6 @@ import type { Host } from '@/storage/records';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
 import { newSession, pushedListing } from '@/topics/host-writes';
-import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import { recordVisit } from '@/topics/visit';
 
 import { useHostWrite, type HostWriteRun } from './use-host-write';
@@ -24,8 +23,7 @@ type NewSession = Extract<PathOpening, { kind: 'new' }>;
 export function useGoToPick(hostId: string, onOpened: () => void) {
   const holder = useAttachHolder();
   const openSession = useOpenSession();
-  const { write, hostName, send, check } = useHostWrite(hostId);
-  const held = useRef<Intent | null>(null);
+  const { write, hostName, check, request } = useHostWrite(hostId);
   const [picked, setPicked] = useState<NewSession | null>(null);
   const focused = useRef(false);
   useFocusEffect(useCallback(() => {
@@ -44,18 +42,14 @@ export function useGoToPick(hostId: string, onOpened: () => void) {
 
   const make = (opening: NewSession) => {
     setPicked(opening);
-    const intent = intentFor(held.current, JSON.stringify([opening.directory, opening.name]));
-    held.current = intent;
-    void send(async ({ host, step, refuse, unsure }) => {
-      const added = await newSession(host, opening.directory, opening.name, intent.request, () => {
+    void request(
+      JSON.stringify([opening.directory, opening.name]),
+      ({ host, step, refuse }, id) => newSession(host, opening.directory, opening.name, id, () => {
         if (!focused.current) refuse('You left the Host Screen before the Connection was up.');
         step('sending');
-      });
-      held.current = intentAfter(intent, added);
-      if (added.kind === 'failed') return refuse(added.error);
-      if (added.kind === 'unknown') return unsure(added.message);
-      return attach(added.session, opening.directory, host, step);
-    }).then(opened);
+      }),
+      (added, { host, step }) => attach(added.session, opening.directory, host, step),
+    ).then(opened);
   };
 
   return {

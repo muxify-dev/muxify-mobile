@@ -38,6 +38,17 @@ export function windowGrid(topology: Topology): Grid | null {
   return cols > 0 && rows > 0 ? { cols, rows } : null;
 }
 
+/** The Panes the Terminal Screen shows, as the Mac's Unread on visit counts them. */
+export function shownPanes(topology: Topology): string[] {
+  if (topology.activeWindow?.zoomed) return topology.activePane ? [topology.activePane.id] : [];
+  return topology.panes.map((pane) => pane.id);
+}
+
+/** The active Window with its Panes and which of them is active, as one string to compare. */
+export function windowShape({ activeWindow, activePane, panes }: Topology): string {
+  return `${activeWindow?.id} ${activePane?.id} ${panes.map((pane) => pane.id).join(',')}`;
+}
+
 /**
  * What a notification did to the model, as far as this file is concerned.
  *

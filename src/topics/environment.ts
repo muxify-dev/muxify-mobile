@@ -98,14 +98,22 @@ export interface EnvironmentSnapshot {
   no_topic: SessionId[];
 }
 
+/** Every card on the Board, in the Mac's order. */
+export function boardCards({ pinned, unpinned }: EnvironmentSnapshot): Card[] {
+  return [...pinned, ...unpinned.places, ...unpinned.guests, ...unpinned.bench];
+}
+
+/** The open Topics, in Board order. */
+export function openTopics(snapshot: EnvironmentSnapshot): TopicSummary[] {
+  return boardCards(snapshot).flatMap((card) => (card.kind === 'topic' ? [card.topic] : []));
+}
+
 /**
  * The name of each Session the Host has: live, or a Board Session that the
  * Board lists as Dormant, whose card opens it again by that name.
  */
 export function sessionNamesHad(snapshot: EnvironmentSnapshot): Set<string> {
-  const { pinned, unpinned } = snapshot;
-  const dormant = [...pinned, ...unpinned.places, ...unpinned.guests, ...unpinned.bench]
-    .flatMap((card) => (card.kind === 'dormant_session' ? [card.name] : []));
+  const dormant = boardCards(snapshot).flatMap((card) => (card.kind === 'dormant_session' ? [card.name] : []));
   return new Set([...snapshot.sessions.map((session) => session.name), ...dormant]);
 }
 

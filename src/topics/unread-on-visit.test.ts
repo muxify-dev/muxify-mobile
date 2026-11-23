@@ -2,7 +2,7 @@ import type { HostServer } from '@/ssh/host-server';
 import { fakeHostServer, lost } from '@/test-support/fake-host-server';
 
 import type { TopicId } from './environment';
-import { markTopicRead } from './unread-on-visit';
+import { markPanesRead, markTopicRead } from './unread-on-visit';
 
 const mockLogged: string[] = [];
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: (_tag: string, text: string) => mockLogged.push(text) }) }));
@@ -30,6 +30,17 @@ it('sends `mark_read` with the Topic on the Host\'s Host Server, waits for nothi
   expect(mockLogged).toEqual([]);
 });
 
+it('sends `mark_read` with the shown Panes, which makes their Agents read', async () => {
+  const fake = fakeHostServer();
+  fake.on.mark_read = async () => ({});
+
+  expect(markPanesRead('host-1', ['%3', '%4'], connectionsOf(fake.server))).toBe(true);
+  await settle();
+
+  expect(fake.requests).toEqual([{ mark_read: { panes: ['%3', '%4'] } }]);
+  expect(mockLogged).toEqual([]);
+});
+
 it('only logs a `mark_read` that fails, and throws nothing', async () => {
   const fake = fakeHostServer();
   fake.on.mark_read = async () => { throw lost(); };
@@ -53,7 +64,8 @@ it('sends nothing in Sessions only', async () => {
   expect(mockLogged).toEqual([]);
 });
 
-it('sends nothing with no Host Server on the Connection', async () => {
+it('sends nothing with no Host Server on the Connection, and says so', async () => {
+  expect(markPanesRead('host-1', ['%3'], connectionsOf(null))).toBe(false);
   markTopicRead('host-1', TOPIC, connectionsOf(null));
   await settle();
 

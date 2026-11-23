@@ -1,10 +1,10 @@
 import { lastAnswer, type Listing } from '@/domain/host-listing';
 import type { BoardCard, BoardSessionCard } from '@/topics/board-card';
-import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, TopicId } from '@/topics/environment';
+import { openTopics, type Card, type EnvironmentSnapshot, type Mark, type SessionId, type SnapshotSession, type TopicId } from '@/topics/environment';
 import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
-import type { CardSection } from '@/topics/topic-action';
+import type { CardSection, MenuCard } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
-import type { SessionOnHost } from '@/topics/tmux-order';
+import type { SessionOnHost } from '@/topics/session-action';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**
@@ -108,6 +108,16 @@ export type CardRow = Extract<HostScreenRow, { kind: 'topic' }> | BoardSessionRo
 /** The card of a row, as the writes name it. */
 export function cardOf(row: CardRow): BoardCard {
   return row.kind === 'topic' ? { kind: 'topic', id: row.id } : row.card;
+}
+
+/** The card of a row as its menu and its swipe see it. */
+export function menuCard(row: CardRow): MenuCard {
+  return { kind: cardOf(row).kind, section: row.section, mark: row.mark };
+}
+
+/** The words a card shows for what it is: a Topic's title, a Board Session's name. */
+export function cardTitle(row: CardRow): string {
+  return row.kind === 'topic' ? row.label : row.name;
 }
 
 /** The card a row is, or null for a row that no write can name. */
@@ -424,10 +434,7 @@ export interface RunningSession {
 export function runningSessions(listing: Listing, topics: HostTopics): RunningSession[] | undefined {
   const snapshot = lastSnapshot(topics);
   const bySession = new Map(snapshot?.sessions.map((session) => [session.name, session]));
-  const labels = new Map(
-    snapshot === null ? [] : [...snapshot.pinned, ...snapshot.unpinned.places, ...snapshot.unpinned.guests, ...snapshot.unpinned.bench]
-      .flatMap((card): [TopicId, string][] => (card.kind === 'topic' ? [[card.topic.id, card.topic.label]] : [])),
-  );
+  const labels = new Map(snapshot === null ? [] : openTopics(snapshot).map((topic) => [topic.id, topic.label]));
   return lastAnswer(listing)?.map((live) => {
     const known = bySession.get(live.name);
     return {

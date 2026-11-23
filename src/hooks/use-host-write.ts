@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { check, ended, IDLE, reached, send, type HostWrite, type HostWriteEnd, type HostWriteStep } from '@/domain/host-write';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
-import { WriteOutcomeUnknown } from '@/topics/request';
+import { intentAfter, intentFor, WriteOutcomeUnknown, type Intent, type RequestId, type UnknownOutcome } from '@/topics/request';
 
 /** What a write's code gets while it runs. */
 export interface HostWriteRun {
@@ -78,67 +78,97 @@ export function useHostWrites(hostId: string, now: () => number = Date.now): Hos
     void loadHost(hostId).then((host) => { if (present.current && host) setHostName(host.displayName); });
   }, [hostId]);
 
-  const move = (target: string, next: HostWrite) => {
-    const all = new Map(current.current);
-    if (next.kind === 'idle') all.delete(target);
-    else all.set(target, next);
-    current.current = all;
-    if (present.current) setStates(all);
-  };
+  // One object while nothing changes, so a screen can hold its writes in a memoized menu.
+  return useMemo((): HostWrites => {
+    const move = (target: string, next: HostWrite) => {
+      const all = new Map(current.current);
+      if (next.kind === 'idle') all.delete(target);
+      else all.set(target, next);
+      current.current = all;
+      if (present.current) setStates(all);
+    };
 
-  const run = async <T,>(
-    target: string,
-    begin: HostWrite | null,
-    attempt: (run: HostWriteRun) => Promise<T>,
-  ): Promise<{ end: HostWrite; value?: T } | undefined> => {
-    if (begin === null) return undefined;
-    move(target, begin);
-    const at = () => current.current.get(target) ?? IDLE;
-    let end: HostWriteEnd;
-    let value: T | undefined;
-    try {
-      const host = await loadHost(hostId);
-      if (!host) throw new Refusal('This Host is no longer saved.');
-      value = await attempt({
-        host,
-        step: (next) => move(target, reached(at(), next)),
-        refuse: (reason, fields) => { throw new Refusal(reason, fields); },
-        unsure: (reason) => { throw new InDoubt(reason); },
-      });
-      end = { kind: 'done' };
-    } catch (error) {
-      end = endOfThrow(error);
-    }
-    const last = ended(at(), end);
-    move(target, last);
-    return present.current ? { end: last, value } : undefined;
-  };
+    const run = async <T,>(
+      target: string,
+      begin: HostWrite | null,
+      attempt: (run: HostWriteRun) => Promise<T>,
+    ): Promise<{ end: HostWrite; value?: T } | undefined> => {
+      if (begin === null) return undefined;
+      move(target, begin);
+      const at = () => current.current.get(target) ?? IDLE;
+      let end: HostWriteEnd;
+      let value: T | undefined;
+      try {
+        const host = await loadHost(hostId);
+        if (!host) throw new Refusal('This Host is no longer saved.');
+        value = await attempt({
+          host,
+          step: (next) => move(target, reached(at(), next)),
+          refuse: (reason, fields) => { throw new Refusal(reason, fields); },
+          unsure: (reason) => { throw new InDoubt(reason); },
+        });
+        end = { kind: 'done' };
+      } catch (error) {
+        end = endOfThrow(error);
+      }
+      const last = ended(at(), end);
+      move(target, last);
+      return present.current ? { end: last, value } : undefined;
+    };
 
-  const valueOf = <T,>(result: { end: HostWrite; value?: T } | undefined) => (result?.end.kind === 'idle' ? result.value : undefined);
+    const valueOf = <T,>(result: { end: HostWrite; value?: T } | undefined) => (result?.end.kind === 'idle' ? result.value : undefined);
 
-  return {
-    state: (target) => states.get(target) ?? IDLE,
-    hostName,
-    send: async (target, attempt) => valueOf(await run(target, send(current.current.get(target) ?? IDLE, now()), attempt)),
-    check: async (target, probe) => valueOf(await run(target, check(current.current.get(target) ?? IDLE, now()), probe)),
-    sendAndReport: async (target, attempt) => {
-      const result = await run(target, send(current.current.get(target) ?? IDLE, now()), attempt);
-      if (result) move(target, IDLE);
-      return result?.end;
-    },
-  };
+    return {
+      state: (target) => states.get(target) ?? IDLE,
+      hostName,
+      send: async (target, attempt) => valueOf(await run(target, send(current.current.get(target) ?? IDLE, now()), attempt)),
+      check: async (target, probe) => valueOf(await run(target, check(current.current.get(target) ?? IDLE, now()), probe)),
+      sendAndReport: async (target, attempt) => {
+        const result = await run(target, send(current.current.get(target) ?? IDLE, now()), attempt);
+        if (result) move(target, IDLE);
+        return result?.end;
+      },
+    };
+  }, [states, hostName, hostId, now]);
 }
 
 const ONE = 'one';
 
-/** The runner for a sheet, which has one write. */
+/** A Host's answer to a Request that did not do it: a refusal, or a Request in doubt. */
+type Unanswered = { kind: 'failed'; error: string } | UnknownOutcome;
+
+function unanswered(answer: { kind: string }): answer is Unanswered {
+  return answer.kind === 'failed' || answer.kind === 'unknown';
+}
+
+/**
+ * The runner for a sheet, which has one write. `request` sends one Request
+ * that the Host answers. What it sends again under the same `key` keeps its
+ * Request id, so a Retry finds the work of the first send. A refusal fails
+ * the write and a Request in doubt makes it unsure; any other answer goes on
+ * to `then`, in the same write, and the write resolves to what `then` gives.
+ */
 export function useHostWrite(hostId: string) {
   const writes = useHostWrites(hostId);
+  const held = useRef<Intent | null>(null);
   return {
     write: writes.state(ONE),
     hostName: writes.hostName,
     send: <T,>(attempt: (run: HostWriteRun) => Promise<T>) => writes.send(ONE, attempt),
     check: <T,>(probe: (run: HostWriteRun) => Promise<T>) => writes.check(ONE, probe),
+    request: <A extends { kind: string }, T,>(
+      key: string,
+      ask: (run: HostWriteRun, request: RequestId) => Promise<A>,
+      then: (answer: Exclude<A, Unanswered>, run: HostWriteRun) => T | Promise<T>,
+    ) =>
+      writes.send(ONE, async (run) => {
+        const intent = intentFor(held.current, key);
+        held.current = intent;
+        const answer: A | Unanswered = await ask(run, intent.request);
+        held.current = intentAfter(intent, answer);
+        if (!unanswered(answer)) return then(answer as Exclude<A, Unanswered>, run);
+        return answer.kind === 'failed' ? run.refuse(answer.error) : run.unsure(answer.message);
+      }),
   };
 }
 

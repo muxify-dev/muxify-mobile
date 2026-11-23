@@ -14,12 +14,12 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
 import { actionLabel } from '@/domain/cover';
-import type { BoardSessionRow, CardRow, HostScreenRow, OpenableRow, SessionRow } from '@/domain/host-screen';
+import { menuCard, type BoardSessionRow, type CardRow, type HostScreenRow, type OpenableRow, type SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { cardKey } from '@/topics/board-card';
 import { menuActions, TOPIC_ACTION_ICON, TOPIC_ACTION_LABEL, type CardAction } from '@/topics/topic-action';
-import { sessionActions, TMUX_MENU_LABEL, TMUX_ORDER_ICON, type SessionAction } from '@/topics/tmux-order';
+import { MENU_ITEM, sessionActions, type NamedSession, type SessionAction } from '@/topics/session-action';
 import { WAKE_LABEL, type Wake } from '@/topics/wake-topic';
 
 export type TopicRow = Extract<HostScreenRow, { kind: 'topic' }>;
@@ -44,10 +44,11 @@ export interface RowActions {
   /** Asks how to Forget the Topic, from its long-press menu. A screen that does not pass it gives the card no Forget… item. */
   onForget?: (row: TopicRow) => void;
   /**
-   * Sends one Action of a Session row's long-press menu. A screen that does
-   * not pass it, or a row the Host Server has not described, has no menu.
+   * Sends one Action of the long-press menu of a Session row or of a live
+   * Board Session's card. A screen that does not pass it, or a row the Host
+   * Server has not described, has no Session Actions.
    */
-  onSessionAction?: (row: SessionRow, action: SessionAction) => void;
+  onSessionAction?: (session: NamedSession, action: SessionAction) => void;
   /** Offers the Topics that can fill an Open Place. A screen that does not pass it leaves the Open Place untappable. */
   onFillPlace?: (row: OpenPlaceRow) => void;
   onToggle: (row: OpenableRow) => void;
@@ -246,7 +247,15 @@ export function HostScreenRowView({
           </HStack>
         </Button>
       );
-      return <CardMenu row={row} dormant={dormant} actions={actions} card={card} />;
+      const { onSessionAction } = actions;
+      const live = row.card.kind === 'live-session' ? { id: row.card.session, name: row.name } : null;
+      return (
+        <CardMenu row={row} dormant={dormant} actions={actions} card={card}>
+          {live === null || onSessionAction === undefined ? null : sessionActions({ id: live.id, inTopic: false }).map((action) => (
+            <SessionActionButton key={action} action={action} onPress={() => onSessionAction(live, action)} />
+          ))}
+        </CardMenu>
+      );
     }
     case 'open-place': {
       const { onFillPlace } = actions;
@@ -339,7 +348,7 @@ function CardMenu({
 }) {
   const { onWake, onCardAction, onMove } = actions;
   const wakes = dormant && onWake !== undefined;
-  const orders = onCardAction === undefined ? [] : menuActions(row);
+  const orders = onCardAction === undefined ? [] : menuActions(menuCard(row));
   if (!wakes && orders.length === 0 && onMove === undefined && !hasItems(children)) return card;
   return (
     <ContextMenu>
@@ -499,7 +508,7 @@ function SessionRowView({
   /** A write to the Host for this Session runs. */
   busy: boolean;
   onPress: () => void;
-  onAction?: (row: SessionRow, action: SessionAction) => void;
+  onAction?: (session: NamedSession, action: SessionAction) => void;
 }) {
   const windows = row.windowCount === undefined ? null : `${row.windowCount} ${row.windowCount === 1 ? 'Window' : 'Windows'}`;
   const about = [row.topicLabel, windows].filter((part) => part !== null).join(' · ');
@@ -534,18 +543,24 @@ function SessionRowView({
     <ContextMenu>
       <ContextMenu.Items>
         {sessionActions(onHost).map((action) => (
-          <Button
-            key={action}
-            label={TMUX_MENU_LABEL[action]}
-            systemImage={TMUX_ORDER_ICON[action]}
-            role={action === 'stop-session' ? 'destructive' : undefined}
-            onPress={() => onAction(row, action)}
-            modifiers={[accessibilityLabel(TMUX_MENU_LABEL[action])]}
-          />
+          <SessionActionButton key={action} action={action} onPress={() => onAction({ id: onHost.id, name: row.name }, action)} />
         ))}
       </ContextMenu.Items>
       <ContextMenu.Trigger>{line}</ContextMenu.Trigger>
     </ContextMenu>
+  );
+}
+
+function SessionActionButton({ action, onPress }: { action: SessionAction; onPress: () => void }) {
+  const { label, icon, destructive } = MENU_ITEM[action];
+  return (
+    <Button
+      label={label}
+      systemImage={icon}
+      role={destructive ? 'destructive' : undefined}
+      onPress={onPress}
+      modifiers={[accessibilityLabel(label)]}
+    />
   );
 }
 

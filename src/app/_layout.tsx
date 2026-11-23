@@ -142,6 +142,15 @@ function AppStack() {
           }}
         />
         <Stack.Screen
+          name="move-to-topic"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.65, 1],
+            sheetGrabberVisible: true,
+            title: 'Move to Topic',
+          }}
+        />
+        <Stack.Screen
           name="rename"
           options={{
             // One field, with what it renames in view behind it.

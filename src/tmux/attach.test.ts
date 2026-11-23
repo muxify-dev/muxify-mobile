@@ -1,5 +1,5 @@
 import { lastTopic, type TopicDetail, type TopicRead } from '@/topics/topic-detail';
-import type { TopicId } from '@/topics/environment';
+import type { SessionId, TopicId } from '@/topics/environment';
 import { createLog } from '@/diagnostics/log';
 import { createTestClock, type TestClock } from '@/lib/test-clock';
 import { MissingCredentialError } from '@/ssh/failures';
@@ -416,7 +416,8 @@ function attachOn(
     topicId?: string;
     restore?: Place;
     followTopic?: AttachOptions['followTopic'];
-    markTopicRead?: AttachOptions['markTopicRead'];
+    markPanesRead?: AttachOptions['markPanesRead'];
+    onHostServerChange?: AttachOptions['onHostServerChange'];
     zoomed?: boolean;
     upload?: Upload;
     colours?: PaneColours;
@@ -444,7 +445,8 @@ function attachOn(
     zoomed: options.zoomed ?? true,
     colours: options.colours,
     followTopic: options.followTopic,
-    markTopicRead: options.markTopicRead,
+    markPanesRead: options.markPanesRead,
+    onHostServerChange: options.onHostServerChange,
     store,
     clock,
     log,
@@ -3674,84 +3676,293 @@ describe('the Place', () => {
   });
 });
 
+describe('a Session moved into a Topic', () => {
+  it('holds the Topic when the Host moved the Session it is on, and keeps the name the Host gives it', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].notify('%session-changed $1 work');
+    await settle();
+    const commands = kit.hosts[0].commands.length;
+
+    kit.attach.movedIntoTopic('$2' as SessionId, 'other', 'dock' as TopicId);
+    expect(kit.attach.state().topic).toBeNull();
+    kit.hosts[0].notify('%session-renamed $1 work/ship');
+    await settle();
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    await settle();
+
+    expect(kit.attach.state().topic?.id).toBe('ship');
+    expect(kit.attach.state().sessionName).toBe('work/ship');
+    expect(kit.wrote.at(-1)).toBe('last place host-1 work/ship ship');
+    expect(kit.hosts[0].commands.slice(commands).some((line) => line.startsWith("'switch-client'"))).toBe(false);
+  });
+
+  it('records where it arrived under the new name when the Host answers before tmux says it renamed the Session', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    kit.hosts[0].notify('%session-changed $1 work');
+    await settle();
+    const before = kit.wrote.length;
+
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    await settle();
+    expect(kit.attach.state().topic?.id).toBe('ship');
+    kit.hosts[0].notify('%session-renamed $1 work/ship');
+    await settle();
+
+    expect(kit.wrote.slice(before)).toEqual(['session host-1 work/ship', 'last place host-1 work/ship ship']);
+  });
+
+  it('holds the Topic of a Session moved while it was not connected, known by its name', async () => {
+    const kit = attachOn();
+    kit.attach.movedIntoTopic('$1' as SessionId, 'work', 'ship' as TopicId);
+    expect(kit.attach.state().topic?.id).toBe('ship');
+  });
+});
+
 describe('Unread on visit', () => {
   const topic = (id: string): TopicDetail => ({ id: id as TopicId, label: id, note: null,
     tags: [], state: 'live', sessions: [] });
   const destination = (sessionName: string, id: string) => ({ sessionName, topic: { id: id as TopicId, seed: topic(id) } });
+  const TWO = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
   function visits() {
     const marked: string[] = [];
-    return { marked, markTopicRead: (hostId: string, topicId: TopicId) => { marked.push(`${hostId} ${topicId}`); } };
+    return { marked, markPanesRead: (hostId: string, panes: readonly string[]) => { marked.push(`${hostId} ${panes.join(' ')}`); return true; } };
+  }
+  /** A Window of two Panes, %0 active, zoomed or not. */
+  function splitHost(zoomed: boolean) {
+    const split = fakeHost();
+    split.answering('list-windows', [`@0\t0\t1\t2\t${zoomed ? 1 : 0}\tshell\tzsh`]);
+    split.answering('list-panes', [`0\t%0\tzsh\t1\t/home/user\t${TWO}`, `1\t%2\tzsh\t0\t/home/user\t${TWO}`]);
+    return split;
   }
 
-  it('marks the shown Session\'s Topic read when the Terminal Screen comes into focus', async () => {
-    const { marked, markTopicRead } = visits();
-    const kit = attachOn({ topicId: 'a', markTopicRead });
+  it('reads the shown Panes each time the Terminal Screen comes into focus', async () => {
+    const { marked, markPanesRead } = visits();
+    const kit = attachOn({ topicId: 'a', markPanesRead });
     await connected(kit);
     expect(marked).toEqual([]);
 
+    const blur = kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 %0']);
+    blur();
     kit.attach.terminalFocused();
-    expect(marked).toEqual(['host-1 a']);
-    kit.attach.terminalFocused();
-    expect(marked).toEqual(['host-1 a', 'host-1 a']);
+    expect(marked).toEqual(['host-1 %0', 'host-1 %0']);
   });
 
   it('waits for the Session to attach when the Terminal Screen comes into focus first', async () => {
-    const { marked, markTopicRead } = visits();
-    const kit = attachOn({ topicId: 'a', markTopicRead });
+    const { marked, markPanesRead } = visits();
+    const kit = attachOn({ topicId: 'a', markPanesRead });
     kit.attach.terminalFocused();
     expect(marked).toEqual([]);
 
     await connected(kit);
-    expect(marked).toEqual(['host-1 a']);
+    expect(marked).toEqual(['host-1 %0']);
   });
 
-  it('marks the Topic read when the Attach switches to a Session of a Topic', async () => {
-    const { marked, markTopicRead } = visits();
-    const kit = attachOn({ topicId: 'a', markTopicRead });
+  it('reads every Pane of an unzoomed Window, and only the active one of a zoomed Window', async () => {
+    const plain = visits();
+    const unzoomed = attachOn({ hosts: [splitHost(false)], zoomed: false, markPanesRead: plain.markPanesRead });
+    await connected(unzoomed);
+    unzoomed.attach.terminalFocused();
+    expect(plain.marked).toEqual(['host-1 %0 %2']);
+
+    const zoomedVisits = visits();
+    const zoomed = attachOn({ hosts: [splitHost(true)], markPanesRead: zoomedVisits.markPanesRead });
+    await connected(zoomed);
+    zoomed.attach.terminalFocused();
+    expect(zoomedVisits.marked).toEqual(['host-1 %0']);
+  });
+
+  it('reads only the Pane that newly shows when the Window is unzoomed, each time, as the Mac does', async () => {
+    const { marked, markPanesRead } = visits();
+    const split = splitHost(true);
+    const kit = attachOn({ hosts: [split], markPanesRead });
     await connected(kit);
+    kit.attach.terminalFocused();
+
+    const zoom = async (zoomed: boolean) => {
+      split.answering('list-windows', [`@0\t0\t1\t2\t${zoomed ? 1 : 0}\tshell\tzsh`]);
+      split.notify(`%layout-change @0 ${TWO} ${TWO} *${zoomed ? 'Z' : ''}`);
+      await settle();
+    };
+    await zoom(false);
+    expect(marked).toEqual(['host-1 %0', 'host-1 %2']);
+    await zoom(true);
+    await zoom(false);
+    expect(marked).toEqual(['host-1 %0', 'host-1 %2', 'host-1 %2']);
+  });
+
+  it('reads only the Pane a laptop `select-pane` makes active in a Window the Zoom preference keeps zoomed', async () => {
+    const { marked, markPanesRead } = visits();
+    const THREE = 'b25d,49x41,0,0[49x13,0,0,0,49x13,0,14,2,49x13,0,28,4]';
+    const host = fakeHost();
+    const window = (zoomed: boolean) => [`@0\t0\t1\t3\t${zoomed ? 1 : 0}\tshell\tzsh`];
+    const panes = (active: string) => ['%0', '%2', '%4'].map((id, at) =>
+      `${at}\t${id}\tzsh\t${id === active ? 1 : 0}\t/home/user\t${THREE}`);
+    host.answering('list-windows', window(true));
+    host.answering('list-panes', panes('%0'));
+    const kit = attachOn({ hosts: [host], markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused();
+    expect(marked).toEqual(['host-1 %0']);
+
+    // tmux drops the zoom, then names the new active Pane, and answers the
+    // phone's reads only after both.
+    const rezoomed = () => host.commands.some((line) => line.startsWith("'resize-pane'"));
+    host.answering('list-windows', () => window(rezoomed()));
+    host.answering('list-panes', panes('%2'));
+    host.hold('list-windows');
+    host.notify(`%layout-change @0 ${THREE} ${THREE} *`);
+    host.notify('%window-pane-changed @0 %2');
+    host.release();
+    await settle();
+
+    expect(rezoomed()).toBe(true);
+    expect(kit.attach.state().topology.activeWindow?.zoomed).toBe(true);
+    expect(marked).toEqual(['host-1 %0', 'host-1 %2']);
+  });
+
+  it('reads the Panes of a Window unzoomed at the laptop although the Zoom preference is on', async () => {
+    const { marked, markPanesRead } = visits();
+    const split = splitHost(true);
+    const kit = attachOn({ hosts: [split], markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused();
+
+    split.answering('list-windows', ['@0\t0\t1\t2\t0\tshell\tzsh']);
+    split.notify(`%layout-change @0 ${TWO} ${TWO} *`);
+    await settle();
+
+    expect(split.commands.some((line) => line.startsWith("'resize-pane'"))).toBe(false);
+    expect(marked).toEqual(['host-1 %0', 'host-1 %2']);
+  });
+
+  it('reads the shown Panes of each Window picked, also one shown before', async () => {
+    const { marked, markPanesRead } = visits();
+    const host = fakeHost();
+    const kit = attachOn({ hosts: [host], markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused();
+    const windows = (active: 0 | 3) => [`@0\t0\t${active === 0 ? 1 : 0}\t1\t0\tshell\tzsh`, `@3\t3\t${active === 3 ? 1 : 0}\t1\t0\tlogs\tzsh`];
+    host.answering('list-windows', windows(3));
+    host.answering('list-panes', ['0\t%9\tzsh\t1\t/home/user\tb25d,49x41,0,0,9']);
+    await kit.attach.selectWindow(3);
+    await settle();
+    host.answering('list-windows', windows(0));
+    host.answering('list-panes', ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']);
+    await kit.attach.selectWindow(0);
+    await settle();
+
+    expect(marked).toEqual(['host-1 %0', 'host-1 %9', 'host-1 %0']);
+  });
+
+  it('reads only the active Pane of a split Window that the Zoom preference zooms as the user picks it', async () => {
+    const { marked, markPanesRead } = visits();
+    const host = fakeHost();
+    const kit = attachOn({ hosts: [host], markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused();
+    const LOGS = 'b25d,49x41,0,0[49x20,0,0,5,49x20,0,21,6]';
+    const windows = (zoomed: boolean) => ['@0\t0\t0\t1\t0\tshell\tzsh', `@3\t3\t1\t2\t${zoomed ? 1 : 0}\tlogs\tzsh`];
+    host.answering('list-windows', windows(false));
+    host.answering('list-panes', [`0\t%5\tzsh\t1\t/home/user\t${LOGS}`, `1\t%6\tzsh\t0\t/home/user\t${LOGS}`]);
+    host.hold('resize-pane');
+
+    const picked = kit.attach.selectWindow(3);
+    host.notify('%session-window-changed $1 @3');
+    await settle();
+    expect(kit.attach.state().topology.panes.map((pane) => pane.id)).toEqual(['%5', '%6']);
+    expect(marked).toEqual(['host-1 %0']);
+
+    host.answering('list-windows', windows(true));
+    host.release();
+    await picked;
+    await settle();
+    expect(marked).toEqual(['host-1 %0', 'host-1 %5']);
+  });
+
+  it('sends the shown Panes at the next look when there was no Host Server to send them to', async () => {
+    const marked: string[] = [];
+    let server = false;
+    const kit = attachOn({ markPanesRead: (_hostId, panes) => {
+      if (server) marked.push(panes.join(' '));
+      return server;
+    } });
+    await connected(kit);
+    kit.attach.terminalFocused();
+    expect(marked).toEqual([]);
+
+    server = true;
+    kit.hosts[0].notify('%session-renamed $1 renamed');
+    await settle();
+    expect(marked).toEqual(['%0']);
+  });
+
+  it('sends the shown Panes when the Host Server starts, if there was none to send them to', async () => {
+    const marked: string[] = [];
+    let server = false;
+    const heard = new Set<() => void>();
+    const kit = attachOn({
+      markPanesRead: (_hostId, panes) => {
+        if (server) marked.push(panes.join(' '));
+        return server;
+      },
+      onHostServerChange: (hostId, changed) => {
+        expect(hostId).toBe('host-1');
+        heard.add(changed);
+        return () => heard.delete(changed);
+      },
+    });
+    await connected(kit);
+    kit.attach.terminalFocused();
+    expect(marked).toEqual([]);
+
+    server = true;
+    for (const changed of heard) changed();
+    expect(marked).toEqual(['%0']);
+
+    await kit.attach.close();
+    expect(heard.size).toBe(0);
+  });
+
+  it('reads nothing while the Terminal Screen is out of focus', async () => {
+    const { marked, markPanesRead } = visits();
+    const split = splitHost(true);
+    const kit = attachOn({ hosts: [split], topicId: 'a', markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused()();
+
+    split.answering('list-windows', ['@0\t0\t1\t2\t0\tshell\tzsh']);
+    split.notify(`%layout-change @0 ${TWO} ${TWO} *`);
+    await kit.attach.switchSession(destination('play', 'b'));
+    await settle();
+
+    expect(marked).toEqual(['host-1 %0']);
+  });
+
+  it('reads the shown Panes again when the Attach switches Session, in a Topic or in none', async () => {
+    const { marked, markPanesRead } = visits();
+    const kit = attachOn({ topicId: 'a', markPanesRead });
+    await connected(kit);
+    kit.attach.terminalFocused();
 
     await kit.attach.switchSession(destination('play', 'b'));
     await settle();
-    expect(marked).toEqual(['host-1 b']);
-
-    kit.hosts[0].notify('%session-changed $3 elsewhere');
+    await kit.attach.switchSession({ sessionName: 'work', topic: null });
     await settle();
-    expect(kit.attach.state().topic).toBeNull();
-    expect(marked).toEqual(['host-1 b']);
+
+    expect(marked).toEqual(['host-1 %0', 'host-1 %0', 'host-1 %0']);
   });
 
-  it('marks the Topic read when the Host switches the Client to a sibling Session of the Topic', async () => {
-    const { marked, markTopicRead } = visits();
-    const detail = { ...topic('a'), sessions: [{ id: '$2' as import('@/topics/environment').SessionId, name: 'play', windows: [] }] };
-    const kit = attachOn({ topicId: 'a', markTopicRead, followTopic: topicFeeds({ kind: 'shown', topic: detail }).follow });
-    kit.attach.showTopic();
-    await connected(kit);
-
-    kit.hosts[0].notify('%session-changed $2 play');
-    await settle();
-    expect(kit.attach.state().topic?.id).toBe('a');
-    expect(marked).toEqual(['host-1 a']);
-  });
-
-  it('sends nothing for a Session in no Topic', async () => {
-    const { marked, markTopicRead } = visits();
-    const kit = attachOn({ markTopicRead });
-    kit.attach.terminalFocused();
+  it('reads nothing more after a plain same-Session pick or a rename', async () => {
+    const { marked, markPanesRead } = visits();
+    const kit = attachOn({ topicId: 'a', markPanesRead });
     await connected(kit);
     kit.attach.terminalFocused();
-    await kit.attach.switchSession({ sessionName: 'play', topic: null });
-    await settle();
-    expect(kit.attach.state().sessionName).toBe('play');
-    expect(marked).toEqual([]);
-  });
-
-  it('sends nothing after a plain same-Session pick or a rename', async () => {
-    const { marked, markTopicRead } = visits();
-    const kit = attachOn({ topicId: 'a', markTopicRead });
-    await connected(kit);
     await kit.attach.switchSession(destination('work', 'a'));
     kit.hosts[0].notify('%session-renamed $1 renamed');
     await settle();
-    expect(marked).toEqual([]);
+    expect(marked).toEqual(['host-1 %0']);
   });
 });

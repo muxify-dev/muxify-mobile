@@ -2,7 +2,7 @@ import { fakeHostServer, inDoubt, refused } from '@/test-support/fake-host-serve
 import type { Host } from '@/storage/records';
 
 import type { SessionId } from './environment';
-import { endAlert, sendTmuxOrder, sessionActions, WINDOW_ACTIONS, type TmuxOrder } from './tmux-order';
+import { endAlert, sendTmuxOrder, type TmuxOrder } from './tmux-order';
 
 let mockServer = fakeHostServer();
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
@@ -16,15 +16,9 @@ beforeEach(() => {
 });
 
 describe('the Session and Window Actions', () => {
-  it('offers Remove from Topic only for a Session in a Topic', () => {
-    expect(sessionActions({ id: SESSION, inTopic: true })).toEqual(['rename-session', 'remove-from-topic', 'stop-session']);
-    expect(sessionActions({ id: SESSION, inTopic: false })).toEqual(['rename-session', 'stop-session']);
-    expect(WINDOW_ACTIONS).toEqual(['rename-window', 'close-window']);
-  });
-
-  it('asks before Stop Session and Close Window, naming what ends', () => {
-    expect(endAlert('stop-session', 'api')).toEqual({
-      title: 'Stop api?', message: 'Its Windows and what runs in them end on the Host.', confirm: 'Stop Session',
+  it('asks before Kill Session and Close Window, naming what ends', () => {
+    expect(endAlert('kill-session', 'api')).toEqual({
+      title: 'Kill api?', message: 'Its Windows and what runs in them end on the Host.', confirm: 'Kill Session',
     });
     expect(endAlert('close-window', 'logs')).toEqual({
       title: 'Close logs?', message: 'Its Panes and what runs in them end on the Host.', confirm: 'Close Window',
@@ -34,7 +28,7 @@ describe('the Session and Window Actions', () => {
   it.each<[TmuxOrder, object, object | undefined]>([
     [{ kind: 'rename-session', session: SESSION, name: 'web' }, { rename_session: { name: 'web' } }, { session: '$3' }],
     [{ kind: 'remove-from-topic', session: SESSION }, { remove_from_topic: {} }, { session: '$3' }],
-    [{ kind: 'stop-session', session: SESSION }, { kill_session: {} }, { session: '$3' }],
+    [{ kind: 'kill-session', session: SESSION }, { kill_session: {} }, { session: '$3' }],
     [{ kind: 'rename-window', window: '@7', name: 'logs' }, { rename_window: { name: 'logs' } }, { window: '@7' }],
     [{ kind: 'close-window', window: '@7' }, { kill_window: {} }, { window: '@7' }],
     [{ kind: 'mark-all-read' }, { mark_all_read: {} }, undefined],
@@ -51,15 +45,15 @@ describe('the Session and Window Actions', () => {
   });
 
   it('has its own Request id for each tap', async () => {
-    await sendTmuxOrder(HOST, { kind: 'stop-session', session: SESSION }, () => {});
-    await sendTmuxOrder(HOST, { kind: 'stop-session', session: SESSION }, () => {});
+    await sendTmuxOrder(HOST, { kind: 'kill-session', session: SESSION }, () => {});
+    await sendTmuxOrder(HOST, { kind: 'kill-session', session: SESSION }, () => {});
     const [first, second] = mockServer.writes();
     expect(first!.request).not.toBe(second!.request);
   });
 
   it("ends failed with the Host's refusal, and unknown for a Request in doubt", async () => {
     mockServer.answer = () => { throw refused('No Session $3.', 'session_unavailable'); };
-    await expect(sendTmuxOrder(HOST, { kind: 'stop-session', session: SESSION }, () => {}))
+    await expect(sendTmuxOrder(HOST, { kind: 'kill-session', session: SESSION }, () => {}))
       .resolves.toEqual({ kind: 'failed', error: 'No Session $3.' });
     mockServer.answer = () => { throw inDoubt('The Host may have it.'); };
     await expect(sendTmuxOrder(HOST, { kind: 'mark-all-read' }, () => {}))
