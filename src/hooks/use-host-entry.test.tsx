@@ -18,6 +18,7 @@ const mockLoad = jest.fn();
 const mockReadTopic = jest.fn();
 const mockPlaceFor = jest.fn();
 const mockWakeBoardSession = jest.fn();
+const mockMarkTopicRead = jest.fn();
 let mockBlur: (() => void) | undefined;
 
 jest.mock('expo-router', () => ({
@@ -39,6 +40,10 @@ jest.mock('@/tmux/attach', () => ({ openAttach: (...args: unknown[]) => mockOpen
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ openConnection: jest.fn(), lifecycleChanged: jest.fn() }) }));
 jest.mock('@/topics/read-topic', () => ({ readTopic: (...args: unknown[]) => mockReadTopic(...args) }));
 jest.mock('@/topics/act-on-card', () => ({ sendCardOrder: jest.fn() }));
+jest.mock('@/topics/unread-on-visit', () => ({
+  markTopicRead: (...args: unknown[]) => mockMarkTopicRead(...args),
+  markPanesRead: () => {},
+}));
 jest.mock('@/topics/host-writes', () => ({ wakeBoardSession: (...args: unknown[]) => mockWakeBoardSession(...args) }));
 
 const host = { id: 'host', displayName: 'Host', address: 'host', port: 22, identityId: 'key' };
@@ -101,6 +106,13 @@ it.each(['topic', 'session'] as const)('checks focus after the Host lookup for a
   await act(async () => { answer(records); });
   expect(mockOpenAttach).not.toHaveBeenCalled();
   expect(mockEntered).not.toHaveBeenCalled();
+});
+
+it('reads an Empty Topic when its card opens Add a Session, as a visit to its page on the Mac does', async () => {
+  await mount();
+  await act(async () => { actions.openTopic({ ...topic, state: 'empty', sessions: [] }); });
+  expect(mockMarkTopicRead).toHaveBeenCalledWith('host', topic.id);
+  expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/topic-add-session' }));
 });
 
 it('marks an Empty Topic form opened from the Terminal for origin capture', async () => {

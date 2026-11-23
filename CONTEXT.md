@@ -381,9 +381,20 @@ user opens the No Topic row, which lists it.
 _Avoid_: current card, pinned card
 
 **Unread on visit**:
-The Mac's rule that showing a Session clears its Topic's Unread. The phone
-follows it while the Attach shows a Session: when the Terminal Screen comes
-into focus and when the Attach switches Session.
+The Mac's rule that showing a Pane makes its Agent read. The phone follows it
+while the Terminal Screen has focus, for a Session in a Topic or in none. The
+Panes it shows are every Pane of the active Window, or only the active Pane
+while the Window is zoomed. While the Zoom preference is about to zoom a
+Window again, the phone reads nothing, and reads the one Pane it then shows.
+An entry reads every shown Pane: the Terminal Screen comes into focus, or the
+Attach moves to another Session. After that, only a Pane that newly shows is
+read, such as after an unzoom, a split or a move to another Window. A visit
+does not clear a Topic's own Unread. Only a visit to an Empty Topic's page
+does, which on the phone is the tap on its card that opens Add a Session. The
+phone cannot read the Mac's Config, so it sends these reads also when
+`notifications.manual_read` is on. Unlike the Mac, an Agent that finishes
+while the phone shows it becomes Unread: the phone reads a Pane only when it
+newly shows.
 _Avoid_: auto-read, mark seen
 
 **No Topic**:

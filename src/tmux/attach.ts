@@ -53,7 +53,8 @@ import {
   type ScrollPosition,
 } from './pane-view';
 import type { Extent } from './pane-layout';
-import { createTopologyStore, EMPTY_TOPOLOGY, windowGrid, type Topology, type TopologyStore } from './topology';
+import { createPaneVisit } from './pane-visit';
+import { createTopologyStore, EMPTY_TOPOLOGY, shownPanes, windowGrid, windowShape, type Topology, type TopologyStore } from './topology';
 import type { TmuxTransport } from './transport';
 import { sameGrid, TmuxClient, type Grid, type Session, type Window } from './tmux-client';
 
@@ -239,11 +240,11 @@ export interface Attach {
   /** Follows the Topic again with a new subscription: the Title Sheet's Retry. */
   refreshTopic(): void;
   /**
-   * The Terminal Screen came into focus: Unread on visit for the Topic of the
-   * Session shown, once the Session is attached. A Session in no Topic sends
-   * nothing.
+   * The Terminal Screen came into focus: Unread on visit for the Panes it
+   * shows, once the Session is attached, and for each Pane that shows later
+   * while it keeps focus. Returns the call that says it lost focus.
    */
-  terminalFocused(): void;
+  terminalFocused(): () => void;
   selectWindow(index: number): Promise<void>;
   /**
    * Optimistic: moves the Pane here first and puts it back if refused.
@@ -352,11 +353,17 @@ export interface AttachOptions {
    */
   followTopic?: (hostId: string, topicId: TopicId, onRead: (read: TopicRead) => void) => () => void;
   /**
-   * Unread on visit: clears the Unread of the Topic whose Session the Attach
-   * shows, as the Mac does on a visit. Fire and forget: it shows nothing. See
-   * `markTopicRead`.
+   * Unread on visit: makes the Agents in these Panes read, as the Mac does
+   * when it shows them. Fire and forget: it shows nothing, and answers only
+   * whether it sent the read. See `markPanesRead`.
    */
-  markTopicRead?: (hostId: string, topicId: TopicId) => void;
+  markPanesRead?: (hostId: string, panes: readonly string[]) => boolean;
+  /**
+   * Hears each change of the Host's Host Server, so that a visit
+   * `markPanesRead` had no Host Server for is sent once one starts. Answers
+   * the way to stop hearing.
+   */
+  onHostServerChange?: (hostId: string, changed: () => void) => () => void;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
   /** The Theme's colours, for the Panes to report. Null reports nothing until coloursChanged. */
@@ -566,6 +573,7 @@ export function openAttach(options: AttachOptions): Attach {
     }
     publish();
     notePlace();
+    visitShownPanes();
   }
 
   /** Whether the view of `paneId` may draw a cursor: the active Pane, while Typing is open. */
@@ -817,13 +825,18 @@ export function openAttach(options: AttachOptions): Attach {
   }
 
   /**
-   * Writes the Place when the user moved in the Topic or the Session. Not
-   * during a Session switch or a restore: the Topology then shows a Window
-   * that the user is only passing through.
+   * Whether the Window shown is one the user stopped in. Not during a Session
+   * switch or a restore: the Topology then shows a Window that the user is
+   * only passing through.
    */
+  function stopped(): boolean {
+    return !closed && state.phase.kind === 'connected' && !pendingSwitch && !pendingRestore && !restoring;
+  }
+
+  /** Writes the Place when the user moved in the Topic or the Session. */
   function notePlace(): void {
     const window = state.topology.activeWindow;
-    if (closed || !window || state.phase.kind !== 'connected' || pendingSwitch || pendingRestore || restoring) return;
+    if (!window || !stopped()) return;
     const place = {
       hostId: host.id,
       owner: ownerNow(),
@@ -851,6 +864,7 @@ export function openAttach(options: AttachOptions): Attach {
     if (!sameOwner(ownerNow(), place.owner) || state.sessionName !== place.session) {
       say(`not restoring the Place of ${describeOwner(place.owner)}: the Attach is in ${state.sessionName} now`);
       notePlace();
+      visitShownPanes();
       return;
     }
     restoring = true;
@@ -881,6 +895,7 @@ export function openAttach(options: AttachOptions): Attach {
     } finally {
       restoring = false;
       notePlace();
+      visitShownPanes();
     }
   }
 
@@ -891,18 +906,41 @@ export function openAttach(options: AttachOptions): Attach {
     }).catch(() => {});
   }
 
-  /** Whether the Terminal Screen came into focus before the Session was attached, so its visit waits for it. */
-  let visitWaiting = false;
+  const paneVisit = createPaneVisit();
 
-  /** Unread on visit for the Topic of the Session shown. A Session in no Topic sends nothing. */
-  function visitTopic(): void {
-    if (closed) return;
-    if (state.phase.kind !== 'connected') {
-      visitWaiting = true;
-      return;
-    }
-    visitWaiting = false;
-    if (state.topic) options.markTopicRead?.(host.id, state.topic.id);
+  /**
+   * The active Window's shape when it was last zoomed, or last asked to be.
+   * See keepZoom.
+   */
+  let zoomedShape: string | null = null;
+  /** How many re-applications of the Zoom preference, or reads that may lead to one, are on their way to tmux. */
+  let zoomsSettling = 0;
+
+  /**
+   * Whether the Window tmux shows unzoomed is about to be zoomed again by the
+   * Zoom preference: after a Window switch, a split, or a Connection that has
+   * not applied the preference yet. The Terminal Screen draws its every Pane
+   * only until then. A Window the user unzoomed at the laptop, in the shape it
+   * was zoomed in, stays as they put it.
+   */
+  function reZoomDue(): boolean {
+    if (zoomsSettling > 0) return true;
+    const { activeWindow, panes } = state.topology;
+    return state.zoomed && activeWindow !== undefined && !activeWindow.zoomed && panes.length > 1 &&
+      windowShape(state.topology) !== zoomedShape;
+  }
+
+  /** Unread on visit for the Panes the Terminal Screen shows, once they settle. See `PaneVisit`. */
+  function visitShownPanes(): void {
+    paneVisit.observe(shownPanes(state.topology), stopped() && !reZoomDue(), (panes) =>
+      options.markPanesRead?.(host.id, panes) ?? false);
+  }
+  const stopHearingHostServer = options.onHostServerChange?.(host.id, visitShownPanes);
+
+  /** An entry: the Attach moved to another Session. */
+  function enterVisit(): void {
+    paneVisit.enter();
+    visitShownPanes();
   }
 
   function acceptDestination(destination: SessionDestination): void {
@@ -918,8 +956,7 @@ export function openAttach(options: AttachOptions): Attach {
       : null });
     followTopic();
     if (state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
-    // The Attach switched to a Session of a Topic: the Mac's visit.
-    if (moved && state.phase.kind === 'connected') visitTopic();
+    if (moved) enterVisit();
   }
 
   /** How many screens show the Topic now. Its detail is followed only while one does. */
@@ -1237,8 +1274,6 @@ export function openAttach(options: AttachOptions): Attach {
       // somebody else's `select-pane` all arrive the same way.
       let windowSize: Grid | null = null;
       /**
-       * The Window's shape when it was last zoomed, or last asked to be.
-       *
        * tmux drops the zoom by itself whenever the Window changes under it: a
        * split, a Pane closing or a plain `select-pane`, made on the laptop or
        * by a program in a Pane. The preference says the phone wants one Pane,
@@ -1246,16 +1281,37 @@ export function openAttach(options: AttachOptions): Attach {
        * the shape it was zoomed in was unzoomed on purpose, by someone at the
        * laptop, and is left as they put it.
        */
-      let zoomedShape: string | null = null;
+      zoomedShape = null;
+      let wasZoomed = false;
       const keepZoom = (next: Topology) => {
         const window = next.activeWindow;
+        const unzoomed = wasZoomed && !window?.zoomed;
+        wasZoomed = window?.zoomed ?? false;
         if (!window || next.panes.length < 2) return;
-        const shape = `${window.id} ${next.activePane?.id} ${next.panes.map((pane) => pane.id).join(',')}`;
+        const shape = windowShape(next);
         if (window.zoomed) {
           zoomedShape = shape;
           return;
         }
-        if (!state.zoomed || shape === zoomedShape) return;
+        if (!state.zoomed) return;
+        if (shape === zoomedShape) {
+          // A plain `select-pane` also drops the zoom in this shape, and
+          // tmux names the new active Pane only in the notification after
+          // it. One round trip tells the two apart, and until it answers the
+          // Panes that zoom hid are not read.
+          if (unzoomed) {
+            zoomsSettling += 1;
+            background(mine, async () => {
+              try {
+                await topology?.refresh();
+              } finally {
+                zoomsSettling -= 1;
+                visitShownPanes();
+              }
+            });
+          }
+          return;
+        }
         zoomedShape = shape;
         say(`Window ${window.id} changed and lost its zoom; applying the Zoom preference again`);
         background(mine, () => settleAfterVerb(mine));
@@ -1295,7 +1351,7 @@ export function openAttach(options: AttachOptions): Attach {
       // and a Session that refused to attach is not somewhere you have been.
       arrived(state.sessionName, state.topic?.id ?? null);
       followTopic();
-      if (visitWaiting) visitTopic();
+      enterVisit();
 
       // Size first when a grid has settled, so the capture that follows is of
       // a Pane the size of the Surface. With none, the first settled grid
@@ -1573,12 +1629,18 @@ export function openAttach(options: AttachOptions): Attach {
   async function settleAfterVerb(mine: number): Promise<void> {
     const current = client;
     if (!current || stale(mine)) return;
-    // Selecting a Pane drops tmux out of zoom, and moving to another Window
-    // lands on one nobody has zoomed, so the preference is re-applied rather
-    // than assumed to have survived.
-    await current.setZoom(currentSessionTarget(), state.zoomed);
-    if (stale(mine)) return;
-    await topology?.refresh();
+    zoomsSettling += 1;
+    try {
+      // Selecting a Pane drops tmux out of zoom, and moving to another Window
+      // lands on one nobody has zoomed, so the preference is re-applied rather
+      // than assumed to have survived.
+      await current.setZoom(currentSessionTarget(), state.zoomed);
+      if (stale(mine)) return;
+      await topology?.refresh();
+    } finally {
+      zoomsSettling -= 1;
+      visitShownPanes();
+    }
   }
 
   async function runSessionVerb(verb: Verb): Promise<void> {
@@ -1613,7 +1675,11 @@ export function openAttach(options: AttachOptions): Attach {
 
     refreshTopic,
 
-    terminalFocused: visitTopic,
+    terminalFocused(): () => void {
+      const blur = paneVisit.focus();
+      visitShownPanes();
+      return blur;
+    },
 
     showTopic(): () => void {
       topicShown += 1;
@@ -1991,6 +2057,7 @@ export function openAttach(options: AttachOptions): Attach {
       composer.dispose();
       generation += 1;
       followTopic();
+      stopHearingHostServer?.();
       sizing.dispose();
       onScreen.clear();
       listeners.clear();

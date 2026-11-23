@@ -12,16 +12,30 @@ const say = speakingAs(deviceLog(), 'topic');
 export type VisitConnections = { hostServer(hostId: string): HostServer | null };
 
 /**
- * Unread on visit: `mark_read { topics: [id] }` on the Host Server of the
- * Host's open Connection, as the Mac sends when it shows a Session of the
- * Topic. It is not a Host Write: nothing waits for it, it shows nothing, and a
- * failure is only logged. With no Host Server, or in Sessions only, nothing is
- * sent. The Host Server pushes the Listing and the Topic without the Unread.
+ * Unread on visit for Panes the Attach shows: `mark_read { panes }`, which
+ * makes the Agent in each of them read, as the Mac does when it shows them.
+ * Answers whether it sent the read.
  */
+export function markPanesRead(hostId: string, panes: readonly string[], connections: VisitConnections = appConnections()): boolean {
+  return visitRead(hostId, { panes: [...panes] }, `Panes ${panes.join(' ')}`, connections);
+}
+
+/** Unread on visit for an Empty Topic, whose page shows no Session: `mark_read { topics }` clears its Unread. */
 export function markTopicRead(hostId: string, topicId: TopicId, connections: VisitConnections = appConnections()): void {
+  visitRead(hostId, { topics: [topicId] }, `Topic ${topicId}`, connections);
+}
+
+/**
+ * Sends one `mark_read` on the Host Server of the Host's open Connection. It
+ * is not a Host Write: nothing waits for it, it shows nothing, and a failure
+ * is only logged. With no Host Server, or in Sessions only, nothing is sent,
+ * and it answers false. The Host Server pushes what changed.
+ */
+function visitRead(hostId: string, read: { panes: string[] } | { topics: TopicId[] }, what: string, connections: VisitConnections): boolean {
   const server = connections.hostServer(hostId);
-  if (!server || server.state().kind === 'sessions-only') return;
+  if (!server || server.state().kind === 'sessions-only') return false;
   void Promise.resolve()
-    .then(() => server.request({ mark_read: { topics: [topicId] } }))
-    .catch((error: unknown) => say(`the Host did not mark Topic ${topicId} read on the visit: ${describeError(error)}`));
+    .then(() => server.request({ mark_read: read }))
+    .catch((error: unknown) => say(`the Host did not mark ${what} read on the visit: ${describeError(error)}`));
+  return true;
 }
