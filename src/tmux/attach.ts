@@ -1629,10 +1629,10 @@ export function openAttach(options: AttachOptions): Attach {
     async switchSession(destination: SessionDestination): Promise<void> {
       if (closed) throw new Error('This Attach has ended.');
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
-      if (destination.topic === null && destination.sessionName === state.sessionName) {
-        // The Session held now: only its Session Place can move the user.
-        if (state.topic || !destination.restore) return;
-      } else if (destination.topic === null) {
+      const held = destination.sessionName === state.sessionName;
+      // The Session held now, in a Topic: the Topic stays, so nothing moves.
+      if (destination.topic === null && held && state.topic) return;
+      if (destination.topic === null && !held) {
         const topic = state.topic && lastTopic(state.topic.view);
         if (state.topic && !topic) {
           throw new Error('The current Topic has not loaded. Retry after it loads.');
@@ -1644,7 +1644,9 @@ export function openAttach(options: AttachOptions): Attach {
       // Also for the Topic or Session held now: Back from a Web View leaves its
       // Tab in the Place, and opening it again from the Host Screen shows it again.
       const restore = restoreFor(destination);
-      if (destination.sessionName === state.sessionName) {
+      if (held) {
+        // With no Topic asked for, only the Session Place can move the user.
+        if (destination.topic === null && !restore) return;
         pendingRestore = restore;
         acceptDestination(destination);
         if (state.phase.kind === 'connected') await restorePlace(generation);

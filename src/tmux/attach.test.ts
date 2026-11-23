@@ -3620,6 +3620,30 @@ describe('the Place', () => {
     }
   });
 
+  it('moves nothing for a pick of the Session it holds that has no Place of what it holds', async () => {
+    // In a Topic: the Topic stays, and the Session Place is not its Place.
+    const inTopic = attachOn({ hosts: [twoWindows()], topicId: 'a' });
+    // With no Topic: a Place of another owner is no Place of this Session.
+    const noTopic = attachOn({ hosts: [twoWindows()] });
+    const asked = [
+      { kit: inTopic, restore: sessionPlace('work', { tab: TAB }) },
+      { kit: noTopic, restore: place({ tab: TAB }) },
+    ];
+    for (const { kit, restore } of asked) {
+      await connected(kit);
+      await settle();
+      const stamps = kit.wrote.length;
+
+      await kit.attach.switchSession({ sessionName: 'work', topic: null, restore });
+      await settle();
+
+      expect(where(kit)).toBe('@0 %0');
+      expect(kit.attach.state().tabToRestore).toBeNull();
+      expect(kit.wrote.slice(stamps)).toEqual([]);
+    }
+    expect(inTopic.attach.state().topic?.id).toBe('a');
+  });
+
   it('goes back to the Session Place of the Session it holds, its Tab included', async () => {
     const kit = attachOn({ hosts: [twoWindows()] });
     await connected(kit);
