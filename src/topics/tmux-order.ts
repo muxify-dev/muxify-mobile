@@ -1,5 +1,3 @@
-import type { SFSymbol } from 'expo-symbols';
-
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import type { Host } from '@/storage/records';
@@ -20,68 +18,30 @@ const say = speakingAs(deviceLog(), 'topic');
 export type TmuxOrder =
   | { kind: 'rename-session'; session: SessionId; name: string }
   | { kind: 'remove-from-topic'; session: SessionId }
-  | { kind: 'stop-session'; session: SessionId }
+  | { kind: 'kill-session'; session: SessionId }
   | { kind: 'rename-window'; window: string; name: string }
   | { kind: 'close-window'; window: string }
   | { kind: 'mark-all-read' };
 
 export type TmuxOrderKind = TmuxOrder['kind'];
 
-/** The Actions of a Session's menu. Rename Session… opens the name sheet, and Stop Session… asks first. */
-export type SessionAction = Extract<TmuxOrderKind, 'rename-session' | 'remove-from-topic' | 'stop-session'>;
-
-/** The Actions of a Window's menu. Rename Window… opens the name sheet, and Close Window… asks first. */
-export type WindowAction = Extract<TmuxOrderKind, 'rename-window' | 'close-window'>;
-
 /** The Mac's words for each order, as an alert names it. */
 export const TMUX_ORDER_LABEL: Record<TmuxOrderKind, string> = {
   'rename-session': 'Rename Session',
   'remove-from-topic': 'Remove from Topic',
-  'stop-session': 'Stop Session',
+  'kill-session': 'Kill Session',
   'rename-window': 'Rename Window',
   'close-window': 'Close Window',
   'mark-all-read': 'Mark All as Read',
 };
 
-/** The menu item of each Action: an ellipsis where a sheet or a confirm comes first. */
-export const TMUX_MENU_LABEL: Record<SessionAction | WindowAction, string> = {
-  'rename-session': 'Rename Session…',
-  'remove-from-topic': 'Remove from Topic',
-  'stop-session': 'Stop Session…',
-  'rename-window': 'Rename Window…',
-  'close-window': 'Close Window…',
-};
-
-export const TMUX_ORDER_ICON: Record<TmuxOrderKind, SFSymbol> = {
-  'rename-session': 'pencil',
-  'remove-from-topic': 'minus.circle',
-  'stop-session': 'stop.circle',
-  'rename-window': 'pencil',
-  'close-window': 'xmark.circle',
-  'mark-all-read': 'envelope.open',
-};
-
-/** What the Host Server says of a Session, which its Actions need. */
-export interface SessionOnHost {
-  id: SessionId;
-  /** Whether it is in a Topic, which is when Remove from Topic is offered. */
-  inTopic: boolean;
-}
-
-/** The Actions a Session offers: Remove from Topic only for a Session in a Topic. */
-export function sessionActions(session: SessionOnHost): SessionAction[] {
-  return session.inTopic ? ['rename-session', 'remove-from-topic', 'stop-session'] : ['rename-session', 'stop-session'];
-}
-
-export const WINDOW_ACTIONS: readonly WindowAction[] = ['rename-window', 'close-window'];
-
-/** The confirm alert of Stop Session… and Close Window…: its title, its words and its destructive button. */
-export function endAlert(action: Extract<TmuxOrderKind, 'stop-session' | 'close-window'>, name: string) {
-  return action === 'stop-session'
+/** The confirm alert of Kill Session… and Close Window…: its title, its words and its destructive button. */
+export function endAlert(action: Extract<TmuxOrderKind, 'kill-session' | 'close-window'>, name: string) {
+  return action === 'kill-session'
     ? {
-        title: `Stop ${name}?`,
+        title: `Kill ${name}?`,
         message: 'Its Windows and what runs in them end on the Host.',
-        confirm: TMUX_ORDER_LABEL['stop-session'],
+        confirm: TMUX_ORDER_LABEL['kill-session'],
       }
     : {
         title: `Close ${name}?`,
@@ -97,7 +57,7 @@ export function tmuxWrite(order: TmuxOrder): { command: EnvironmentCommand; targ
       return { command: { rename_session: { name: order.name } }, target: { session: order.session } };
     case 'remove-from-topic':
       return { command: { remove_from_topic: {} }, target: { session: order.session } };
-    case 'stop-session':
+    case 'kill-session':
       return { command: { kill_session: {} }, target: { session: order.session } };
     case 'rename-window':
       return { command: { rename_window: { name: order.name } }, target: { window: order.window } };

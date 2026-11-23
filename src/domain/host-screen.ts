@@ -4,7 +4,7 @@ import type { Card, EnvironmentSnapshot, Mark, SessionId, SnapshotSession, Topic
 import { lastSnapshot, topicsUnavailable, type HostTopics } from '@/topics/host-topics';
 import type { CardSection, MenuCard } from '@/topics/topic-action';
 import { tagColorHex, type ColorAppearance } from '@/topics/tag-color';
-import type { SessionOnHost } from '@/topics/tmux-order';
+import type { SessionOnHost } from '@/topics/session-action';
 import { seededTopic, type TopicDetail } from '@/topics/topic-detail';
 
 /**

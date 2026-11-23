@@ -62,7 +62,6 @@ import {
   type HostScreenSection,
   type HostScreenTab,
   type OpenableRow,
-  type SessionRow,
 } from '@/domain/host-screen';
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useCardWrites } from '@/hooks/use-card-writes';
@@ -90,7 +89,7 @@ import {
   type CardAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
-import type { SessionAction } from '@/topics/tmux-order';
+import type { NamedSession, SessionAction } from '@/topics/session-action';
 import { recordVisit } from '@/topics/visit';
 
 const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
@@ -281,14 +280,12 @@ export default function HostScreen() {
   };
 
   const tmuxWrites = useTmuxWrites(id);
-  // Rename opens the name sheet, Stop asks first, and Remove from Topic goes at once.
-  const actOnSession = (row: SessionRow, action: SessionAction) => {
-    const session = row.onHost?.id;
-    if (session === undefined) return;
+  // Rename opens the name sheet, Kill asks first, and Remove from Topic goes at once.
+  const actOnSession = ({ id: session, name }: NamedSession, action: SessionAction) => {
     if (action === 'rename-session') {
-      const params: RenameParams = { hostId: id, kind: 'session', id: session, name: row.name };
+      const params: RenameParams = { hostId: id, kind: 'session', id: session, name };
       router.push({ pathname: '/rename', params });
-    } else if (action === 'stop-session') tmuxWrites.confirm({ kind: 'stop-session', session }, row.name);
+    } else if (action === 'kill-session') tmuxWrites.confirm({ kind: 'kill-session', session }, name);
     else void tmuxWrites.order({ kind: 'remove-from-topic', session });
   };
 

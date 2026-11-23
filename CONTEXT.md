@@ -248,7 +248,7 @@ _Avoid_: connection error, offline, unreachable (which is one kind of it)
 **Host Write**:
 One change the user asks of a Host: New Topic, Edit Topic, a Go to pick that
 makes a Session, Add a Session, the menu orders, drops and wakes of a Topic
-card, Pin, Unpin, Forget, renaming, removing or stopping a Session, renaming
+card, Pin, Unpin, Forget, renaming, removing or killing a Session, renaming
 or closing a Window, and Mark All as Read. The user never
 sends it again blind: a Host Write that carries a Request is sent one more
 time with the same id when no answer came, and any other is not sent again by
@@ -504,7 +504,8 @@ Bench. The Host keeps it in its state database, so a tmux restart leaves its
 card at its place as a Dormant card. Its long-press menu has Pin or Unpin,
 Move Up, Move Down and, when it is not Pinned, Bench, which takes the card off
 the Board. A Dormant one also has Reopen and Start Fresh. A live one also has
-Mark as Read when its card shows a done or failed mark, and Mark as Unread
+Rename Session… and Kill Session…, which asks first, as a Session row does,
+and Mark as Read when its card shows a done or failed mark, and Mark as Unread
 when it shows no mark, in the menu and in a trailing swipe as on a Topic card.
 It has no mark of its own, so both act on the Agents of its Session: Read
 clears their Unread, and Unread makes each Agent that is not working Unread.

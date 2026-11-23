@@ -311,7 +311,7 @@ describe('a live Host Screen', () => {
     await server.push(protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item);
 
     expect(labels()).toEqual([
-      'Mark as Unread', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session docs', 'Mark as Unread docs',
+      'Mark as Unread', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Rename Session…', 'Kill Session…', 'Session docs', 'Mark as Unread docs',
       'Reopen', 'Start Fresh', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session logs',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session scratch',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session notes',
@@ -330,6 +330,15 @@ describe('a live Host Screen', () => {
     await act(async () => { labelled('Reopen')[0]!.props.onPress(); });
     expect(mockSend).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'host' }), { kind: 'dormant-session', id: 's4' }, { kind: 'wake', wake: 'reopen' }, expect.any(Function));
+
+    await act(async () => { button('Rename Session…').props.onPress(); });
+    expect(mockRouter.push).toHaveBeenLastCalledWith({ pathname: '/rename', params: { hostId: 'host', kind: 'session', id: '$6', name: 'docs' } });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    await act(async () => { button('Kill Session…').props.onPress(); });
+    const [title, , buttons] = alert.mock.calls[0]!;
+    expect(title).toBe('Kill docs?');
+    await act(async () => { (buttons as AlertButton[])[0]!.onPress!(); });
+    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'kill-session', session: '$6' }, expect.any(Function));
   });
 
   it('moves a Board Session card: a Guest trades with a card In Play', async () => {
@@ -363,8 +372,8 @@ describe('a live Host Screen', () => {
     await server.push(withScratch('ship'));
     // Remove from Topic only for the Session in a Topic.
     expect(labels()).toEqual([
-      'Rename Session…', 'Remove from Topic', 'Stop Session…', 'Session ship',
-      'Rename Session…', 'Stop Session…', 'Session scratch',
+      'Rename Session…', 'Remove from Topic', 'Kill Session…', 'Session ship',
+      'Rename Session…', 'Kill Session…', 'Session scratch',
     ]);
 
     await act(async () => { button('Remove from Topic').props.onPress(); });
@@ -376,13 +385,13 @@ describe('a live Host Screen', () => {
     expect(labels()).toContain('Session web');
 
     mockTmuxSend.mockClear();
-    await act(async () => { labelled('Stop Session…')[1]!.props.onPress(); });
+    await act(async () => { labelled('Kill Session…')[1]!.props.onPress(); });
     expect(mockTmuxSend).not.toHaveBeenCalled();
     const [title, , buttons] = alert.mock.calls[0]!;
-    expect(title).toBe('Stop scratch?');
-    expect((buttons as AlertButton[]).map((choice) => choice.text)).toEqual(['Stop Session', 'Cancel']);
+    expect(title).toBe('Kill scratch?');
+    expect((buttons as AlertButton[]).map((choice) => choice.text)).toEqual(['Kill Session', 'Cancel']);
     await act(async () => { (buttons as AlertButton[])[0]!.onPress!(); });
-    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'stop-session', session: '$9' }, expect.any(Function));
+    expect(mockTmuxSend).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'host' }), { kind: 'kill-session', session: '$9' }, expect.any(Function));
     const stopped = withScratch('web');
     await server.push({ ...stopped, no_topic: [], sessions: [stopped.sessions[0]] });
     expect(labels()).not.toContain('Session scratch');

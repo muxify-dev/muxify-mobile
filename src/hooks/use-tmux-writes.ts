@@ -29,8 +29,8 @@ export function useTmuxWrites(hostId: string, send: typeof sendTmuxOrder = sendT
     if (end === undefined) return;
     alertCardWrite(TMUX_ORDER_LABEL[order.kind], end);
   };
-  /** Stop Session and Close Window: a confirm alert first, and the order only on its destructive button. */
-  const confirm = (end: Extract<TmuxOrder, { kind: 'stop-session' | 'close-window' }>, name: string) => {
+  /** Kill Session and Close Window: a confirm alert first, and the order only on its destructive button. */
+  const confirm = (end: Extract<TmuxOrder, { kind: 'kill-session' | 'close-window' }>, name: string) => {
     const alert = endAlert(end.kind, name);
     Alert.alert(alert.title, alert.message, [
       { text: alert.confirm, style: 'destructive', onPress: () => void order(end) },

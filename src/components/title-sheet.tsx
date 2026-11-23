@@ -45,7 +45,7 @@ import { TAPPABLE_ROW } from './tappable-row';
 import type { TopicDetail } from '@/topics/topic-detail';
 import { CHOOSER_LIST_NAMES, type ChooserList, type ChooserLists } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
-import { TMUX_MENU_LABEL, TMUX_ORDER_ICON, WINDOW_ACTIONS, type WindowAction } from '@/topics/tmux-order';
+import { MENU_ITEM, WINDOW_ACTIONS, type WindowAction } from '@/topics/session-action';
 
 import { SheetHeader, SheetNote } from './sheet-chrome';
 import { MarkImage } from './topic-marks';
@@ -328,11 +328,11 @@ function WindowRow({
         {WINDOW_ACTIONS.map((action) => (
           <Button
             key={action}
-            label={TMUX_MENU_LABEL[action]}
-            systemImage={TMUX_ORDER_ICON[action]}
-            role={action === 'close-window' ? 'destructive' : undefined}
+            label={MENU_ITEM[action].label}
+            systemImage={MENU_ITEM[action].icon}
+            role={MENU_ITEM[action].destructive ? 'destructive' : undefined}
             onPress={() => onAction(row, action)}
-            modifiers={[accessibilityLabel(TMUX_MENU_LABEL[action])]}
+            modifiers={[accessibilityLabel(MENU_ITEM[action].label)]}
           />
         ))}
       </ContextMenu.Items>

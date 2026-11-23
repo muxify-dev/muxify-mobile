@@ -27,14 +27,7 @@ import type { Attach, AttachState } from '@/tmux/attach';
 import { useAttachHolder } from '@/tmux/attach-context';
 import { trimPreview } from '@/tmux/preview';
 import { lastTopic } from '@/topics/topic-detail';
-import {
-  sessionActions,
-  TMUX_MENU_LABEL,
-  TMUX_ORDER_ICON,
-  type SessionAction,
-  type SessionOnHost,
-  type WindowAction,
-} from '@/topics/tmux-order';
+import { MENU_ITEM, sessionActions, type SessionAction, type SessionOnHost, type WindowAction } from '@/topics/session-action';
 
 const say = speakingAs(deviceLog(), 'screen');
 
@@ -149,8 +142,8 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       case 'remove-from-topic':
         void tmuxWrites.order({ kind: 'remove-from-topic', session });
         break;
-      case 'stop-session':
-        tmuxWrites.confirm({ kind: 'stop-session', session }, name);
+      case 'kill-session':
+        tmuxWrites.confirm({ kind: 'kill-session', session }, name);
         break;
     }
   };
@@ -166,7 +159,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       ...card,
       busy: card.busy || tmuxWrites.writing(session.id),
       menu: sessionActions(session).map((action) => ({
-        id: action, label: TMUX_MENU_LABEL[action], systemImage: TMUX_ORDER_ICON[action], destructive: action === 'stop-session',
+        id: action, label: MENU_ITEM[action].label, systemImage: MENU_ITEM[action].icon, destructive: MENU_ITEM[action].destructive,
       })),
     };
   };

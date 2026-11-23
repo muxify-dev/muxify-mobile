@@ -5,9 +5,9 @@
 # waits until tmux or the Mac, asked through the CLI, has the change, and then
 # until the screen shows it from the Host Server's push.
 #
-# - The Sessions tab: Rename Session…, Remove from Topic and Stop Session… in a
+# - The Sessions tab: Rename Session…, Remove from Topic and Kill Session… in a
 #   Session row's long-press menu. Remove from Topic is offered only for the
-#   Session in a Topic, and Stop asks first.
+#   Session in a Topic, and Kill asks first.
 # - The Title Sheet's Windows: Rename Window… and Close Window… in a Window
 #   row's long-press menu. Close asks first.
 # - Host Options: Mark All as Read. The Topic card's menu then offers Mark as
@@ -93,7 +93,7 @@ menu() {
   agent-device wait "label=\"$1\"" 15000 >/dev/null || fail "no $1"
   agent-device longpress "label=\"$1\"" 1000 --settle >/dev/null
   agent-device wait "role=button label=\"$3\"" 5000 >/dev/null || fail "no $3 in the menu of $1"
-  items=$(menu_items "Rename Session…|Remove from Topic|Stop Session…|Rename Window…|Close Window…|Mark as Read|Mark as Unread")
+  items=$(menu_items "Rename Session…|Remove from Topic|Kill Session…|Rename Window…|Close Window…|Mark as Read|Mark as Unread")
   [ "$items" = "$2" ] || fail "the menu of $1 is '$items', not '$2'"
   agent-device press "role=button label=\"$3\"" --settle >/dev/null
 }
@@ -113,29 +113,29 @@ agent-device wait 'label="Host Options"' 15000 >/dev/null || fail "no Host Scree
 agent-device wait 1500 >/dev/null 2>&1
 
 echo "== Sessions tab"
-menu "Session scratch" "Rename Session…|Stop Session…" "Rename Session…"
+menu "Session scratch" "Rename Session…|Kill Session…" "Rename Session…"
 rename_to "Session name" "renamed"
 until_true 'has_session renamed' || fail "tmux has no Session renamed"
 agent-device wait 'label="Session renamed"' 10000 >/dev/null || fail "the Sessions tab does not show renamed"
 echo "ok: Rename Session"
 
-menu "Session $in_topic" "Rename Session…|Remove from Topic|Stop Session…" "Remove from Topic"
+menu "Session $in_topic" "Rename Session…|Remove from Topic|Kill Session…" "Remove from Topic"
 until_true '[ "$(topic_of "$in_topic_id")" = none ]' || fail "the Mac still has $in_topic in the Topic"
 # The Host may give the Session its name with no Topic; its row no longer offers Remove from Topic.
 removed=$(tmux display-message -p -t "$in_topic_id" '#{session_name}')
 sleep 1
-menu "Session $removed" "Rename Session…|Stop Session…" "Rename Session…"
+menu "Session $removed" "Rename Session…|Kill Session…" "Rename Session…"
 agent-device press 'label="Cancel"' --settle >/dev/null || fail "no Cancel on the name sheet"
 agent-device wait absent 'label="Session name"' 8000 >/dev/null || fail "Cancel did not close the name sheet"
 echo "ok: Remove from Topic"
 
-menu "Session renamed" "Rename Session…|Stop Session…" "Stop Session…"
-agent-device wait 'role=button label="Stop Session"' 5000 >/dev/null || fail "Stop Session… did not ask first"
+menu "Session renamed" "Rename Session…|Kill Session…" "Kill Session…"
+agent-device wait 'role=button label="Kill Session"' 5000 >/dev/null || fail "Kill Session… did not ask first"
 has_session renamed || fail "tmux stopped the Session before the confirm"
-agent-device press 'role=button label="Stop Session"' --settle >/dev/null
+agent-device press 'role=button label="Kill Session"' --settle >/dev/null
 until_true '! has_session renamed' || fail "tmux still has the Session renamed"
 agent-device wait absent 'label="Session renamed"' 10000 >/dev/null || fail "the Sessions tab still shows renamed"
-echo "ok: Stop Session"
+echo "ok: Kill Session"
 
 echo "== Mark All as Read"
 agent-device press 'label="Host Options"' --settle >/dev/null

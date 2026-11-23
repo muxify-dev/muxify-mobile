@@ -4,7 +4,8 @@
 # this Mac, the dev Host (see e2e/sandbox.sh): live and Dormant Board Session
 # cards in Pinned, In Play and the Guests, their long-press menus, the move
 # mode, the Fill sheet, a tap that opens a live one, a restart of the sandbox's
-# tmux server, and Reopen, Start Fresh, Bench and Unpin of the Dormant cards.
+# tmux server, Reopen, Start Fresh, Bench and Unpin of the Dormant cards, and
+# Rename Session and Kill Session on a live card.
 # After each write it waits until the Mac, asked through the CLI, has the
 # change, and then checks that the Host Screen shows the Mac's order.
 #
@@ -206,7 +207,8 @@ menu_items() {
   python3 - "$SNAPSHOT" <<'PY'
 import json, sys
 words = {"Mark as Read", "Mark as Unread", "Pin", "Unpin", "Move Up", "Move Down", "Bench", "Make a Guest",
-         "Reopen", "Start Fresh", "Move…", "Settle…", "Forget…", "Note", "Tags", "Edit"}
+         "Reopen", "Start Fresh", "Move…", "Settle…", "Forget…", "Note", "Tags", "Edit",
+         "Rename Session…", "Move to Topic…", "Kill Session…"}
 nodes = json.load(open(sys.argv[1]))["data"]["nodes"]
 print("|".join(n["label"] for n in nodes if n.get("label") in words and "Button" in n.get("type", "") + n.get("role", "")))
 PY
@@ -334,16 +336,16 @@ expect "TopA bspin | bsplace open open | bsguest bsextra | TopB"
 scroll_to top
 
 echo "== Live Board Sessions: menus and moves"
-menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…" "Move Up"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Kill Session…" "Move Up"
 expect "bspin TopA | bsplace open open | bsguest bsextra | TopB"
-menu "Session bsguest" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsguest" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsguest did not start"
 targets=$(move_targets)
 [ "$targets" = "Fill Open Place|Move below bsextra|Trade TopB|Trade bsplace" ] || fail "the targets of bsguest are '$targets'"
 echo "ok: the targets of Guest bsguest are $targets, none on a Pinned card"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
-menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsplace did not start"
 reveal "Trade bsguest" || fail "no Trade bsguest target"
 agent-device press 'label="Trade bsguest"' --settle >/dev/null || fail "no Trade bsguest"
@@ -451,17 +453,17 @@ menu "Session bsplace" "Reopen|Start Fresh|Pin|Move Up|Move Down|Bench|Move…" 
 LIVE_PLACES=$(python3 -c 'import sys; print(sys.argv[1].replace("bsguest~", "open").replace("bsplace~", "bsplace"))' "$PLACES")
 expect "bspin TopA~ | $LIVE_PLACES | bsextra | TopB~"
 tmux has-session -t '=bsplace' || fail "tmux has no Session bsplace"
-menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Move…"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
 echo "ok: live bsplace shows in its place, with the menu of a live card"
 
 echo "== Unpin puts the card at the end of the Guests"
-menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…" "Unpin"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…|Rename Session…|Kill Session…" "Unpin"
 expect "TopA~ | $LIVE_PLACES | bsextra bspin | TopB~"
 
 echo "== Bench a live Board Session: it leaves the Board and stays a Session"
-menu "Session bspin" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Bench"
+menu "Session bspin" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Bench"
 expect_mac "TopA~ | $LIVE_PLACES | bsextra | TopB~"
 # The app is still attached to bspin, which is now in No Topic: the Bench
 # shows it as the Attach's peek, above the Benched cards.
@@ -475,6 +477,24 @@ done
 echo "ok: TopA~ | $LIVE_PLACES | bsextra | TopB~, and the attached bspin shows as the Bench peek"
 tmux has-session -t '=bspin' || fail "Bench of a live Board Session stopped its Session"
 echo "ok: bspin left the Board and its Session runs"
+
+echo "== Rename Session… and Kill Session… on a live Board Session's card"
+scroll_to top
+menu "Session bsextra" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Rename Session…"
+agent-device wait 'label="Session name"' 8000 >/dev/null || fail "the name sheet did not open"
+agent-device fill 'label="Session name"' "bsrenamed" >/dev/null || fail "could not type the name"
+agent-device press 'label="Save"' --settle >/dev/null || fail "no Save on the name sheet"
+for _ in $(seq 40); do tmux has-session -t '=bsrenamed' 2>/dev/null && break; sleep 0.25; done
+tmux has-session -t '=bsrenamed' 2>/dev/null || fail "tmux has no Session bsrenamed"
+reveal "Session bsrenamed" || fail "the card does not show the new name"
+echo "ok: Rename Session renamed bsextra's Session, and its card shows bsrenamed"
+menu "Session bsrenamed" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…|Rename Session…|Kill Session…" "Kill Session…"
+agent-device wait 'role=button label="Kill Session"' 5000 >/dev/null || fail "Kill Session… did not ask first"
+tmux has-session -t '=bsrenamed' 2>/dev/null || fail "tmux killed the Session before the confirm"
+agent-device press 'role=button label="Kill Session"' --settle >/dev/null
+for _ in $(seq 40); do tmux has-session -t '=bsrenamed' 2>/dev/null || break; sleep 0.25; done
+tmux has-session -t '=bsrenamed' 2>/dev/null && fail "tmux still has the Session bsrenamed"
+echo "ok: Kill Session asked first, then ended the Session"
 
 scroll_to top
 agent-device close >/dev/null 2>&1

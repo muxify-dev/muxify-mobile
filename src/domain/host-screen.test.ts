@@ -12,7 +12,7 @@ import {
   type OpenableRow,
 } from './host-screen';
 import type { Session } from '@/tmux/tmux-client';
-import type { SessionOnHost } from '@/topics/tmux-order';
+import type { SessionOnHost } from '@/topics/session-action';
 import type { CardSection } from '@/topics/topic-action';
 import type {
   BoardSessionId,
