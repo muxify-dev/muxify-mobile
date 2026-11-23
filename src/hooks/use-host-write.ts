@@ -4,7 +4,7 @@ import { check, ended, IDLE, reached, send, type HostWrite, type HostWriteEnd, t
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
-import { WriteOutcomeUnknown } from '@/topics/request';
+import { intentAfter, intentFor, WriteOutcomeUnknown, type Intent, type RequestId, type UnknownOutcome } from '@/topics/request';
 
 /** What a write's code gets while it runs. */
 export interface HostWriteRun {
@@ -131,14 +131,41 @@ export function useHostWrites(hostId: string, now: () => number = Date.now): Hos
 
 const ONE = 'one';
 
-/** The runner for a sheet, which has one write. */
+/** A Host's answer to a Request that did not do it: a refusal, or a Request in doubt. */
+type Unanswered = { kind: 'failed'; error: string } | UnknownOutcome;
+
+function unanswered(answer: { kind: string }): answer is Unanswered {
+  return answer.kind === 'failed' || answer.kind === 'unknown';
+}
+
+/**
+ * The runner for a sheet, which has one write. `request` sends one Request
+ * that the Host answers. What it sends again under the same `key` keeps its
+ * Request id, so a Retry finds the work of the first send. A refusal fails
+ * the write and a Request in doubt makes it unsure; any other answer goes on
+ * to `then`, in the same write, and the write resolves to what `then` gives.
+ */
 export function useHostWrite(hostId: string) {
   const writes = useHostWrites(hostId);
+  const held = useRef<Intent | null>(null);
   return {
     write: writes.state(ONE),
     hostName: writes.hostName,
     send: <T,>(attempt: (run: HostWriteRun) => Promise<T>) => writes.send(ONE, attempt),
     check: <T,>(probe: (run: HostWriteRun) => Promise<T>) => writes.check(ONE, probe),
+    request: <A extends { kind: string }, T,>(
+      key: string,
+      ask: (run: HostWriteRun, request: RequestId) => Promise<A>,
+      then: (answer: Exclude<A, Unanswered>, run: HostWriteRun) => T | Promise<T>,
+    ) =>
+      writes.send(ONE, async (run) => {
+        const intent = intentFor(held.current, key);
+        held.current = intent;
+        const answer: A | Unanswered = await ask(run, intent.request);
+        held.current = intentAfter(intent, answer);
+        if (!unanswered(answer)) return then(answer as Exclude<A, Unanswered>, run);
+        return answer.kind === 'failed' ? run.refuse(answer.error) : run.unsure(answer.message);
+      }),
   };
 }
 

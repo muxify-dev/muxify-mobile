@@ -36,7 +36,6 @@ import { folderSessionName } from '@/topics/add-session';
 import type { Tag, TopicId } from '@/topics/environment';
 import { addSession, createTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
-import { intentAfter, intentFor, type Intent } from '@/topics/request';
 import type { TopicDetail } from '@/topics/topic-detail';
 import { recordVisit } from '@/topics/visit';
 
@@ -69,7 +68,7 @@ export default function NewTopicScreen() {
   const { appearance, palette } = useSettings();
   const openSession = useOpenSession();
   const [step, setStep] = useState<Step>({ step: 'title' });
-  const { write, hostName, send, check } = useHostWrite(hostId);
+  const { write, hostName, send, check, request } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
 
   const [tagsAttempt, setTagsAttempt] = useState(0);
@@ -91,8 +90,6 @@ export default function NewTopicScreen() {
   const title = useNativeState('');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
   const [titleError, setTitleError] = useState<string | undefined>();
-  // The Request of the last create, so a Retry with the same title and Tags is the same Request.
-  const [created, setCreated] = useState<Intent | null>(null);
   // In Config order, as the Mac lists a Topic's Tags.
   const chosenTags = (tags ?? []).filter((tag) => chosen.has(tag.name)).map((tag) => tag.name);
 
@@ -106,8 +103,8 @@ export default function NewTopicScreen() {
   useEffect(() => ask(''), [ask]);
   const rows = adding ? goToRows({ query, mode: 'paths', sessions: [], paths, recent: [] }) : [];
   const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
-  // The Request of the last add, so a second try at the same folder finds the Session of the first.
-  const [added, setAdded] = useState<{ addition: Addition; intent: Intent } | null>(null);
+  // The last add, for Retry.
+  const [added, setAdded] = useState<Addition | null>(null);
 
   const toAddSession = (topic: TopicId | undefined, label: string) => {
     if (topic === undefined) return;
@@ -122,15 +119,11 @@ export default function NewTopicScreen() {
       return;
     }
     setTitleError(undefined);
-    const sent = intentFor(created, JSON.stringify([wanted, chosenTags]));
-    setCreated(sent);
-    void send(async ({ host, step: at, refuse, unsure }) => {
-      const made = await createTopic(host, wanted, chosenTags, sent.request, () => at('sending'));
-      setCreated(intentAfter(sent, made));
-      if (made.kind === 'failed') return refuse(made.error);
-      if (made.kind === 'unknown') return unsure(made.message);
-      return made.topic;
-    }).then((topic) => toAddSession(topic, wanted));
+    void request(
+      JSON.stringify([wanted, chosenTags]),
+      ({ host, step: at }, id) => createTopic(host, wanted, chosenTags, id, () => at('sending')),
+      (made) => made.topic,
+    ).then((topic) => toAddSession(topic, wanted));
   };
 
   const checkCreated = () => {
@@ -156,26 +149,25 @@ export default function NewTopicScreen() {
       void send(({ host, step: at }) => attach(topic, made, host, at)).then(opened);
       return;
     }
-    const intent = intentFor(added?.intent ?? null, JSON.stringify([addition.folder, addition.worktree]));
-    setAdded({ addition, intent });
-    void send(async ({ host, step: at, refuse, unsure }) => {
-      const row = paths.rows.find((candidate) => candidate.directory === addition.folder);
-      const folder = { directory: addition.folder, worktree: row?.worktree ?? null, name: row?.name };
-      // The Topic is new, so no Session of it has the name of the folder's Session Path. A new
-      // Worktree's Session takes its name from the branch, which only the Host knows.
-      const chosenName = addition.worktree ? undefined : row?.name ?? folderSessionName(addition.folder);
-      const result = await addSession(host, topic.id, folder, { newWorktree: addition.worktree, chosenName }, intent.request, () => at('sending'));
-      if (intentAfter(intent, result) === null) setAdded(null);
-      if (result.kind === 'failed') return refuse(result.error);
-      if (result.kind === 'unknown') return unsure(result.message);
-      return attach(topic, result.session, host, at, addition.folder);
-    }).then(opened);
+    setAdded(addition);
+    void request(
+      JSON.stringify([addition.folder, addition.worktree]),
+      ({ host, step: at }, id) => {
+        const row = paths.rows.find((candidate) => candidate.directory === addition.folder);
+        const folder = { directory: addition.folder, worktree: row?.worktree ?? null, name: row?.name };
+        // The Topic is new, so no Session of it has the name of the folder's Session Path. A new
+        // Worktree's Session takes its name from the branch, which only the Host knows.
+        const chosenName = addition.worktree ? undefined : row?.name ?? folderSessionName(addition.folder);
+        return addSession(host, topic.id, folder, { newWorktree: addition.worktree, chosenName }, id, () => at('sending'));
+      },
+      (result, { host, step: at }) => attach(topic, result.session, host, at, addition.folder),
+    ).then(opened);
   };
   const addAt = (row: FolderRow | undefined, worktree: boolean) => {
     if (row === undefined || locked) return;
     add({ folder: row.kind === 'path' ? row.path.directory : row.directory, worktree });
   };
-  const retryAdd = () => { if (added) add(added.addition); };
+  const retryAdd = () => { if (added) add(added); };
 
   const checkAdded = () => {
     if (step.step !== 'add-session') return;
