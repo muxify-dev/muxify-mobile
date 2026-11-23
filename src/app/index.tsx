@@ -33,7 +33,7 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { readDevHost } from '@/dev/dev-host';
-import { placeToReconnect } from '@/domain/reconnect';
+import { coldStartRoute, placeToReconnect } from '@/domain/reconnect';
 import { deviceSettingsStore } from '@/settings/device-settings';
 import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
@@ -62,18 +62,10 @@ export default function HomeScreen() {
       ]);
       const place = placeToReconnect(settings, records);
       if (!place || !navigation.isFocused()) return;
-      // Pushed in the order Back walks them, so the Terminal Screen has the
-      // Host Screen and then Home under it, as if tapped to.
+      // Pushed in the order Back walks them, so the Terminal Screen or the
+      // Web View has the Host Screen and then Home under it, as if tapped to.
       router.push({ pathname: '/hosts/[id]', params: { id: place.hostId } });
-      router.push({
-        pathname: '/terminal',
-        params: {
-          hostId: place.hostId,
-          session: place.session,
-          ...(place.topicId ? { topicId: place.topicId } : {}),
-          reconnect: '1',
-        },
-      });
+      router.push(coldStartRoute(records, place));
     })();
   }, [router, navigation]);
 

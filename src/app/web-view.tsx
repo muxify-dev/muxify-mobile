@@ -8,14 +8,18 @@ import type { ParamListBase } from 'expo-router/react-navigation';
 import { placeTabRoute } from '@/browser/place-tab-route';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
+import { ConnectionScreen } from '@/components/connection-screen';
 import { HeaderBand } from '@/components/header-band';
 import { HeaderTitleButton, type HeaderTitle } from '@/components/terminal-header';
 import { TitleSheet } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { coverOf } from '@/domain/cover';
+import { useCoverAction, useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
 import { useSettings } from '@/settings/settings-context';
 import type { PlaceTab } from '@/storage/records';
+import type { Attach } from '@/tmux/attach';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 
 const say = speakingAs(deviceLog(), 'browser');
@@ -48,13 +52,17 @@ interface ShownPage {
  * pick in the Title Sheet puts the Terminal Screen back. See ADR 0020.
  */
 export default function WebViewScreen() {
-  const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string; restored?: string }>();
+  const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string; restored?: string } & RouteSession>();
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   const focused = useIsFocused();
-  const { palette } = useSettings();
+  const { appearance, palette } = useSettings();
   const attach = useCurrentAttach();
   const state = useAttachState(attach);
+  // A cold start whose Place has a Tab opens here, with no Terminal Screen
+  // first: the reconnect runs from this screen, behind the Connection Screen.
+  const [coldStart] = useState(() => (params.reconnect ? { hostId: params.hostId, session: params.session, topicId: params.topicId, reconnect: params.reconnect } : null));
+  const opening = useRouteSession(coldStart, 'page', say);
   const webView = useRef<WebView>(null);
   const [shown, setShown] = useState<ShownPage>(() => ({
     url: params.url,
@@ -102,7 +110,7 @@ export default function WebViewScreen() {
   // so Back and the swipe from the edge are the stack's own and go to the Host
   // Screen, and the Place keeps the page. A pick in the Title Sheet gives the
   // place back to the Terminal Screen.
-  const hostId = attach?.hostId;
+  const hostId = attach?.hostId ?? coldStart?.hostId;
   const [release, setRelease] = useState<(() => void) | null>(null);
   const leave = useCallback(() => {
     if (leaving.current || !navigation.isFocused()) return;
@@ -130,7 +138,8 @@ export default function WebViewScreen() {
     leaving.current = true;
     setRelease(() => () => router.replace(placeTabRoute(tab)));
   }, [leave, router]);
-  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved });
+  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved,
+    onReplacingStopped: opening.forgetLookup });
 
   // A page that a Place opened: once the Attach is back in the Place's
   // Window, the Host must still list the Tab. A Tab closed on the Mac sends the
@@ -157,13 +166,32 @@ export default function WebViewScreen() {
 
   // A new Attach, or a Topic that the Attach went to from elsewhere, is
   // somewhere else: the Terminal Screen shows it. A Topic picked in this
-  // screen's Title Sheet waits for the pick, which says where to go.
-  const [arrivedIn] = useState(() => ({ attach, topicId: state?.topic?.id ?? null }));
+  // screen's Title Sheet waits for the pick, which says where to go. A cold
+  // start's page arrives with no Attach, and the first one is its own.
   const topicId = state?.topic?.id ?? null;
+  const [arrivedIn, setArrivedIn] = useState(() => (coldStart ? null : { attach, topicId }));
+  if (arrivedIn === null && attach) setArrivedIn({ attach, topicId });
   const openingTopic = chooser.openingTopic;
   useEffect(() => {
-    if (focused && !openingTopic && (attach !== arrivedIn.attach || topicId !== arrivedIn.topicId)) leave();
+    if (arrivedIn && focused && !openingTopic && (attach !== arrivedIn.attach || topicId !== arrivedIn.topicId)) leave();
   }, [focused, openingTopic, attach, topicId, arrivedIn, leave]);
+
+  // The cold start's Connection Screen, until its Attach is attached. The
+  // page counts as the Attach's first paint: after it, a wait or a failure
+  // leaves the page as it is, as on a page opened from the Host Screen.
+  const [pageShownFor, setPageShownFor] = useState<Attach | null>(null);
+  if (attach && attach !== pageShownFor && state?.typing.kind === 'open') setPageShownFor(attach);
+  const cover = coverOf({
+    missing: opening.missing,
+    lookup: opening.lookup,
+    attach: state ? { typing: state.typing, step: state.step, paintedOnce: attach === pageShownFor } : null,
+    place: { hostName: attach?.hostName ?? opening.hostName, session: state?.sessionName ?? opening.session },
+  });
+  const goHost = useCallback(() => {
+    if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
+    else router.dismissTo('/');
+  }, [hostId, router]);
+  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly: chooser.openSessionsOnly, goHost, say });
 
   const pageTitle = title || shown.page;
   const headerTitle = useMemo((): HeaderTitle | null => {
@@ -237,6 +265,15 @@ export default function WebViewScreen() {
           </Pressable>
         </View>
       )}
+      {coldStart && cover.kind === 'connection-screen' ? (
+        <ConnectionScreen
+          cover={cover}
+          place={opening.missing === null && opening.hostName !== '' ? { hostName: opening.hostName, session: opening.session } : null}
+          palette={palette}
+          appearance={appearance}
+          onAction={runCoverAction}
+        />
+      ) : null}
       <TitleSheet {...chooser.sheet} />
     </HeaderBand>
   );

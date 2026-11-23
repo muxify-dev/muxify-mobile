@@ -45,7 +45,6 @@ import { useCopyLog } from '@/hooks/use-copy-log';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
 import { useSettings } from '@/settings/settings-context';
-import type { TopicId } from '@/topics/environment';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
 import { fieldsParam } from '@/topics/topic-edit';
 import { placeTabRoute } from '@/browser/place-tab-route';
@@ -53,17 +52,8 @@ import type { BrowserTab } from '@/browser/tabs';
 import {
   topicSeedParam,
 } from '@/topics/topic-detail';
-import {
-  LOOKUP_START,
-  reconnect as reconnectToSession,
-  type Lookup,
-  type SessionVisit,
-} from '@/domain/reconnect';
-import { deviceHostStore } from '@/storage/device-store';
-import { findPlace, placeOwner, type Host, type PlaceTab } from '@/storage/records';
-import { execCommandRunner } from '@/tmux/exec-runner';
-import { appConnections } from '@/tmux/ssh-connection';
-import { TmuxClient } from '@/tmux/tmux-client';
+import { useCoverAction, useRouteSession, type RouteSession } from '@/hooks/use-route-session';
+import type { PlaceTab } from '@/storage/records';
 import { base64ToBytes, bytesToBase64 } from '@/lib/base64';
 import { describeError } from '@/lib/describe-error';
 import { directoryName } from '@/lib/paths';
@@ -155,42 +145,17 @@ type PickerState = { open: false } | { open: true; error?: string };
 export default function TerminalScreen() {
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
-  const {
-    hostId: routeHostId,
-    session: sessionParam,
-    topicId: routeTopicId,
-    reconnect,
-  } = useLocalSearchParams<{
-    hostId?: string;
-    session?: string;
-    /** The Topic from an external link or Last Place. */
-    topicId?: string;
-    /** Set by a cold start that reopens the Last Place: look first, then attach. */
-    reconnect?: string;
-  }>();
+  /** The Session from an external link or a cold start's Last Place. */
+  const routeSession = useLocalSearchParams<RouteSession>();
   const insets = useSafeAreaInsets();
   const { settings, update, terminal, ansi, appearance, palette: chrome, sheetPalette } = useSettings();
 
-  const bootstrap = useRef({ hostId: routeHostId, session: sessionParam, topicId: routeTopicId, reconnect });
-  const bootstrapAttempt = useRef(-1);
   const holder = useAttachHolder();
   const attach = useCurrentAttach();
   const state = useAttachState(attach);
-  const hostId = attach?.hostId ?? routeHostId;
-  /** Why the screen could not even ask for an Attach: a Host that has gone. */
-  const [missing, setMissing] = useState<string | null>(null);
-  /**
-   * The visit that finds the Session before a cold-start reconnect attaches,
-   * or null when this screen was not opened by one.
-   */
-  const [lookup, setLookup] = useState<Lookup | null>(reconnect ? LOOKUP_START : null);
-  const [reconnectHost, setReconnectHost] = useState('');
-  /** Bumped by Try again, to run the reconnect once more. Nothing else retries it. */
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const tryReconnectAgain = useCallback(() => {
-    setLookup(LOOKUP_START);
-    setReconnectAttempt((attempt) => attempt + 1);
-  }, []);
+  const hostId = attach?.hostId ?? routeSession.hostId;
+  const opening = useRouteSession(routeSession, 'terminal', say);
+  const { missing, lookup, forgetLookup } = opening;
 
   const goHost = useCallback(() => {
     if (hostId) router.dismissTo({ pathname: '/hosts/[id]', params: { id: hostId } });
@@ -216,78 +181,6 @@ export default function TerminalScreen() {
     ensureParents();
     return stop;
   }, [hostId, navigation]);
-
-  /**
-   * Asks the root for the Session this route names, if it is not already up.
-   *
-   * The only life-cycle act left in this file, and it is a request rather than
-   * a start: the holder decides whether anything happens, and tapping the row
-   * of a Session that is already attached happens to mean nothing at all.
-   */
-  useEffect(() => {
-    say(`opened for ${hostId ?? '?'}:${sessionParam ?? '?'}`);
-    const requested = routeHostId && sessionParam
-      ? { hostId: routeHostId, session: sessionParam, topicId: routeTopicId, reconnect }
-      : reconnectAttempt > 0 && reconnectAttempt > bootstrapAttempt.current ? bootstrap.current : null;
-    if (!requested?.hostId || !requested.session) {
-      setMissing(holder.current() ? null : 'No Host was chosen.');
-      return;
-    }
-    bootstrap.current = requested;
-    bootstrapAttempt.current = reconnectAttempt;
-    let left = false;
-    void (async () => {
-      const store = deviceHostStore();
-      const records = await store.load();
-      const host = records.hosts.find((candidate) => candidate.id === requested.hostId);
-      if (left) return;
-      if (!host) {
-        say('the Host in the route is no longer saved');
-        setMissing('This Host is no longer saved.');
-        return;
-      }
-      setMissing(null);
-      // The Last Place's Topic or Session opens at its Place, a Browser Tab
-      // included: the Web View goes on top once the Attach is there to show it.
-      const found = findPlace(records, host.id, placeOwner(requested.topicId || null, requested.session!));
-      const place = found?.session === requested.session ? found : null;
-      const request = {
-        host,
-        destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null,
-          restore: place },
-        zoomed: settings.zoomMultipaneWindows,
-      };
-      if (!requested.reconnect) {
-        await holder.open(request);
-        if (!left) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
-        if (!left && place?.tab) router.replace(placeTabRoute(place.tab));
-        return;
-      }
-      setReconnectHost(host.displayName);
-      let accepted = false;
-      await reconnectToSession({
-        session: requested.session!,
-        visit: sessionVisit(host),
-        attach: async () => {
-          if (left) return;
-          await holder.open(request);
-          accepted = true;
-        },
-        progress: (next) => {
-          if (!left) setLookup(next);
-        },
-      });
-      if (!left && accepted) router.setParams({ hostId: '', session: '', topicId: '', reconnect: '' });
-      if (!left && accepted && place?.tab) router.replace(placeTabRoute(place.tab));
-    })().catch((error) => { if (!left) setMissing(describeError(error)); });
-    return () => {
-      left = true;
-      say('left');
-    };
-    // The Zoom preference is what the Session is *opened* with; changing it in
-    // Settings must not reopen a Session that is already up.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holder, routeHostId, sessionParam, reconnectAttempt]);
 
   /** The Surface area's size in points, which every Pane is placed inside. */
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -323,8 +216,6 @@ export default function TerminalScreen() {
   }, [physicalKeyboard]);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   const closePicker = useCallback(() => setPicker({ open: false }), []);
-  /** A cold start's visit is over once a Session is picked in place of one that stopped. */
-  const forgetLookup = useCallback(() => setLookup(null), []);
   /**
    * A Tab picked in the Title Sheet: its page in the Web View. The Attach
    * stays up. The page takes this screen's place, so Back from it goes to the
@@ -1215,8 +1106,8 @@ export default function TerminalScreen() {
 
 
   const place = {
-    hostName: attach?.hostName ?? reconnectHost,
-    session: state?.sessionName ?? bootstrap.current.session ?? '',
+    hostName: attach?.hostName ?? opening.hostName,
+    session: state?.sessionName ?? opening.session,
   };
   const cover = coverOf({
     missing,
@@ -1225,42 +1116,7 @@ export default function TerminalScreen() {
     place,
   });
 
-  /** A Cover's button. Each is the same act wherever it shows: the Connection Screen or a card. */
-  const runCoverAction = useCallback((action: CoverAction) => {
-    say(`Cover: ${actionLabel(action)}`);
-    switch (action) {
-      case 'reconnect':
-      case 'try-again':
-        // The cold start's visit, if that is what stopped; else the Attach,
-        // which reads the Host record again, so an edit to it counts.
-        if (lookup?.kind === 'failed' || !attach) tryReconnectAgain();
-        else attach.reconnect();
-        return;
-      case 'edit-host':
-        if (hostId) router.push({ pathname: '/host-form', params: { id: hostId } });
-        return;
-      case 'accept-key':
-        if (lookup?.kind === 'failed' && lookup.step === 'checking-host-key') {
-          const fingerprint = lookup.fingerprint;
-          void (async () => {
-            if (hostId) await deviceHostStore().rememberFingerprint(hostId, fingerprint);
-            tryReconnectAgain();
-          })();
-        } else {
-          void attach?.acceptHostKey();
-        }
-        return;
-      case 'choose-session':
-        openSessionsOnly();
-        return;
-      case 'go-to-host':
-        goHost();
-        return;
-      case 'go-to-hosts':
-        router.dismissTo('/');
-        return;
-    }
-  }, [lookup, attach, hostId, router, tryReconnectAgain, openSessionsOnly, goHost]);
+  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly, goHost, say });
 
   return (
     <TerminalHeader
@@ -2401,20 +2257,3 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 });
-
-/** The reconnect's visit to `host`, on the Host's Connection. */
-function sessionVisit(host: Host): SessionVisit {
-  return async ({ onHostKey, onSignedIn }) => {
-    const sessions = await appConnections().read(
-      host,
-      (transport) => {
-        onSignedIn();
-        return new TmuxClient(execCommandRunner(transport, host.tmuxExecutablePath)).listSessions();
-      },
-      { onHostKey },
-    );
-    const names = sessions.map((candidate) => candidate.name);
-    say(`reconnect: ${host.displayName} has ${names.join(', ') || 'no Sessions'}`);
-    return names;
-  };
-}

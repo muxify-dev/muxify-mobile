@@ -2,7 +2,8 @@ import { describeError } from '@/lib/describe-error';
 import type { Settings } from '@/settings/settings';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { LastPlace, Records } from '@/storage/records';
+import { placeTabRoute } from '@/browser/place-tab-route';
+import { findPlace, placeOwner, type LastPlace, type Place, type Records } from '@/storage/records';
 
 /** What the Connection Screen shows for a cold start, in the order a reconnect goes through them. */
 export const RECONNECT_STEPS = [
@@ -45,6 +46,31 @@ export function placeToReconnect(
   const place = records.lastPlace;
   if (!settings.reconnectOnStart || place === null) return null;
   return records.hosts.some((host) => host.id === place.hostId) ? place : null;
+}
+
+/**
+ * The Place a Last Place opens at: its Topic's Topic Place, or its Session's
+ * Session Place when it has no Topic. A Topic Place left in another Session of
+ * the Topic does not count: the Last Place names the Session to open.
+ */
+export function placeOfLastPlace(records: Pick<Records, 'places'>, last: LastPlace): Place | null {
+  const found = findPlace(records, last.hostId, placeOwner(last.topicId, last.session));
+  return found?.session === last.session ? found : null;
+}
+
+/**
+ * The screen a cold start opens the Last Place on, over the Host Screen. A
+ * Place with a Tab opens its Web View, which shows the Connection Screen
+ * while the reconnect runs: no Terminal Screen comes first, so no Surface is
+ * mounted to size the Mac's Window while only the page is ever shown. Any
+ * other Place opens the Terminal Screen.
+ */
+export function coldStartRoute(records: Pick<Records, 'places'>, last: LastPlace) {
+  const opening = { hostId: last.hostId, session: last.session, ...(last.topicId ? { topicId: last.topicId } : {}), reconnect: '1' };
+  const tab = placeOfLastPlace(records, last)?.tab;
+  if (!tab) return { pathname: '/terminal', params: opening } as const;
+  const page = placeTabRoute(tab);
+  return { pathname: page.pathname, params: { ...page.params, ...opening } } as const;
 }
 
 export function reconnectStepLabel(step: ReconnectStep): string {

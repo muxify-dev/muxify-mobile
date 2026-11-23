@@ -21,8 +21,9 @@ interface ConnectionScreenProps {
  * reconnect, a failure before the first paint, and a Host that is not saved.
  *
  * Every step, the ones done ticked and the current one turning. Drawn over the
- * Terminal Screen rather than pushed as its own, because the Attach reaches
- * its attached phase only once a Surface below has reported its grid. Go to
+ * Terminal Screen rather than pushed as its own, and over the Web View that a
+ * cold start opens for a Place with a Tab, so the screen under it is already
+ * the one the user lands on. Go to
  * Host is there at every step. A failure stays, with its reason and the
  * actions for it: nothing here tries again by itself.
  */
