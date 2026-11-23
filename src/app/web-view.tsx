@@ -118,8 +118,8 @@ export default function WebViewScreen() {
   }, []);
   /**
    * A pick in the Title Sheet. A Topic or Session whose Place has a Tab shows that
-   * page in place of this one, in one move; any other pick goes to the
-   * Terminal Screen under it.
+   * page in place of this one, in one move; any other pick puts the Terminal
+   * Screen back in this one's place.
    */
   const moved = useCallback((tab: PlaceTab | null) => {
     if (!tab) {
