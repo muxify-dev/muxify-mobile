@@ -1,10 +1,11 @@
 import type { Mark } from './environment';
 import {
+  allowsFullSwipe,
   closeAlert,
   menuActions,
-  swipeAction,
+  readAction,
   type CardSection,
-  type SwipeAction,
+  type ReadAction,
   type TopicAction,
   TOPIC_ACTION_LABEL,
 } from './topic-action';
@@ -49,13 +50,26 @@ describe('what the menu of a Topic card offers', () => {
 });
 
 describe('what the menu of a Board Session card offers', () => {
+  const live = (section: CardSection, mark: Mark | null = null) => menuActions({ kind: 'live-session', section, mark });
+
   it.each<[CardSection, TopicAction[]]>([
-    ['pinned', ['unpin', 'move-up', 'move-down']],
-    ['in-play', ['pin', 'move-up', 'move-down', 'bench']],
-    ['guests', ['pin', 'move-up', 'move-down', 'bench']],
-  ])('in %s, with no Mark as Read and no Bench on a Pinned card', (section, expected) => {
-    expect(menuActions({ kind: 'board-session', section, mark: null })).toEqual(expected);
-    expect(menuActions({ kind: 'board-session', section, mark: 'unread' })).toEqual(expected);
+    ['pinned', ['mark-unread', 'unpin', 'move-up', 'move-down']],
+    ['in-play', ['mark-unread', 'pin', 'move-up', 'move-down', 'bench']],
+    ['guests', ['mark-unread', 'pin', 'move-up', 'move-down', 'bench']],
+  ])('on a live one in %s, with no Bench on a Pinned card', (section, expected) => {
+    expect(live(section)).toEqual(expected);
+  });
+
+  it.each<Mark>(['done', 'failed'])('offers Mark as Read on a live one with a %s Agent', (mark) => {
+    expect(live('guests', mark)).toEqual(['mark-read', 'pin', 'move-up', 'move-down', 'bench']);
+  });
+
+  it.each<Mark>(['working', 'blocked'])('offers neither on a live one with a %s Agent', (mark) => {
+    expect(live('guests', mark)).toEqual(['pin', 'move-up', 'move-down', 'bench']);
+  });
+
+  it('offers neither on a Dormant one, which has no Agents', () => {
+    expect(menuActions({ kind: 'dormant-session', section: 'guests', mark: null })).toEqual(['pin', 'move-up', 'move-down', 'bench']);
   });
 });
 
@@ -79,15 +93,25 @@ describe('the confirm alert of Settle… and Forget…', () => {
   });
 });
 
-describe('the trailing swipe of a Topic card', () => {
-  it.each<[Mark | null, SwipeAction | null]>([
+describe('Mark as Read or Mark as Unread on a card', () => {
+  it.each<[Mark | null, ReadAction | null]>([
     ['unread', 'mark-read'],
     [null, 'mark-unread'],
     ['done', 'mark-read'],
     ['failed', 'mark-read'],
     ['working', null],
     ['blocked', null],
-  ])('with mark %s offers %s', (mark, expected) => {
-    expect(swipeAction(mark)).toBe(expected);
+  ])('with mark %s offers %s on a Topic and on a live Board Session', (mark, expected) => {
+    expect(readAction({ kind: 'topic', mark })).toBe(expected);
+    expect(readAction({ kind: 'live-session', mark })).toBe(expected);
+  });
+
+  it('offers nothing on a Dormant Board Session', () => {
+    expect(readAction({ kind: 'dormant-session', mark: null })).toBeNull();
+  });
+
+  it('lets a full swipe run Read only', () => {
+    expect(allowsFullSwipe('mark-read')).toBe(true);
+    expect(allowsFullSwipe('mark-unread')).toBe(false);
   });
 });

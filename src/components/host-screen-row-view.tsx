@@ -14,7 +14,7 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
 import { actionLabel } from '@/domain/cover';
-import type { BoardSessionRow, CardRow, HostScreenRow, OpenableRow, SessionRow } from '@/domain/host-screen';
+import { menuCard, type BoardSessionRow, type CardRow, type HostScreenRow, type OpenableRow, type SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
 import { cardKey } from '@/topics/board-card';
@@ -339,7 +339,7 @@ function CardMenu({
 }) {
   const { onWake, onCardAction, onMove } = actions;
   const wakes = dormant && onWake !== undefined;
-  const orders = onCardAction === undefined ? [] : menuActions(row);
+  const orders = onCardAction === undefined ? [] : menuActions(menuCard(row));
   if (!wakes && orders.length === 0 && onMove === undefined && !hasItems(children)) return card;
   return (
     <ContextMenu>

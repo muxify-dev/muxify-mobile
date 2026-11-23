@@ -217,6 +217,10 @@ describe('the orders of a Board Session card, as MuxifyCore pins them', () => {
   });
 
   it.each<[string, BoardCard, CardOrder, object, object]>([
+    ['Mark as Read on a live one, which reads the Agents of its Session', { kind: 'live-session', session: '$6' as SessionId },
+      { kind: 'action', action: 'mark-read' }, { mark_read: { change: 'read', scope: 'session' } }, { session: '$6' }],
+    ['Mark as Unread on a live one, which makes the Agents of its Session Unread', { kind: 'live-session', session: '$6' as SessionId },
+      { kind: 'action', action: 'mark-unread' }, { mark_read: { change: 'unread', scope: 'session' } }, { session: '$6' }],
     ['Bench on a live one', { kind: 'live-session', session: '$6' as SessionId }, { kind: 'action', action: 'bench' },
       { bench_topic: {} }, { session: '$6' }],
     ['Bench on a Dormant one', DORMANT, { kind: 'action', action: 'bench' }, { bench_topic: {} }, { board_session: 's1' }],

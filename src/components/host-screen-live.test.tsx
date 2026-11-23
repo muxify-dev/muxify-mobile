@@ -311,7 +311,7 @@ describe('a live Host Screen', () => {
     await server.push(protocolFrames('5-board').find((frame) => frame.kind === 'item' && 'pinned' in frame.item)!.item);
 
     expect(labels()).toEqual([
-      'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session docs',
+      'Mark as Unread', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session docs', 'Mark as Unread docs',
       'Reopen', 'Start Fresh', 'Unpin', 'Move Up', 'Move Down', 'Move…', 'Session logs',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session scratch',
       'Reopen', 'Start Fresh', 'Pin', 'Move Up', 'Move Down', 'Bench', 'Move…', 'Session notes',
@@ -324,6 +324,9 @@ describe('a live Host Screen', () => {
     await act(async () => { labelled('Unpin')[0]!.props.onPress(); });
     expect(mockSend).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'host' }), { kind: 'live-session', session: '$6' }, { kind: 'action', action: 'unpin' }, expect.any(Function));
+    await act(async () => { button('Mark as Unread docs').props.onPress(); });
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'host' }), { kind: 'live-session', session: '$6' }, { kind: 'action', action: 'mark-unread' }, expect.any(Function));
     await act(async () => { labelled('Reopen')[0]!.props.onPress(); });
     expect(mockSend).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'host' }), { kind: 'dormant-session', id: 's4' }, { kind: 'wake', wake: 'reopen' }, expect.any(Function));

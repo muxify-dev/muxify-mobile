@@ -492,7 +492,13 @@ can be Pinned, take an In Play place or be a Guest, but it is never on the
 Bench. The Host keeps it in its state database, so a tmux restart leaves its
 card at its place as a Dormant card. Its long-press menu has Pin or Unpin,
 Move Up, Move Down and, when it is not Pinned, Bench, which takes the card off
-the Board. A Dormant one also has Reopen and Start Fresh.
+the Board. A Dormant one also has Reopen and Start Fresh. A live one also has
+Mark as Read when its card shows a done or failed mark, and Mark as Unread
+when it shows no mark, in the menu and in a trailing swipe as on a Topic card.
+It has no mark of its own, so both act on the Agents of its Session: Read
+clears their Unread, and Unread makes each Agent that is not working Unread.
+The Host Screen cannot see whether the Session has such an Agent, so Mark as
+Unread can change nothing.
 _Avoid_: Locked Session, Lock, Guest Session
 
 **Session Place**:

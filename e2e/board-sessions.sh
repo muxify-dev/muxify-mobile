@@ -334,16 +334,16 @@ expect "TopA bspin | bsplace open open | bsguest bsextra | TopB"
 scroll_to top
 
 echo "== Live Board Sessions: menus and moves"
-menu "Session bspin" "Unpin|Move Up|Move Down|Move…" "Move Up"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…" "Move Up"
 expect "bspin TopA | bsplace open open | bsguest bsextra | TopB"
-menu "Session bsguest" "Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsguest" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsguest did not start"
 targets=$(move_targets)
 [ "$targets" = "Fill Open Place|Move below bsextra|Trade TopB|Trade bsplace" ] || fail "the targets of bsguest are '$targets'"
 echo "ok: the targets of Guest bsguest are $targets, none on a Pinned card"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
-menu "Session bsplace" "Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of bsplace did not start"
 reveal "Trade bsguest" || fail "no Trade bsguest target"
 agent-device press 'label="Trade bsguest"' --settle >/dev/null || fail "no Trade bsguest"
@@ -451,17 +451,17 @@ menu "Session bsplace" "Reopen|Start Fresh|Pin|Move Up|Move Down|Bench|Move…" 
 LIVE_PLACES=$(python3 -c 'import sys; print(sys.argv[1].replace("bsguest~", "open").replace("bsplace~", "bsplace"))' "$PLACES")
 expect "bspin TopA~ | $LIVE_PLACES | bsextra | TopB~"
 tmux has-session -t '=bsplace' || fail "tmux has no Session bsplace"
-menu "Session bsplace" "Pin|Move Up|Move Down|Bench|Move…" "Move…"
+menu "Session bsplace" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Move…"
 agent-device press 'label="Cancel Move"' --settle >/dev/null || fail "no Cancel Move"
 agent-device wait absent 'label="Cancel Move"' 3000 >/dev/null || fail "Cancel did not end the move"
 echo "ok: live bsplace shows in its place, with the menu of a live card"
 
 echo "== Unpin puts the card at the end of the Guests"
-menu "Session bspin" "Unpin|Move Up|Move Down|Move…" "Unpin"
+menu "Session bspin" "Mark as Unread|Unpin|Move Up|Move Down|Move…" "Unpin"
 expect "TopA~ | $LIVE_PLACES | bsextra bspin | TopB~"
 
 echo "== Bench a live Board Session: it leaves the Board and stays a Session"
-menu "Session bspin" "Pin|Move Up|Move Down|Bench|Move…" "Bench"
+menu "Session bspin" "Mark as Unread|Pin|Move Up|Move Down|Bench|Move…" "Bench"
 expect_mac "TopA~ | $LIVE_PLACES | bsextra | TopB~"
 # The app is still attached to bspin, which is now in No Topic: the Bench
 # shows it as the Attach's peek, above the Benched cards.

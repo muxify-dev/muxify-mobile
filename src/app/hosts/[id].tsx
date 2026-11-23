@@ -49,9 +49,11 @@ import { hostProblemWords } from '@/domain/cover';
 import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
   cardOf,
+  cardTitle,
   firstReadAnswered,
   hostScreen,
   hostScreenTabs,
+  menuCard,
   runningSessions,
   tabOnShow,
   type CardRow,
@@ -79,9 +81,10 @@ import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach
 import type { BoardCard } from '@/topics/board-card';
 import { lastSnapshot } from '@/topics/host-topics';
 import {
+  allowsFullSwipe,
   closeAlert,
+  readAction,
   SWIPE_LABEL,
-  swipeAction,
   TOPIC_ACTION_ICON,
   TOPIC_ACTION_LABEL,
   type CardAction,
@@ -328,18 +331,18 @@ export default function HostScreen() {
     if (targets !== null) {
       return <HostScreenRowView key={key} row={row} palette={palette} actions={movingActions} move={moveRole(row)} />;
     }
-    if (row.kind === 'topic') {
-      const swipe = swipeAction(row.mark);
+    if (row.kind === 'topic' || row.kind === 'board-session') {
+      const swipe = readAction(menuCard(row));
       if (swipe !== null) {
         return (
           <SwipeActions key={key}>
             <HostScreenRowView row={row} palette={palette} actions={actions} />
-            <SwipeActions.Actions allowsFullSwipe={swipe === 'mark-read'}>
+            <SwipeActions.Actions allowsFullSwipe={allowsFullSwipe(swipe)}>
               <Button
                 label={SWIPE_LABEL[swipe]}
                 systemImage={TOPIC_ACTION_ICON[swipe]}
                 onPress={() => void actFromMenu(cardOf(row), swipe)}
-                modifiers={[accessibilityLabel(`${TOPIC_ACTION_LABEL[swipe]} ${row.label}`)]}
+                modifiers={[accessibilityLabel(`${TOPIC_ACTION_LABEL[swipe]} ${cardTitle(row)}`)]}
               />
             </SwipeActions.Actions>
           </SwipeActions>

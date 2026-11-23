@@ -14,7 +14,7 @@ import { array, object } from './json-shape';
 import { firstPush, sendEnvironment, type EnvironmentAnswer, type EnvironmentCommand, type ServerConnections } from './host-write-request';
 import { parseNewTopic, type NewTopicRead } from './new-topic';
 import type { RequestId } from './request';
-import type { CardAction, TopicAction } from './topic-action';
+import { isReadable, READ_SCOPES, type CardAction, type TopicAction } from './topic-action';
 import { parseTopicDetail, TOPIC_GONE, type TopicDetail } from './topic-detail';
 import type { Drop } from './topic-drop';
 import type { TopicChange, TopicWrite } from './topic-edit';
@@ -48,15 +48,16 @@ const CLOSING: Record<ClosingAction, { close: 'settle' | 'forget'; stopSessions:
 };
 
 /**
- * The command of a menu order that needs nothing from the Host first. Mark as
- * Read reads the whole Topic; Mark as Unread changes only its Topic mark.
+ * The command of a menu order on this kind of card that needs nothing from
+ * the Host first. Mark as Read and Mark as Unread take the card's scope from
+ * `READ_SCOPES`; no menu offers them on a card with nothing to read.
  */
-export function actionCommand(action: CardAction): EnvironmentCommand {
+export function actionCommand(action: CardAction, card: BoardCard['kind']): EnvironmentCommand {
   switch (action) {
     case 'mark-read':
-      return { mark_read: { change: 'read', scope: 'topic' } };
     case 'mark-unread':
-      return { mark_read: { change: 'unread', scope: 'topic_mark' } };
+      if (!isReadable(card)) throw new Error(`A ${card} card has nothing to read.`);
+      return { mark_read: { change: action === 'mark-read' ? 'read' : 'unread', scope: READ_SCOPES[card][action] } };
     case 'move-up':
       return { move_card: { move: { up: {} } } };
     case 'move-down':
