@@ -1,5 +1,5 @@
 import { createHostStore, credentialKey, type JsonFile, type Secrets } from './store';
-import type { TopicPlace } from './records';
+import type { Place } from './records';
 
 function fakeStorage(initial: string | null = null) {
   let contents = initial;
@@ -210,7 +210,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
-      topicPlaces: [],
+      places: [],
     });
   });
 
@@ -223,7 +223,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
-      topicPlaces: [],
+      places: [],
     });
   });
 
@@ -236,7 +236,7 @@ describe('load', () => {
       fingerprints: [],
       recentSessions: [],
       lastPlace: null,
-      topicPlaces: [],
+      places: [],
     });
   });
 });
@@ -412,10 +412,10 @@ describe('reorderHosts', () => {
   });
 });
 
-describe('Topic Places', () => {
-  const place = (over: Partial<TopicPlace> = {}): TopicPlace => ({
+describe('Places', () => {
+  const place = (over: Partial<Place> = {}): Place => ({
     hostId: 'host1',
-    topicId: 'topic1',
+    owner: { kind: 'topic', topicId: 'topic1' },
     session: 'work',
     window: { id: '@2', index: 1, name: 'editor' },
     pane: '%7',
@@ -423,50 +423,139 @@ describe('Topic Places', () => {
     at: '2026-11-15T10:00:00.000Z',
     ...over,
   });
+  const sessionPlace = (over: Partial<Place> = {}): Place =>
+    place({ owner: { kind: 'session', session: 'work' }, ...over });
+  /** A read after every Place above was written. */
+  const readLater = new Date('2026-11-15T11:00:00.000Z');
 
-  it('keeps one per Topic of each Host and reads it back after a relaunch', async () => {
+  it('keeps one per owner of each Host, a Topic or a Session, and reads it back after a relaunch', async () => {
     const storage = fakeStorage();
     const store = createHostStore(storage.file, storage.secrets);
-    await store.rememberTopicPlace(place());
-    await store.rememberTopicPlace(place({ hostId: 'host2' }));
-    await store.rememberTopicPlace(place({ pane: '%8', tab: null }));
+    await store.rememberPlace(place());
+    await store.rememberPlace(place({ hostId: 'host2' }));
+    await store.rememberPlace(sessionPlace({ pane: '%9' }));
+    await store.rememberPlace(place({ pane: '%8', tab: null }));
 
     const relaunched = createHostStore(fakeStorage(storage.written()).file, storage.secrets);
-    expect(await relaunched.topicPlaceFor('host1', 'topic1')).toEqual(place({ pane: '%8', tab: null }));
-    expect(await relaunched.topicPlaceFor('host2', 'topic1')).toEqual(place({ hostId: 'host2' }));
-    expect(await relaunched.topicPlaceFor('host1', 'other')).toBeNull();
+    expect(await relaunched.placeFor('host1', { kind: 'topic', topicId: 'topic1' })).toEqual(place({ pane: '%8', tab: null }));
+    expect(await relaunched.placeFor('host2', { kind: 'topic', topicId: 'topic1' })).toEqual(place({ hostId: 'host2' }));
+    expect(await relaunched.placeFor('host1', { kind: 'session', session: 'work' })).toEqual(sessionPlace({ pane: '%9' }));
+    expect(await relaunched.placeFor('host1', { kind: 'topic', topicId: 'other' })).toBeNull();
+    expect(await relaunched.placeFor('host1', { kind: 'session', session: 'renamed' })).toBeNull();
+  });
+
+  it('reads the Topic Places of an older build as Topic Places, and writes them back as Places', async () => {
+    const { owner: _owner, ...rest } = place();
+    const storage = fakeStorage(JSON.stringify({ hosts: [], topicPlaces: [{ ...rest, topicId: 'topic1' }] }));
+    const store = createHostStore(storage.file, storage.secrets);
+
+    expect(await store.placeFor('host1', { kind: 'topic', topicId: 'topic1' })).toEqual(place());
+    await store.rememberPlace(sessionPlace());
+
+    const written = JSON.parse(storage.written());
+    expect(written.topicPlaces).toBeUndefined();
+    expect(written.places).toEqual([place(), sessionPlace()]);
   });
 
   it('drops a bad entry and keeps the rest of the records', async () => {
     const good = place();
+    const { owner: _owner, ...legacy } = good;
     const { file, secrets } = fakeStorage(JSON.stringify({
       hosts: [],
       lastPlace: { hostId: 'host1', session: 'work', topicId: 'topic1' },
-      topicPlaces: [
+      places: [
         good,
-        { ...good, topicId: 'no window id', window: { index: 1, name: 'editor' } },
-        { ...good, topicId: 'bad tab', tab: { url: 'http://a.ts.net/', page: 'http://a.ts.net/', scrollY: 'top' } },
+        { ...good, owner: { kind: 'topic', topicId: 'no window id' }, window: { index: 1, name: 'editor' } },
+        { ...good, owner: { kind: 'topic', topicId: 'bad tab' }, tab: { url: 'http://a.ts.net/', page: 'http://a.ts.net/', scrollY: 'top' } },
         { ...good, session: '' },
+        { ...good, owner: { kind: 'session', session: 'other' } },
+        { ...good, owner: { kind: 'window', id: '@2' } },
+        'not a place',
+      ],
+      topicPlaces: [
+        { ...legacy, topicId: 'legacy' },
+        { ...legacy, topicId: '' },
+        { ...legacy, topicId: 'legacy bad pane', pane: 7 },
         'not a place',
       ],
     }));
 
     const records = await createHostStore(file, secrets).load();
-    expect(records.topicPlaces).toEqual([good]);
+    expect(records.places).toEqual([good, place({ owner: { kind: 'topic', topicId: 'legacy' } })]);
     expect(records.lastPlace).toEqual({ hostId: 'host1', session: 'work', topicId: 'topic1' });
   });
 
-  it('goes with its Host, and stays through a Disconnect', async () => {
+  it('goes with its Host, of both kinds, and stays through a Disconnect', async () => {
     const { file, secrets } = fakeStorage();
     const store = createHostStore(file, secrets, ids());
     const kept = await store.saveHost({ host: HOST, identity: IDENTITY, credential: 'hunter2' });
     const removed = await store.saveHost({ host: { ...HOST, displayName: 'Other' }, identity: IDENTITY, credential: 'x' });
-    await store.rememberTopicPlace(place({ hostId: kept.id }));
-    await store.rememberTopicPlace(place({ hostId: removed.id }));
+    await store.rememberPlace(place({ hostId: kept.id }));
+    await store.rememberPlace(sessionPlace({ hostId: kept.id }));
+    await store.rememberPlace(place({ hostId: removed.id }));
+    await store.rememberPlace(sessionPlace({ hostId: removed.id }));
 
     await store.forgetLastPlace();
     await store.removeHost(removed.id);
 
-    expect((await store.load()).topicPlaces).toEqual([place({ hostId: kept.id })]);
+    expect((await store.load()).places).toEqual([place({ hostId: kept.id }), sessionPlace({ hostId: kept.id })]);
+  });
+
+  it('prunes the Session Places of Sessions the Host no longer has, and keeps Topic Places and other Hosts', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    const notes = sessionPlace({ owner: { kind: 'session', session: 'notes' }, session: 'notes' });
+    const killed = sessionPlace({ owner: { kind: 'session', session: 'killed' }, session: 'killed' });
+    const elsewhere = sessionPlace({ hostId: 'host2', owner: { kind: 'session', session: 'killed' }, session: 'killed' });
+    const topic = place({ session: 'killed' });
+    for (const each of [sessionPlace(), notes, killed, elsewhere, topic]) await store.rememberPlace(each);
+
+    await store.pruneSessionPlaces('host1', new Set(['work', 'notes']), readLater);
+
+    expect((await store.load()).places).toEqual([sessionPlace(), notes, elsewhere, topic]);
+  });
+
+  it('keeps a Session Place written at or after the read, whose Session the read was too early to see', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    const readAt = new Date('2026-11-15T10:00:00.000Z');
+    const before = sessionPlace({ owner: { kind: 'session', session: 'old' }, session: 'old', at: '2026-11-15T09:59:59.999Z' });
+    const same = sessionPlace({ owner: { kind: 'session', session: 'same' }, session: 'same', at: '2026-11-15T10:00:00.000Z' });
+    const after = sessionPlace({ owner: { kind: 'session', session: 'new' }, session: 'new', at: '2026-11-15T10:00:00.001Z' });
+    for (const each of [before, same, after]) await store.rememberPlace(each);
+
+    await store.pruneSessionPlaces('host1', new Set(['work']), readAt);
+
+    expect((await store.load()).places).toEqual([same, after]);
+  });
+
+  it('writes nothing when a prune finds nothing to delete', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    await store.rememberPlace(sessionPlace());
+    const before = storage.written();
+    let writes = 0;
+    const counted = createHostStore({ read: storage.file.read, write: async (next) => { writes += 1; await storage.file.write(next); } }, storage.secrets);
+
+    await counted.pruneSessionPlaces('host1', new Set(['work']), readLater);
+
+    expect(writes).toBe(0);
+    expect(storage.written()).toBe(before);
+  });
+
+  it('loses no change when two run at once', async () => {
+    // A file whose reads and writes take turns with other work, as the device's do.
+    let contents: string | null = null;
+    const slow: JsonFile = {
+      read: async () => { await Promise.resolve(); return contents; },
+      write: async (next) => { await Promise.resolve(); contents = next; },
+    };
+    const store = createHostStore(slow, fakeStorage().secrets);
+    const gone = sessionPlace({ owner: { kind: 'session', session: 'gone' }, session: 'gone' });
+    await store.rememberPlace(gone);
+
+    await Promise.all([store.pruneSessionPlaces('host1', new Set(['work']), readLater), store.rememberPlace(sessionPlace())]);
+
+    expect((await store.load()).places).toEqual([sessionPlace()]);
   });
 });

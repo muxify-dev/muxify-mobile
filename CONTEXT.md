@@ -149,7 +149,10 @@ the Attach currently holds, if any. The app writes it each time an Attach reache
 attached phase or switches Session, and clears it on Disconnect. With Reconnect
 on start on, a cold start opens it again behind the Connection Screen, titled
 "Trying to reconnect". Its Topic, when it has one, opens at that Topic's Topic
-Place, so a cold start can open the Web View again.
+Place, and a Session with no Topic at its Session Place. When that Place has a
+Tab, the cold start opens the Web View right away, with the Connection Screen
+over the page until the Session is attached, and no Terminal Screen comes
+first; else it opens the Terminal Screen.
 A Disconnect means "do not take me back", so the next cold start opens Home.
 _Avoid_: last session, resume point, saved state
 
@@ -268,7 +271,10 @@ alternate screen, it fits above the keyboard instead. Returning to the normal
 screen restores the full height even if the keyboard stays up (ADR 0008). Under tmux's `window-size latest` the Window takes the size of the
 latest Client, and a laptop that types becomes it. So Muxify claims the Window
 with every size it asks for, and again on the next key typed on the phone after
-another Client has taken it.
+another Client has taken it. An Attach does not wait for a Surface: until a
+Surface reports a grid that has stopped moving, the Client says no size, and
+tmux leaves the Window at the size it has. So a Place's Web View, opened with
+no Terminal Screen under it, does not resize the Mac's Window.
 _Avoid_: viewer, terminal, connection
 
 **Slide**:
@@ -303,9 +309,11 @@ changes. Opening the Topic again goes back to it, also when it is the Topic
 that the Attach still holds: the Topic Place's Session
 while the Topic lists it live, then its Window by id, else by index and name,
 then its Pane. When it has a Tab that the Host still lists, the Web View opens
-again; a Tab the Host lists no more leaves the user on the Pane. A pick in the
-Title Sheet, a Pane Swipe and the Panes picker only write it. A Disconnect keeps
-it; deleting the Host removes it. See ADR 0020.
+again; a Tab the Host lists no more leaves the user on the Pane. A Topic picked
+in the Title Sheet's Topics list goes back to it too. A Window or Session pick
+in the Title Sheet's rows, a Pane Swipe and the Panes picker only write it. A
+Disconnect keeps it; deleting the Host removes it. An Attach with no Topic
+keeps a Session Place in the same way. See ADR 0020.
 _Avoid_: last place (for one Topic), position, bookmark
 
 **Topic Note**:
@@ -486,6 +494,22 @@ card at its place as a Dormant card. Its long-press menu has Pin or Unpin,
 Move Up, Move Down and, when it is not Pinned, Bench, which takes the card off
 the Board. A Dormant one also has Reopen and Start Fresh.
 _Avoid_: Locked Session, Lock, Guest Session
+
+**Session Place**:
+Where the user was in one Session with no Topic on this phone: its Window, Pane
+and, if the Web View was on top, the Browser Tab and how far the page was
+scrolled. The phone keeps one for each Session of each Host, by the Session's
+name, so a renamed Session starts with none. It is the Topic Place's twin, for
+an Attach that holds no Topic: the same writes, and opening the Session again
+from the Host Screen, from Go to or on a cold start goes back to it in the same
+way. A Board Session's card opens a Session with no Topic, so it has one too.
+A pick of another Session in the Title Sheet's Sessions list, and Choose a
+Session after a Session ended, also go back to it, as a Topic pick in the
+Title Sheet goes back to the Topic Place. When the Host's Host Server says
+which Sessions the Host has, the phone deletes each Session Place whose
+Session is neither live nor a Dormant Board Session. See ADR (draft) "A Place
+belongs to a Topic or a Session".
+_Avoid_: Session history, last Session place
 
 ### Terminal
 
@@ -679,21 +703,23 @@ Browser has no Tabs, and a Host in Sessions only, list no Tabs. See ADR
 _Avoid_: page, link, bookmark, browser tab (in lower case, for the term)
 
 **Web View**:
-The screen that a tap on a Browser Tab opens, over the Terminal Screen. It
-loads the Tab's URL on the phone, so it shows what the address serves and not
-the state of the Tab on the Host. Its title is the Header's for the Topic: the
-Topic title over one dim line with 🌐, the page's title and the Session name.
-Without a Topic, it is the Session name over the page's title. A tap on the
-title opens the Title Sheet. A Window or Session pick there, or a Topic, goes
-to the Terminal Screen; a Tab pick shows that Tab in the same Web View. Reload,
-and a pull down on the page, load the page again. A page that does not load
-shows the reason and **Try again**. In a Topic, Back goes to the Host Screen,
-as Back on the Terminal Screen does, and the Topic Place keeps the Tab, so
-opening the Topic again shows the page again. In a Topic, the page stands in
-the Terminal Screen's place, so the swipe from the edge shows the Host Screen
-under it, and the Title Sheet's Window pick puts the Terminal Screen back. A Window pick in the Title Sheet
-is the way to the terminal, and it clears the Tab. Without a Topic, Back goes
-to the Session, which stayed attached.
+The screen that a tap on a Browser Tab opens, in the Terminal Screen's place.
+It loads the Tab's URL on the phone, so it shows what the address serves and
+not the state of the Tab on the Host. Its title is the Header's for the Topic:
+the Topic title over one dim line with 🌐, the page's title and the Session
+name. Without a Topic, it is the Session name over the page's title. A tap on
+the title opens the Title Sheet. A Window pick there goes to the Terminal
+Screen. A Session or Topic pick goes there too, or to the page of its Place
+when its Place has a Tab. A Tab pick shows that Tab in the same Web View.
+Reload, and a pull down on the page, load the page again. A page that does not
+load shows the reason and **Try again**. Back goes to the Host Screen, as Back
+on the Terminal Screen does, and the Topic Place, or the Session Place for a
+Session with no Topic, keeps the Tab, so opening the Topic or the Session again
+shows the page again. A cold start whose Last Place has a Tab opens the page
+directly, with the Connection Screen over it until the Session is attached. The page stands in the Terminal Screen's place, so the
+swipe from the edge shows the Host Screen under it. A Window pick in the Title
+Sheet is the way to the terminal: it puts the Terminal Screen back and clears
+the Tab.
 _Avoid_: browser (that is the Host's), in-app browser, preview
 
 **Options**:

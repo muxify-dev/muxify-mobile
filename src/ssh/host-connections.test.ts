@@ -66,10 +66,13 @@ function setup(options: {
   silentOn?: string;
   /** Each Connection can run a Host Server, which says this `hello` once its channel opens. */
   serverHello?: string;
+  /** Each prune of Session Places fails while this says so. */
+  pruneFails?: () => boolean;
 } = {}) {
   const clock = createTestClock();
   const links: FakeLink[] = [];
   const remembered: string[] = [];
+  const pruned: { hostId: string; had: string[]; readAt: number }[] = [];
   const logged: string[] = [];
   const connections = createHostConnections({
     clock,
@@ -78,6 +81,10 @@ function setup(options: {
       rememberFingerprint: (_hostId: string, fingerprint: string) => {
         remembered.push(fingerprint);
         return Promise.resolve();
+      },
+      pruneSessionPlaces: (hostId: string, had: ReadonlySet<string>, readAt: Date) => {
+        pruned.push({ hostId, had: [...had].sort(), readAt: readAt.getTime() });
+        return options.pruneFails?.() ? Promise.reject(new Error('the disk is full')) : Promise.resolve();
       },
     },
     dial: (_host, dropped, progress): Promise<Dialed> => {
@@ -172,7 +179,7 @@ function setup(options: {
       });
     },
   });
-  return { clock, links, remembered, logged, connections };
+  return { clock, links, remembered, pruned, logged, connections };
 }
 
 /** Lets every promise that can settle, settle. */
@@ -599,7 +606,7 @@ describe('the Host Problem', () => {
     const refused = Object.assign(new Error('auth'), { code: 'AUTH_FAILED' });
     const auth = createHostConnections({
       dial: () => Promise.reject(refused),
-      store: { rememberFingerprint: () => Promise.resolve() },
+      store: { rememberFingerprint: () => Promise.resolve(), pruneSessionPlaces: () => Promise.resolve() },
     });
 
     const failed = await auth.openConnection(HOST).catch((error: unknown) => error);
@@ -721,6 +728,79 @@ describe('the Host Server', () => {
     await settle();
     await settle();
     expect(connections.listing(HOST.id)?.server.kind).toBe('live');
+  });
+
+  /** A Connection whose Host Server is live and subscribed to snapshots, and a way to push one. */
+  async function subscribed(options: Parameters<typeof setup>[0]) {
+    const context = setup({ serverHello: CAPABLE, ...options });
+    await context.connections.hold(HOST);
+    await settle();
+    await settle();
+    const server = context.links[0]!.servers[0]!;
+    const subscription = server.frames.find((frame) =>
+      (frame.request as { subscribe?: { snapshot?: unknown } } | undefined)?.subscribe?.snapshot !== undefined);
+    const push = async (item: unknown) => {
+      server.print(`${JSON.stringify({ id: subscription!.id, item, kind: 'item' })}\n`);
+      await settle();
+    };
+    const dormantCard = (name: string) => ({ kind: 'dormant_session', id: `b-${name}`, name, sessions: [] });
+    const snapshot = (live: string[], dormant: string[]) => ({
+      sessions: live.map((name, index) => ({ id: '$' + index, name, activity: 0, mark: null, topic: null })),
+      tags: [],
+      pinned: dormant.slice(0, 1).map(dormantCard),
+      unpinned: { kind: 'in_play', limit: 3, places: [], guests: [], bench: dormant.slice(1).map(dormantCard) },
+      no_topic: [],
+    });
+    return { ...context, push, snapshot };
+  }
+
+  it('prunes Session Places to the Sessions a snapshot names, live or Dormant, and only for a snapshot that reads', async () => {
+    const { pruned, push, snapshot } = await subscribed({});
+    const names = () => pruned.map(({ hostId, had }) => ({ hostId, had }));
+    expect(names()).toEqual([]);
+
+    await push({ broken: true });
+    expect(names()).toEqual([]);
+
+    await push(snapshot(['work', 'docs'], ['notes', 'logs']));
+    expect(names()).toEqual([{ hostId: HOST.id, had: ['docs', 'logs', 'notes', 'work'] }]);
+
+    // The same Sessions again, such as a new mark: nothing to prune.
+    await push(snapshot(['work', 'docs'], ['notes', 'logs']));
+    expect(pruned).toHaveLength(1);
+
+    await push(snapshot(['work'], []));
+    expect(names()).toEqual([
+      { hostId: HOST.id, had: ['docs', 'logs', 'notes', 'work'] },
+      { hostId: HOST.id, had: ['work'] },
+    ]);
+  });
+
+  it('tries a prune that failed again on the next snapshot, with the same Sessions', async () => {
+    let failing = true;
+    const { pruned, logged, push, snapshot } = await subscribed({ pruneFails: () => failing });
+
+    await push(snapshot(['work'], []));
+    expect(pruned).toHaveLength(1);
+    expect(logged.some((line) => line.includes('could not prune Session Places: the disk is full'))).toBe(true);
+
+    failing = false;
+    await push(snapshot(['work'], []));
+    expect(pruned).toHaveLength(2);
+
+    // It succeeded, so the same Sessions again write nothing.
+    await push(snapshot(['work'], []));
+    expect(pruned).toHaveLength(2);
+  });
+
+  it('prunes with the time the phone received the snapshot', async () => {
+    const { clock, pruned, push, snapshot } = await subscribed({});
+    clock.advance(5_000);
+    const received = clock.now();
+
+    await push(snapshot(['work'], []));
+
+    expect(pruned.map(({ readAt }) => readAt)).toEqual([received]);
   });
 
   it('closes with its Connection, and a new Connection starts a new one', async () => {

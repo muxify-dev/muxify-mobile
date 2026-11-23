@@ -99,6 +99,17 @@ export interface EnvironmentSnapshot {
 }
 
 /**
+ * The name of each Session the Host has: live, or a Board Session that the
+ * Board lists as Dormant, whose card opens it again by that name.
+ */
+export function sessionNamesHad(snapshot: EnvironmentSnapshot): Set<string> {
+  const { pinned, unpinned } = snapshot;
+  const dormant = [...pinned, ...unpinned.places, ...unpinned.guests, ...unpinned.bench]
+    .flatMap((card) => (card.kind === 'dormant_session' ? [card.name] : []));
+  return new Set([...snapshot.sessions.map((session) => session.name), ...dormant]);
+}
+
+/**
  * Parses the answer once, at the boundary, so nothing past it checks a shape.
  *
  * Throws with the path of the first thing that is wrong, and `HostCliTooOld`

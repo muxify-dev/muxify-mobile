@@ -14,9 +14,20 @@
 #      although the Mac moved tmux's active Window meanwhile
 #   4  Back from the Web View goes to the Host Screen, and the same Topic
 #      opened again has its page on top again
-#   5  a Window picked in the Web View's Title Sheet goes to the Terminal
-#      Screen, and the Topic opened again is on that Window, with no page
-#   6  a Tab that the Host lists no more leaves the reopened Topic on its Pane
+#   5  after a relaunch, the Topic opened from the Host Screen, with no Attach
+#      up, has its page on top with no Terminal Screen first: one Client
+#      attaches, it is in the Place's Window, and the tmux Window keeps its
+#      size, because no Surface has said one
+#   6  the same on a cold start with Reconnect on start
+#   7  a Window picked in the Web View's Title Sheet goes to the Terminal
+#      Screen, which gives the tmux Window the phone's size, and the Topic
+#      opened again is on that Window, with no page
+#   8  a Tab that the Host lists no more leaves the reopened Topic on its Pane
+#
+# Steps 5 and 6 run over a slow link (e2e/slow-launch.sh), so that a Terminal
+# Screen mounted under the page would have its grid before the Attach is up,
+# and they read the app's own log: no Terminal Screen opened, and no size went
+# to tmux, while only the page was shown.
 #
 # The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
 # stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
@@ -44,8 +55,9 @@ on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
+. "$(dirname "$0")/slow-launch.sh"
 SERVER=
-trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null' EXIT
+trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null; [ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 topic_new() {
   muxify topic new "$1" --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])'
@@ -91,6 +103,38 @@ page_on_top() {
   agent-device is exists 'id="web-view-title"' >/dev/null 2>&1 || fail "the Web View has no Header title"
 }
 
+# A size that no phone has, for both Windows of the Topic's Session, which a
+# Client with no size leaves as it is. resize-window sets window-size to
+# manual, so that is unset again.
+MAC_SIZE=123x41
+window_now() { on_host "tmux display-message -p -t '$TOPIC_SESSION' '#{window_index}'"; }
+window_size() { on_host "tmux display-message -p -t '$TOPIC_SESSION:$1' '#{window_width}x#{window_height}'"; }
+mac_sized() {
+  for window in 0 1; do
+    on_host "tmux resize-window -t '$TOPIC_SESSION:$window' -x 123 -y 41 && tmux set-option -w -t '$TOPIC_SESSION:$window' -u window-size" \
+      || fail "could not size Window $window"
+    [ "$(window_size $window)" = "$MAC_SIZE" ] || fail "Window $window is $(window_size $window), not $MAC_SIZE"
+  done
+}
+# The phone's Clients on the Session. A Listener, such as the Host Server's,
+# asks for ignore-size and is no one's Client, as tmux-client.ts counts them.
+clients() { on_host "tmux list-clients -t '$TOPIC_SESSION' -F '#{client_flags}'" | grep -vc ignore-size; }
+
+# The page is on top of a fresh Attach of the Topic, and no Terminal Screen has
+# been under it: one Client, Window 0, and Window 0 at the size it had.
+fresh_page() {
+  page_on_top "$1"
+  agent-device is exists 'id="pane-command"' >/dev/null 2>&1 && fail "a Terminal Screen is on screen under the page"
+  for _ in $(seq 20); do [ "$(clients)" = 1 ] && break; sleep 0.5; done
+  [ "$(clients)" = 1 ] || fail "the Topic's Session has $(clients) Clients, not 1, with the page on top"
+  # The Attach restores the Place after it attaches; give it a moment.
+  sleep 3
+  page_first "the app's log says the phone showed a Terminal Screen or sized the Window with only the page on top"
+  [ "$(window_now)" = 0 ] || fail "the Topic is in Window $(window_now), not in Window 0 of its Place"
+  [ "$(window_size 0)" = "$MAC_SIZE" ] || fail "Window 0 is $(window_size 0): the phone sized it with only the page on top"
+  [ "$(relayed)" -gt "$RELAYED_BEFORE" ] || fail "no Connection went through the slow relay"
+}
+
 # Back from the Terminal Screen or the Web View: both go to the Host Screen.
 back_to_host() {
   for _ in 1 2; do
@@ -101,7 +145,7 @@ back_to_host() {
   agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back did not reach the Host Screen"
 }
 
-echo "0/6  two Topics, the first with two Windows, and a page at this Mac's Tailscale address"
+echo "0/8  two Topics, the first with two Windows, and a page at this Mac's Tailscale address"
 ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
 [ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
 PORT=$(python3 -c 'import socket, sys; s = socket.socket(); s.bind((sys.argv[1], 0)); print(s.getsockname()[1])' "$ADDRESS")
@@ -137,7 +181,7 @@ agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&
 agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
 agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
 
-echo "1/6  a Tab of the Topic's Window opens in the Web View"
+echo "1/8  a Tab of the Topic's Window opens in the Web View"
 open_topic "$TOPIC"
 open_title_sheet header-title
 agent-device wait "label=\"Tab $URL\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab"
@@ -146,7 +190,7 @@ page_on_top "the Web View did not show the page"
 agent-device is text 'id="topic-title"' "$TOPIC" >/dev/null 2>&1 || fail "the Web View's title is not the Topic's"
 echo "     the page, under the Topic's title"
 
-echo "2/6  the Web View's title reaches the Topics list"
+echo "2/8  the Web View's title reaches the Topics list"
 open_title_sheet web-view-title
 agent-device press 'label="Topics"' >/dev/null 2>&1
 agent-device wait "label=\"Topic $OTHER\"" 15000 >/dev/null 2>&1 || fail "the Web View's Title Sheet does not list the Topics"
@@ -157,7 +201,7 @@ agent-device is text 'id="topic-title"' "$OTHER" >/dev/null 2>&1 || fail "the To
 agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View is still on top after the Topic pick"
 echo "     $OTHER on the Terminal Screen"
 
-echo "3/6  $TOPIC opened again has its page on top, in the Window the phone was in"
+echo "3/8  $TOPIC opened again has its page on top, in the Window the phone was in"
 on_host "tmux select-window -t '$TOPIC_SESSION:1'"
 back_to_host
 open_topic "$TOPIC"
@@ -167,14 +211,53 @@ WINDOW=$(on_host "tmux display-message -p -t '$TOPIC_SESSION' '#{window_index}'"
 [ "$WINDOW" = 0 ] || fail "the reopened Topic is in Window $WINDOW, not in Window 0 where the phone left it"
 echo "     the page, and Window 0 under it"
 
-echo "4/6  Back from the page goes to the Host Screen, and $TOPIC opens on its page again"
+echo "4/8  Back from the page goes to the Host Screen, and $TOPIC opens on its page again"
 agent-device press 'id="BackButton"' >/dev/null 2>&1
 agent-device wait 'label="Host Options"' 8000 >/dev/null 2>&1 || fail "Back from the Web View did not go to the Host Screen"
 open_topic "$TOPIC"
 page_on_top "the Topic opened again after Back did not show its page"
 echo "     the Host Screen, then the page again"
 
-echo "5/6  a Window picked from the page goes to the terminal, and the Topic forgets the page"
+echo "5/8  after a relaunch, $TOPIC opens on its page with no Terminal Screen first, and does not resize the Window"
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+slow_link
+RELAYED_BEFORE=$(relayed)
+mac_sized
+on_host "tmux select-window -t '$TOPIC_SESSION:1'"
+[ "$(clients)" = 0 ] || fail "the Topic's Session still has a Client after the app was stopped"
+agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
+agent-device wait text "Dev Host" 25000 >/dev/null 2>&1
+agent-device press 'label="Host Dev Host"' --settle >/dev/null 2>&1
+agent-device wait 'label="Host Options"' 15000 >/dev/null 2>&1 || fail "the Host Screen is not on top"
+agent-device wait "label=\"Topic $TOPIC\"" 15000 >/dev/null 2>&1 || fail "the Host Screen does not list $TOPIC"
+agent-device press "label=\"Topic $TOPIC\"" >/dev/null 2>&1
+fresh_page "the Topic opened after a relaunch did not show its page"
+echo "     the page, one Client, Window 0, and Window 0 still $MAC_SIZE"
+
+echo "6/8  a cold start with Reconnect on start opens $TOPIC on its page, the same way"
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+python3 - "$DATA/muxify-settings.json" "$DATA/muxify-records.json" "$TOPIC_ID" <<'PY'
+import json, sys
+settings_path, records_path, topic = sys.argv[1:]
+settings = json.load(open(settings_path))
+settings["reconnectOnStart"] = True
+json.dump(settings, open(settings_path, "w"))
+last = json.load(open(records_path)).get("lastPlace") or {}
+assert last.get("topicId") == topic, f"the Last Place is {last}"
+PY
+[ $? = 0 ] || fail "the Last Place is not $TOPIC"
+slow_link
+RELAYED_BEFORE=$(relayed)
+mac_sized
+on_host "tmux select-window -t '$TOPIC_SESSION:1'"
+agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
+fresh_page "the cold start did not show the page of $TOPIC"
+echo "     the page, one Client, Window 0, and Window 0 still $MAC_SIZE"
+
+echo "7/8  a Window picked from the page goes to the terminal, which sizes the Window, and the Topic forgets the page"
 open_title_sheet web-view-title
 agent-device press 'label="Windows"' >/dev/null 2>&1
 agent-device wait 'label="second"' 15000 >/dev/null 2>&1 || fail "the Web View's Title Sheet does not list the Windows"
@@ -182,6 +265,8 @@ sleep 1
 agent-device press 'label="second"' >/dev/null 2>&1
 agent-device wait 'id="pane-command"' 20000 >/dev/null 2>&1 || fail "the Window pick did not go to the Terminal Screen"
 agent-device is exists "text=\"$MARKER\"" >/dev/null 2>&1 && fail "the Web View is still on top after the Window pick"
+sleep 2
+[ "$(window_size 1)" != "$MAC_SIZE" ] || fail "Window 1 is still $MAC_SIZE with the Terminal Screen shown"
 back_to_host
 open_topic "$TOPIC"
 sleep 3
@@ -190,7 +275,7 @@ WINDOW=$(on_host "tmux display-message -p -t '$TOPIC_SESSION' '#{window_index}'"
 [ "$WINDOW" = 1 ] || fail "the reopened Topic is in Window $WINDOW, not in Window 1 that was picked"
 echo "     the terminal in Window 1, and no page"
 
-echo "6/6  a Tab the Host lists no more leaves the Topic on its Pane"
+echo "8/8  a Tab the Host lists no more leaves the Topic on its Pane"
 open_title_sheet header-title
 agent-device wait "label=\"Tab $URL\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list the Tab again"
 agent-device press "label=\"Tab $URL\"" >/dev/null 2>&1
@@ -207,6 +292,8 @@ echo "     the Pane, and no Web View"
 agent-device close >/dev/null 2>&1
 echo
 echo "PASS: a Topic opened again is where it was left, its page included, also"
-echo "      after Back from the page to the Host Screen; a Window picked from"
+echo "      after Back from the page to the Host Screen; with no Attach up, after"
+echo "      a relaunch and on a cold start, the page shows with no Terminal"
+echo "      Screen first and does not resize the Mac's Window; a Window picked from"
 echo "      the page goes to the terminal and forgets the page; and a Tab the"
 echo "      Host lists no more leaves the Pane on top."

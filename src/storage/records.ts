@@ -63,7 +63,7 @@ export interface LastPlace {
   topicId: string | null;
 }
 
-/** The Browser Tab a Topic Place has on top. */
+/** The Browser Tab a Place has on top. */
 export interface PlaceTab {
   /** The Host Tab's URL: what "is the Tab still there" compares. */
   url: string;
@@ -73,15 +73,50 @@ export interface PlaceTab {
 }
 
 /**
- * Where the user was in one Topic on this phone. One per Topic of each Host.
+ * Whose Place it is: the Topic the Attach holds, else its Session, by name.
+ * A renamed Session is a new owner, with no Place.
+ */
+export type PlaceOwner =
+  | { kind: 'topic'; topicId: string }
+  | { kind: 'session'; session: string };
+
+/** The owner of an Attach that holds `topicId` (null for none) and is in `session`. */
+export function placeOwner(topicId: string | null, session: string): PlaceOwner {
+  return topicId === null ? { kind: 'session', session } : { kind: 'topic', topicId };
+}
+
+export function sameOwner(left: PlaceOwner, right: PlaceOwner): boolean {
+  return left.kind === 'topic'
+    ? right.kind === 'topic' && left.topicId === right.topicId
+    : right.kind === 'session' && left.session === right.session;
+}
+
+/** Whether `place` is the Place of this owner on this Host. */
+export function samePlace(place: Place, hostId: string, owner: PlaceOwner): boolean {
+  return place.hostId === hostId && sameOwner(place.owner, owner);
+}
+
+/** The owner's Place on this Host, or null when it has not been here. */
+export function findPlace(records: Pick<Records, 'places'>, hostId: string, owner: PlaceOwner): Place | null {
+  return records.places.find((place) => samePlace(place, hostId, owner)) ?? null;
+}
+
+/**
+ * Where the user was in one Topic, or in one Session with no Topic, on this
+ * phone: a Topic Place or a Session Place. One per owner of each Host.
  *
  * The phone's own: tmux's active Window is shared with the Mac and every
  * other Client, so it cannot say where *this* phone was. See ADR 0020.
  */
-export interface TopicPlace {
+export interface Place {
   hostId: string;
-  topicId: string;
-  /** Session name. The Attach targets Sessions by name. */
+  owner: PlaceOwner;
+  /**
+   * Session name. The Attach targets Sessions by name. The owner is the key
+   * a lookup asks with, and this is where the Place is: a Topic has several
+   * Sessions. For a Session Place the two are the same name, and parsePlace
+   * refuses a saved one where they differ.
+   */
   session: string;
   /** tmux's id (`@12`) first; index and name find it again after Reopen gives new ids. */
   window: { id: string; index: number; name: string } | null;
@@ -100,11 +135,11 @@ export interface Records {
   fingerprints: Fingerprint[];
   recentSessions: RecentSession[];
   lastPlace: LastPlace | null;
-  topicPlaces: TopicPlace[];
+  places: Place[];
 }
 
 export function emptyRecords(): Records {
-  return { hosts: [], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, topicPlaces: [] };
+  return { hosts: [], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, places: [] };
 }
 
 /**
@@ -122,27 +157,44 @@ export function parseLastPlace(raw: unknown): LastPlace | null {
 }
 
 /**
- * The Topic Places a saved value names. A bad entry is dropped on its own: the
- * Topic it was for opens where the Host says, which is where it opened before
- * there were Topic Places.
+ * The Places a saved file names: `places`, and the `topicPlaces` that builds
+ * before Session Places wrote, as Topic Places. A bad entry is dropped on its
+ * own: its Topic or Session opens where the Host says, which is where it
+ * opened before there were Places.
  */
-export function parseTopicPlaces(raw: unknown): TopicPlace[] {
-  return Array.isArray(raw) ? raw.flatMap((entry) => parseTopicPlace(entry) ?? []) : [];
+export function parsePlaces(places: unknown, legacyTopicPlaces: unknown): Place[] {
+  const current = Array.isArray(places) ? places.flatMap((entry) => parsePlace(entry) ?? []) : [];
+  const legacy = Array.isArray(legacyTopicPlaces) ? legacyTopicPlaces.flatMap((entry) => {
+    if (!isObject(entry) || !isName(entry.topicId)) return [];
+    const { topicId, ...rest } = entry;
+    return parsePlace({ ...rest, owner: { kind: 'topic', topicId } }) ?? [];
+  }) : [];
+  // A file holds one of the two. Were it both, `places` comes first, so it wins a lookup.
+  return [...current, ...legacy];
 }
 
-function parseTopicPlace(raw: unknown): TopicPlace | null {
+function parsePlace(raw: unknown): Place | null {
   if (!isObject(raw)) return null;
-  const { hostId, topicId, session, window, pane, tab, at } = raw;
-  if (!isName(hostId) || !isName(topicId) || !isName(session) || typeof at !== 'string') return null;
+  const { hostId, owner, session, window, pane, tab, at } = raw;
+  if (!isName(hostId) || !isName(session) || typeof at !== 'string') return null;
+  const whose = parseOwner(owner);
+  if (!whose || (whose.kind === 'session' && whose.session !== session)) return null;
   if (pane !== null && !isName(pane)) return null;
   const placeWindow = window === null ? null : parseWindow(window);
   if (placeWindow === undefined) return null;
   const placeTab = tab === null ? null : parseTab(tab);
   if (placeTab === undefined) return null;
-  return { hostId, topicId, session, window: placeWindow, pane, tab: placeTab, at };
+  return { hostId, owner: whose, session, window: placeWindow, pane, tab: placeTab, at };
 }
 
-function parseWindow(raw: unknown): TopicPlace['window'] | undefined {
+function parseOwner(raw: unknown): PlaceOwner | null {
+  if (!isObject(raw)) return null;
+  if (raw.kind === 'topic' && isName(raw.topicId)) return { kind: 'topic', topicId: raw.topicId };
+  if (raw.kind === 'session' && isName(raw.session)) return { kind: 'session', session: raw.session };
+  return null;
+}
+
+function parseWindow(raw: unknown): Place['window'] | undefined {
   if (!isObject(raw)) return undefined;
   const { id, index, name } = raw;
   if (!isName(id) || !Number.isInteger(index) || typeof name !== 'string') return undefined;

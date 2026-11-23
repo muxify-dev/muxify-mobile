@@ -1,9 +1,9 @@
-import type { Host } from '@/storage/records';
+import type { Host, Place } from '@/storage/records';
 
 import type { KeyVerdict } from '@/ssh/host-key';
 
 import { coverOf } from './cover';
-import { placeToReconnect, reconnect, type Lookup, type SessionVisit } from './reconnect';
+import { placeOfLastPlace, placeToReconnect, reconnect, type Lookup, type SessionVisit } from './reconnect';
 
 const HOST: Host = {
   id: 'host1',
@@ -27,6 +27,33 @@ describe('placeToReconnect', () => {
     ['its Host was deleted', true, [], PLACE],
   ])('is the Hosts list when %s', (_, on, hosts, lastPlace) => {
     expect(placeToReconnect({ reconnectOnStart: on }, { hosts, lastPlace })).toBeNull();
+  });
+});
+
+describe('placeOfLastPlace', () => {
+  const TAB = { url: 'http://localhost:3000/', page: 'http://localhost:3000/docs', scrollY: 120 };
+  const at = (overrides: Partial<Place>): Place => ({
+    hostId: 'host1', owner: { kind: 'session', session: 'main' }, session: 'main',
+    window: { id: '@2', index: 1, name: 'web' }, pane: '%3', tab: null, at: '2026-11-23T10:00:00.000Z', ...overrides,
+  });
+
+  it('is the Session Place of a Last Place with no Topic', () => {
+    const place = at({ tab: TAB });
+    expect(placeOfLastPlace({ places: [place] }, PLACE)).toBe(place);
+  });
+
+  it('is the Topic Place of a Last Place in a Topic', () => {
+    const topicPlace = at({ owner: { kind: 'topic', topicId: 't1' }, tab: TAB });
+    expect(placeOfLastPlace({ places: [topicPlace] }, { ...PLACE, topicId: 't1' })).toBe(topicPlace);
+  });
+
+  it.each([
+    ['there is no Place', [], PLACE],
+    ['the Place is of another Session', [at({ owner: { kind: 'session', session: 'other' }, session: 'other', tab: TAB })], PLACE],
+    ['the Topic Place is in another Session of the Topic', [at({ owner: { kind: 'topic', topicId: 't1' }, session: 'other', tab: TAB })], { ...PLACE, topicId: 't1' }],
+    ['the Place is on another Host', [at({ hostId: 'host2', tab: TAB })], PLACE],
+  ])('is null when %s', (_, places, last) => {
+    expect(placeOfLastPlace({ places }, last)).toBeNull();
   });
 });
 

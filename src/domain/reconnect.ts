@@ -2,7 +2,7 @@ import { describeError } from '@/lib/describe-error';
 import type { Settings } from '@/settings/settings';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import type { KeyVerdict } from '@/ssh/host-key';
-import type { LastPlace, Records } from '@/storage/records';
+import { findPlace, placeOwner, type LastPlace, type Place, type Records } from '@/storage/records';
 
 /** What the Connection Screen shows for a cold start, in the order a reconnect goes through them. */
 export const RECONNECT_STEPS = [
@@ -45,6 +45,16 @@ export function placeToReconnect(
   const place = records.lastPlace;
   if (!settings.reconnectOnStart || place === null) return null;
   return records.hosts.some((host) => host.id === place.hostId) ? place : null;
+}
+
+/**
+ * The Place a Last Place opens at: its Topic's Topic Place, or its Session's
+ * Session Place when it has no Topic. A Topic Place left in another Session of
+ * the Topic does not count: the Last Place names the Session to open.
+ */
+export function placeOfLastPlace(records: Pick<Records, 'places'>, last: LastPlace): Place | null {
+  const found = findPlace(records, last.hostId, placeOwner(last.topicId, last.session));
+  return found?.session === last.session ? found : null;
 }
 
 export function reconnectStepLabel(step: ReconnectStep): string {

@@ -20,6 +20,7 @@ import { useLiveListing } from '@/hooks/use-host-listing';
 import { useHostReading } from '@/hooks/use-host-reading';
 import { useTmuxWrites } from '@/hooks/use-tmux-writes';
 import { describeError } from '@/lib/describe-error';
+import { deviceHostStore } from '@/storage/device-store';
 import type { ChooserLists } from '@/settings/settings';
 import { useChooserLists, useSettings } from '@/settings/settings-context';
 import type { Attach, AttachState } from '@/tmux/attach';
@@ -48,7 +49,7 @@ export interface TitleSheetOptions {
   onOpenTab: (tab: BrowserTab) => void;
   /**
    * The user went to another Window, Session or Topic from the sheet, which
-   * has closed. `tab` is the Tab of the Topic Place of a Topic opened there.
+   * has closed. `tab` is the Tab of the Place of a Topic or Session opened there.
    */
   onMoved?: (tab: PlaceTab | null) => void;
   /** The sheet is about to open: a screen closes its other sheets. */
@@ -264,13 +265,20 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     if (pick.session !== null && pick.session !== state.sessionName) setSwitchingTo(pick.session);
     void (async () => {
       try {
+        // A pick from the Sessions list opens another Session at its Session
+        // Place, as a Topic pick opens its Topic Place. The Session held now
+        // has nothing to open.
+        const restore = !explicitTopic && pick.session !== null && pick.session !== state.sessionName && hostId
+          ? await deviceHostStore().placeFor(hostId, { kind: 'session', session: pick.session })
+          : null;
         if (pick.session !== null) {
           await attach.switchSession({ sessionName: pick.session,
-            topic: explicitTopic && state.topic ? { id: state.topic.id, seed: topic } : null });
+            topic: explicitTopic && state.topic ? { id: state.topic.id, seed: topic } : null, restore });
         }
         if (!current() || attach.state().sessionName !== (pick.session ?? state.sessionName)) return;
         if (pick.window !== null) await attach.selectWindow(pick.window);
-        if (current()) entered();
+        // A Topic held now that lists the Session keeps it, and the Session Place does not apply.
+        if (current()) entered(attach.state().topic === null ? restore?.tab ?? null : null);
       } catch (error) {
         if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
       } finally {
@@ -278,7 +286,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
         setSwitchingTo(null);
       }
     })();
-  }, [attach, state, topic, holder, entered]);
+  }, [attach, state, topic, holder, entered, hostId]);
   const selectSession = useCallback((session: string) => {
     if (!sessionsFromHost) {
       choose({ session, window: null }, false);

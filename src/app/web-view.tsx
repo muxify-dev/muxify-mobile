@@ -8,19 +8,24 @@ import type { ParamListBase } from 'expo-router/react-navigation';
 import { placeTabRoute } from '@/browser/place-tab-route';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
+import { ConnectionScreen } from '@/components/connection-screen';
 import { HeaderBand } from '@/components/header-band';
 import { HeaderTitleButton, type HeaderTitle } from '@/components/terminal-header';
 import { TitleSheet } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { coverOf } from '@/domain/cover';
+import { useCoverAction } from '@/hooks/use-cover-action';
+import { useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
 import { useSettings } from '@/settings/settings-context';
 import type { PlaceTab } from '@/storage/records';
+import type { Attach } from '@/tmux/attach';
 import { useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 
 const say = speakingAs(deviceLog(), 'browser');
 
-/** How long the page rests before where it is goes into the Topic Place. */
+/** How long the page rests before where it is goes into the Place. */
 const SCROLL_SETTLE_MS = 400;
 
 interface ShownPage {
@@ -41,20 +46,24 @@ interface ShownPage {
  * the Session as it was. See ADR 0007.
  *
  * It has the Terminal Header's title and the same Title Sheet. While it is on
- * top, the Attach keeps its Tab in the Topic Place. In a Topic it stands in
- * the Terminal Screen's place, over the Host Screen: Back and the swipe from
- * the edge go there and leave the Tab in the Place, so opening the Topic again
- * opens the page again, and a pick in the Title Sheet puts the Terminal Screen
- * back. A Session's page goes over its Terminal Screen. See ADR 0020.
+ * top, the Attach keeps its Tab in the Place of its Topic, or of its Session
+ * when it holds no Topic. It stands in the Terminal Screen's place, over the
+ * Host Screen: Back and the swipe from the edge go there and leave the Tab in
+ * the Place, so opening the Topic or Session again opens the page again, and a
+ * pick in the Title Sheet puts the Terminal Screen back. See ADR 0020.
  */
 export default function WebViewScreen() {
-  const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string; restored?: string }>();
+  const params = useLocalSearchParams<{ url: string; title?: string; page?: string; scrollY?: string; restored?: string } & RouteSession>();
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   const focused = useIsFocused();
-  const { palette } = useSettings();
+  const { appearance, palette } = useSettings();
   const attach = useCurrentAttach();
   const state = useAttachState(attach);
+  // A cold start whose Place has a Tab opens here, with no Terminal Screen
+  // first: the reconnect runs from this screen, behind the Connection Screen.
+  const [coldStart] = useState(() => (params.reconnect ? { hostId: params.hostId, session: params.session, topicId: params.topicId, reconnect: params.reconnect } : null));
+  const opening = useRouteSession(coldStart, 'page', say);
   const webView = useRef<WebView>(null);
   const [shown, setShown] = useState<ShownPage>(() => ({
     url: params.url,
@@ -66,11 +75,11 @@ export default function WebViewScreen() {
   /** Why the last load failed; null while the page loads or shows. */
   const [failure, setFailure] = useState<string | null>(null);
 
-  // The Attach's token for this Tab. Going away gives it back, which clears
-  // the Tab from the Topic Place, unless the Topic changed first. Back in a
-  // Topic keeps it: see `keepsTab`.
+  // The Attach's token for this Tab. Back keeps the Tab in the Place; a pick
+  // that leaves the page (see `leaving`) gives the token back, which clears the
+  // Tab from the Place, unless the owner changed first.
   const token = useRef<number | null>(null);
-  const keepsTab = useRef(false);
+  const leaving = useRef(false);
   const where = useRef({ page: shown.page, scrollY: shown.scrollY });
   const scrolled = useRef(false);
   useEffect(() => {
@@ -80,11 +89,11 @@ export default function WebViewScreen() {
     where.current = { page: shown.page, scrollY: shown.scrollY };
     scrolled.current = shown.scrollY === 0;
     return () => {
-      if (keepsTab.current) {
-        attach.updateTab(mine, where.current);
-        say('Back: to the Host Screen, and the Topic keeps its page');
-      } else {
+      if (leaving.current) {
         attach.leaveTab(mine);
+      } else {
+        attach.updateTab(mine, where.current);
+        say('Back: to the Host Screen, and the Place keeps its page');
       }
       if (token.current === mine) token.current = null;
     };
@@ -98,25 +107,16 @@ export default function WebViewScreen() {
     if (token.current !== null) attach?.updateTab(token.current, where.current);
   }, [attach]);
 
-  // In a Topic, the page sits right over the Host Screen, in the Terminal
-  // Screen's place, so Back and the swipe from the edge are the stack's own
-  // and go to the Host Screen, and the Topic keeps the page. A pick in the
-  // Title Sheet gives the place back to the Terminal Screen. Without a Topic,
-  // the page sits over the Session's Terminal Screen, and Back goes there.
-  const hostId = attach?.hostId;
-  const inTopic = state?.topic != null;
+  // The page sits right over the Host Screen, in the Terminal Screen's place,
+  // so Back and the swipe from the edge are the stack's own and go to the Host
+  // Screen, and the Place keeps the page. A pick in the Title Sheet gives the
+  // place back to the Terminal Screen.
+  const hostId = attach?.hostId ?? coldStart?.hostId;
   const [release, setRelease] = useState<(() => void) | null>(null);
-  const leaving = useRef(false);
-  useEffect(() => {
-    keepsTab.current = inTopic && !leaving.current;
-  }, [inTopic]);
   const leave = useCallback(() => {
     if (leaving.current || !navigation.isFocused()) return;
     leaving.current = true;
-    keepsTab.current = false;
-    const stack = navigation.getState();
-    const underIsTerminal = stack !== undefined && stack.routes[stack.index - 1]?.name === 'terminal';
-    setRelease(() => () => (underIsTerminal ? router.back() : router.replace('/terminal')));
+    setRelease(() => () => router.replace('/terminal'));
   }, [navigation, router]);
   useEffect(() => release?.(), [release]);
 
@@ -126,9 +126,9 @@ export default function WebViewScreen() {
     setShown({ url: tab.url, page: tab.url, scrollY: 0, title: tab.title });
   }, []);
   /**
-   * A pick in the Title Sheet. A Topic whose Topic Place has a Tab shows that
-   * page in place of this one, in one move; any other pick goes to the
-   * Terminal Screen under it.
+   * A pick in the Title Sheet. A Topic or Session whose Place has a Tab shows that
+   * page in place of this one, in one move; any other pick puts the Terminal
+   * Screen back in this one's place.
    */
   const moved = useCallback((tab: PlaceTab | null) => {
     if (!tab) {
@@ -137,12 +137,12 @@ export default function WebViewScreen() {
     }
     if (leaving.current) return;
     leaving.current = true;
-    keepsTab.current = false;
     setRelease(() => () => router.replace(placeTabRoute(tab)));
   }, [leave, router]);
-  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved });
+  const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved,
+    onReplacingStopped: opening.forgetLookup });
 
-  // A page that a Topic Place opened: once the Attach is back in the Place's
+  // A page that a Place opened: once the Attach is back in the Place's
   // Window, the Host must still list the Tab. A Tab closed on the Mac sends the
   // user to the Pane, and the Place forgets it. A read that fails says nothing,
   // and the page stays.
@@ -157,7 +157,7 @@ export default function WebViewScreen() {
       const read = window ? await readBrowserTabs(hostId, window) : { kind: 'failed' as const, error: 'no active Window' };
       const restore = tabRestoreOf(read, wanted.tab.url);
       if (restore.kind === 'gone') {
-        say(`the Topic Place's Tab ${wanted.tab.url} is no longer listed; going to the Pane`);
+        say(`the Place's Tab ${wanted.tab.url} is no longer listed; going to the Pane`);
         leave();
       } else if (restore.unread !== null) {
         say(`the Tabs of ${window} did not read (${restore.unread}); keeping ${wanted.tab.url}`);
@@ -167,13 +167,32 @@ export default function WebViewScreen() {
 
   // A new Attach, or a Topic that the Attach went to from elsewhere, is
   // somewhere else: the Terminal Screen shows it. A Topic picked in this
-  // screen's Title Sheet waits for the pick, which says where to go.
-  const [arrivedIn] = useState(() => ({ attach, topicId: state?.topic?.id ?? null }));
+  // screen's Title Sheet waits for the pick, which says where to go. A cold
+  // start's page arrives with no Attach, and the first one is its own.
   const topicId = state?.topic?.id ?? null;
+  const [arrivedIn, setArrivedIn] = useState(() => (coldStart ? null : { attach, topicId }));
+  if (arrivedIn === null && attach) setArrivedIn({ attach, topicId });
   const openingTopic = chooser.openingTopic;
   useEffect(() => {
-    if (focused && !openingTopic && (attach !== arrivedIn.attach || topicId !== arrivedIn.topicId)) leave();
+    if (arrivedIn && focused && !openingTopic && (attach !== arrivedIn.attach || topicId !== arrivedIn.topicId)) leave();
   }, [focused, openingTopic, attach, topicId, arrivedIn, leave]);
+
+  // The cold start's Connection Screen, until its Attach is attached. The
+  // page counts as the Attach's first paint: after it, a wait or a failure
+  // leaves the page as it is, as on a page opened from the Host Screen.
+  const [pageShownFor, setPageShownFor] = useState<Attach | null>(null);
+  if (attach && attach !== pageShownFor && state?.typing.kind === 'open') setPageShownFor(attach);
+  const place = {
+    hostName: attach?.hostName ?? opening.hostName,
+    session: state?.sessionName ?? opening.session,
+  };
+  const cover = coverOf({
+    missing: opening.missing,
+    lookup: opening.lookup,
+    attach: state ? { typing: state.typing, step: state.step, paintedOnce: attach === pageShownFor } : null,
+    place,
+  });
+  const runCoverAction = useCoverAction({ opening, attach, hostId, openSessionsOnly: chooser.openSessionsOnly, say });
 
   const pageTitle = title || shown.page;
   const headerTitle = useMemo((): HeaderTitle | null => {
@@ -247,6 +266,15 @@ export default function WebViewScreen() {
           </Pressable>
         </View>
       )}
+      {coldStart && cover.kind === 'connection-screen' ? (
+        <ConnectionScreen
+          cover={cover}
+          place={opening.missing === null && place.hostName !== '' ? place : null}
+          palette={palette}
+          appearance={appearance}
+          onAction={runCoverAction}
+        />
+      ) : null}
       <TitleSheet {...chooser.sheet} />
     </HeaderBand>
   );

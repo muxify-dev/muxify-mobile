@@ -17,7 +17,7 @@ it('uses the phone Recent Session for this Host and keeps Mac order for ties', (
 
 it('prefers the Session of the Topic Place while the Topic lists it live', () => {
   const recent = [{ hostId: 'host', name: 'second', lastOpenedAt: '2026-11-09T12:00:00Z' }];
-  const place = { hostId: 'host', topicId: 't', session: 'first', window: null, pane: null, tab: null, at: '2026-11-08T12:00:00Z' };
+  const place = { hostId: 'host', owner: { kind: 'topic' as const, topicId: 't' }, session: 'first', window: null, pane: null, tab: null, at: '2026-11-08T12:00:00Z' };
   expect(chooseTopicSession(topic, 'host', recent, place)?.name).toBe('first');
   expect(chooseTopicSession(topic, 'host', recent, { ...place, session: 'gone' })?.name).toBe('second');
 });
