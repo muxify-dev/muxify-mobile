@@ -22,6 +22,11 @@
 #      Client attaches, it is in the Place's Window, and the tmux Window keeps
 #      its size, because no Surface has said one
 #   7  the same on a cold start with Reconnect on start
+#
+# Steps 6 and 7 run over a slow link (e2e/slow-launch.sh), so that a Terminal
+# Screen mounted under the page would have its grid before the Attach is up,
+# and they read the app's own log: no Terminal Screen opened, and no size went
+# to tmux, while only the page was shown.
 #   8  a Tab that the Host lists no more leaves the reopened Session on its
 #      Pane, the Session Place forgets the Tab, and the tmux Window takes the
 #      phone's size once the Terminal Screen is shown
@@ -53,8 +58,9 @@ on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
+. "$(dirname "$0")/slow-launch.sh"
 SERVER=
-trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null' EXIT
+trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null; [ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 # The Tabs stored for every Window on the Host: the page and a public site, or
 # the public site only.
@@ -111,8 +117,10 @@ fresh_page() {
   [ "$(clients)" = 1 ] || fail "$SESSION has $(clients) Clients, not 1, with the page on top"
   # The Attach restores the Place after it attaches; give it a moment.
   sleep 3
+  page_first "the app's log says the phone showed a Terminal Screen or sized the Window with only the page on top"
   [ "$(window_now)" = 1 ] || fail "the Session is in Window $(window_now), not in Window 1 of its Place"
   [ "$(window_size)" = "$MAC_SIZE" ] || fail "Window 1 is $(window_size): the phone sized it with only the page on top"
+  [ "$(relayed)" -gt "$RELAYED_BEFORE" ] || fail "no Connection went through the slow relay"
 }
 
 # Opens a Session from a row of the Sessions tab and waits for it to attach.
@@ -253,6 +261,8 @@ echo "6/8  after a relaunch, $SESSION opens on its page with no Terminal Screen 
 [ "$(saved_place)" = "1 $URL" ] || fail "the Session Place of $SESSION is \"$(saved_place)\", not Window 1 with the page"
 agent-device close >/dev/null 2>&1
 xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+slow_link
+RELAYED_BEFORE=$(relayed)
 mac_sized
 on_host "tmux select-window -t '$SESSION:0'"
 [ "$(clients)" = 0 ] || fail "$SESSION still has a Client after the app was stopped"
@@ -276,6 +286,8 @@ last = json.load(open(records_path)).get("lastPlace") or {}
 assert last.get("session") == session and last.get("topicId") is None, f"the Last Place is {last}"
 PY
 [ $? = 0 ] || fail "the Last Place is not $SESSION with no Topic"
+slow_link
+RELAYED_BEFORE=$(relayed)
 mac_sized
 on_host "tmux select-window -t '$SESSION:0'"
 agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1

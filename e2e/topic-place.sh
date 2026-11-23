@@ -24,6 +24,11 @@
 #      opened again is on that Window, with no page
 #   8  a Tab that the Host lists no more leaves the reopened Topic on its Pane
 #
+# Steps 5 and 6 run over a slow link (e2e/slow-launch.sh), so that a Terminal
+# Screen mounted under the page would have its grid before the Attach is up,
+# and they read the app's own log: no Terminal Screen opened, and no size went
+# to tmux, while only the page was shown.
+#
 # The Tabs are stored in the sandbox's tmux Window options as desktop Muxify
 # stores them (`stored-tabs`, see e2e/sandbox.sh), and the app gets them from
 # the sandbox's real `muxify server`: no step talks to the Muxify app on this
@@ -50,8 +55,9 @@ on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
 
+. "$(dirname "$0")/slow-launch.sh"
 SERVER=
-trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null' EXIT
+trap '[ -n "$SERVER" ] && kill $SERVER 2>/dev/null; [ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 topic_new() {
   muxify topic new "$1" --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["changed"]["topic_id"])'
@@ -123,8 +129,10 @@ fresh_page() {
   [ "$(clients)" = 1 ] || fail "the Topic's Session has $(clients) Clients, not 1, with the page on top"
   # The Attach restores the Place after it attaches; give it a moment.
   sleep 3
+  page_first "the app's log says the phone showed a Terminal Screen or sized the Window with only the page on top"
   [ "$(window_now)" = 0 ] || fail "the Topic is in Window $(window_now), not in Window 0 of its Place"
   [ "$(window_size 0)" = "$MAC_SIZE" ] || fail "Window 0 is $(window_size 0): the phone sized it with only the page on top"
+  [ "$(relayed)" -gt "$RELAYED_BEFORE" ] || fail "no Connection went through the slow relay"
 }
 
 # Back from the Terminal Screen or the Web View: both go to the Host Screen.
@@ -214,6 +222,8 @@ echo "5/8  after a relaunch, $TOPIC opens on its page with no Terminal Screen fi
 DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
 agent-device close >/dev/null 2>&1
 xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+slow_link
+RELAYED_BEFORE=$(relayed)
 mac_sized
 on_host "tmux select-window -t '$TOPIC_SESSION:1'"
 [ "$(clients)" = 0 ] || fail "the Topic's Session still has a Client after the app was stopped"
@@ -239,6 +249,8 @@ last = json.load(open(records_path)).get("lastPlace") or {}
 assert last.get("topicId") == topic, f"the Last Place is {last}"
 PY
 [ $? = 0 ] || fail "the Last Place is not $TOPIC"
+slow_link
+RELAYED_BEFORE=$(relayed)
 mac_sized
 on_host "tmux select-window -t '$TOPIC_SESSION:1'"
 agent-device open "$APP" --platform ios --relaunch "${device[@]}" >/dev/null 2>&1
