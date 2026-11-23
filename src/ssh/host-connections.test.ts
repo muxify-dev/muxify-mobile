@@ -70,6 +70,7 @@ function setup(options: {
   const clock = createTestClock();
   const links: FakeLink[] = [];
   const remembered: string[] = [];
+  const pruned: { hostId: string; had: string[] }[] = [];
   const logged: string[] = [];
   const connections = createHostConnections({
     clock,
@@ -77,6 +78,10 @@ function setup(options: {
     store: {
       rememberFingerprint: (_hostId: string, fingerprint: string) => {
         remembered.push(fingerprint);
+        return Promise.resolve();
+      },
+      pruneSessionPlaces: (hostId: string, had: ReadonlySet<string>) => {
+        pruned.push({ hostId, had: [...had].sort() });
         return Promise.resolve();
       },
     },
@@ -172,7 +177,7 @@ function setup(options: {
       });
     },
   });
-  return { clock, links, remembered, logged, connections };
+  return { clock, links, remembered, pruned, logged, connections };
 }
 
 /** Lets every promise that can settle, settle. */
@@ -599,7 +604,7 @@ describe('the Host Problem', () => {
     const refused = Object.assign(new Error('auth'), { code: 'AUTH_FAILED' });
     const auth = createHostConnections({
       dial: () => Promise.reject(refused),
-      store: { rememberFingerprint: () => Promise.resolve() },
+      store: { rememberFingerprint: () => Promise.resolve(), pruneSessionPlaces: () => Promise.resolve() },
     });
 
     const failed = await auth.openConnection(HOST).catch((error: unknown) => error);
@@ -721,6 +726,45 @@ describe('the Host Server', () => {
     await settle();
     await settle();
     expect(connections.listing(HOST.id)?.server.kind).toBe('live');
+  });
+
+  it('prunes Session Places to the Sessions a snapshot names, live or Dormant, and only for a snapshot that reads', async () => {
+    const { links, pruned, connections } = setup({ serverHello: CAPABLE });
+    await connections.hold(HOST);
+    await settle();
+    await settle();
+    const server = links[0]!.servers[0]!;
+    const subscription = server.frames.find((frame) =>
+      (frame.request as { subscribe?: { snapshot?: unknown } } | undefined)?.subscribe?.snapshot !== undefined);
+    const push = async (item: unknown) => {
+      server.print(`${JSON.stringify({ id: subscription!.id, item, kind: 'item' })}\n`);
+      await settle();
+    };
+    const dormantCard = (name: string) => ({ kind: 'dormant_session', id: `b-${name}`, name, sessions: [] });
+    const snapshot = (live: string[], dormant: string[]) => ({
+      sessions: live.map((name, index) => ({ id: '$' + index, name, activity: 0, mark: null, topic: null })),
+      tags: [],
+      pinned: dormant.slice(0, 1).map(dormantCard),
+      unpinned: { kind: 'in_play', limit: 3, places: [], guests: [], bench: dormant.slice(1).map(dormantCard) },
+      no_topic: [],
+    });
+    expect(pruned).toEqual([]);
+
+    await push({ broken: true });
+    expect(pruned).toEqual([]);
+
+    await push(snapshot(['work', 'docs'], ['notes', 'logs']));
+    expect(pruned).toEqual([{ hostId: HOST.id, had: ['docs', 'logs', 'notes', 'work'] }]);
+
+    // The same Sessions again, such as a new mark: nothing to prune.
+    await push(snapshot(['work', 'docs'], ['notes', 'logs']));
+    expect(pruned).toHaveLength(1);
+
+    await push(snapshot(['work'], []));
+    expect(pruned).toEqual([
+      { hostId: HOST.id, had: ['docs', 'logs', 'notes', 'work'] },
+      { hostId: HOST.id, had: ['work'] },
+    ]);
   });
 
   it('closes with its Connection, and a new Connection starts a new one', async () => {

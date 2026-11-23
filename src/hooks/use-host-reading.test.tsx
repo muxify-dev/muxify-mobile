@@ -12,7 +12,7 @@ const host = { id: 'h1', displayName: 'mac', tmuxExecutablePath: 'tmux' } as Hos
 let mockDown = true;
 const mockConnections: HostConnections = createHostConnections({
   clock: createTestClock(),
-  store: { rememberFingerprint: () => Promise.resolve() },
+  store: { rememberFingerprint: () => Promise.resolve(), pruneSessionPlaces: () => Promise.resolve() },
   dial: (): Promise<Dialed> => {
     if (mockDown) return Promise.reject(new Error('Connection refused (os error 61)'));
     return Promise.resolve({

@@ -92,6 +92,7 @@ function memoryStore() {
     forgetLastPlace: () => Promise.resolve(),
     placeFor: () => Promise.resolve(null),
     rememberPlace: () => Promise.resolve(),
+    pruneSessionPlaces: () => Promise.resolve(),
   };
   return { store, wrote };
 }

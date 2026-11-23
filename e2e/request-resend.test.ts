@@ -99,7 +99,7 @@ it('makes one Topic, and gives no error, when the answer of the first send is lo
   const log: string[] = [];
   const connections = createHostConnections({
     dial: () => dial(dials),
-    store: { rememberFingerprint: () => Promise.resolve() },
+    store: { rememberFingerprint: () => Promise.resolve(), pruneSessionPlaces: () => Promise.resolve() },
     log: { record: (tag, text) => log.push(`${tag}: ${text}`) },
   });
   const request = newRequestId();

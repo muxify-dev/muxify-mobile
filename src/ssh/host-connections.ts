@@ -1,6 +1,7 @@
 import { attachmentUpload } from '@/composer/host-upload';
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
 import { systemClock, type Clock, type Timer } from '@/lib/clock';
+import { describeError } from '@/lib/describe-error';
 import { HostProblem } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
 import { followListing, type ListingFeed, type LiveListing } from '@/ssh/host-listing-feed';
@@ -17,6 +18,7 @@ import {
   type HostCliState,
   type OpenCommandChannel,
 } from '@/topics/host-cli-install';
+import { sessionNamesHad } from '@/topics/environment';
 import { topicsUnavailable } from '@/topics/host-topics';
 import { createMuxifyPath, type MuxifyPath } from '@/topics/muxify-path';
 import { WriteOutcomeUnknown } from '@/topics/request';
@@ -168,7 +170,7 @@ interface Entry {
  */
 export function createHostConnections(options: {
   dial: Dial;
-  store: Pick<HostStore, 'rememberFingerprint'>;
+  store: Pick<HostStore, 'rememberFingerprint' | 'pruneSessionPlaces'>;
   clock?: Clock;
   log?: Log;
   /** The phone's build line, which its Host Server `hello` carries. */
@@ -303,10 +305,23 @@ export function createHostConnections(options: {
       say: (line) => say(`${host.displayName}: Host Server: ${line}`),
     });
     const feed = followListing(entry.server, (line) => say(`${host.displayName}: Host Server: ${line}`));
+    /** The Sessions the last prune kept Places for, so a push that changes none of them writes nothing. */
+    let prunedFor: string | null = null;
     const changed = () => {
       // A Connection that a newer one replaced has nothing to say.
       if (feeds.get(host.id)?.feed !== feed) return;
       for (const listener of [...listingListeners]) listener(host.id);
+      // A snapshot is the Host's whole state, live Sessions and Board alike,
+      // so a Session it does not name is gone, and so is its Session Place.
+      const { snapshot } = feed.current();
+      if (!snapshot) return;
+      const had = sessionNamesHad(snapshot);
+      const key = [...had].sort().join('\n');
+      if (key === prunedFor) return;
+      prunedFor = key;
+      store.pruneSessionPlaces(host.id, had).catch((error: unknown) => {
+        say(`${host.displayName}: could not prune Session Places: ${describeError(error)}`);
+      });
     };
     feeds.set(host.id, { entry, feed });
     feed.onChange(changed);

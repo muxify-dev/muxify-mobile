@@ -498,4 +498,48 @@ describe('Places', () => {
 
     expect((await store.load()).places).toEqual([place({ hostId: kept.id }), sessionPlace({ hostId: kept.id })]);
   });
+
+  it('prunes the Session Places of Sessions the Host no longer has, and keeps Topic Places and other Hosts', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    const notes = sessionPlace({ owner: { kind: 'session', session: 'notes' }, session: 'notes' });
+    const killed = sessionPlace({ owner: { kind: 'session', session: 'killed' }, session: 'killed' });
+    const elsewhere = sessionPlace({ hostId: 'host2', owner: { kind: 'session', session: 'killed' }, session: 'killed' });
+    const topic = place({ session: 'killed' });
+    for (const each of [sessionPlace(), notes, killed, elsewhere, topic]) await store.rememberPlace(each);
+
+    await store.pruneSessionPlaces('host1', new Set(['work', 'notes']));
+
+    expect((await store.load()).places).toEqual([sessionPlace(), notes, elsewhere, topic]);
+  });
+
+  it('writes nothing when a prune finds nothing to delete', async () => {
+    const storage = fakeStorage();
+    const store = createHostStore(storage.file, storage.secrets);
+    await store.rememberPlace(sessionPlace());
+    const before = storage.written();
+    let writes = 0;
+    const counted = createHostStore({ read: storage.file.read, write: async (next) => { writes += 1; await storage.file.write(next); } }, storage.secrets);
+
+    await counted.pruneSessionPlaces('host1', new Set(['work']));
+
+    expect(writes).toBe(0);
+    expect(storage.written()).toBe(before);
+  });
+
+  it('loses no change when two run at once', async () => {
+    // A file whose reads and writes take turns with other work, as the device's do.
+    let contents: string | null = null;
+    const slow: JsonFile = {
+      read: async () => { await Promise.resolve(); return contents; },
+      write: async (next) => { await Promise.resolve(); contents = next; },
+    };
+    const store = createHostStore(slow, fakeStorage().secrets);
+    const gone = sessionPlace({ owner: { kind: 'session', session: 'gone' }, session: 'gone' });
+    await store.rememberPlace(gone);
+
+    await Promise.all([store.pruneSessionPlaces('host1', new Set(['work'])), store.rememberPlace(sessionPlace())]);
+
+    expect((await store.load()).places).toEqual([sessionPlace()]);
+  });
 });

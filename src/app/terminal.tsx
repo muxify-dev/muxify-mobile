@@ -60,7 +60,7 @@ import {
   type SessionVisit,
 } from '@/domain/reconnect';
 import { deviceHostStore } from '@/storage/device-store';
-import { placeOwner, sameOwner, type Host, type PlaceTab } from '@/storage/records';
+import { findPlace, placeOwner, type Host, type PlaceTab } from '@/storage/records';
 import { execCommandRunner } from '@/tmux/exec-runner';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
@@ -249,12 +249,12 @@ export default function TerminalScreen() {
       setMissing(null);
       // The Last Place's Topic or Session opens at its Place, a Browser Tab
       // included: the Web View goes on top once the Attach is there to show it.
-      const owner = placeOwner(requested.topicId || null, requested.session!);
-      const place = records.places.find((each) => each.hostId === host.id && sameOwner(each.owner, owner) && each.session === requested.session);
+      const found = findPlace(records, host.id, placeOwner(requested.topicId || null, requested.session!));
+      const place = found?.session === requested.session ? found : null;
       const request = {
         host,
         destination: { sessionName: requested.session!, topic: requested.topicId ? { id: requested.topicId as TopicId, seed: null } : null,
-          restore: place ?? null },
+          restore: place },
         zoomed: settings.zoomMultipaneWindows,
       };
       if (!requested.reconnect) {

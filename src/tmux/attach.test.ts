@@ -392,6 +392,7 @@ function fakeStore() {
       places.push(place);
       return Promise.resolve();
     },
+    pruneSessionPlaces: () => Promise.resolve(),
   };
   /** The Host as Edit Host saves it. */
   const edit = (host: Host) => {

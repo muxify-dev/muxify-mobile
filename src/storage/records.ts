@@ -91,6 +91,16 @@ export function sameOwner(left: PlaceOwner, right: PlaceOwner): boolean {
     : right.kind === 'session' && left.session === right.session;
 }
 
+/** Whether `place` is the Place of this owner on this Host. */
+export function samePlace(place: Place, hostId: string, owner: PlaceOwner): boolean {
+  return place.hostId === hostId && sameOwner(place.owner, owner);
+}
+
+/** The owner's Place on this Host, or null when it has not been here. */
+export function findPlace(records: Pick<Records, 'places'>, hostId: string, owner: PlaceOwner): Place | null {
+  return records.places.find((place) => samePlace(place, hostId, owner)) ?? null;
+}
+
 /**
  * Where the user was in one Topic, or in one Session with no Topic, on this
  * phone: a Topic Place or a Session Place. One per owner of each Host.
@@ -101,7 +111,12 @@ export function sameOwner(left: PlaceOwner, right: PlaceOwner): boolean {
 export interface Place {
   hostId: string;
   owner: PlaceOwner;
-  /** Session name. The Attach targets Sessions by name. */
+  /**
+   * Session name. The Attach targets Sessions by name. The owner is the key
+   * a lookup asks with, and this is where the Place is: a Topic has several
+   * Sessions. For a Session Place the two are the same name, and parsePlace
+   * refuses a saved one where they differ.
+   */
   session: string;
   /** tmux's id (`@12`) first; index and name find it again after Reopen gives new ids. */
   window: { id: string; index: number; name: string } | null;

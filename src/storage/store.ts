@@ -1,5 +1,6 @@
 import {
   emptyRecords,
+  findPlace,
   type Fingerprint,
   type Host,
   type Identity,
@@ -10,7 +11,7 @@ import {
   type PlaceOwner,
   type RecentSession,
   type Records,
-  sameOwner,
+  samePlace,
 } from './records';
 
 /** Where the JSON lives. The one seam between the store and the filesystem. */
@@ -66,6 +67,12 @@ export interface HostStore {
   placeFor(hostId: string, owner: PlaceOwner): Promise<Place | null>;
   /** Replaces its owner's Place. A Disconnect keeps them: see forgetLastPlace. */
   rememberPlace(place: Place): Promise<void>;
+  /**
+   * Deletes each Session Place of the Host whose Session is not in `had`: the
+   * names of every Session that a complete read found live or as a Dormant
+   * Board Session. Topic Places stay.
+   */
+  pruneSessionPlaces(hostId: string, had: ReadonlySet<string>): Promise<void>;
 }
 
 /** How a credential is addressed in the keychain. */
@@ -113,67 +120,83 @@ export function createHostStore(
 
   const save = (records: Records) => file.write(JSON.stringify(records, null, 2));
 
+  // Each change reads the whole file and writes it back. Two at once, such as
+  // the Attach's Place write and a prune of Session Places, would each write
+  // what it read, and one change would be lost. So changes run one at a time.
+  let changes: Promise<unknown> = Promise.resolve();
+  function exclusive<T>(change: () => Promise<T>): Promise<T> {
+    const run = changes.then(change);
+    changes = run.catch(() => {});
+    return run;
+  }
+
   return {
     load,
 
-    async saveHost({ host, identity, credential }: SaveHostInput): Promise<Host> {
-      const records = await load();
-      const identityId = identity.id ?? newId();
-      const hostId = host.id ?? newId();
+    saveHost({ host, identity, credential }: SaveHostInput): Promise<Host> {
+      return exclusive(async () => {
+        const records = await load();
+        const identityId = identity.id ?? newId();
+        const hostId = host.id ?? newId();
 
-      const savedIdentity: Identity = {
-        id: identityId,
-        username: identity.username,
-        kind: identity.kind,
-      };
-      const savedHost: Host = { ...host, id: hostId, identityId };
+        const savedIdentity: Identity = {
+          id: identityId,
+          username: identity.username,
+          kind: identity.kind,
+        };
+        const savedHost: Host = { ...host, id: hostId, identityId };
 
-      await save({
-        ...records,
-        hosts: replaceById(records.hosts, savedHost),
-        identities: replaceById(records.identities, savedIdentity),
+        await save({
+          ...records,
+          hosts: replaceById(records.hosts, savedHost),
+          identities: replaceById(records.identities, savedIdentity),
+        });
+        // Written after the records, so a failed keychain write cannot leave a
+        // credential belonging to a Host that was never saved.
+        if (credential !== '') {
+          await secrets.set(credentialKey(identityId), credential);
+        }
+        return savedHost;
       });
-      // Written after the records, so a failed keychain write cannot leave a
-      // credential belonging to a Host that was never saved.
-      if (credential !== '') {
-        await secrets.set(credentialKey(identityId), credential);
-      }
-      return savedHost;
     },
 
-    async removeHost(hostId: string): Promise<void> {
-      const records = await load();
-      const host = records.hosts.find((candidate) => candidate.id === hostId);
-      if (!host) return;
+    removeHost(hostId: string): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        const host = records.hosts.find((candidate) => candidate.id === hostId);
+        if (!host) return;
 
-      const hosts = records.hosts.filter((candidate) => candidate.id !== hostId);
-      // An Identity may serve several Hosts, so it only goes when the last one
-      // that used it does — deleting a credential another Host still needs
-      // would break that Host silently.
-      const stillUsed = hosts.some((candidate) => candidate.identityId === host.identityId);
+        const hosts = records.hosts.filter((candidate) => candidate.id !== hostId);
+        // An Identity may serve several Hosts, so it only goes when the last one
+        // that used it does — deleting a credential another Host still needs
+        // would break that Host silently.
+        const stillUsed = hosts.some((candidate) => candidate.identityId === host.identityId);
 
-      await save({
-        hosts,
-        identities: stillUsed
-          ? records.identities
-          : records.identities.filter((candidate) => candidate.id !== host.identityId),
-        fingerprints: records.fingerprints.filter((candidate) => candidate.hostId !== hostId),
-        recentSessions: records.recentSessions.filter(
-          (candidate) => candidate.hostId !== hostId,
-        ),
-        lastPlace: records.lastPlace?.hostId === hostId ? null : records.lastPlace,
-        places: records.places.filter((candidate) => candidate.hostId !== hostId),
+        await save({
+          hosts,
+          identities: stillUsed
+            ? records.identities
+            : records.identities.filter((candidate) => candidate.id !== host.identityId),
+          fingerprints: records.fingerprints.filter((candidate) => candidate.hostId !== hostId),
+          recentSessions: records.recentSessions.filter(
+            (candidate) => candidate.hostId !== hostId,
+          ),
+          lastPlace: records.lastPlace?.hostId === hostId ? null : records.lastPlace,
+          places: records.places.filter((candidate) => candidate.hostId !== hostId),
+        });
+        if (!stillUsed) {
+          await secrets.remove(credentialKey(host.identityId));
+        }
       });
-      if (!stillUsed) {
-        await secrets.remove(credentialKey(host.identityId));
-      }
     },
 
-    async reorderHosts(hostIds: string[]): Promise<void> {
-      const records = await load();
-      const named = hostIds.flatMap((id) => records.hosts.find((host) => host.id === id) ?? []);
-      const rest = records.hosts.filter((host) => !named.includes(host));
-      await save({ ...records, hosts: [...new Set(named), ...rest] });
+    reorderHosts(hostIds: string[]): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        const named = hostIds.flatMap((id) => records.hosts.find((host) => host.id === id) ?? []);
+        const rest = records.hosts.filter((host) => !named.includes(host));
+        await save({ ...records, hosts: [...new Set(named), ...rest] });
+      });
     },
 
     async credentialFor(hostId: string): Promise<string | null> {
@@ -183,22 +206,24 @@ export function createHostStore(
       return secrets.get(credentialKey(host.identityId));
     },
 
-    async rememberFingerprint(hostId: string, value: string): Promise<void> {
-      const records = await load();
-      const existing = records.fingerprints.find((candidate) => candidate.hostId === hostId);
-      const fingerprint: Fingerprint = {
-        hostId,
-        value,
-        // Kept from the original sighting: when a key was first trusted is the
-        // interesting fact, not when it was last confirmed.
-        firstSeenAt: existing?.firstSeenAt ?? now().toISOString(),
-      };
-      await save({
-        ...records,
-        fingerprints: [
-          ...records.fingerprints.filter((candidate) => candidate.hostId !== hostId),
-          fingerprint,
-        ],
+    rememberFingerprint(hostId: string, value: string): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        const existing = records.fingerprints.find((candidate) => candidate.hostId === hostId);
+        const fingerprint: Fingerprint = {
+          hostId,
+          value,
+          // Kept from the original sighting: when a key was first trusted is the
+          // interesting fact, not when it was last confirmed.
+          firstSeenAt: existing?.firstSeenAt ?? now().toISOString(),
+        };
+        await save({
+          ...records,
+          fingerprints: [
+            ...records.fingerprints.filter((candidate) => candidate.hostId !== hostId),
+            fingerprint,
+          ],
+        });
       });
     },
 
@@ -207,14 +232,16 @@ export function createHostStore(
       return records.fingerprints.find((candidate) => candidate.hostId === hostId);
     },
 
-    async rememberSession(hostId: string, name: string): Promise<void> {
-      const records = await load();
-      await save({
-        ...records,
-        recentSessions: [
-          ...records.recentSessions.filter((candidate) => !sameSession(candidate, hostId, name)),
-          { hostId, name, lastOpenedAt: now().toISOString() },
-        ],
+    rememberSession(hostId: string, name: string): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        await save({
+          ...records,
+          recentSessions: [
+            ...records.recentSessions.filter((candidate) => !sameSession(candidate, hostId, name)),
+            { hostId, name, lastOpenedAt: now().toISOString() },
+          ],
+        });
       });
     },
 
@@ -225,34 +252,46 @@ export function createHostStore(
         .sort(byMostRecentlyOpened);
     },
 
-    async rememberLastPlace(place: LastPlace): Promise<void> {
-      const records = await load();
-      await save({ ...records, lastPlace: place });
+    rememberLastPlace(place: LastPlace): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        await save({ ...records, lastPlace: place });
+      });
     },
 
-    async forgetLastPlace(): Promise<void> {
-      const records = await load();
-      if (records.lastPlace === null) return;
-      await save({ ...records, lastPlace: null });
+    forgetLastPlace(): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        if (records.lastPlace === null) return;
+        await save({ ...records, lastPlace: null });
+      });
     },
 
     async placeFor(hostId: string, owner: PlaceOwner): Promise<Place | null> {
       const records = await load();
-      return records.places.find((candidate) => samePlace(candidate, hostId, owner)) ?? null;
+      return findPlace(records, hostId, owner);
     },
 
-    async rememberPlace(place: Place): Promise<void> {
-      const records = await load();
-      await save({
-        ...records,
-        places: [...records.places.filter((candidate) => !samePlace(candidate, place.hostId, place.owner)), place],
+    rememberPlace(place: Place): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        await save({
+          ...records,
+          places: [...records.places.filter((candidate) => !samePlace(candidate, place.hostId, place.owner)), place],
+        });
+      });
+    },
+
+    pruneSessionPlaces(hostId: string, had: ReadonlySet<string>): Promise<void> {
+      return exclusive(async () => {
+        const records = await load();
+        const places = records.places.filter((candidate) =>
+          candidate.hostId !== hostId || candidate.owner.kind !== 'session' || had.has(candidate.owner.session));
+        if (places.length === records.places.length) return;
+        await save({ ...records, places });
       });
     },
   };
-}
-
-function samePlace(candidate: Place, hostId: string, owner: PlaceOwner): boolean {
-  return candidate.hostId === hostId && sameOwner(candidate.owner, owner);
 }
 
 function sameSession(candidate: RecentSession, hostId: string, name: string): boolean {
