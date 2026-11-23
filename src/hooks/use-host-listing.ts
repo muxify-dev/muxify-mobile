@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { answered, asking, HOST_PROBLEM, refused, UNASKED, type Listing } from '@/domain/host-listing';
+import { systemClock } from '@/lib/clock';
 import { HostProblem } from '@/ssh/failures';
 import { deviceHostStore } from '@/storage/device-store';
 import { execCommandRunner } from '@/tmux/exec-runner';
@@ -11,8 +12,7 @@ import type { LiveListing } from '@/ssh/host-listing-feed';
 import { describeConnectionFailure, type DisconnectReason } from '@/tmux/disconnect-reason';
 import { appConnections } from '@/tmux/ssh-connection';
 import { TmuxClient } from '@/tmux/tmux-client';
-import type { EnvironmentSnapshot } from '@/topics/environment';
-import { liveReading, withHostCli } from '@/topics/host-topics';
+import { freshness, liveReading, withHostCli, type Freshness, type HostTopics, type Shown } from '@/topics/host-topics';
 
 /** The screens' own voice in the Log: what the Host answered when asked. */
 const say = speakingAs(deviceLog(), 'host');
@@ -123,6 +123,7 @@ export function useHostListing(hostId: string) {
   return {
     listing,
     topics,
+    freshness: useFreshness(topics),
     /** No Host Server runs: Topic Actions, Go to and New Topic are hidden. */
     sessionsOnly: live?.server.kind === 'sessions-only',
     problem,
@@ -146,13 +147,35 @@ export function useLiveReading(hostId: string, read: { sessions: Listing; failur
     useCallback((changed: () => void) => connections.subscribeHostCli(changed), [connections]),
     () => connections.hostCli(hostId),
   );
-  /** The latest push, which stays on screen until the next Connection's first push. */
-  const [last, setLast] = useState<EnvironmentSnapshot | null>(null);
-  const pushed = live?.snapshot ?? null;
-  if (pushed !== null && pushed !== last) setLast(pushed);
+  /** The latest push and the doubt of it, which stay on screen until the next Connection's first push. */
+  const [last, setLast] = useState<Shown | null>(null);
+  if (live?.received && (live.received !== last?.received || live.doubt !== last.doubt)) {
+    setLast({ received: live.received, doubt: live.doubt });
+  }
   const problem = useHostProblem(hostId);
   const reading = liveReading({ live, last, ...read, problem: problem !== null });
   return { live, listing: reading.listing, topics: withHostCli(reading.topics, hostCli), problem };
+}
+
+/**
+ * How fresh the Topics on screen are, now. A `quiet` wait draws again at its
+ * `until`, when an update still on its way turns into "Updating…".
+ *
+ * The time is state that the wait's timer moves on, not a clock read in the
+ * render: the React Compiler keeps a render's result while its inputs stay
+ * the same, so a clock read there would keep the first answer. A timer may
+ * fire a little early, so it moves the time at least to `until`.
+ */
+function useFreshness(topics: HostTopics): Freshness {
+  const [now, setNow] = useState(() => systemClock.now());
+  const shown = freshness(topics, now);
+  const until = shown.kind === 'quiet' ? shown.until : null;
+  useEffect(() => {
+    if (until === null) return;
+    const timer = systemClock.after(until - systemClock.now(), () => setNow(Math.max(until, systemClock.now())));
+    return () => systemClock.cancel(timer);
+  }, [until]);
+  return shown;
 }
 
 /**

@@ -119,7 +119,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
    * knows each Session's id and Topic. Sessions only offers none.
    */
   const live = useLiveListing(hostId ?? '');
-  const served = live?.server.kind === 'live' ? live.snapshot : null;
+  const served = live?.server.kind === 'live' ? live.received?.snapshot ?? null : null;
   const onHost = useMemo(
     () => new Map<string, SessionOnHost>(served?.sessions.map((session) => [session.name, { id: session.id, inTopic: session.topic !== null }])),
     [served],

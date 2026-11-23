@@ -718,7 +718,8 @@ describe('the Host Server', () => {
     await settle();
     expect(connections.listing(HOST.id)).toEqual({
       server: { kind: 'live', build: 'muxify 7593671 1794697369', protocol: 1 },
-      snapshot: null,
+      received: null,
+      doubt: expect.anything(),
     });
     expect(heard).toContain(HOST.id);
 
@@ -927,5 +928,97 @@ describe('the Host Server', () => {
     await expect(connections.onServer(HOST, jest.fn())).rejects.toEqual(
       new Error("Topics are unavailable on Mac: Muxify Mobile is too old for the Host's muxify (muxify next). Update the app."),
     );
+  });
+
+  describe('after a return from the background', () => {
+    const snapshotSubscriptions = (channel: FakeChannel) =>
+      channel.frames.filter((frame) => (frame.request as { subscribe?: { snapshot?: unknown } } | undefined)?.subscribe?.snapshot !== undefined);
+    const pings = (channel: FakeChannel) =>
+      channel.frames.filter((frame) => (frame.request as { ping?: unknown } | undefined)?.ping !== undefined);
+    const pushOn = async (channel: FakeChannel, subscription: Record<string, unknown>, item: unknown) => {
+      channel.print(`${JSON.stringify({ id: subscription.id, item, kind: 'item' })}\n`);
+      await settle();
+    };
+    const returnFromBackground = async (connections: ReturnType<typeof setup>['connections']) => {
+      connections.lifecycleChanged('background');
+      connections.lifecycleChanged('active');
+      await settle();
+    };
+
+    it('keeps a screen’s Connection whose Host Server answers a ping, and reads the Listing again on it', async () => {
+      const { clock, links, logged, connections, push, snapshot } = await subscribed({});
+      await push(snapshot(['work'], []));
+      const server = links[0]!.servers[0]!;
+      clock.advance(5_000);
+      const away = clock.now();
+
+      connections.lifecycleChanged('background');
+      expect(connections.listing(HOST.id)?.doubt).toEqual({ since: away, asked: null });
+      expect(pings(server)).toEqual([]);
+      // The channel pings on its own while idle; only the last ping is the return's.
+      clock.advance(120_000);
+      const idle = pings(server).length;
+      connections.lifecycleChanged('active');
+      await settle();
+      expect(connections.listing(HOST.id)?.doubt).toEqual({ since: away, asked: away + 120_000 });
+      expect(pings(server)).toHaveLength(idle + 1);
+      expect(logged).toContain('connections: Mac: asking its Host Server after the return');
+      answer(server, pings(server).at(-1)!.id, {});
+      await settle();
+
+      expect(links).toHaveLength(1);
+      expect(links[0]!.disconnected).toBe(false);
+      expect(logged).toContain('connections: Mac: its Host Server answered after the return; reading the Listing again');
+      expect(snapshotSubscriptions(server)).toHaveLength(2);
+      expect(connections.listing(HOST.id)).toMatchObject({ doubt: { since: away }, received: { snapshot: { sessions: [{ name: 'work' }] } } });
+
+      await pushOn(server, snapshotSubscriptions(server)[1]!, snapshot(['work', 'docs'], []));
+      expect(connections.listing(HOST.id)).toMatchObject({
+        doubt: null,
+        received: { snapshot: { sessions: [{ name: 'work' }, { name: 'docs' }] } },
+      });
+    });
+
+    it('keeps the doubt over a push of the subscription that ran before the background', async () => {
+      const { links, connections, push, snapshot } = await subscribed({});
+      await push(snapshot(['work'], []));
+      const server = links[0]!.servers[0]!;
+
+      await returnFromBackground(connections);
+      await pushOn(server, snapshotSubscriptions(server)[0]!, snapshot(['work', 'old'], []));
+
+      expect(connections.listing(HOST.id)).toMatchObject({
+        doubt: expect.objectContaining({ since: expect.any(Number) }),
+        received: { snapshot: { sessions: [{ name: 'work' }, { name: 'old' }] } },
+      });
+    });
+
+    it('drops a screen’s Connection whose Host Server does not answer the ping in time', async () => {
+      const { clock, links, logged, connections } = await subscribed({});
+
+      await returnFromBackground(connections);
+      clock.advance(EXEC_DEADLINE_MS - 1);
+      await settle();
+      expect(links[0]!.disconnected).toBe(false);
+      clock.advance(1);
+      await settle();
+
+      expect(links[0]!.disconnected).toBe(true);
+      expect(logged).toContain('connections: Mac: closed (its Host Server did not answer after the app came back from the background)');
+    });
+
+    it('reads the Listing again on a Connection an Attach holds, and leaves the link to the Attach', async () => {
+      const { links, connections } = setup({ serverHello: CAPABLE });
+      await connections.openConnection(HOST);
+      await settle();
+      await settle();
+      const server = links[0]!.servers[0]!;
+
+      await returnFromBackground(connections);
+
+      expect(pings(server)).toEqual([]);
+      expect(snapshotSubscriptions(server)).toHaveLength(2);
+      expect(links[0]!.disconnected).toBe(false);
+    });
   });
 });

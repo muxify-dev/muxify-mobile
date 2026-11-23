@@ -117,6 +117,11 @@ export function sessionNamesHad(snapshot: EnvironmentSnapshot): Set<string> {
   return new Set([...snapshot.sessions.map((session) => session.name), ...dormant]);
 }
 
+/** Whether the Board has the Topic. */
+export function hasTopic(snapshot: EnvironmentSnapshot, id: TopicId): boolean {
+  return openTopics(snapshot).some((topic) => topic.id === id);
+}
+
 /**
  * Parses the answer once, at the boundary, so nothing past it checks a shape.
  *

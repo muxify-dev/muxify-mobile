@@ -26,8 +26,12 @@ the Terminal Screen, going Home and backgrounding Muxify all leave it up.
 Muxify holds at most one per Host, and the Attach and the screens share it:
 the Attach's Control Connection and each screen read are channels on it. It
 ends when the transport is lost, when its keepalive goes unanswered for about
-15 s, when tmux does not answer the Attach's probe within 8 s, or a minute
-after the last screen read once no Attach holds it. See ADR 0007 and ADR 0012.
+15 s, when tmux does not answer the Attach's probe within 8 s, a minute
+after the last screen read once no Attach holds it, or, when the app comes back
+from the background with no Attach on it, when its Host Server does not answer
+a ping within 8 s. A Connection that passes the ping stays, and its Listing
+subscribes again on it. Muxify writes nothing to the Host Server while the app
+is in the background. See ADR 0007, ADR 0012 and ADR 0031.
 _Avoid_: SSH session, link, socket
 
 **Host CLI**:
@@ -226,11 +230,24 @@ Adding, editing, deleting, and ordering Hosts is in Settings.
 **Listing**:
 What a Host last said its Topics and Sessions were. The Host Server pushes a new
 Listing whenever it changes on the Host, and the Host Screen draws it at once:
-the answer it holds stays on screen until the next one arrives. Only the first
-Listing of a Connection has nothing to show and a spinner to stand in for it. A
-refusal is the exception and drops the list, because a Host that cannot be
-reached has no Sessions to offer. A Host that could not be asked at all drops
-the list too, and the Host Problem says why.
+the answer it holds stays on screen, its rows still tappable, until the next
+one arrives. Only the first Listing of a Connection has nothing to show and a
+spinner to stand in for it. The phone knows the Listing on screen is the
+Host's now while a subscription made after the last doubt has delivered it and
+still runs. The doubt begins when the app goes to the background, when the
+subscription ends, when the Host Server stops being live, or when the
+Connection closes. A push from a subscription that ran before the background
+does not end the doubt: only the first item of a new subscription does. The
+Host Screen says "Updating…" above the list only when the phone has not known
+the list for 30 s and has asked again for at least 1 s, so a short absence or
+a quick answer shows nothing. When the update fails with the list still on
+screen, that line becomes "Not updated · <age>" with Retry. The age is from
+the last moment the phone knew the list, not from the last push: a Host where
+nothing changed for hours sends no push. A tap on a Topic that the newest Listing no
+longer has says that the Topic was closed. A refusal with no Listing drops the
+list, because a Host that cannot be reached has no Sessions to offer. A Host
+that could not be asked at all drops the list too, and the Host Problem says
+why.
 _Avoid_: sessions (which are the Sessions themselves), fetch, cache
 
 **Host Problem**:

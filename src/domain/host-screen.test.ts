@@ -32,8 +32,14 @@ import {
   listedSessions,
   TOPICS_UNASKED,
   withHostCli,
+  type Freshness,
   type HostTopics,
+  type Shown,
 } from '@/topics/host-topics';
+
+/** A snapshot as the feed hands it on: the time is the Freshness's business, not these tests'. */
+const got = (snapshot: EnvironmentSnapshot): Shown => ({ received: { snapshot, at: 0 }, doubt: null });
+const CURRENT: Freshness = { kind: 'current' };
 
 const running = (name: string, windowCount = 1): Session => ({ name, windowCount });
 
@@ -133,7 +139,7 @@ function snapshot(over: Partial<EnvironmentSnapshot> = {}): EnvironmentSnapshot 
 
 const listed = (over: Partial<EnvironmentSnapshot>): HostTopics => ({
   kind: 'listed',
-  snapshot: snapshot(over),
+  ...got(snapshot(over)),
 });
 
 const CLOSED = new Set<OpenableRow>();
@@ -230,7 +236,7 @@ describe('the Board tab of the Host Screen', () => {
       topics: {
         kind: 'failed',
         error: 'muxify exited with status 1',
-        last: snapshot({ pinned: [topicCard('p')], unpinned: inPlay() }),
+        last: got(snapshot({ pinned: [topicCard('p')], unpinned: inPlay() })),
       },
       sections: [
         section(
@@ -441,7 +447,7 @@ describe('the Board tab of the Host Screen', () => {
     },
     {
       name: 'draws the last snapshot while it reads again',
-      topics: { kind: 'loading', last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
+      topics: { kind: 'loading', last: got(snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) })) },
       sections: [inPlaySection(topicRow('t1'))],
     },
     {
@@ -472,7 +478,7 @@ describe('the Board tab of the Host Screen', () => {
     {
       name: 'shows the Topics pushed after the install put a Host CLI there',
       topics: withHostCli(
-        { kind: 'listed', snapshot: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }) },
+        { kind: 'listed', ...got(snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) })) },
         installDone('installed', 'abc1234 1760000000'),
       ),
       sections: [inPlaySection(topicRow('t1'))],
@@ -494,14 +500,14 @@ describe('the Board tab of the Host Screen', () => {
       topics: {
         kind: 'failed',
         error: 'muxify exited with status 1',
-        last: snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) }),
+        last: got(snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) })),
       },
       sections: [
         inPlaySection({ kind: 'refused', message: 'muxify exited with status 1' }, topicRow('t1')),
       ],
     },
   ])('$name', ({ topics, attach = null, opened = CLOSED, appearance = 'light', sections }) => {
-    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach, opened, appearance, problem: null })).toEqual(sections);
+    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach, opened, appearance, problem: null, freshness: CURRENT })).toEqual(sections);
   });
 });
 
@@ -513,10 +519,11 @@ describe('the Host Screen, against the snapshot `environment show` gave on the M
       tab: 'board',
       listing: UNASKED,
       attach: null,
-      topics: { kind: 'listed', snapshot: mac },
+      topics: { kind: 'listed', ...got(mac) },
       opened: new Set<OpenableRow>(['bench']),
       appearance: 'dark',
       problem: null,
+      freshness: CURRENT,
     });
     const ids = (cards: Card[]) => cards.map((card) => (card.kind === 'topic' ? card.topic.id : card.kind));
     const rowIds = (rows: HostScreenRow[]) =>
@@ -535,11 +542,12 @@ describe('the Host Screen, against the snapshot `environment show` gave on the M
     const [sessions] = hostScreen({
       tab: 'sessions',
       listing: answered(listedSessions(mac)),
-      topics: { kind: 'listed', snapshot: mac },
+      topics: { kind: 'listed', ...got(mac) },
       attach: null,
       opened: CLOSED,
       appearance: 'light',
       problem: null,
+      freshness: CURRENT,
     });
 
     expect(sessions?.rows.map((row) => ('name' in row ? row.name : row.kind))).toEqual(mac.sessions.map((session) => session.name));
@@ -551,7 +559,7 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
 
   it('lists every Topic of the Host, the Bench too, and no Session or place', () => {
     const topicIds = (cards: Card[]) => cards.flatMap((card) => (card.kind === 'topic' ? [card.topic.id] : []));
-    const sections = topicSections({ kind: 'listed', snapshot: mac }, 'dark');
+    const sections = topicSections({ kind: 'listed', ...got(mac) }, 'dark');
     const rows = sections.flatMap((section) => section.rows);
 
     expect(rows.every((row) => row.kind === 'topic')).toBe(true);
@@ -570,14 +578,14 @@ describe('topicSections, the Topics a list of Sessions shows under itself', () =
 });
 
 describe('firstReadAnswered, which the Host Screen waits for before it draws the Host', () => {
-  const listed: HostTopics = { kind: 'listed', snapshot: parseEnvironment(inPlayFixture) };
+  const listed: HostTopics = { kind: 'listed', ...got(parseEnvironment(inPlayFixture)) };
 
   it.each<{ name: string; listing: Listing; topics: HostTopics; answered: boolean }>([
     { name: 'waits while the first read is in flight', listing: UNASKED, topics: TOPICS_UNASKED, answered: false },
     { name: 'waits for the Topics, which say the tabs', listing: answered([running('main')]), topics: TOPICS_UNASKED, answered: false },
     { name: 'draws once both have answered', listing: answered([running('main')]), topics: listed, answered: true },
     { name: 'draws a Host with no Host CLI', listing: answered([running('main')]), topics: { kind: 'absent' }, answered: true },
-    { name: 'does not wait again on a later read', listing: asking(answered([running('main')])), topics: { kind: 'loading', last: parseEnvironment(inPlayFixture) }, answered: true },
+    { name: 'does not wait again on a later read', listing: asking(answered([running('main')])), topics: { kind: 'loading', last: got(parseEnvironment(inPlayFixture)) }, answered: true },
     { name: 'takes a refusal as the answer', listing: refused('This Host is no longer saved.'), topics: TOPICS_UNASKED, answered: true },
   ])('$name', ({ listing, topics, answered: expected }) => {
     expect(firstReadAnswered({ listing, topics })).toBe(expected);
@@ -595,10 +603,10 @@ describe('the tabs of the Host Screen', () => {
     { name: 'shows both when the Config has both off, which leaves no view', topics: withSidebar({ topics: false, sessions: false }), tabs: ['board', 'sessions'] },
     { name: 'shows only Sessions on a Host with no Host CLI', topics: { kind: 'absent' }, tabs: ['sessions'] },
     { name: 'shows only Sessions while the Host CLI is installed', topics: { kind: 'installing' }, tabs: ['sessions'] },
-    { name: 'shows only Sessions while an old Host CLI is updated', topics: { kind: 'updating', last: snapshot() }, tabs: ['sessions'] },
+    { name: 'shows only Sessions while an old Host CLI is updated', topics: { kind: 'updating', last: got(snapshot()) }, tabs: ['sessions'] },
     { name: 'shows only Sessions when the Topics read failed and there is no snapshot', topics: { kind: 'failed', error: 'no route', last: null }, tabs: ['sessions'] },
-    { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: snapshot() }, tabs: ['board', 'sessions'] },
-    { name: 'keeps the tabs of the last snapshot while it reads again', topics: { kind: 'loading', last: lastSnapshot(withSidebar({ topics: true, sessions: false })) }, tabs: ['board'] },
+    { name: 'keeps the tabs of the last snapshot through a failed read', topics: { kind: 'failed', error: 'no route', last: got(snapshot()) }, tabs: ['board', 'sessions'] },
+    { name: 'keeps the tabs of the last snapshot while it reads again', topics: { kind: 'loading', last: got(lastSnapshot(withSidebar({ topics: true, sessions: false }))!) }, tabs: ['board'] },
   ])('$name', ({ topics, tabs }) => {
     expect(hostScreenTabs(topics)).toEqual(tabs);
   });
@@ -612,7 +620,7 @@ describe('the tabs of the Host Screen', () => {
 
 describe('the Sessions tab of the Host Screen', () => {
   const sessions = (listing: Listing, topics: HostTopics) =>
-    hostScreen({ tab: 'sessions', listing, topics, attach: null, opened: CLOSED, appearance: 'light', problem: null });
+    hostScreen({ tab: 'sessions', listing, topics, attach: null, opened: CLOSED, appearance: 'light', problem: null, freshness: CURRENT });
   const withTopics = listed({
     sessions: [
       { ...snapshotSession('$1', 'zeta', 't1'), windows: [] },
@@ -670,7 +678,7 @@ describe('the Sessions tab of the Host Screen', () => {
 
   it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Board tab has the error', () => {
     expect(sessions(answered([running('main')]), { kind: 'absent' })[0]?.rows).toHaveLength(1);
-    expect(sessions(answered([]), { kind: 'failed', error: 'no route', last: snapshot() })[0]?.rows).toEqual([
+    expect(sessions(answered([]), { kind: 'failed', error: 'no route', last: got(snapshot()) })[0]?.rows).toEqual([
       note('No Sessions on this Host.'),
     ]);
   });
@@ -691,7 +699,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
     no_topic: [sid('$2')],
   });
   const benchRows = (attach: AttachPlace | null, opened: OpenableRow[] = []) =>
-    hostScreen({ tab: 'board', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light', problem: null })
+    hostScreen({ tab: 'board', listing: UNASKED, topics: host, attach, opened: new Set(opened), appearance: 'light', problem: null, freshness: CURRENT })
       .find((shown) => shown.id === 'bench')?.rows;
   const CLOSED_BENCH: HostScreenRow = { kind: 'bench', opened: false };
 
@@ -736,7 +744,7 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
 
   it('shows the Session of the Attach in No Topic on a Host with an empty Bench', () => {
     const topics = listed({ sessions: [snapshotSession('$2', 'loose', null)], no_topic: [sid('$2')] });
-    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light', problem: null }))
+    expect(hostScreen({ tab: 'board', listing: UNASKED, topics, attach: { sessionName: 'loose', topic: null }, opened: CLOSED, appearance: 'light', problem: null, freshness: CURRENT }))
       .toEqual([
         section('bench', null, sessionRow('loose')),
         section('no-topic', null, { kind: 'no-topic', count: 1, opened: false }),
@@ -749,12 +757,39 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
   });
 });
 
+describe('the freshness row of the Host Screen', () => {
+  const kept = got(snapshot({ sessions: [snapshotSession('$1', 'work', 't1')], unpinned: inPlay({ places: [topicCard('t1')] }) }));
+  const screen = (tab: 'board' | 'sessions', topics: HostTopics, freshness: Freshness, listing: Listing = answered([running('work')])) =>
+    hostScreen({ tab, listing, topics, attach: null, opened: CLOSED, appearance: 'light', problem: null, freshness });
+
+  it.each(['board', 'sessions'] as const)('says "Updating…" above the old list on the %s tab, and keeps its rows', (tab) => {
+    const [first] = screen(tab, { kind: 'loading', last: kept }, { kind: 'updating' });
+
+    expect(first?.rows[0]).toEqual({ kind: 'checking', text: 'Updating…' });
+    expect(first?.rows.slice(1).map((row) => row.kind)).toEqual(tab === 'board' ? ['topic'] : ['session']);
+  });
+
+  it('says nothing while a recent list waits quietly', () => {
+    const quiet = screen('board', { kind: 'listed', ...kept, doubt: { since: 0, asked: 0 } }, { kind: 'quiet', until: 30_000 });
+
+    expect(quiet).toEqual(screen('board', { kind: 'listed', ...kept }, CURRENT));
+  });
+
+  it('says how old a list it could not update is, in place of the refusal row', () => {
+    const failed: HostTopics = { kind: 'failed', error: 'no route', last: kept };
+    const [first] = screen('board', failed, { kind: 'not-updated', at: 5, error: 'no route' }, refused('no route'));
+
+    expect(first?.rows.map((row) => row.kind)).toEqual(['not-updated', 'topic']);
+    expect(first?.rows[0]).toEqual({ kind: 'not-updated', at: 5, message: 'no route' });
+  });
+});
+
 describe('the Host Problem on the Host Screen', () => {
   const problem = { title: 'Could not reach mac', detail: 'The Host did not answer in time.' };
   const unreachable: HostTopics = { kind: 'host-problem', last: null };
 
   it.each(['sessions', 'board'] as const)('is one row on the %s tab, however many reads of the Host met it', (tab) => {
-    const rows = hostScreen({ tab, listing: HOST_PROBLEM, topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem })
+    const rows = hostScreen({ tab, listing: HOST_PROBLEM, topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem, freshness: CURRENT })
       .flatMap((section) => section.rows);
 
     expect(rows).toEqual([{ kind: 'host-problem', ...problem }]);
@@ -764,11 +799,11 @@ describe('the Host Problem on the Host Screen', () => {
   // spinner, but the screen draws none of it.
   const cached: HostTopics = {
     kind: 'host-problem',
-    last: snapshot({ pinned: [topicCard('pinned')], unpinned: inPlay({ places: [topicCard('playing')] }) }),
+    last: got(snapshot({ pinned: [topicCard('pinned')], unpinned: inPlay({ places: [topicCard('playing')] }) })),
   };
 
   it.each(['sessions', 'board'] as const)('drops the cached Topics on the %s tab, and stands in a section of its own', (tab) => {
-    const sections = hostScreen({ tab, listing: HOST_PROBLEM, topics: cached, attach: null, opened: CLOSED, appearance: 'light', problem });
+    const sections = hostScreen({ tab, listing: HOST_PROBLEM, topics: cached, attach: null, opened: CLOSED, appearance: 'light', problem, freshness: CURRENT });
 
     expect(sections).toEqual([{ id: tab === 'board' ? 'topics' : tab, title: null, rows: [{ kind: 'host-problem', ...problem }] }]);
   });
@@ -778,7 +813,7 @@ describe('the Host Problem on the Host Screen', () => {
   });
 
   it('leaves a refusal from a Host that answered as its own row', () => {
-    const rows = hostScreen({ tab: 'sessions', listing: refused('no server running'), topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem: null })
+    const rows = hostScreen({ tab: 'sessions', listing: refused('no server running'), topics: unreachable, attach: null, opened: CLOSED, appearance: 'light', problem: null, freshness: CURRENT })
       .flatMap((section) => section.rows);
 
     expect(rows).toEqual([{ kind: 'refused', message: 'no server running' }]);

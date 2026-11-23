@@ -17,6 +17,8 @@ import {
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
+  animation,
+  Animation,
   background,
   buttonStyle,
   environment,
@@ -77,7 +79,7 @@ import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord, PlaceTab, RecentSession } from '@/storage/records';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
 import type { BoardCard } from '@/topics/board-card';
-import { lastSnapshot } from '@/topics/host-topics';
+import { lastReceived, lastSnapshot } from '@/topics/host-topics';
 import {
   allowsFullSwipe,
   closeAlert,
@@ -107,7 +109,7 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const { listing, topics, sessionsOnly, problem, retry: retryHost } = useHostListing(id);
+  const { listing, topics, freshness, sessionsOnly, problem, retry: retryHost } = useHostListing(id);
   /** The card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<BoardCard | null>(null);
   /** The Open Place the user fills: tapped, until a card is picked or the sheet is closed. */
@@ -220,6 +222,7 @@ export default function HostScreen() {
     attach: attachedHere === null ? null : { sessionName: attachedHere.sessionName, topic: attachedHere.topic?.id ?? null },
     appearance,
     problem: problem === null ? null : hostProblemWords(problem, host?.displayName ?? 'the Host'),
+    freshness,
   };
   // A move opens the Bench: a card cannot go where the list hides it.
   const movingSections = moving === null ? [] : hostScreen({ ...input, opened: new Set([...opened, 'bench']) });
@@ -520,7 +523,8 @@ export default function HostScreen() {
         renderTab={(each) => (
           <Host style={styles.fill} matchContents={false}>
             <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
-              <Form modifiers={[scrollContentBackground('hidden')]}>
+              {/* A new push animates the rows it adds, drops or moves, as SwiftUI's List does. */}
+              <Form modifiers={[scrollContentBackground('hidden'), animation(Animation.default, lastReceived(topics)?.at ?? 0)]}>
                 {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
               </Form>
             </VStack>

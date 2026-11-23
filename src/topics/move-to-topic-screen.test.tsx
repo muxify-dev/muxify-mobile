@@ -33,7 +33,7 @@ jest.mock('@/storage/device-store', () => ({
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 jest.mock('@/hooks/use-host-listing', () => ({
-  useLiveListing: () => ({ server: { kind: 'live' }, snapshot: require('@/topics/environment').parseEnvironment(mockListing) }),
+  useLiveListing: () => ({ server: { kind: 'live' }, received: { snapshot: require('@/topics/environment').parseEnvironment(mockListing), at: 0 }, doubt: null }),
 }));
 jest.mock('@/tmux/attach-context', () => ({
   useAttachHolder: () => ({

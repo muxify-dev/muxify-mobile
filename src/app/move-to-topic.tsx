@@ -42,7 +42,7 @@ export default function MoveToTopicScreen() {
   const holder = useAttachHolder();
   const { hostId, session, name } = useLocalSearchParams<MoveToTopicParams>();
   const { appearance, palette } = useSettings();
-  const snapshot = useLiveListing(hostId)?.snapshot ?? null;
+  const snapshot = useLiveListing(hostId)?.received?.snapshot ?? null;
   const { write, hostName, check, request } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
 

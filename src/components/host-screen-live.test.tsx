@@ -121,6 +121,8 @@ function fakeServer(initial: HostServerState) {
       for (const listener of [...listeners]) listener(next);
     },
     push: (item: unknown) => act(async () => { items[items.length - 1]!(item); }),
+    /** A push on the `nth` subscription, such as one that ran before the app went to the background. */
+    pushOn: (nth: number, item: unknown) => act(async () => { items[nth]!(item); }),
   };
 }
 
@@ -418,6 +420,105 @@ describe('a live Host Screen', () => {
     await act(async () => { second.become({ kind: 'live', build: 'muxify 1', protocol: 1 }); });
     await second.push(snapshotItem('Ship', 'Docs'));
     expect(topics()).toEqual(['Topic Ship', 'Topic Docs']);
+  });
+});
+
+describe('a Host Screen after a return from the background', () => {
+  const LIVE = { kind: 'live', build: 'muxify 1', protocol: 1 } as const;
+  const wait = (ms: number) => act(async () => { jest.advanceTimersByTime(ms); });
+  /** The Connections, as the app goes away for `ms` and comes back: the Host Server has not been asked yet. */
+  const away = (ms: number) => act(async () => {
+    feed.pause();
+    jest.advanceTimersByTime(ms);
+    feed.resume();
+  });
+  /** The Host Server answered the return's ping: the Connections read the Listing again. */
+  const answered = () => act(async () => { feed.refresh(); });
+  const updating = () => texts().includes('Updating…');
+
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('says nothing after 10 s away, however slow the answer', async () => {
+    const server = connect(LIVE);
+    await mount();
+    await server.push(snapshotItem('Ship'));
+
+    await away(10_000);
+    await wait(5_000);
+    expect(updating()).toBe(false);
+    await answered();
+    await server.push(snapshotItem('Ship'));
+
+    expect(updating()).toBe(false);
+  });
+
+  it('says nothing after 2 min away when the Host Server answers at once', async () => {
+    const server = connect(LIVE);
+    await mount();
+    await server.push(snapshotItem('Ship'));
+
+    await act(async () => { feed.pause(); });
+    await wait(120_000);
+    // Timers that fire as the app wakes, before it hears it is active, say nothing either.
+    expect(updating()).toBe(false);
+    await act(async () => { feed.resume(); });
+    expect(updating()).toBe(false);
+    await wait(300);
+    await answered();
+    expect(updating()).toBe(false);
+    await wait(300);
+    await server.push(snapshotItem('Ship', 'Docs'));
+
+    expect(updating()).toBe(false);
+    expect(topics()).toEqual(['Topic Ship', 'Topic Docs']);
+  });
+
+  it('says "Updating…" from 1 s after a return from 2 min away until the first push of the new subscription', async () => {
+    const server = connect(LIVE);
+    await mount();
+    // An hour with no change on the Mac: the list stays the Host's.
+    await server.push(snapshotItem('Ship'));
+    await wait(3_600_000);
+    expect(updating()).toBe(false);
+
+    await away(120_000);
+    await wait(999);
+    expect(updating()).toBe(false);
+    await wait(1);
+    expect(updating()).toBe(true);
+
+    // A push the old subscription held over the background proves nothing.
+    await server.pushOn(0, snapshotItem('Ship', 'Old'));
+    expect(updating()).toBe(true);
+    await wait(5_000);
+    await answered();
+    expect(updating()).toBe(true);
+    expect(topics()).toEqual(['Topic Ship', 'Topic Old']);
+
+    await server.push(snapshotItem('Docs'));
+    expect(updating()).toBe(false);
+    expect(topics()).toEqual(['Topic Docs']);
+  });
+
+  it('says how long ago it last knew the list when it cannot update it after 2 hr away, not how old the last push is', async () => {
+    const server = connect(LIVE);
+    await mount();
+    await server.push(snapshotItem('Ship'));
+    await wait(3_600_000);
+
+    await away(2 * 3_600_000);
+    // The Host Server did not answer the ping: the Connections drop the link, and the next dial fails.
+    (mockConnections.hold as jest.Mock).mockImplementationOnce(async () => { throw new Error('Network is unreachable'); });
+    await act(async () => { server.become({ kind: 'closed' }); });
+
+    expect(texts()).toContain('Not updated · 2 hr ago');
+    expect(topics()).toEqual(['Topic Ship']);
+    expect(labels()).toContain('Retry: not updated, 2 hr ago');
   });
 });
 

@@ -17,6 +17,7 @@ import { actionLabel } from '@/domain/cover';
 import { menuCard, type BoardSessionRow, type CardRow, type HostScreenRow, type OpenableRow, type SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
 import { phaseLabel } from '@/tmux/attach-labels';
+import { timeAgo } from '@/lib/relative-time';
 import { cardKey } from '@/topics/board-card';
 import { menuActions, TOPIC_ACTION_ICON, TOPIC_ACTION_LABEL, type CardAction } from '@/topics/topic-action';
 import { MENU_ITEM, sessionActions, type NamedSession, type SessionAction } from '@/topics/session-action';
@@ -143,6 +144,30 @@ export function HostScreenRowView({
           <TryAgain onPress={actions.onRetry} />
         </VStack>
       );
+    case 'not-updated': {
+      // Read at each draw, so the age is as old as the list when the screen next changes.
+      const age = timeAgo(new Date(row.at), new Date());
+      return (
+        <VStack
+          spacing={4}
+          alignment="leading"
+          modifiers={[frame({ maxWidth: 3000, alignment: 'leading' })]}>
+          <HStack spacing={8}>
+            <Image systemName="clock.badge.exclamationmark" size={15} color={palette.secondaryLabel} />
+            <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>
+              {`Not updated · ${age}`}
+            </Text>
+            <Spacer />
+            <Button
+              label="Retry"
+              onPress={actions.onRetry}
+              modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel(`Retry: not updated, ${age}`)]}
+            />
+          </HStack>
+          <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{row.message}</Text>
+        </VStack>
+      );
+    }
     case 'host-problem':
       return (
         <VStack

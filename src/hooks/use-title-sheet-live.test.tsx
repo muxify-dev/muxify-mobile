@@ -265,10 +265,14 @@ describe('the Session and Window Actions', () => {
   /** The Host Server is live, and its Listing has `game/ship` in Topic `t` and `app` in no Topic. */
   const live = (): LiveListing => ({
     server: { kind: 'live', build: 'muxify 1', protocol: 1 },
-    snapshot: parseEnvironment(snapshotPush({
-      topics: [{ id: 't', label: 'Ship', state: 'live' }],
-      sessions: [{ id: '$1', name: 'game/ship', topic: 't' }, { id: '$2', name: 'app' }],
-    })),
+    received: {
+      snapshot: parseEnvironment(snapshotPush({
+        topics: [{ id: 't', label: 'Ship', state: 'live' }],
+        sessions: [{ id: '$1', name: 'game/ship', topic: 't' }, { id: '$2', name: 'app' }],
+      })),
+      at: 0,
+    },
+    doubt: null,
   });
   const button = (label: string, nth = 0) => renderer.root.findAllByType(Button).filter((node) =>
     node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label))[nth]!;
@@ -334,7 +338,7 @@ describe('the Session and Window Actions', () => {
   });
 
   it('offers none of them in Sessions only', async () => {
-    mockListing = { server: { kind: 'sessions-only', reason: 'the Host Server did not answer' }, snapshot: null };
+    mockListing = { server: { kind: 'sessions-only', reason: 'the Host Server did not answer' }, received: null, doubt: null };
     mockLists = ['sessions', 'windows'];
     await mount(fakeAttach([{ name: 'game/ship', windowCount: 1 }]));
     await fake.push(topicItem('Ship', 'claude', 'working'));
