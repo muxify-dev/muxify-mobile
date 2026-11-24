@@ -51,6 +51,17 @@ describe('parseSettings', () => {
     });
   });
 
+  it('keeps empty Quick Action positions and drops repeated or unknown actions in place', () => {
+    const raw = { quickActions: {
+      ctrl: ['suspend', 'suspend', 'paste', 'interrupt', 'clear-screen'],
+      cmd: ['clear-pane', null, 'copy-pane', 'removed-action'],
+    } };
+    expect(parseSettings(raw).quickActions).toEqual({
+      ctrl: ['suspend', null, null, 'interrupt'],
+      cmd: ['clear-pane', null, 'copy-pane', null],
+    });
+  });
+
   it('defaults a file that is not there', () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
   });

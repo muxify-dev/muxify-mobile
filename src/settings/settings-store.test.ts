@@ -23,6 +23,10 @@ const CHANGED: Settings = {
   zoomMultipaneWindows: false,
   hostScreenTabs: { host1: 'sessions' },
   reconnectOnStart: true,
+  quickActions: {
+    ctrl: [null, 'interrupt-twice', null, 'suspend'],
+    cmd: ['paste', null, 'copy-pane', null],
+  },
 };
 
 describe('settings store', () => {

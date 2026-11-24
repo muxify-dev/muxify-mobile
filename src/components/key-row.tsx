@@ -1,4 +1,5 @@
 import { MaskedView } from '@expo/ui/community/masked-view';
+import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -19,6 +20,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
+import { QuickActionKey, type QuickActionTile } from './quick-action-key';
+import type { QuickAction, QuickActionKey as QuickActionModifier } from '@/lib/quick-actions';
 import type { Appearance } from '@/constants/app-theme';
 import {
   ARROW_KEYS,
@@ -40,6 +43,8 @@ import type { Modifier, Modifiers } from '@/lib/modifier-keys';
 export interface KeyRowProps {
   /** Which modifiers are armed, so the row can show them held down. */
   armed: Modifiers;
+  quickActions: Record<QuickActionModifier, readonly (QuickActionTile | null)[]>;
+  onQuickAction: (id: QuickAction) => void;
   /** A modifier tapped: on if it was off, off if it was on. */
   onArm: (modifier: Modifier) => void;
   /** Escape, tab or an arrow, once for each repeat of a held arrow. */
@@ -90,6 +95,14 @@ const KEYBOARD_COLORS: Record<'light' | 'dark', KeyRowColors> = {
   },
 };
 
+function tick(feedback: 'light' | 'selection' = 'light') {
+  const request = feedback === 'selection'
+    ? Haptics.selectionAsync()
+    : Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  // The key still works when the device cannot give feedback.
+  void request.catch(() => {});
+}
+
 /**
  * The strip docked on top of the software keyboard, or at the bottom of the
  * Terminal Screen while the keyboard is down: the keys a phone keyboard
@@ -105,12 +118,27 @@ export function KeyRow(props: KeyRowProps) {
   const palette = KEYBOARD_COLORS[scheme];
   const [bubble, setBubble] = useState<Bubble | null>(null);
 
-  const fixedKey = (each: ModifierKey | NamedKey) =>
-    each.kind === 'modifier' ? (
+  const fixedKey = (each: ModifierKey | NamedKey) => {
+    if (each.kind === 'modifier' && each.modifier !== 'alt') {
+      const held = armed[each.modifier];
+      return (
+        <QuickActionKey key={each.spoken + (keysDisabled ? '-disabled' : '')} label={each.spoken} modifier={each.modifier}
+          held={held} disabled={keysDisabled} palette={palette} tiles={props.quickActions[each.modifier]}
+          style={styles.key} keyWidth={KEY_WIDTH}
+          onTap={() => { tick('selection'); onArm(each.modifier); }}
+          onOpen={() => tick('selection')}
+          onSelect={id => { tick(); props.onQuickAction(id); }}>
+          {held && <View style={[styles.held, { backgroundColor: palette.controlAccent }]} />}
+          <Text allowFontScaling={false} style={[styles.keyLabel, { color: held ? palette.controlAccent : palette.toolbarTint }]}>{each.label}</Text>
+        </QuickActionKey>
+      );
+    }
+    return each.kind === 'modifier' ? (
       <FixedKey
         key={each.spoken}
         label={each.spoken}
         held={armed[each.modifier]}
+        feedback="selection"
         disabled={keysDisabled}
         palette={palette}
         onPress={() => onArm(each.modifier)}>
@@ -126,13 +154,22 @@ export function KeyRow(props: KeyRowProps) {
         {each.label}
       </FixedKey>
     );
+  };
 
   return (
     <View style={{ backgroundColor: palette.background, paddingBottom: props.below }}>
       <View style={styles.row}>
         {LEFT_KEYS.map(fixedKey)}
         <Divider palette={palette} />
-        <PairStrip disabled={keysDisabled} palette={palette} onSymbol={onSymbol} onBubble={setBubble} />
+        <PairStrip
+          disabled={keysDisabled}
+          palette={palette}
+          onSymbol={(symbol) => {
+            tick();
+            onSymbol(symbol);
+          }}
+          onBubble={setBubble}
+        />
         <Divider palette={palette} />
         <ArrowStick disabled={keysDisabled} palette={palette} onKey={onKey} onBubble={setBubble} />
         <FixedKey
@@ -191,6 +228,7 @@ function Divider({ palette }: { palette: KeyRowColors }) {
 
 function FixedKey({
   label,
+  feedback = 'light',
   held = false,
   disabled = false,
   palette,
@@ -200,6 +238,7 @@ function FixedKey({
 }: {
   /** What the accessibility tree says, and what every e2e suite presses by. */
   label: string;
+  feedback?: 'light' | 'selection';
   held?: boolean;
   disabled?: boolean;
   palette: KeyRowColors;
@@ -214,7 +253,10 @@ function FixedKey({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: held, disabled }}
-      onPress={onPress}
+      onPress={() => {
+        tick(feedback);
+        onPress();
+      }}
       style={({ pressed }) => [styles.key, disabled ? styles.dim : null, pressed && { backgroundColor: palette.rowSurface, borderRadius: KEY_HEIGHT / 2 }]}>
       {/* A circle, not a capsule the shape of the key: a held modifier should
           read as a key pressed down, and a tall rounded rectangle reads as a
@@ -365,7 +407,7 @@ function PairKeyView({
     touch.current = null;
     onBubble(null);
     progress.value = withSpring(0, SPRING_BACK);
-    if (type && current) onSymbol(current.flicked ? pair.alternate : pair.main);
+    if (type && current && !disabled) onSymbol(current.flicked ? pair.alternate : pair.main);
   };
 
   return (
@@ -377,7 +419,9 @@ function PairKeyView({
       // VoiceOver has no drag down, so the alternate symbol is an action of its own.
       accessibilityActions={[{ name: 'activate' }, { name: 'alternate', label: pair.alternate }]}
       onAccessibilityAction={({ nativeEvent }) => {
-        if (!disabled) onSymbol(nativeEvent.actionName === 'alternate' ? pair.alternate : pair.main);
+        if (disabled) return;
+        if (nativeEvent.actionName === 'activate') onSymbol(pair.main);
+        if (nativeEvent.actionName === 'alternate') onSymbol(pair.alternate);
       }}
       onStartShouldSetResponder={() => !disabled}
       onResponderGrant={begin}
@@ -523,6 +567,8 @@ function ArrowStick({
     if (current.phase === 'sending') {
       if (current.direction === direction) return;
       clearTimeout(current.timer);
+    } else {
+      tick();
     }
     const key = ARROW_KEYS[direction];
     latestOnKey.current(key);
@@ -540,7 +586,10 @@ function ArrowStick({
       accessibilityActions={STICK_ACTIONS}
       onAccessibilityAction={({ nativeEvent }) => {
         const action = STICK_ACTIONS.find((each) => each.name === nativeEvent.actionName);
-        if (action && !disabled) onKey(ARROW_KEYS[action.name]);
+        if (action && !disabled) {
+          tick();
+          onKey(ARROW_KEYS[action.name]);
+        }
       }}
       onStartShouldSetResponder={() => !disabled}
       onResponderTerminationRequest={() => false}

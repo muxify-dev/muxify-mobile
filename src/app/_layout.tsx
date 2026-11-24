@@ -76,6 +76,7 @@ function AppStack() {
         }}>
         <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+        <Stack.Screen name="quick-actions" options={{ title: 'Quick Actions' }} />
         <Stack.Screen name="keyboard-shortcuts" options={{ title: 'Keyboard Shortcuts' }} />
         <Stack.Screen name="chooser-lists" options={{ title: 'Chooser' }} />
         <Stack.Screen
