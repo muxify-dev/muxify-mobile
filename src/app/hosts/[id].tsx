@@ -32,6 +32,7 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { placeTabRoute } from '@/browser/place-tab-route';
+import { HostGoToList } from '@/components/host-go-to-list';
 import { FillPlaceSheet } from '@/components/fill-place-sheet';
 import { GoToList, type FolderRow } from '@/components/go-to-list';
 import {
@@ -47,7 +48,7 @@ import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
 import { hostProblemWords } from '@/domain/cover';
-import { goToRows, pathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
+import { goToRows, pathOpening, folderOpening, typedFolderRows, type PathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
 import {
   cardOf,
   cardTitle,
@@ -66,7 +67,7 @@ import {
 } from '@/domain/host-screen';
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useCardWrites } from '@/hooks/use-card-writes';
-import { useGoToPaths } from '@/hooks/use-go-to-paths';
+import { useGoToPaths, useHostGoTo } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
@@ -90,6 +91,7 @@ import {
   type CardAction,
 } from '@/topics/topic-action';
 import type { Drop } from '@/topics/topic-drop';
+import type { HostGoToRow } from '@/topics/go-to-answer';
 import { recordVisit } from '@/topics/visit';
 
 const TAB_NAMES: Record<HostScreenTab, string> = { board: 'Board', sessions: 'Sessions' };
@@ -109,7 +111,7 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const { listing, topics, freshness, sessionsOnly, problem, retry: retryHost } = useHostListing(id);
+  const { listing, topics, freshness, sessionsOnly, hostRanksGoTo, problem, retry: retryHost } = useHostListing(id);
   /** The card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<BoardCard | null>(null);
   /** The Open Place the user fills: tapped, until a card is picked or the sheet is closed. */
@@ -156,18 +158,25 @@ export default function HostScreen() {
   const search = useRef<SearchBarCommands>(null);
   // Frozen: "2 hr ago" must not change under the user's thumb.
   const [listedAt] = useState(() => new Date());
-  const { paths, reading, ask } = useGoToPaths(id, hasGoTo, goTo !== null && query.trim() === '');
+  const [goToTag, setGoToTag] = useState<string | null>(null);
+  const ranked = hostRanksGoTo && goTo !== 'paths';
+  const still = goTo !== null && query.trim() === '';
+  const folders = useGoToPaths(id, hasGoTo && !ranked, still);
+  const hostList = useHostGoTo(id, hasGoTo && ranked, still, attachedHere?.sessionName, goToTag);
+  const { ask, reading } = ranked ? hostList : folders;
   useFocusEffect(useCallback(() => {
-    if (hasGoTo) ask('');
-  }, [hasGoTo, ask]));
+    if (hasGoTo) ask(query);
+  }, [hasGoTo, ask, query]));
 
   // The field's own Cancel button has already ended the search. A second
   // cancelSearch from its handler leaves the field deaf to the next tap.
   const goToCancelled = useCallback(() => {
     setGoTo(null);
+    setGoToTag(null);
     setQuery('');
     setHighlighted(0);
   }, []);
+  useFocusEffect(useCallback(() => goToCancelled, [goToCancelled]));
   const closeGoTo = useCallback(() => {
     search.current?.cancelSearch();
     goToCancelled();
@@ -181,17 +190,21 @@ export default function HostScreen() {
   const pick = useGoToPick(id, useCallback(() => entered(null), [entered]));
 
   const sessions = useMemo(() => runningSessions(listing, topics) ?? [], [listing, topics]);
-  const rows = goTo === null ? [] : goToRows({
+  const rankedSections = goTo !== null && ranked && hostList.list.query === query.trim() ? hostList.list.rows : [];
+  const rankedRows = rankedSections.flatMap((section) => section.rows);
+  const localRows = goTo === null ? [] : ranked ? typedFolderRows(query) : goToRows({
     query,
     mode: goTo,
     sessions: sessions.map(({ name, topicLabel }) => ({ name, topicLabel: topicLabel ?? null })),
-    paths,
+    paths: folders.paths,
     recent,
   });
+  const rows = [...rankedRows, ...localRows];
   const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
 
-  const openFolder = (row: FolderRow, another: boolean) => {
-    const opening = pathOpening(row, sessions.map((session) => session.name), another || goTo === 'paths');
+  const pickLocked = pick.write.kind === 'running' || hostEntry.busy;
+  const openPath = (opening: PathOpening) => {
+    if (pickLocked) return;
     if (opening.kind === 'new') {
       pick.make(opening);
       return;
@@ -199,8 +212,27 @@ export default function HostScreen() {
     if (host) recordVisit(host, opening.directory);
     hostEntry.openSession(opening.session);
   };
-  const pickRow = (row: GoToRow | undefined, another = false) => {
-    if (row === undefined || pick.write.kind === 'running') return;
+  const openFolder = (row: FolderRow, another: boolean) =>
+    openPath(pathOpening(row, sessions.map((session) => session.name), another || goTo === 'paths'));
+
+  const pickRow = (row: GoToRow | HostGoToRow | undefined, another = false) => {
+    if (row === undefined || pickLocked) return;
+    if ('target' in row) {
+      const t = row.target;
+      if (another && !('session_path' in t)) return;
+      if ('session' in t) hostEntry.openSession(t.session.name);
+      else if ('session_path' in t) openPath(folderOpening(t.session_path.directory, t.session_path.name, sessions.map((s) => s.name), another));
+      else if ('settled' in t) hostEntry.reopenSettled(t.settled.id);
+      else if ('board_session' in t) hostEntry.wakeSession(t.board_session.id, 'reopen');
+      else if ('topic' in t) hostEntry.openTopic({ ...t.topic, label: row.title.text, tags: row.tags.map((tag) => tag.text.replace(/^#/, '')), note: null, sessions: [] });
+      else {
+        setGoToTag(t.tag.name);
+        setQuery('');
+        setHighlighted(0);
+        search.current?.setText('');
+      }
+      return;
+    }
     if (row.kind === 'session') hostEntry.openSession(row.name);
     else openFolder(row, another);
   };
@@ -246,7 +278,7 @@ export default function HostScreen() {
     ...(tabs.length > 1 && goTo === null && targets === null ? { 'switch-tab': switchTab } : {}),
     ...(goTo === null ? {} : {
       'list-up': () => setHighlighted(Math.max(onShow - 1, 0)),
-      'list-down': () => setHighlighted(Math.min(onShow + 1, rows.length - 1)),
+      'list-down': () => setHighlighted(Math.max(0, Math.min(onShow + 1, rows.length - 1))),
       'list-pick': () => pickRow(rows[onShow]),
       'list-close': closeGoTo,
       'new-session-here': () => pickRow(rows[onShow], true),
@@ -364,8 +396,7 @@ export default function HostScreen() {
     const text = event.nativeEvent.text ?? '';
     setQuery(text);
     setHighlighted(0);
-    ask(text);
-  }, [ask]);
+  }, []);
   const fieldFocused = useCallback(() => setGoTo((mode) => mode ?? 'all'), []);
   // Return on the software keyboard. A hardware Return is the List Key, which the app takes before the field.
   const submit = useRef(() => {});
@@ -408,13 +439,17 @@ export default function HostScreen() {
           onRetry={pick.retry}
           onCheck={pick.check}
         />
+        <HostGoToList sections={rankedSections} tags={lastSnapshot(topics)?.tags ?? []}
+          appearance={appearance} palette={palette} locked={pickLocked} onPick={pickRow} highlighted={onShow} />
         <GoToList
-          rows={rows}
-          highlighted={onShow}
+          ranked={ranked}
+          hostRows={rankedRows.length > 0}
+          rows={localRows}
+          highlighted={onShow - rankedRows.length}
           reading={reading}
           palette={palette}
           now={listedAt}
-          locked={pick.write.kind === 'running'}
+          locked={pickLocked}
           onPick={pickRow}
           folderMenu={goTo === 'all' ? { label: 'New Session here', icon: 'plus', onPress: (row) => openFolder(row, true) } : undefined}
         />
@@ -479,7 +514,7 @@ export default function HostScreen() {
         <>
           <Stack.SearchBar
             ref={search}
-            placeholder={goTo === 'paths' ? 'New Session at a folder' : 'Go to'}
+            placeholder={goTo === 'paths' ? 'New Session at a folder' : goToTag ? `Go to #${goToTag}` : 'Go to'}
             autoCapitalize="none"
             onFocus={fieldFocused}
             onChangeText={changeQuery}

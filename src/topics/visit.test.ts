@@ -1,7 +1,7 @@
 import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import type { Host } from '@/storage/records';
 
-import { recordVisit } from './visit';
+import { recordSessionVisit, recordVisit } from './visit';
 
 const mockLogged: string[] = [];
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: (_tag: string, text: string) => mockLogged.push(text) }) }));
@@ -45,4 +45,17 @@ it('only logs a visit the Host refuses', async () => {
   await settle();
 
   expect(mockLogged.join('\n')).toMatch(/^Dev Host did not record the visit of \/nope: .*No folder at \/nope\.$/);
+});
+
+it('records a Session visit on a Host with go-to and leaves folder visits to the older Host', async () => {
+  const server = fakeHostServer();
+  server.server.state = () => ({ kind: 'live', goTo: true, protocol: 2, build: 'muxify test' });
+  recordVisit(HOST, '/work/game', server);
+  recordSessionVisit(HOST, 'game', server);
+  await settle();
+  expect(server.requests).toEqual([{ visit_session: { session: 'game' } }]);
+  const older = fakeHostServer();
+  recordSessionVisit(HOST, 'game', older);
+  await settle();
+  expect(older.requests).toEqual([]);
 });

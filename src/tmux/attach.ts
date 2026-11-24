@@ -352,6 +352,7 @@ export interface Attach {
 }
 
 export interface AttachOptions {
+  recordSessionVisit?: (host: Host, session: string) => void;
   host: Host;
   destination: SessionDestination;
   /**
@@ -963,7 +964,10 @@ export function openAttach(options: AttachOptions): Attach {
       ? (followed ? state.topic : { id: topic.id, view: topicStartingFrom(topic.seed ?? (state.topic?.id === topic.id ? lastTopic(state.topic.view) : null)) })
       : null });
     followTopic();
-    if (arrive && state.phase.kind === 'connected') arrived(state.sessionName, state.topic?.id ?? null);
+    if (arrive && state.phase.kind === 'connected') {
+      arrived(state.sessionName, state.topic?.id ?? null);
+      options.recordSessionVisit?.(host, state.sessionName);
+    }
     if (moved) enterVisit();
   }
 
@@ -1358,6 +1362,7 @@ export function openAttach(options: AttachOptions): Attach {
       // tapped: the Host Screen's order is a record of where you have been,
       // and a Session that refused to attach is not somewhere you have been.
       arrived(state.sessionName, state.topic?.id ?? null);
+      options.recordSessionVisit?.(host, state.sessionName);
       followTopic();
       enterVisit();
 
@@ -1713,7 +1718,10 @@ export function openAttach(options: AttachOptions): Attach {
       if (pendingSwitch) throw new Error('A Session switch is already in progress.');
       const held = destination.sessionName === state.sessionName;
       // The Session held now, in a Topic: the Topic stays, so nothing moves.
-      if (destination.topic === null && held && state.topic) return;
+      if (destination.topic === null && held && state.topic) {
+        if (state.phase.kind === 'connected') options.recordSessionVisit?.(host, state.sessionName);
+        return;
+      }
       if (destination.topic === null && !held) {
         const topic = state.topic && lastTopic(state.topic.view);
         if (state.topic && !topic) {
@@ -1728,7 +1736,10 @@ export function openAttach(options: AttachOptions): Attach {
       const restore = restoreFor(destination);
       if (held) {
         // With no Topic asked for, only the Session Place can move the user.
-        if (destination.topic === null && !restore) return;
+        if (destination.topic === null && !restore) {
+          if (state.phase.kind === 'connected') options.recordSessionVisit?.(host, state.sessionName);
+          return;
+        }
         pendingRestore = restore;
         acceptDestination(destination);
         if (state.phase.kind === 'connected') await restorePlace(generation);

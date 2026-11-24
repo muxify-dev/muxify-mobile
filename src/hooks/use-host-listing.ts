@@ -126,6 +126,7 @@ export function useHostListing(hostId: string) {
     freshness: useFreshness(topics),
     /** No Host Server runs: Topic Actions, Go to and New Topic are hidden. */
     sessionsOnly: live?.server.kind === 'sessions-only',
+    hostRanksGoTo: live?.server.kind === 'live' && live.server.goTo === true,
     problem,
     retry,
   };

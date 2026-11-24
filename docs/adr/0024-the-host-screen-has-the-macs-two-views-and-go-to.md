@@ -7,6 +7,8 @@ showed up to three lists, which the user chose for each Host in Configure
 panels. The Mac shows two views, Topics and Sessions, and has Go to… and New
 Topic (⌘N) for the same work.
 
+[ADR 0032](0032-the-host-ranks-go-to.md) updates the Go to list and its ranking for a Host Server with `go-to`.
+
 ## Decision
 
 The phone follows the Mac.

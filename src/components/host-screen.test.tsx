@@ -7,6 +7,7 @@ import { answered, HOST_PROBLEM } from '@/domain/host-listing';
 import { requestGoTo } from '@/keyboard/go-to-request';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
 import { fakeHostServer, refused } from '@/test-support/fake-host-server';
+import { protocolFrames } from '@/test-support/protocol-frames';
 import { searchBar, toolbarMenuActions } from '@/test-support/toolbar';
 import type { EnvironmentSnapshot, SessionId, TopicId } from '@/topics/environment';
 import type { DisconnectReason } from '@/tmux/disconnect-reason';
@@ -15,16 +16,20 @@ import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths
 
 const mockRouter = { push: jest.fn() };
 const mockRemember = jest.fn();
+const mockReopen = jest.fn();
+const mockWake = jest.fn();
+const mockOpenTopic = jest.fn();
 const mockOpenSession = jest.fn();
 const mockOpen = jest.fn();
 const mockPaths = jest.fn();
 let mockServer = fakeHostServer();
 const mockVisit = jest.fn();
-const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn() };
+const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn(), setText: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
+let mockAttachedHost: string | null = null;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
-let mockReading: { listing: unknown; topics: HostTopics; freshness: Freshness; sessionsOnly: boolean; problem: DisconnectReason | null; retry: jest.Mock };
+let mockReading: { listing: unknown; topics: HostTopics; freshness: Freshness; sessionsOnly: boolean; hostRanksGoTo?: boolean; problem: DisconnectReason | null; retry: jest.Mock };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -64,7 +69,7 @@ jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
-  openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null,
+  openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: mockOpenTopic, wakeSession: mockWake, reopenSettled: mockReopen, openBoardSession: jest.fn(), busyCard: null,
 }) }));
 jest.mock('@/hooks/use-card-writes', () => ({ useCardWrites: () => ({ order: jest.fn(), close: jest.fn(), writing: () => false }) }));
 jest.mock('@/keyboard/key-commands', () => ({ useScreenKeyboardShortcuts: (handlers: KeyboardHandlers) => { mockKeys = handlers; } }));
@@ -76,12 +81,13 @@ jest.mock('@/storage/device-store', () => ({
     load: async () => ({ hosts: [{ id: 'host', displayName: 'Dev Host' }] }),
     recentSessionsFor: async () => [],
   }),
+  deviceRankedGoToCache: () => ({ load: async () => [], save: async () => {} }),
   deviceGoToCache: () => ({ load: async () => [], save: async () => {} }),
 }));
 jest.mock('@/tmux/attach-context', () => ({
   useAttachHolder: () => ({ current: () => null, disconnect: jest.fn() }),
-  useCurrentAttach: () => null,
-  useAttachState: () => null,
+  useCurrentAttach: () => mockAttachedHost && { hostId: mockAttachedHost },
+  useAttachState: () => mockAttachedHost && { sessionName: 'api', topic: null, phase: { kind: 'connected' } },
   useOpenSession: () => mockOpen,
 }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
@@ -105,11 +111,12 @@ const got = (shown: EnvironmentSnapshot): Shown => ({ received: { snapshot: show
 const path = (name: string): SessionPathRow => ({ kind: 'session_path', name, label: name, directory: `/work/${name}`, worktree: null, alsoIn: [], lastVisit: null });
 
 let renderer: ReactTestRenderer;
-async function mount(topics: HostTopics = { kind: 'listed', ...got(snapshot()) }) {
+async function mount(topics: HostTopics = { kind: 'listed', ...got(snapshot()) }, hostRanksGoTo = false) {
   mockReading = {
     listing: answered([{ name: 'api', windowCount: 1 }, { name: 'api/fix-login', windowCount: 2 }]),
     topics,
     freshness: { kind: 'current' },
+    hostRanksGoTo,
     sessionsOnly: topics.kind === 'unavailable',
     problem: null,
     retry: jest.fn(),
@@ -123,6 +130,7 @@ beforeEach(() => {
   mockSettings = {};
   mockKeys = {};
   mockFocused = true;
+  mockAttachedHost = null;
   mockPaths.mockResolvedValue([path('api'), path('web')]);
   mockServer = fakeHostServer();
   mockServer.answer = (payload) => ({ changed: { session_name: newSessionOf(payload)?.name } });
@@ -257,6 +265,84 @@ describe('the bar at the bottom', () => {
 
     expect(searchBar(renderer)).toBeUndefined();
     expect(mockKeys['go-to']).toBeUndefined();
+  });
+});
+
+describe('Go to on a Host that ranks the list', () => {
+  const frames = protocolFrames('6-go-to');
+  const rankedAnswer = frames[3]!.end.ok;
+  const taggedAnswer = frames[5]!.end.ok;
+
+  async function ranked(answer = rankedAnswer) {
+    mockServer.on.go_to = () => answer;
+    await mount(undefined, true);
+    await focusGoTo();
+  }
+
+  it.each(['host', 'other'])('sends the current Session only for the attached Host (%s)', async (hostId) => {
+    mockAttachedHost = hostId;
+    await ranked();
+    const query = hostId === 'host' ? { query: '', current_session: 'api' } : { query: '' };
+    expect(mockServer.requests.at(-1)).toEqual({ go_to: query });
+  });
+
+  it('shows the Host sections and row order and opens a Topic, a Board Session and a running Session by their targets', async () => {
+    await ranked();
+    expect(labels()).toEqual(['Topic Ship music', 'Reopen music-logs', 'Folder /code/music', 'Session muxify']);
+    expect(mockPaths).not.toHaveBeenCalled();
+    await act(async () => { row('Topic Ship music').props.onPress(); });
+    expect(mockOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', state: 'live' }));
+    await act(async () => { row('Reopen music-logs').props.onPress(); });
+    expect(mockWake).toHaveBeenCalledWith('s1', 'reopen');
+    await act(async () => { row('Session muxify').props.onPress(); });
+    expect(mockOpenSession).toHaveBeenCalledWith('muxify');
+  });
+
+  it('opens the Session Path at its directory with the launch name the Host sent', async () => {
+    await ranked();
+    await act(async () => { row('Folder /code/music').props.onPress(); });
+    expect(newSessions()).toEqual([{ directory: '/code/music', name: 'music' }]);
+  });
+
+  it('shows the empty-field answer as soon as the user clears a query', async () => {
+    jest.useFakeTimers();
+    try {
+      await ranked();
+      mockServer.on.go_to = () => taggedAnswer;
+      await type('#back');
+      await act(async () => { jest.runAllTimers(); });
+      expect(labels()).toContain('Tag #backend');
+      mockServer.on.go_to = () => rankedAnswer;
+      await type('');
+      expect(labels()).toContain('Folder /code/music');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('highlights Swift Character offsets across an emoji family and a combining accent', async () => {
+    const title = { text: 'A👨‍👩‍👧‍👦e\u0301Z', marks: [1, 2] };
+    await ranked({ sections: [{ id: 'topics', title: null, rows: [{ ...rankedAnswer.sections[0].rows[0], title }] }] });
+    const bold = renderer.root.findAll((node) => node.type === ('Text' as never) &&
+      node.props.modifiers?.some((m: { name: string; value?: { weight?: string } }) => m.name === 'font' && m.value?.weight === 'bold'));
+    expect(bold.map((part) => part.props.children)).toEqual(['👨‍👩‍👧‍👦e\u0301']);
+  });
+
+  it('reopens a Settled Topic by id', async () => {
+    const topic = rankedAnswer.sections[0].rows[0];
+    await ranked({ sections: [{ id: 'settled', title: 'Settled', rows: [{ ...topic, target: { settled: { id: 'closed' } } }] }] });
+    await act(async () => { row('Reopen Ship music').props.onPress(); });
+    expect(mockReopen).toHaveBeenCalledWith('closed');
+  });
+
+  it('lists a Tag by name with an empty field and does not keep a Tag filter on cancel', async () => {
+    await ranked(taggedAnswer);
+    mockServer.on.go_to = () => frames[7]!.end.ok;
+    await act(async () => { row('Tag #backend').props.onPress(); });
+    expect(mockServer.requests.at(-1)).toEqual({ go_to: { query: '', tag: 'backend' } });
+    expect(labels()).toEqual(['Topic Ship music']);
+    await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+    expect(mockServer.requests.at(-1)).toEqual({ go_to: { query: '' } });
   });
 });
 

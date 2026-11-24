@@ -78,6 +78,7 @@ ROOT=$(cd "$(mktemp -d /tmp/muxify-e2e.XXXXXX)" && pwd -P) || exit 1
 DOCUMENTS="$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents" || exit 1
 RECORDS="$DOCUMENTS/muxify-records.json"
 SETTINGS="$DOCUMENTS/muxify-settings.json"
+GO_TO_CACHES=(muxify-go-to.json muxify-go-to-sections.json)
 
 # The app holds its records in memory and writes them back, so it must not run
 # while the files are swapped under it.
@@ -101,6 +102,13 @@ cleanup() {
   [ -f "$ROOT/sshd.pid" ] && kill "$(cat "$ROOT/sshd.pid")" 2>/dev/null
   for file in "$RECORDS" "$SETTINGS"; do
     [ -f "$ROOT/saved/${file##*/}" ] && cp "$ROOT/saved/${file##*/}" "$file"
+  done
+  for name in "${GO_TO_CACHES[@]}"; do
+    if [ -f "$ROOT/saved/$name" ]; then
+      mv -f "$ROOT/saved/$name" "$DOCUMENTS/$name"
+    elif [ -f "$ROOT/saved/$name.absent" ]; then
+      rm -f "$DOCUMENTS/$name"
+    fi
   done
   case "$(cat "$ROOT/saved/keyboard-minimization" 2>/dev/null)" in
     1) keyboard_minimization write -bool true ;;
@@ -180,6 +188,15 @@ nc -z 127.0.0.1 "$PORT" 2>/dev/null || { echo "the sandbox sshd did not start"; 
 
 stop_app
 cp "$RECORDS" "$SETTINGS" "$ROOT/saved/" || exit 1
+# The saved Dev Host and the sandbox use the same Host id. Give the sandbox
+# empty Go to caches, then return both caches to their state before the run.
+for name in "${GO_TO_CACHES[@]}"; do
+  if [ -f "$DOCUMENTS/$name" ]; then
+    mv "$DOCUMENTS/$name" "$ROOT/saved/$name" || exit 1
+  else
+    touch "$ROOT/saved/$name.absent" || exit 1
+  fi
+done
 { keyboard_minimization read 2>/dev/null || echo unset; } >"$ROOT/saved/keyboard-minimization"
 keyboard_minimization write -bool false || exit 1
 python3 - "$RECORDS" "$PORT" "$SETTINGS" "${MUXIFY_E2E_AUTHORIZED_KEY:+$(id -un)}" <<'PY' || exit 1
