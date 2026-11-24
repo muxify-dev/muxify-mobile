@@ -71,8 +71,10 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
+import { DEFAULT_QUICK_ACTIONS, quickActionLabel, type QuickAction, type QuickActionSlots } from '@/lib/quick-actions';
+import { runQuickAction } from '@/keyboard/run-quick-action';
 import { requestGoTo } from '@/keyboard/go-to-request';
-import { performChord, useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
+import { performChord, useScreenKeyboardShortcuts, type KeyboardHandlers } from '@/keyboard/key-commands';
 import { toShellInput, toTypedParts, withoutTerminalReplies } from '@/lib/terminal-input';
 import type { Attach, Paste } from '@/tmux/attach';
 import { useAttachHolder, useAttachState, useCurrentAttach } from '@/tmux/attach-context';
@@ -701,8 +703,14 @@ export default function TerminalScreen() {
    * action, so iOS asks nothing, and the text goes the same safe way in.
    */
   const pasteFromSurface = useCallback(
-    (pasted: TerminalPasteEvent) => {
-      void pasteInto(attach, async () => {
+    (paneId: string, pasted: TerminalPasteEvent) => {
+      if (!attach) return;
+      const destination = () => {
+        const live = attach.state();
+        return holder.current() === attach && live.typing.kind === 'open' &&
+          live.topology.activePane?.id === paneId ? attach : null;
+      };
+      void pasteInto(destination, async () => {
         const { imageUri } = pasted;
         if (!imageUri) return { kind: 'text', text: pasted.text ?? '' };
         const written = new File(imageUri);
@@ -713,7 +721,7 @@ export default function TerminalScreen() {
         }
       });
     },
-    [attach],
+    [attach, holder],
   );
 
   const clearPane = useCallback(() => attach?.clearPane(), [attach]);
@@ -967,18 +975,56 @@ export default function TerminalScreen() {
     void verb().catch((error: unknown) => Alert.alert(`Could not ${label}`, describeError(error)));
   }, []);
 
-  useScreenKeyboardShortcuts(useMemo(() => attach ? {
-    ...(hostId ? { 'go-to': () => { requestGoTo(hostId); goHost(); } } : {}),
+  const paneActions = useMemo(() => attach ? ({
     'split-right': () => runVerb('split the Pane', () => attach.split('right')),
     'split-down': () => runVerb('split the Pane', () => attach.split('down')),
+    'clear-pane': clearPane,
+    'copy-pane': copyPaneText,
+  }) : null, [attach, runVerb, clearPane, copyPaneText]);
+
+  const shortcutHandlers = useMemo<KeyboardHandlers>(() => attach && paneActions ? {
+    ...(hostId ? { 'go-to': () => { requestGoTo(hostId); goHost(); } } : {}),
+    ...paneActions,
     'pane-left': () => attach.selectPaneToward('left'),
     'pane-down': () => attach.selectPaneToward('down'),
     'pane-up': () => attach.selectPaneToward('up'),
     'pane-right': () => attach.selectPaneToward('right'),
-    'clear-pane': clearPane,
     // ⌘C is the system's Copy wherever a text has the keys.
-    ...(inputElsewhere ? {} : { 'copy-pane': copyPaneText }),
-  } : {}, [attach, hostId, goHost, runVerb, clearPane, copyPaneText, inputElsewhere]));
+    'copy-pane': inputElsewhere ? undefined : paneActions['copy-pane'],
+  } : {}, [attach, hostId, goHost, paneActions, inputElsewhere]);
+  useScreenKeyboardShortcuts(shortcutHandlers);
+
+  const quickActions = useMemo(() => {
+    const configured = settings.quickActions ?? DEFAULT_QUICK_ACTIONS;
+    const tiles = (slots: QuickActionSlots) => slots.map(id => {
+      if (id === null) return null;
+      const { chord, title } = quickActionLabel(id, settings.keyboardShortcuts);
+      return { id, chord, label: title };
+    });
+    return { ctrl: tiles(configured.ctrl), cmd: tiles(configured.cmd) };
+  }, [settings.quickActions, settings.keyboardShortcuts]);
+
+  const pickQuickAction = (action: QuickAction) => {
+    if (!attach || !paneActions || composerOpen || sheetOpen || !navigation.isFocused()) return;
+    const hasTarget = () => {
+      const live = attach.state();
+      return holder.current() === attach && live.typing.kind === 'open' &&
+        live.sessionName === sessionName && live.topology.activePane?.id === activePaneId;
+    };
+    if (!hasTarget()) return;
+    const surface = surfaces.current.get(activePaneId);
+    if (!surface) return;
+    endSelection();
+    armedRef.current = NO_MODIFIERS;
+    setArmed(NO_MODIFIERS);
+    runQuickAction(action, {
+      control: key => {
+        if (hasTarget()) attach.view(activePaneId).press({ key, ctrl: true, alt: false, shift: false });
+      },
+      paste: () => surface.pressKey('v', { ...NO_MODIFIERS, cmd: true }),
+      shortcut: id => paneActions[id](),
+    });
+  };
 
   /**
    * The ⋯ menu, in the spec's order. Each entry is said to the Log as it is
@@ -1350,6 +1396,9 @@ export default function TerminalScreen() {
           />
         ) : null}
         {!physicalKeyboard ? <KeyRow
+          key={JSON.stringify([hostId, sessionName, activePaneId])}
+          quickActions={quickActions}
+          onQuickAction={pickQuickAction}
           armed={armed}
           onArm={armModifier}
           onKey={pressKey}
@@ -1357,7 +1406,7 @@ export default function TerminalScreen() {
           onPanes={openPanes}
           onKeyboard={toggleKeyboard}
           keyboardVisible={keyboardVisible}
-          keysDisabled={!open || composerOpen}
+          keysDisabled={!open || composerOpen || sheetOpen || !screenFocused}
           // One Pane is when you reach for Split, so never disabled while keys go through.
           panesDisabled={!open}
           below={clearance.bottom}
@@ -1449,16 +1498,15 @@ function surfaceFor(ref: TerminalViewRef): ScreenSurface {
  * Pastes what `read` gives into the active Pane, and says so when it cannot.
  * An empty text pastes nothing. A staged image is let go afterwards.
  */
-async function pasteInto(attach: Attach | null, read: () => Promise<Paste>): Promise<void> {
-  if (!attach) return;
+async function pasteInto(destination: () => Attach | null, read: () => Promise<Paste>): Promise<void> {
   try {
     const content = await read();
     if (content.kind === 'text') {
-      if (content.text !== '') await attach.paste(content, confirmRunLines);
+      if (content.text !== '') await destination()?.paste(content, confirmRunLines);
       return;
     }
     try {
-      await attach.paste(content, confirmRunLines);
+      await destination()?.paste(content, confirmRunLines);
     } finally {
       content.file.dispose();
     }
@@ -1530,7 +1578,7 @@ function PaneSurfaceView({
   onSelectionEnd: () => void;
   /** A handle of the Selection is held at the top or bottom edge. */
   onSelectionEdge: (paneId: string, grid: Grid, direction: 'up' | 'down') => void;
-  onPaste: (pasted: TerminalPasteEvent) => void;
+  onPaste: (paneId: string, pasted: TerminalPasteEvent) => void;
 }) {
   /**
    * The grid this Surface last reported, or null before it has.
@@ -1643,7 +1691,7 @@ function PaneSurfaceView({
         onSelectionEdge={({ nativeEvent }) =>
           onSelectionEdge(slot.pane.id, own.current, nativeEvent.direction)
         }
-        onPaste={({ nativeEvent }) => onPaste(nativeEvent)}
+        onPaste={({ nativeEvent }) => onPaste(slot.pane.id, nativeEvent)}
       />
 
       {/* The seam, and only the seam. A rectangle per Pane drew a rule along

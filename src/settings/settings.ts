@@ -6,6 +6,7 @@ import {
   type ThemeId,
   type ThemeKind,
 } from '@/constants/app-theme';
+import { parseQuickActions, type QuickActions } from '@/lib/quick-actions';
 import type { HostScreenTab } from '@/domain/host-screen';
 import { parseKeyboardShortcuts, type KeyboardShortcuts } from '@/keyboard/keyboard-shortcuts';
 
@@ -53,6 +54,7 @@ export interface Settings {
   chooserListPreferences?: Readonly<Record<string, ChooserLists>>;
   /** The Keyboard Shortcuts the user changed. The rest keep their defaults. */
   keyboardShortcuts?: KeyboardShortcuts;
+  quickActions?: QuickActions;
 }
 
 export const APPEARANCE_SETTINGS = ['system', 'light', 'dark'] as const;
@@ -112,7 +114,7 @@ export function moveChooserLists(lists: ChooserLists, sources: number[], destina
  * The items after a drag, with SwiftUI's move: `sources` are the dragged
  * indices and `destination` is an index from before the move.
  */
-function moved<T>(items: readonly T[], sources: number[], destination: number): T[] {
+export function moved<T>(items: readonly T[], sources: number[], destination: number): T[] {
   const moving = items.filter((_, at) => sources.includes(at));
   const before = items.filter((_, at) => at < destination && !sources.includes(at));
   const after = items.filter((_, at) => at >= destination && !sources.includes(at));
@@ -227,11 +229,13 @@ export function parseSettings(raw: unknown): Settings {
     ? Object.fromEntries(Object.entries(chooser).map(([id, lists]) => [id, parseChooserLists(lists)]))
     : undefined;
 
+  const quickActions = parseQuickActions(record.quickActions);
   const keyboardShortcuts = parseKeyboardShortcuts(record.keyboardShortcuts);
   const hostScreenTabs = parseHostScreenTabs(record.hostScreenTabs);
 
   return {
     ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
+    ...(quickActions === undefined ? {} : { quickActions }),
     ...(keyboardShortcuts === undefined ? {} : { keyboardShortcuts }),
     ...(hostScreenTabs === undefined ? {} : { hostScreenTabs }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,

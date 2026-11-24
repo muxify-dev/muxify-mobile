@@ -206,6 +206,12 @@ export default function SettingsScreen() {
             header={<SectionHeader palette={palette}>Keyboard</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <Button
+              label="Quick Actions"
+              systemImage="square.grid.2x2"
+              onPress={() => router.push('/quick-actions')}
+              modifiers={[accessibilityLabel('Quick Actions')]}
+            />
+            <Button
               label="Keyboard Shortcuts"
               systemImage="keyboard"
               onPress={() => router.push('/keyboard-shortcuts')}

@@ -831,6 +831,16 @@ Screen and remains when the row is hidden.
 _Avoid_: Dock (the old name), Key Bar (the old middle), toolbar, tab bar,
 bottom bar, modifiers
 
+**Key Row quick action**:
+A choice in the Thumb grid above the Key Row. Hold ⌃ or ⌘ to open its grid,
+slide to a tile, and lift to run the action. Lift outside a tile to cancel.
+A short tap still arms or releases the modifier. VoiceOver offers each
+configured action on its modifier key.
+
+Each grid has four positions. Settings lets the user choose and reorder the
+actions for each key. An empty position stays empty. A tile for a Keyboard
+Shortcut shows its current binding.
+
 **Keyboard Shortcut**:
 A ⌘ chord that does something in Muxify: ⌘, opens Settings, ⌘D and ⇧⌘D split
 the active Pane right and down, ⇧⌘H, ⇧⌘J, ⇧⌘K and ⇧⌘L go to the Pane on that
