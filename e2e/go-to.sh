@@ -139,6 +139,7 @@ agent-device press 'label="close"' --settle >/dev/null
 echo "ok: the bar is not on the Terminal, and takes a tap after it"
 
 agent-device press 'label="Board"' --settle >/dev/null
+agent-device wait 'role=button label="Topic One"' 8000 >/dev/null || fail "the Board did not show Topic One"
 agent-device longpress 'label="Topic One"' 1000 --settle >/dev/null
 agent-device press 'role=button label="Move…"' --settle >/dev/null || fail "no Move… in the menu of One"
 agent-device wait 'label="Cancel Move"' 5000 >/dev/null || fail "the move of One did not start"
