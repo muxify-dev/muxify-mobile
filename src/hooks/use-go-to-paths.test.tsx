@@ -139,3 +139,13 @@ it('asks nothing of a Host CLI that has no Go to', async () => {
   expect(mockCached).not.toHaveBeenCalled();
   expect(mockPaths).not.toHaveBeenCalled();
 });
+
+it('keeps an empty Host answer when a slow cache read finishes later', async () => {
+  let cached!: (rows: SessionPathRow[]) => void;
+  mockCached.mockImplementationOnce(() => new Promise((resolve) => { cached = resolve; }));
+  mockPaths.mockResolvedValue(listed());
+  await mount();
+  await act(async () => { paths.ask(''); });
+  await act(async () => { cached([row('old')]); });
+  expect(shown().names).toEqual([]);
+});

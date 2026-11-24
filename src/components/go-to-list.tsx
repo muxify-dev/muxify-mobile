@@ -43,8 +43,12 @@ export function GoToList({
   locked,
   onPick,
   folderMenu,
+  hostRows = false,
+  ranked = false,
 }: {
   rows: readonly GoToRow[];
+  hostRows?: boolean;
+  ranked?: boolean;
   /** The index of the row that Return picks. */
   highlighted: number;
   reading: PathsReading;
@@ -65,7 +69,7 @@ export function GoToList({
           <Text modifiers={[font({ size: 15 }), foregroundColor(palette.destructive)]}>{reading.error}</Text>
         </Section>
       ) : null}
-      <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+      {rows.length || !hostRows || reading.kind === 'reading' || reading.kind === 'waiting' ? <Section modifiers={[listRowBackground(palette.rowSurface)]}>
         {rows.map((row, index) => {
           const face = rowFace(row, now);
           const line = (
@@ -109,16 +113,16 @@ export function GoToList({
         {reading.kind === 'reading' ? (
           <HStack spacing={10}>
             <ProgressView />
-            <Text modifiers={secondaryText}>Reading folders…</Text>
+            <Text modifiers={secondaryText}>{ranked ? 'Reading Go to…' : 'Reading folders…'}</Text>
           </HStack>
         ) : reading.kind === 'waiting' ? (
           <Text modifiers={secondaryText}>
             The Host sent a new list. It shows when you type.
           </Text>
-        ) : rows.length === 0 ? (
+        ) : rows.length === 0 && !hostRows ? (
           <Text modifiers={secondaryText}>Nothing matches.</Text>
         ) : null}
-      </Section>
+      </Section> : null}
     </>
   );
 }

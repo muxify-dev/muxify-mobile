@@ -48,12 +48,17 @@ export interface GoToInput {
  */
 export function goToRows({ query, mode, sessions, paths, recent }: GoToInput): GoToRow[] {
   const text = query.trim();
-  const typed = text.startsWith('~') || text.startsWith('/');
+
   return [
     ...(mode === 'all' ? rankedSessions(sessions, recent, text) : []).map((session): GoToRow => ({ kind: 'session', ...session })),
     ...shownPaths(paths, text).map((path): GoToRow => ({ kind: 'path', path })),
-    ...(typed ? [{ kind: 'typed' as const, directory: text }] : []),
+    ...typedFolderRows(text),
   ];
+}
+
+export function typedFolderRows(query: string): Extract<GoToRow, { kind: 'typed' }>[] {
+  const directory = query.trim();
+  return directory.startsWith('~') || directory.startsWith('/') ? [{ kind: 'typed', directory }] : [];
 }
 
 function rankedSessions(sessions: readonly GoToSession[], recent: readonly RecentSession[], text: string): GoToSession[] {
@@ -106,6 +111,10 @@ export function pathOpening(
 ): PathOpening {
   const directory = row.kind === 'path' ? row.path.directory : row.directory;
   const base = row.kind === 'path' ? row.path.name : folderSessionName(directory);
+  return folderOpening(directory, base, sessionNames, another);
+}
+
+export function folderOpening(directory: string, base: string, sessionNames: readonly string[], another: boolean): PathOpening {
   const taken = new Set(sessionNames);
   if (!another && taken.has(base)) return { kind: 'go', directory, session: base };
   return { kind: 'new', directory, name: availableName(base, taken) };

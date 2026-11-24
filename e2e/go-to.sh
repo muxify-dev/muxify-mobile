@@ -10,9 +10,9 @@
 # The bar shows only on the Host Screen, and only while no Topic card moves.
 # It takes a tap again after the Terminal and a Topic Screen were on top of
 # it. A pick of a Session Path makes a Session in no Topic there and opens it,
-# and a second pick of the same path goes to that Session.
+# and the running Session then takes the place of its Session Path.
 #
-# Go to needs a muxify with the session-paths capability. Put one first on
+# Go to needs a muxify with the go-to capability. Put one first on
 # the PATH:
 #
 #   PATH=<muxify checkout>/.build/debug:$PATH bash e2e/go-to.sh
@@ -23,15 +23,15 @@ set -uo pipefail
 
 APP=dev.muxify.app
 
-fail() { echo "FAIL: $*"; agent-device close >/dev/null 2>&1; exit 1; }
+fail() { echo "FAIL: $*"; agent-device snapshot -i; agent-device close >/dev/null 2>&1; exit 1; }
 
 case "$(tmux display-message -p '#{socket_path}')" in
   "$(cd "$MUXIFY_E2E_ROOT" && pwd -P)"/*) ;;
   *) echo "tmux is not the sandbox's server"; exit 1 ;;
 esac
 
-muxify session-paths --help >/dev/null 2>&1 \
-  || { echo "this muxify has no session-paths: put a newer one first on the PATH"; exit 1; }
+muxify go-to --help >/dev/null 2>&1 \
+  || { echo "this muxify has no go-to: put a newer one first on the PATH"; exit 1; }
 
 bash "$(dirname "$0")/topics-tab.sh" || exit 1
 PROJECTS="$(cd "$MUXIFY_E2E_ROOT" && pwd -P)/projects"
@@ -53,7 +53,7 @@ open_go_to() {
   # A debug build's warning toast lies over the bar and takes the tap.
   agent-device react-native dismiss-overlay >/dev/null 2>&1
   agent-device press 'label="Go to"' >/dev/null 2>&1
-  agent-device wait 'role=search' 3000 >/dev/null
+  agent-device wait 'role=search' 8000 >/dev/null
   agent-device snapshot -i 2>/dev/null | grep -q 'search.*\[focused\]' || fail "a tap on Go to did not give it the keys ($1)"
 }
 
@@ -62,8 +62,10 @@ back_to_host_screen() {
   agent-device wait 'label="Host Options"' 8000 >/dev/null || fail "Back did not return to the Host Screen"
 }
 
-agent-device open "$APP" --platform ios --relaunch >/dev/null 2>&1
-agent-device wait 'label="Host Dev Host"' 15000 >/dev/null || fail "no Dev Host"
+device=()
+[ -z "${MUXIFY_E2E_DEVICE:-}" ] || device=(--udid "$MUXIFY_E2E_DEVICE")
+agent-device open "$APP" --platform ios "${device[@]}" --relaunch >/dev/null 2>&1
+agent-device wait 'label="Host Dev Host"' 45000 >/dev/null || fail "no Dev Host"
 agent-device press 'label="Host Dev Host"' --settle >/dev/null
 agent-device wait 'label="Topic One"' 15000 >/dev/null || fail "no Topics on the Host Screen"
 
@@ -109,11 +111,9 @@ first_row=$(edge "$first" top "In Play")
 for k in 1 2 3; do
   open_go_to "time $k"
   on_screen "Back" && fail "the navigation bar shows while Go to has the keys (time $k)"
-  go_to_top=$(edge "$(rects "Session 0" "Session alpha/one")" top "Session 0")
-  alpha_top=$(edge "$(rects "Session 0" "Session alpha/one")" top "Session alpha/one")
-  [ -n "$go_to_top" ] && [ -n "$alpha_top" ] || fail "no running Sessions in the Go to list (time $k)"
-  [ "$alpha_top" -lt "$go_to_top" ] && go_to_top=$alpha_top
-  [ "$go_to_top" -le "$bar" ] || fail "the Go to list does not start at the top: its first row is at $go_to_top (time $k)"
+  agent-device wait 'label="Topic One"' 8000 >/dev/null || fail "no Topic One in Go to"
+  go_to_top=$(edge "$(rects Topics)" top Topics)
+  [ -n "$go_to_top" ] && [ "$go_to_top" -le "$bar" ] || fail "the Topics section starts at $go_to_top (time $k)"
   agent-device press 'label="close"' --settle >/dev/null
   agent-device wait 'label="Host Screen view"' 5000 >/dev/null || fail "no tab control after Go to closed (time $k)"
   sleep 1
@@ -180,12 +180,52 @@ echo "ok: a pick of a path makes a Session in no Topic there and opens it"
 back_to_host_screen
 open_go_to "after the pick"
 agent-device type gam >/dev/null 2>&1
-agent-device wait "label=\"Folder $PROJECTS/gamma\"" 5000 >/dev/null || fail "no gamma in the Go to list the second time"
-agent-device press "label=\"Folder $PROJECTS/gamma\"" --settle >/dev/null
+agent-device wait 'label="Session gamma"' 5000 >/dev/null || fail "no running Session gamma on the second search"
+on_screen "Folder $PROJECTS/gamma" && fail "Go to still shows the Session Path for gamma"
+agent-device press 'label="Session gamma"' --settle >/dev/null
 agent-device wait 'id="pane-command"' 20000 >/dev/null || fail "the second pick of gamma opened no Session"
-agent-device wait 'label="gamma"' 5000 >/dev/null || fail "the second pick of gamma did not go to gamma"
-[ "$(sessions_at_gamma)" = gamma ] || fail "the second pick made a Session: '$(sessions_at_gamma)'"
-echo "ok: a second pick of the path goes to its Session and makes none"
+[ "$(sessions_at_gamma)" = gamma ] || fail "the second pick made a Session"
+echo "ok: the running Session takes the place of its Session Path"
+
+# Both Session names match the same query with the same score. The first
+# comparison checks their order on the phone. Picking the lower one must also
+# change their order for a reader on the Mac.
+mkdir -p "$PROJECTS/rank-m" || exit 1
+muxify session-paths refresh >/dev/null || exit 1
+for name in rank-a rank-z; do tmux new-session -d -s "$name" || exit 1; done
+ranked_rows() {
+  muxify go-to --query rank --current-session gamma --json | python3 -c '
+import json, sys
+for section in json.load(sys.stdin)["sections"]:
+    for row in section["rows"]:
+        target = row["target"]
+        if "session" in target:
+            print("Session " + target["session"]["name"])
+        else:
+            print("Folder " + target["session_path"]["directory"])'
+}
+before=$(ranked_rows) || fail "the Host CLI could not rank the two Sessions"
+[ "$(wc -l <<<"$before" | tr -d ' ')" = 3 ] || fail "expected two Sessions and a Session Path, got $before"
+back_to_host_screen
+open_go_to "to compare the order"
+agent-device type rank >/dev/null
+agent-device wait 'label="Session rank-z"' 8000 >/dev/null || fail "the phone did not list rank-z"
+actual=$(agent-device snapshot --json | python3 -c '
+import json, sys
+rows = [n for n in json.load(sys.stdin)["data"]["nodes"] if (n.get("label") or "").startswith(("Session ", "Folder "))]
+for row in sorted(rows, key=lambda n: n["rect"]["y"]):
+    print(row["label"])') || fail "could not read the Go to rows"
+[ "$actual" = "$before" ] || fail "Go to shows $actual. The Host CLI lists $before"
+picked=$(grep '^Session ' <<<"$before" | tail -1)
+agent-device press "label=\"$picked\"" --settle >/dev/null
+agent-device wait 'id="pane-command"' 20000 >/dev/null || fail "the lower ranked Session did not open"
+for _ in {1..20}; do
+  after=$(ranked_rows) || exit 1
+  [ "$(grep '^Session ' <<<"$after" | head -1)" = "$picked" ] && break
+  sleep 0.25
+done
+[ "$(grep '^Session ' <<<"$after" | head -1)" = "$picked" ] || fail "the phone visit did not move $picked up on the Host"
+echo "ok: the phone shows the Host order, and a visit on the phone moves $picked above the other Session on the Host"
 
 agent-device close >/dev/null 2>&1
 echo "PASS"

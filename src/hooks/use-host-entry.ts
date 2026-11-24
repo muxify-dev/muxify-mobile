@@ -13,7 +13,7 @@ import { captureAttachOrigin, type AttachOrigin } from '@/tmux/attach-holder';
 import { appConnections } from '@/tmux/ssh-connection';
 import { sendCardOrder } from '@/topics/act-on-card';
 import { cardKey } from '@/topics/board-card';
-import { hasTopic, type TopicId } from '@/topics/environment';
+import { hasTopic, type BoardSessionId, type TopicId } from '@/topics/environment';
 import { wakeBoardSession, type BoardSessionWake } from '@/topics/host-writes';
 import { chooseTopicSession } from '@/topics/open-topic';
 import { readTopic } from '@/topics/read-topic';
@@ -44,7 +44,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   const router = useRouter();
   const holder = useAttachHolder();
   const deliverSession = useOpenSession();
-  const [busyCard, setBusyCard] = useState<string | null>(null);
+  const [entry, setEntry] = useState<{ card: string | null } | null>(null);
   const running = useRef<symbol | null>(null);
   const focused = useRef(false);
   const focusRevision = useRef(0);
@@ -54,7 +54,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
       focused.current = false;
       focusRevision.current += 1;
       running.current = null;
-      setBusyCard(null);
+      setEntry(null);
     };
   }, []));
 
@@ -91,7 +91,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     running.current = operation;
     const isCurrent = () => focused.current && focusRevision.current === revision && running.current === operation && (feedback?.isCurrent() ?? true);
     const delivery = { origin: captureAttachOrigin(holder.current()), isCurrent };
-    setBusyCard(card?.key ?? null);
+    setEntry({ card: card?.key ?? null });
     void work(delivery).catch((error) => {
       if (!isCurrent()) return;
       if (feedback) { feedback.onError(error); return; }
@@ -106,7 +106,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     }).finally(() => {
       if (running.current !== operation) return;
       running.current = null;
-      setBusyCard(null);
+      setEntry(null);
     });
   }, [holder, hostId]);
 
@@ -163,6 +163,31 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     run(null, (delivery) => attachSession(sessionName, delivery));
   }, [run, attachSession]);
 
+  const wakeSession = useCallback((id: BoardSessionId, wake: Wake) => {
+    run({ key: cardKey({ kind: 'dormant-session', id }), topic: null }, async (delivery) => {
+      const { end, session } = await wakeOnce(hostId, (host, sending) => wakeBoardSession(host, id, wake, newRequestId(), sending));
+      if (!delivery.isCurrent()) return;
+      if (session === null) { alertCardWrite(WAKE_LABEL[wake], end); return; }
+      await attachSession(session, delivery);
+    });
+  }, [hostId, run, attachSession]);
+
+  const reopenSettled = useCallback((id: TopicId) => {
+    run({ key: id, topic: null }, async (delivery) => {
+      const { end } = await wakeOnce(hostId, (host, sending) =>
+        sendCardOrder(host, { kind: 'topic', id }, { kind: 'wake', wake: 'reopen' }, sending));
+      if (!delivery.isCurrent()) return;
+      if (end.kind !== 'idle') { alertCardWrite(WAKE_LABEL.reopen, end); return; }
+      const read = await readTopic(hostId, id);
+      if (!delivery.isCurrent()) return;
+      if (read.kind === 'failed') throw new Error(read.error);
+      if (read.topic.state === 'empty') {
+        markTopicRead(hostId, id);
+        router.push({ pathname: '/topic-add-session', params: { hostId, topicId: id, seed: topicSeedParam(read.topic) } });
+      } else await attachTopic(read.topic, delivery);
+    });
+  }, [hostId, run, router, attachTopic]);
+
   /**
    * Opens a Board Session's card. A live one opens its Session. A Dormant one
    * asks to Reopen or Start Fresh it, and then opens the Session the Host
@@ -175,20 +200,11 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
       return;
     }
     askWake(row.name, 'This Board Session has no live Session.', (wake) => {
-      run({ key: cardKey(card), topic: null }, async (delivery) => {
-        const { end, session } = await wakeOnce(hostId, (host, sending) =>
-          wakeBoardSession(host, card.id, wake, newRequestId(), sending));
-        if (!delivery.isCurrent()) return;
-        if (session === null) {
-          alertCardWrite(WAKE_LABEL[wake], end);
-          return;
-        }
-        await attachSession(session, delivery);
-      });
+      wakeSession(card.id, wake);
     });
-  }, [hostId, run, attachSession, askWake]);
+  }, [wakeSession, run, attachSession, askWake]);
 
-  return { openTopic, openSession, openBoardSession, busyCard };
+  return { openTopic, openSession, openBoardSession, reopenSettled, wakeSession, busyCard: entry?.card ?? null, busy: entry !== null };
 }
 
 /** One wake from a card tap, ended, with the Session the Host names when it names one. */

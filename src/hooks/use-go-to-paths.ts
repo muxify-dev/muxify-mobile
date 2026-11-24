@@ -1,53 +1,64 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { RankedPaths } from '@/domain/go-to';
+import { deviceGoToCache, deviceHostStore, deviceRankedGoToCache } from '@/storage/device-store';
+import type { GoToCache } from '@/storage/go-to-cache';
+import type { Host } from '@/storage/records';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
-import { deviceGoToCache, deviceHostStore } from '@/storage/device-store';
+import { appConnections } from '@/tmux/ssh-connection';
+import { parseGoToSections, type GoToSection } from '@/topics/go-to-answer';
 import { rankedSessionPaths } from '@/topics/host-session-paths';
+import type { SessionPathRow } from '@/topics/session-paths';
 
-/**
- * Where the read of the paths stands, for the lines around the list.
- * `waiting`: the Host has answered, and the answer would move the rows on
- * show, so it waits until the user types.
- */
 export type PathsReading =
   | { kind: 'idle' }
   | { kind: 'reading' }
   | { kind: 'waiting' }
   | { kind: 'failed'; error: string };
 
-const ASK_DEBOUNCE_MS = 150;
+const folderKeys = (rows: SessionPathRow[]) => rows.map((row) => row.directory);
+const sectionKeys = (sections: GoToSection[]) => sections.flatMap((section) => [
+  section.id, ...section.rows.map((row) => row.id),
+]);
 
-/**
- * The Session Paths of a Host for a Go to list, and the way to ask the Host
- * for them.
- *
- * The phone keeps the Host's last answer for an empty field, so the list is
- * there before the Host answers. `ask` asks the Host Server for the text in
- * the field (`session_paths`), and only the answer for the newest text is
- * kept, in the Host's order.
- *
- * A new answer for an empty field is not put under the user's finger: while
- * `still` is true and the answer would move the rows on show, the answer
- * waits, and it shows when `still` goes false.
- */
 export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
-  const [paths, setPaths] = useState<RankedPaths>({ query: '', rows: [] });
+  const { list, reading, ask } = useGoToList(hostId, enabled, still, rankedSessionPaths, deviceGoToCache, folderKeys, true);
+  return { paths: list, reading, ask };
+}
+
+export function useHostGoTo(hostId: string, enabled: boolean, still: boolean, session: string | undefined, tag: string | null) {
+  const fetch = useCallback(async (host: Host, query: string) => {
+    const answer = await appConnections().onServer(host, (server) => server.request({
+      go_to: { query, ...(session === undefined ? {} : { current_session: session }), ...(tag === null ? {} : { tag }) },
+    }));
+    return parseGoToSections(answer);
+  }, [session, tag]);
+  return useGoToList(hostId, enabled, still, fetch, deviceRankedGoToCache, sectionKeys, tag === null);
+}
+
+/** An empty-field answer that would move visible rows waits until the user types or leaves. */
+function useGoToList<Row>(
+  hostId: string, enabled: boolean, still: boolean, fetch: (host: Host, query: string) => Promise<Row[]>,
+  cache: () => GoToCache<Row>, keys: (rows: Row[]) => string[], unfiltered: boolean,
+) {
+  type List = { query: string; rows: Row[] };
+  const [list, setList] = useState<List>({ query: '', rows: [] });
   const [reading, setReading] = useState<PathsReading>({ kind: 'idle' });
-  const asked = useRef(0);
-  const present = useRef(true);
-  const shown = useRef(paths);
+  const scope = JSON.stringify([hostId, enabled, unfiltered]);
+  const [lastScope, setLastScope] = useState(scope);
+  if (lastScope !== scope) {
+    setLastScope(scope);
+    setList({ query: '', rows: [] });
+    setReading({ kind: 'idle' });
+  }
+  const asked = useRef<symbol | null>(null);
+  const shown = useRef(list);
+  const mayShowCache = useRef(false);
+  const waiting = useRef<List | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const stillNow = useRef(still);
-  const waiting = useRef<RankedPaths | null>(null);
-
-  const show = useCallback((next: RankedPaths) => {
+  const show = useCallback((next: List) => {
     shown.current = next;
-    setPaths(next);
-  }, []);
-
-  useEffect(() => {
-    present.current = true;
-    return () => { present.current = false; };
+    setList(next);
   }, []);
 
   useEffect(() => {
@@ -55,60 +66,63 @@ export function useGoToPaths(hostId: string, enabled: boolean, still: boolean) {
     if (!still && waiting.current) {
       show(waiting.current);
       waiting.current = null;
-      setReading((now) => (now.kind === 'waiting' ? { kind: 'idle' } : now));
+      setReading({ kind: 'idle' });
     }
   }, [still, show]);
 
   useEffect(() => {
-    if (!enabled) return;
-    void deviceGoToCache().load(hostId).then((rows) => {
-      if (present.current && asked.current === 0 && rows.length > 0) show({ query: '', rows });
-    });
-  }, [hostId, enabled, show]);
-
-  const read = useCallback(async (query: string) => {
-    const turn = ++asked.current;
-    const current = () => present.current && asked.current === turn;
-    setReading({ kind: 'reading' });
-    try {
-      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('This Host is no longer saved.');
-      const rows = await rankedSessionPaths(host, query);
-      if (query === '') void deviceGoToCache().save(hostId, rows);
-      if (!current()) return;
-      const next = { query, rows };
-      if (query === '' && stillNow.current && movesRows(shown.current.rows, next.rows)) {
-        waiting.current = next;
-        setReading({ kind: 'waiting' });
-        return;
-      }
-      show(next);
-      setReading({ kind: 'idle' });
-    } catch (error) {
-      if (current()) setReading({ kind: 'failed', error: describeConnectionFailure(error) });
+    let active = true;
+    mayShowCache.current = true;
+    shown.current = { query: '', rows: [] };
+    waiting.current = null;
+    if (enabled && unfiltered) {
+      void cache().load(hostId).then((rows) => {
+        if (active && mayShowCache.current && rows.length) show({ query: '', rows });
+      });
     }
-  }, [hostId, show]);
+    return () => {
+      active = false;
+      asked.current = null;
+      clearTimeout(timer.current);
+    };
+  }, [hostId, enabled, unfiltered, cache, show]);
 
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-
-  /** Reads the Host for this text, after the field has been still for a moment. Text typed in between is not asked. */
   const ask = useCallback((query: string) => {
     if (!enabled) return;
-    if (timer.current) clearTimeout(timer.current);
+    clearTimeout(timer.current);
+    const turn = Symbol();
+    asked.current = turn;
     const text = query.trim();
-    if (text === '') {
-      void read('');
-      return;
+    if (text !== '') mayShowCache.current = false;
+    waiting.current = null;
+    setReading({ kind: 'reading' });
+    async function read() {
+      try {
+        const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
+        if (!host) throw new Error('This Host is no longer saved.');
+        const rows = await fetch(host, text);
+        if (asked.current !== turn) return;
+        mayShowCache.current = false;
+        const next = { query: text, rows };
+        if (text === '' && unfiltered) {
+          void cache().save(hostId, rows).catch(() => {});
+          const old = keys(shown.current.rows);
+          const fresh = keys(rows);
+          if (stillNow.current && shown.current.query === '' && old.length && (old.length !== fresh.length || old.some((key, i) => key !== fresh[i]))) {
+            waiting.current = next;
+            setReading({ kind: 'waiting' });
+            return;
+          }
+        }
+        show(next);
+        setReading({ kind: 'idle' });
+      } catch (error) {
+        if (asked.current === turn) setReading({ kind: 'failed', error: describeConnectionFailure(error) });
+      }
     }
-    timer.current = setTimeout(() => void read(text), ASK_DEBOUNCE_MS);
-  }, [enabled, read]);
+    if (text === '') void read();
+    else timer.current = setTimeout(() => void read(), 150);
+  }, [enabled, hostId, fetch, unfiltered, cache, keys, show]);
 
-  return { paths, reading, ask };
-}
-
-/** False when nothing is on show, or when the next rows are the same folders in the same order. */
-function movesRows(onShow: RankedPaths['rows'], next: RankedPaths['rows']): boolean {
-  return onShow.length > 0
-    && (onShow.length !== next.length || onShow.some((row, index) => row.directory !== next[index]!.directory));
+  return { list, reading, ask };
 }

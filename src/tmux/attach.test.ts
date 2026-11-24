@@ -415,6 +415,7 @@ function attachOn(
     sessionName?: string;
     topicId?: string;
     restore?: Place;
+    recordSessionVisit?: AttachOptions['recordSessionVisit'];
     followTopic?: AttachOptions['followTopic'];
     markPanesRead?: AttachOptions['markPanesRead'];
     onHostServerChange?: AttachOptions['onHostServerChange'];
@@ -445,6 +446,7 @@ function attachOn(
     zoomed: options.zoomed ?? true,
     colours: options.colours,
     followTopic: options.followTopic,
+    recordSessionVisit: options.recordSessionVisit,
     markPanesRead: options.markPanesRead,
     onHostServerChange: options.onHostServerChange,
     store,
@@ -3965,4 +3967,14 @@ describe('Unread on visit', () => {
     await settle();
     expect(marked).toEqual(['host-1 %0']);
   });
+});
+
+it('records Session visits on arrival, opening the held Session, and switching Session', async () => {
+  const visited: string[] = [];
+  const kit = attachOn({ recordSessionVisit: (_host, session) => visited.push(session) });
+  await connected(kit);
+  await kit.attach.switchSession({ sessionName: 'work', topic: null });
+  await kit.attach.switchSession({ sessionName: 'play', topic: null });
+  expect(visited).toEqual(['work', 'work', 'play']);
+  await kit.attach.close();
 });

@@ -5,6 +5,7 @@ import { deviceLog } from '@/diagnostics/device-log';
 import { deviceHostStore } from '@/storage/device-store';
 import { useSettings } from '@/settings/settings-context';
 import { followHostTopic } from '@/topics/read-topic';
+import { recordSessionVisit } from '@/topics/visit';
 import { markPanesRead } from '@/topics/unread-on-visit';
 
 import { openAttach, type Attach, type AttachState, type LifecyclePhase, type SessionDestination } from './attach';
@@ -36,6 +37,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
             store: deviceHostStore(),
             followTopic: followHostTopic,
             markPanesRead,
+            recordSessionVisit,
             onHostServerChange: (hostId, changed) =>
               appConnections().subscribeListing((id) => { if (id === hostId) changed(); }),
             openConnection: appConnections().openConnection,

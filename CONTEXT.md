@@ -141,9 +141,8 @@ shows its phase and offers to end it. See ADR 0007.
 **Recent Session**:
 Muxify's memory of a Session this phone has opened, and when it last did. Not
 the Session, which lives on the Host and outlives every Connection — the
-memory. It is not a list on a screen. It ranks the running Sessions in Go to:
-the ones this phone opened come first, newest first. It also chooses the
-Session that a Topic card opens. The user cannot remove one, and a memory of a
+memory. It is not a list on a screen. It helps choose the Session that a Topic card opens. On a Host Server
+without `go-to`, it also ranks the running Sessions in Go to, newest first. The user cannot remove one, and a memory of a
 Session that the Host no longer has changes nothing.
 _Avoid_: workspace, saved session, history, Recent Sessions list (the old list on the Host Screen)
 
@@ -190,20 +189,24 @@ _Avoid_: Sessions screen, Host page, Configure panels (the old choice of lists),
 
 **Go to**:
 The field in the bar of the Host Screen, and the one list it shows in place of
-the tab while it has the keys, as Go to… on the Mac. The list has the running
-Sessions with their Topic, then the Session Paths and Worktrees of the Host,
-then a folder that the user typed, where a leading `~` is the Host's home
-folder. The Host ranks the paths: with the Mac's match for the text in the
-field, and by last visit for an empty field. The phone matches the running
-Sessions, and puts the Recent Sessions first.
+the tab while it has the keys. A Host Server with `go-to` ranks the Topics
+and Sessions Sources of the Mac's Go to… palette. The phone sends the query,
+the current Session on that Host and any selected Tag. It shows the sections,
+rows and matches in the Host's order. A Topic opens its card. A Settled Topic
+or Dormant Board Session reopens. A Tag lists the Topics that have it. A
+folder typed with a leading `~` or `/` appears after the Host's rows.
+
+On a Host Server without `go-to`, the phone lists its running Sessions first
+and then the Host's ranked Session Paths and Worktrees. The phone matches the
+running Sessions and puts its Recent Sessions first.
 
 A tap on a running Session switches the Attach to it, with the Attach's Topic
 membership rules. A tap on a path goes to the Session in no Topic that runs
 there, which has the name of the Session Path. If none runs, the Host makes
 one there, and the Attach opens it. A long press on a path offers New Session
 here, which makes one more Session there with the next free name (`+2`). Each
-Session that the phone opens at a path is a visit, which the phone tells the
-Host, so the Mac and the phone rank by one last visit.
+Session the phone opens is a visit. The Host records the visit for the
+Session, its Topic and its Session Path. An older Host records folder visits.
 
 The phone keeps the last list of each Host for an empty field and shows it at
 once. A new answer from the Host does not move rows that are on show: it shows

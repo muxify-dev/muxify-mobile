@@ -209,9 +209,9 @@ describe('the Host Server link', () => {
       expect(channel().sent[0]).toEqual({
         id: 0,
         kind: 'hello',
-        hello: { protocol: 1, build: BUILD, capabilities: phoneHello.hello.capabilities },
+        hello: { protocol: 1, build: BUILD, capabilities: [...phoneHello.hello.capabilities, 'go-to'] },
       });
-      expect(phoneHello.hello.capabilities).toEqual([...PHONE_CAPABILITIES]);
+      expect([...phoneHello.hello.capabilities, 'go-to']).toEqual([...PHONE_CAPABILITIES]);
     });
 
     it.each([
@@ -226,7 +226,9 @@ describe('the Host Server link', () => {
       await answer(hello);
 
       expect(channel().sent[0]).toMatchObject({ id: 0, kind: 'hello', hello: { protocol } });
-      expect(server.state()).toEqual({ kind: 'live', build: 'muxify 1a2b3c4 1763100000', protocol });
+      expect(server.state()).toEqual({ kind: 'live', build: 'muxify 1a2b3c4 1763100000', protocol,
+        ...(hello.includes('"go-to"') ? { goTo: true } : {}),
+      });
       expect(logged).toEqual([`muxify 1a2b3c4 1763100000, protocol ${protocol}`]);
     });
 

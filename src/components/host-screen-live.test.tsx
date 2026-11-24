@@ -62,7 +62,7 @@ jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: 
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null }) }));
-jest.mock('@/hooks/use-go-to-paths', () => ({ useGoToPaths: () => ({ paths: { query: '', rows: [] }, reading: { kind: 'idle' }, ask: () => {} }) }));
+jest.mock('@/hooks/use-go-to-paths', () => ({ useHostGoTo: () => ({ list: { query: '', rows: [] } }), useGoToPaths: () => ({ paths: { query: '', rows: [] }, reading: { kind: 'idle' }, ask: () => {} }) }));
 jest.mock('@/topics/act-on-card', () => ({
   ...jest.requireActual('@/topics/act-on-card'),
   sendCardOrder: (...args: unknown[]) => mockSend(...args),

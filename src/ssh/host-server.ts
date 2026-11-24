@@ -18,7 +18,9 @@ import {
 export { HostServerError, type HostServerCall, type OldSide, type OpenServerChannel } from './host-server-channel';
 
 /** What the phone uses of the Host Server. A server whose `hello` lacks one is too old. */
-export const PHONE_CAPABILITIES = ['request', 'snapshot', 'topic-detail', 'ranked-session-paths', 'browser-tabs', 'board'] as const;
+const REQUIRED_CAPABILITIES = ['request', 'snapshot', 'topic-detail', 'ranked-session-paths', 'browser-tabs', 'board'] as const;
+
+export const PHONE_CAPABILITIES = [...REQUIRED_CAPABILITIES, 'go-to'] as const;
 
 /** A server that stops this many times… */
 export const MAX_STOPS = 3;
@@ -37,7 +39,7 @@ export type HostServerState =
   /** No `muxify` on the Host yet: it waits for the Host CLI install. */
   | { kind: 'installing' }
   /** The server answered with every capability the phone uses, on `protocol`, the one both sides speak. */
-  | { kind: 'live'; build: string; protocol: number }
+  | { kind: 'live'; build: string; protocol: number; goTo?: true }
   /** No Host Server for the rest of this Connection. */
   | ({ kind: 'sessions-only' } & Unavailable)
   /** Its Connection closed. */
@@ -206,7 +208,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
     opened.hello.then(
       (hello) => {
         if (session !== opened) return;
-        const missing = PHONE_CAPABILITIES.filter((name) => !hello.capabilities.includes(name));
+        const missing = REQUIRED_CAPABILITIES.filter((name) => !hello.capabilities.includes(name));
         if (missing.length > 0) {
           say(`${hello.build} lacks the capabilities ${missing.join(', ')}`);
           sessionsOnly(unavailable.tooOld('host', hello.build));
@@ -214,7 +216,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
         }
         if (hello.build !== lastBuild) say(`${hello.build}, protocol ${hello.protocol}`);
         lastBuild = hello.build;
-        become({ kind: 'live', build: hello.build, protocol: hello.protocol });
+        become({ kind: 'live', build: hello.build, protocol: hello.protocol, ...(hello.capabilities.includes('go-to') ? { goTo: true as const } : {}) });
         for (const entry of queue.splice(0)) forward(entry, opened);
       },
       () => {},

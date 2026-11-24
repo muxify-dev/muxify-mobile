@@ -1,7 +1,9 @@
 import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 
-import { createGoToCache, type GoToCache } from './go-to-cache';
+import { parseGoToSections, type GoToSection } from '@/topics/go-to-answer';
+
+import { createListCache, createGoToCache, type GoToCache } from './go-to-cache';
 import { createHostStore, type HostStore, type JsonFile, type Secrets } from './store';
 
 const RECORDS_FILE = 'muxify-records.json';
@@ -53,4 +55,10 @@ let goToCache: GoToCache | undefined;
 export function deviceGoToCache(): GoToCache {
   goToCache ??= createGoToCache(jsonFile(GO_TO_FILE));
   return goToCache;
+}
+
+let rankedCache: GoToCache<GoToSection> | undefined;
+export function deviceRankedGoToCache(): GoToCache<GoToSection> {
+  rankedCache ??= createListCache(jsonFile('muxify-go-to-sections.json'), parseGoToSections, (sections) => ({ sections }));
+  return rankedCache;
 }
