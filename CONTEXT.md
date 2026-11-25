@@ -775,8 +775,23 @@ shows the page again. A cold start whose Last Place has a Tab opens the page
 directly, with the Connection Screen over it until the Session is attached. The page stands in the Terminal Screen's place, so the
 swipe from the edge shows the Host Screen under it. A Window pick in the Title
 Sheet is the way to the terminal: it puts the Terminal Screen back and clears
-the Tab.
+the Tab. The page it shows is a Live Page, so Back, a pick and another Tab
+hide the page and do not end it. **Close Page** ends it: the Terminal Screen
+takes its place, and the Tab opened again loads a new page.
 _Avoid_: browser (that is the Host's), in-app browser, preview
+
+**Live Page**:
+The page that the phone loaded for one Browser Tab of one Topic, or of one
+Session with no Topic, on one Host. It stays loaded while the Web View does
+not show it, with its form text, its script state and its scroll, so
+the Tab opened again by the same owner shows it as the user left it. The same
+Tab in another Topic is another Live Page: a Topic never sees what was typed
+in another. Only these release it: Close Page, a Tab that the Host lists no
+more when a Place opens it, a Listing that no longer has its Topic (the Topic
+was settled or forgotten) or its Session, and deleting the Host. A Disconnect
+keeps it. Live Pages do not survive an app restart: the Place then loads the
+page again at its address and scroll. See ADR 0033.
+_Avoid_: tab (that is the Host's), cached page, kept page
 
 **Options**:
 The Header's ⋯ menu starts with Compose. For an Attach with a Topic, Topic
