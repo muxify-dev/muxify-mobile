@@ -18,6 +18,8 @@
 #      still the wheel, and the mouse layer does not follow to the next Pane
 #   7  in a Window that is not zoomed, a swipe changes the Pane from the
 #      active Pane and from another one, and the Window stays as it is
+#   8  a press that drifts a little, sideways or down, opens a Selection and
+#      is neither a swipe nor a scroll (ADR 0035)
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Each check reads the Host instead: the active Pane and
@@ -87,14 +89,14 @@ expect_window() {
 
 scrolled_back() { agent-device is exists 'id="scroll-position"' >/dev/null 2>&1; }
 
-echo "1/7  a Window with one Pane shows no Layout map"
+echo "1/8  a Window with one Pane shows no Layout map"
 attach
 [ -z "$(map_label)" ] || fail "one Pane, and there is a Layout map: $(map_label)"
 swipe_left
 expect_window "0 0" "a swipe with one Pane"
 echo "     no map, and a swipe goes nowhere"
 
-echo "2/7  a swipe goes to the next or the previous Pane, and keeps the Zoom"
+echo "2/8  a swipe goes to the next or the previous Pane, and keeps the Zoom"
 # Before the Attach, which then zooms the Window, as it does on a phone.
 # Each new Pane runs the sandbox's own plain bash, not the user's shell.
 SHELL_COMMAND="env PS1='\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc"
@@ -120,7 +122,7 @@ agent-device is exists 'label="Open Terminal chooser" enabled=true' >/dev/null 2
 swipe_left
 echo "     0 → 1 → 2 → 0, then back 0 → 2 → 1 → 0, zoomed throughout"
 
-echo "3/7  the Layout map names the active Pane and opens the Panes picker"
+echo "3/8  the Layout map names the active Pane and opens the Panes picker"
 [ "$(map_label)" = "Layout map, Pane 1 of 3" ] || fail "the map says '$(map_label)' on Pane 1 of 3"
 swipe_right
 [ "$(map_label)" = "Layout map, Pane 0 of 3" ] || fail "the map says '$(map_label)' on Pane 0 of 3"
@@ -131,9 +133,10 @@ agent-device press 'label="Close Panes"' >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1
 echo "     it follows the swipe, and a tap opens the picker"
 
-echo "4/7  a drag changes the Pane past a quarter of the width, or on a flick"
-# Slow, so that the speed of the finger makes no swipe of it.
-drag 300 400 -80 0 1500
+echo "4/8  a drag changes the Pane past a quarter of the width, or on a flick"
+# Slow, so that the speed of the finger makes no swipe of it, and fast enough
+# to leave the long press's 20 points before 0.35 s, so it is no Selection.
+drag 300 400 -80 0 1000
 expect_window "0 1" "a slow 80 point drag"
 drag 300 400 -160 0 1500
 expect_window "1 1" "a slow 160 point drag"
@@ -151,7 +154,7 @@ agent-device press 'label="Jump to latest"' >/dev/null 2>&1
 sleep 1
 echo "     the short slow drag and the diagonal one left Pane 0, the others did not"
 
-echo "5/7  a vertical drag moves the Scrollback, and a swipe moves none"
+echo "5/8  a vertical drag moves the Scrollback, and a swipe moves none"
 scrolled_back && fail "the Pane is in its Scrollback before the drag"
 drag 200 300 0 200
 scrolled_back || fail "a vertical drag did not move the Scrollback"
@@ -164,7 +167,7 @@ scrolled_back && fail "a swipe moved the Scrollback"
 swipe_right
 echo "     the pill came up for the drag only"
 
-echo "6/7  a program that listens for the mouse: a swipe is the Pane's, a drag is the wheel"
+echo "6/8  a program that listens for the mouse: a swipe is the Pane's, a drag is the wheel"
 # `cat -v` echoes the SGR of every mouse event it is sent. See regressions.sh.
 # On the alternate screen, as a full-screen program is: there a drag is the
 # program's to scroll, and on the normal screen it is the Scrollback.
@@ -198,7 +201,7 @@ on_host "tmux send-keys -t '$WINDOW.0' C-c; sleep 1; \
     tmux send-keys -t '$WINDOW.0' 'printf \"\\033[?1006l\\033[?1000l\\033[?1049l\"; clear' Enter"
 echo "     the swipes sent the program nothing, the drag sent it the wheel"
 
-echo "7/7  a Window that is not zoomed keeps its split across a swipe"
+echo "7/8  a Window that is not zoomed keeps its split across a swipe"
 # Two Panes side by side, so each one is a known half of the Surface.
 on_host "tmux kill-pane -t '$WINDOW.2'; tmux select-pane -t '$WINDOW.0'"
 sleep 2
@@ -214,6 +217,26 @@ expect_window "1 0" "a swipe on the active Pane of a split"
 drag 180 400 -150 0
 expect_window "0 0" "a swipe on the other Pane of a split"
 echo "     0 → 1 → 0, and never zoomed"
+
+echo "8/8  a press that drifts a little opens a Selection, not a swipe or a scroll"
+# Rows of text wide enough that the press and its drift both land on a word.
+on_host "tmux send-keys -t '$WINDOW.0' 'clear; seq -f \"selectable-text-%g\" 1 300' Enter"
+sleep 2
+# 18 points in half a second: past the 10 points of an iOS long press, inside
+# the 20 of the Selection's. Before ADR 0035 this drift was a drag.
+close_selection() {
+  agent-device press 100 150 >/dev/null 2>&1
+  agent-device wait absent 'label="Copy"' 3000 >/dev/null 2>&1 || fail "a tap did not close the Selection"
+}
+drag 40 400 18 0 500
+agent-device wait 'label="Copy"' 3000 >/dev/null 2>&1 || fail "a press that drifted sideways opened no Selection"
+expect_window "0 0" "a press that drifted sideways"
+close_selection
+drag 40 400 0 18 500
+agent-device wait 'label="Copy"' 3000 >/dev/null 2>&1 || fail "a press that drifted down opened no Selection"
+scrolled_back && fail "a press that drifted down moved the Scrollback"
+close_selection
+echo "     both presses opened a Selection, and no Pane or Scrollback moved"
 
 echo
 echo "PASS: a swipe left or right on the Surface goes to the next or the previous"
