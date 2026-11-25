@@ -181,6 +181,17 @@ swipe action, and a drag right from the list goes back.
 The row of the Session that the Attach is on shows the phase of the Attach,
 and a swipe on it offers Disconnect.
 
+Each tab starts with the status section, which has no title. It shows what
+happens now to the Host or to the list on show, and it goes when that ends:
+the Host Problem, "Updating…" and "Not updated" of the Listing, the install or
+update of the Host CLI or its failure, and a failed read of the Topics above
+their last cards. No other section shows a status row: Pinned shows only the
+Pinned cards, and the status section comes before it. A row that stands in
+for a list that has nothing to show yet, as "Checking Topics…", stays where
+the list will be. The line that says why a Host shows only Sessions stays
+above the Sessions, because it does not go away. The phase of the Attach stays
+on the row of its Session.
+
 A bar at the bottom has the Go to field and the **＋** menu, with New Topic and
 New Session at a folder. The bar does not show while the user moves a Topic
 card or fills an Open Place. Home and the Terminal Screen have no bar. The
@@ -244,7 +255,7 @@ still runs. The doubt begins when the app goes to the background, when the
 subscription ends, when the Host Server stops being live, or when the
 Connection closes. A push from a subscription that ran before the background
 does not end the doubt: only the first item of a new subscription does. The
-Host Screen says "Updating…" above the list only when the phone has not known
+Host Screen says "Updating…" in its status section only when the phone has not known
 the list for 30 s and has asked again for at least 1 s, so a short absence or
 a quick answer shows nothing. When the update fails with the list still on
 screen, that line becomes "Not updated · <age>" with Retry. The age is from
@@ -261,7 +272,7 @@ Why the phone could not use a Host the last time it tried: the Host did not
 answer, refused the Identity, or presented a key that was refused. One per
 Host. The Connections keep it, because every use of a Host goes through them.
 Any use that reaches the Host clears it, even one the Host refuses. A screen
-shows it in one place with one Try again: a row at the top of the Host Screen,
+shows it in one place with one Try again: a row in the status section of the Host Screen,
 and the notice of the Title Sheet. Try again reads the Host again, and the
 reads that met the Host Problem do not show it a second time. On the Terminal
 Screen the Cover says why the Attach stopped. A refusal from a Host that
