@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Debrief: Topics stayed unavailable until a new Connection</title>
+<script>
+  const q = matchMedia('(prefers-color-scheme: dark)');
+  const set = () => document.documentElement.dataset.theme = q.matches ? 'dark' : 'light';
+  set(); q.addEventListener('change', set);
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, li, dd, td, th, .badge) { overflow-wrap: anywhere; }
+  code { font-size: .9em; }
+  svg text { font-family: ui-sans-serif, system-ui, sans-serif; fill: currentColor; }
+  .fig { color: var(--color-base-content); }
+  .fig .box { fill: var(--color-base-200); stroke: currentColor; stroke-opacity: .45; }
+  .fig .bad { fill: color-mix(in oklab, var(--color-error) 18%, var(--color-base-100)); stroke: var(--color-error); }
+  .fig .good { fill: color-mix(in oklab, var(--color-success) 18%, var(--color-base-100)); stroke: var(--color-success); }
+  .fig .mute { opacity: .55; }
+  .fig line, .fig path.arrow { stroke: currentColor; stroke-width: 1.6; fill: none; }
+  .fig .badline { stroke: var(--color-error) !important; }
+  .fig .goodline { stroke: var(--color-success) !important; }
+  .badge-soft, .alert-soft { color: var(--color-base-content) !important; }
+  .wide { overflow-x: auto; }
+  .wide > svg { min-width: 760px; }
+  #check .fb { display: none; }
+  #check .picked .fb { display: block; }
+</style>
+</head>
+<body class="bg-base-100 text-base-content">
+<main class="mx-auto max-w-4xl p-4 sm:p-8 space-y-10">
+
+<header class="space-y-3">
+  <p class="text-sm opacity-80">Debrief · Muxify Mobile · worktree <code>muxify-mobile-topics</code> on <code>4db38a3</code> (master) · not committed, not merged</p>
+  <h1 class="text-3xl font-bold">Topics stayed unavailable because Sessions only lasted as long as the Connection</h1>
+  <div class="alert alert-soft alert-info" role="note">
+    <div>
+      <p class="font-semibold">Question: why did the Sessions menu say Topics were not available, until a new sign-in or an app restart?</p>
+      <p>On current master, when the Host Server gives up (no <code>hello</code> in 10 s, or 3 stops in 60 s), the Connection stays in <b>Sessions only</b> until that Connection closes. An Attach can keep one Connection open for hours, so nothing asked the Host Server again until a new sign-in or an app restart made a new Connection. The fix asks again on the same Connection when the cause can pass. This happens on a return from the background, and on a screen's use one minute or more later. A regression test shows the fault on the old code and the fix on the new code.</p>
+    </div>
+  </div>
+  <p><b>Did the work do what was asked?</b> Yes, with one difference: the report says "unsupported", but the app shows "Topics are <i>unavailable</i> on &lt;Host&gt;: &lt;reason&gt;". I found no path that shows "unsupported" in the Sessions menu (see <a class="link" href="#message">the message</a>). I did not reproduce the fault on a real device. The cause is from reading the code and from the test.</p>
+</header>
+
+<section class="space-y-3">
+  <h2 class="text-xl font-bold">Terms on this page</h2>
+  <div class="overflow-x-auto rounded-box border border-base-content/10">
+  <table class="table table-sm" style="min-width:560px">
+    <thead><tr><th>Term</th><th>What it is (CONTEXT.md)</th><th>Unit / where</th></tr></thead>
+    <tbody>
+      <tr><td><b>Connection</b></td><td>One live SSH link to a Host. The Attach and the screens share it.</td><td><code>Entry</code> in <code>host-connections.ts</code></td></tr>
+      <tr><td><b>Attach</b></td><td>The terminal's hold on a Connection. While it holds it, the Connection does not close for idle.</td><td><code>entry.attaches &gt; 0</code></td></tr>
+      <tr><td><b>Host Server</b></td><td><code>muxify server</code> on one channel of the Connection. It pushes Topics.</td><td>one per Connection</td></tr>
+      <tr><td><b>Sessions only</b></td><td>The state when no Host Server runs. Screens show Sessions, and say "Topics are unavailable on &lt;Host&gt;: &lt;reason&gt;".</td><td><code>{ kind: 'sessions-only' }</code></td></tr>
+      <tr><td><b>Title Sheet</b></td><td>The Sessions menu of the Terminal Screen. It reads the Host when it opens.</td><td><code>use-title-sheet.ts</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="cause" class="space-y-4">
+  <h2 class="text-xl font-bold">1 · On master, a Host Server that gave up stays down for the life of the Connection, and an Attach keeps the Connection alive</h2>
+  <p>A worked case, with the numbers from the code: the terminal is open on a Host. iOS suspends the app for more than 45 s. During that time the Host Server exits, because nothing reaches it (ADR 0025: "the server exits after 45 s of silence"). When the app returns, the link is slow.</p>
+  <div class="wide fig rounded-box border border-base-content/10 p-2">
+  <svg viewBox="0 0 760 300" role="img" aria-labelledby="t1">
+    <title id="t1">The failure path next to the path a new Connection takes</title>
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" /></marker></defs>
+    <g id="s1"><title>Return</title><rect class="box" x="10" y="20" width="150" height="54" rx="8" /><text x="85" y="43" text-anchor="middle" font-size="13">App returns</text><text x="85" y="61" text-anchor="middle" font-size="11">server exited after 45 s</text></g>
+    <line x1="160" y1="47" x2="200" y2="47" marker-end="url(#ah)" />
+    <g id="s2"><title>Restart</title><rect class="box" x="200" y="20" width="150" height="54" rx="8" /><text x="275" y="43" text-anchor="middle" font-size="13">Stop 1: start again</text><text x="275" y="61" text-anchor="middle" font-size="11">on the slow link</text></g>
+    <line x1="350" y1="47" x2="390" y2="47" marker-end="url(#ah)" />
+    <g id="s3"><title>Gave up</title><rect class="bad" x="390" y="20" width="170" height="54" rx="8" /><text x="475" y="43" text-anchor="middle" font-size="13">Sessions only</text><text x="475" y="61" text-anchor="middle" font-size="11">no hello in 10 s</text></g>
+    <line x1="560" y1="47" x2="600" y2="47" marker-end="url(#ah)" />
+    <g id="s4"><title>Kept</title><rect class="box" x="600" y="20" width="150" height="54" rx="8" /><text x="675" y="43" text-anchor="middle" font-size="13">Attach keeps link</text><text x="675" y="61" text-anchor="middle" font-size="11">tmux answers in 8 s</text></g>
+
+    <path class="arrow badline" d="M675,74 L675,120 L475,120" marker-end="url(#ah)" />
+    <g id="s5"><title>Stuck</title><rect class="bad" x="300" y="100" width="170" height="64" rx="8" /><text x="385" y="122" text-anchor="middle" font-size="13">Sessions menu:</text><text x="385" y="140" text-anchor="middle" font-size="11">"Topics are unavailable</text><text x="385" y="155" text-anchor="middle" font-size="11">on Mac: …did not answer"</text></g>
+    <text x="490" y="152" font-size="11">return, Try again, reopen menu:</text>
+    <text x="490" y="167" font-size="11" font-weight="bold">nothing starts the server</text>
+
+    <line x1="385" y1="164" x2="385" y2="210" marker-end="url(#ah)" />
+    <text x="395" y="192" font-size="11">sign in again / restart app</text>
+    <g id="s6"><title>New Connection</title><rect class="good" x="300" y="210" width="170" height="54" rx="8" /><text x="385" y="233" text-anchor="middle" font-size="13">New Connection</text><text x="385" y="251" text-anchor="middle" font-size="11">new Host Server: live</text></g>
+  </svg>
+  </div>
+  <ul class="list-disc pl-6 space-y-1">
+    <li>Two causes give up with no user action: <code>no-hello</code> → <code>unavailable.noAnswer()</code>, and 3 stops in <code>STOP_WINDOW_MS</code> (60 s) → <code>stoppedRepeatedly</code>. A restart has no wait, so failures that come fast use the 3 stops in milliseconds. <span class="opacity-80">(<code>src/ssh/host-server.ts:257</code>, <code>:273</code>; before the fix: <code>:248</code>, <code>:264</code>)</span></li>
+    <li>On a return, an entry with an Attach only refreshed its Listing feed. Only a Connection with no Attach and no live server was dropped. <span class="opacity-80">(master <code>src/ssh/host-connections.ts:646-648</code>)</span></li>
+    <li>ADR 0028 keeps a slow link that still answers tmux, and ADR 0031 keeps a Connection over a return. ADR 0025's rule "the next Connection tries again" assumed that a new Connection came soon. These two later ADRs removed that assumption.</li>
+    <li>The Title Sheet's Try again (<code>rereadTopic</code>, <code>readHost</code>) uses the same Host Server object, which stays in Sessions only, so it shows the same note. <span class="opacity-80">(<code>src/hooks/use-title-sheet.ts:304-323</code>, <code>src/ssh/topic-feed.ts:51-53</code>)</span></li>
+  </ul>
+</section>
+
+<section id="message" class="space-y-3">
+  <h2 class="text-xl font-bold">2 · The words on the screen are "unavailable", and the app shows "unsupported" in no Sessions menu</h2>
+  <p>The note comes from one function: <code>topicsUnavailable(host, reason)</code> → <code>"Topics are unavailable on ${host}: ${reason}"</code> (<code>src/topics/host-topics.ts:50-51</code>). It reaches the Title Sheet through the live Listing: <code>live.server.kind === 'sessions-only'</code> → <code>{ kind: 'unavailable' }</code> (<code>src/topics/host-topics.ts:200-202</code>). "unsupported" is only a <code>HostServerError</code> code (<code>src/ssh/host-server-channel.ts:53</code>), the phone sends it as a reply (<code>:526</code>), and a server can send it back for a request it does not know (<code>:309</code>). Only such an error's message can reach a screen (<code>topic-feed.ts:58</code>), never the code word. So I take "unsupported" in the report to mean this note. The reason text that the user saw is not known. Possible reasons are "the Host Server did not answer" or "stopped 3 times in a minute". A reason "too old" would not clear with a sign-in on the same Host, so that reason does not match the report.</p>
+</section>
+
+<section id="asked" class="space-y-3">
+  <h2 class="text-xl font-bold">3 · Every asked item is done. One item differs from the report's word</h2>
+  <p class="text-sm opacity-80">Source of each item: the user's request in this conversation.</p>
+  <div class="overflow-x-auto rounded-box border border-base-content/10">
+  <table class="table table-sm" style="min-width:640px">
+    <thead><tr><th>ID</th><th>Asked</th><th>Status</th><th>What the code does now</th></tr></thead>
+    <tbody>
+      <tr><td>A1</td><td>"Trace the exact message"</td><td><span class="badge badge-soft badge-warning">◐ differs</span></td><td>"Topics are unavailable on …", <code>host-topics.ts:51</code>. The app has no "unsupported" message. See §2.</td></tr>
+      <tr><td>A2</td><td>"handshake"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td><code>hello</code> with a 10 s timer (<code>host-server-channel.ts:24</code>, <code>:559-561</code>). Capability check at <code>host-server.ts:221-226</code>.</td></tr>
+      <tr><td>A3</td><td>"reconnect"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>A stop restarts the server (<code>host-server.ts:270-278</code>). A return: <code>host-connections.ts:647-653</code>. Attach probe: ADR 0028.</td></tr>
+      <tr><td>A4</td><td>"cached capability paths"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Capabilities are read again on each <code>hello</code>. Nothing is stored on disk (<code>src/storage</code> has no capability field). The only cache is the per-Connection server state, and the Listing that <code>feeds</code> keeps until a new Connection (<code>host-connections.ts:108-114</code>). That cache is the stuck state.</td></tr>
+      <tr><td>A5</td><td>"Check history including muxify-mobile-refetch-topics"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>The refetch branch (<code>a55c60d</code>) is on master as #44 (<code>9597e5f</code>, ADR 0031). The earlier SSH fix is #39 (<code>bf0981a</code>, ADR 0028). Neither fix made the stuck state, but together they let a Connection live long enough to show it.</td></tr>
+      <tr><td>A6</td><td>"Establish what can produce the symptom on current master before implementing"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>§1. Two of three new tests failed on master code before the fix.</td></tr>
+      <tr><td>A7</td><td>"Run pop conventions get implementation… read the project glossary and instructions"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Shipped standard (no repo standard). Read <code>CONTEXT.md</code>, <code>AGENTS.md</code>, ADRs 0025, 0028, 0031.</td></tr>
+      <tr><td>A8</td><td>"fix… verify with a focused regression test"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td><code>HostServer.tryAgain</code> (<code>host-server.ts:339-345</code>), called at <code>host-connections.ts:445</code> and <code>:650</code>. Tests: <code>host-connections.test.ts:714-771</code>.</td></tr>
+      <tr><td>A9</td><td>"Do not merge or deploy"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Nothing committed, pushed, merged or deployed.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="fix" class="space-y-4">
+  <h2 class="text-xl font-bold">4 · The fix asks the Host Server again on the same Connection, only when the cause can pass</h2>
+  <div class="grid gap-4 md:grid-cols-2">
+    <div class="card card-border"><div class="card-body p-4">
+      <h3 class="font-semibold">Before (master)</h3>
+      <ul class="list-disc pl-5 text-sm space-y-1">
+        <li>Sessions only, any cause → stays until the Connection closes.</li>
+        <li>Return with an Attach → Listing refresh only.</li>
+        <li>Screen read → tmux read. The server state does not change.</li>
+      </ul>
+    </div></div>
+    <div class="card card-border"><div class="card-body p-4">
+      <h3 class="font-semibold">After</h3>
+      <ul class="list-disc pl-5 text-sm space-y-1">
+        <li>Sessions only marks if its cause can pass (<code>canPass</code>): no answer, or 3 stops.</li>
+        <li>Return with an Attach → <code>tryAgain()</code>, then the Listing refresh.</li>
+        <li>Any screen use (read, write, hold, <code>onServer</code>) → <code>tryAgain(60 s)</code>: only when Sessions only began 60 s or more before.</li>
+        <li>A retry resets the 3-stop budget. "Too old" and "not installed" never retry here: the Host CLI install already starts the server again when it answers installed or updated (<code>host-server.ts:318-337</code>).</li>
+      </ul>
+    </div></div>
+  </div>
+  <p>Why 60 s on the use path: the Host Screen's Sessions-only list reads the Host each time the state becomes Sessions only (<code>use-host-listing.ts:93-118</code>). With no wait, that read would start the server, the server would fail, and the read would start it again, in a loop. When the server becomes live, the Listing feed and the Topic feed subscribe again by themselves (<code>host-listing-feed.ts:123-125</code>, <code>topic-feed.ts:63-65</code>).</p>
+  <div id="diff" class="rounded-box border border-base-content/10 overflow-hidden"></div>
+  <p class="text-sm opacity-80">The diff shows the two source files. Also changed: five test fakes get <code>tryAgain: () =&gt; {}</code>, there is a new ADR 0033, and <code>CONTEXT.md</code> → Host Server.</p>
+</section>
+
+<section id="evidence" class="space-y-3">
+  <h2 class="text-xl font-bold">5 · The new tests failed on master code and pass with the fix, and the full suite passes</h2>
+  <div class="overflow-x-auto rounded-box border border-base-content/10">
+  <table class="table table-sm" style="min-width:560px">
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>jest host-connections.test.ts -t 'later try can change'</code> before the fix</td><td><span class="badge badge-soft badge-error">✗ 2 failed</span>, 1 passed. Both expected <code>live</code> and got <code>sessions-only</code> (return path, and read path after 60 s). The "too old" test passed.</td></tr>
+      <tr><td><code>jest src/ssh</code> after the fix</td><td><span class="badge badge-soft badge-success">✓</span> 5 suites, 126 tests</td></tr>
+      <tr><td><code>jest</code> (all)</td><td><span class="badge badge-soft badge-success">✓</span> 118 suites, 2062 tests</td></tr>
+      <tr><td><code>tsc --noEmit</code></td><td><span class="badge badge-soft badge-warning">◐</span> 2 errors, both in files this change does not touch: <code>e2e/host-cli.test.ts:91</code>, <code>src/constants/theme.ts:6</code></td></tr>
+      <tr><td><code>eslint</code> on changed files</td><td><span class="badge badge-soft badge-success">✓</span> 0 errors. 6 <code>no-require-imports</code> warnings in test files, which were there before</td></tr>
+      <tr><td>e2e (<code>e2e/sandbox.sh</code>), device</td><td><span class="badge badge-soft badge-warning">— not run</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The test that fails on master: an Attach opens the Connection, the server channel says no <code>hello</code>, and the clock moves 10 s → <code>{ kind: 'sessions-only', reason: 'the Host Server did not answer' }</code>. Then the Host answers again, and the app goes to the background and returns. On master the Listing still says <code>sessions-only</code>. With the fix it says <code>live</code>, on the same SSH link (<code>links</code> has length 1).</p>
+</section>
+
+<section id="extra" class="space-y-2">
+  <h2 class="text-xl font-bold">6 · No asked item covers these changes, but each one follows from the fix</h2>
+  <ul class="list-disc pl-6 space-y-1">
+    <li><code>docs/adr/0033-a-sessions-only-that-can-pass-is-tried-again.md</code>: this changes the ADR 0025 rule "The next Connection tries the Host Server again", so I recorded the decision and the options I did not choose.</li>
+    <li><code>CONTEXT.md</code> → <b>Host Server</b>: one sentence about when it starts again.</li>
+    <li>Test fakes of <code>HostServer</code>: <code>fake-host-server.ts</code>, <code>host-screen-live.test.tsx</code>, <code>use-title-sheet-live.test.tsx</code>, <code>host-listing-feed.test.ts</code>, <code>topic-feed.test.ts</code>. The interface got one method.</li>
+    <li><code>host-connections.test.ts</code> setup: a new <code>serverSilent</code> option, so that a Host Server channel can stay silent.</li>
+  </ul>
+</section>
+
+<section id="check" class="space-y-4">
+  <h2 class="text-xl font-bold">Check yourself</h2>
+  <p>Make sure you understand it well enough before you decide.</p>
+  <div class="q card card-border" data-q="1"><div class="card-body p-4 space-y-2">
+    <p class="font-semibold">Q1. The Terminal is open. The Host Server gave up 20 s ago with "did not answer". The user opens the Sessions menu. What happens now?</p>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">The server starts again at once, because opening the menu reads the Host.<span class="fb text-left block font-normal">Not right. The read is a screen use, and a screen use asks again only when Sessions only began 60 s or more before. See <a class="link" href="#fix">§4</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="true">The menu still says Topics are unavailable. A return from the background, or a use 60 s or more after the server gave up, starts it again.<span class="fb text-left block font-normal">Right. The 60 s wait stops the Host Screen's read-on-Sessions-only from looping. See <a class="link" href="#fix">§4</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">It stays down until the user signs in again, as on master.<span class="fb text-left block font-normal">Not right. That is the old behaviour in <a class="link" href="#cause">§1</a>.</span></button>
+    <button class="btn btn-xs btn-ghost hidden" data-queue="check-Q1">Section did not teach this: queue a note</button>
+  </div></div>
+  <div class="q card card-border" data-q="2"><div class="card-body p-4 space-y-2">
+    <p class="font-semibold">Q2. The Host's muxify lacks the <code>board</code> capability. The app returns from the background with the Terminal open. What does the fix do?</p>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">It starts the server again with a fresh budget of 3 stops.<span class="fb text-left block font-normal">Not right. "Too old" cannot pass on the same binary, so it is not marked <code>canPass</code>. See <a class="link" href="#fix">§4</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">It drops the Connection so a new one tries.<span class="fb text-left block font-normal">Not right. A Connection with an Attach is never dropped on a return. The Attach decides. See <a class="link" href="#cause">§1</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="true">Nothing: it stays in Sessions only until the Host CLI install puts a newer muxify on the Host.<span class="fb text-left block font-normal">Right. The third regression test checks this. See <a class="link" href="#fix">§4</a>.</span></button>
+    <button class="btn btn-xs btn-ghost hidden" data-queue="check-Q2">Section did not teach this: queue a note</button>
+  </div></div>
+  <div class="q card card-border" data-q="3"><div class="card-body p-4 space-y-2">
+    <p class="font-semibold">Q3. Why did a new sign-in fix the symptom on master?</p>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">It cleared a capability list stored on the phone.<span class="fb text-left block font-normal">Not right. Nothing about capabilities is stored. See A4 in <a class="link" href="#asked">§3</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="true">It made a new Connection, and each Connection starts its own Host Server.<span class="fb text-left block font-normal">Right. See <a class="link" href="#cause">§1</a>.</span></button>
+    <button class="btn btn-sm btn-outline justify-start" data-right="false">It updated the Host CLI.<span class="fb text-left block font-normal">Not right. The install restarts the server only when it answers installed or updated. A sign-in on a current Host does neither. See <a class="link" href="#cause">§1</a>.</span></button>
+    <button class="btn btn-xs btn-ghost hidden" data-queue="check-Q3">Section did not teach this: queue a note</button>
+  </div></div>
+</section>
+
+<section id="open" class="space-y-2">
+  <h2 class="text-xl font-bold">Not done, and what is not known</h2>
+  <ul class="list-disc pl-6 space-y-1">
+    <li><b>No device check.</b> I did not see the fault on a phone. I did not run the e2e suites. A device test: open the Terminal, keep the app in the background for more than 45 s on a slow link, then return.</li>
+    <li><b>The reason text is not known.</b> The report does not say which reason it showed. If the log has "Sessions only: …" lines from <code>connections: &lt;Host&gt;: Host Server:</code>, they tell which cause it was.</li>
+    <li><b>The timer during a suspension is a guess.</b> If a restart begins just before iOS suspends the app, the 10 s <code>hello</code> timer can fire on resume before the buffered <code>hello</code> is read. That would give a false "did not answer". I did not confirm the order of events on iOS. The fix recovers from it in both cases.</li>
+    <li><b>No backoff between fast restarts.</b> Three fast failures still use the budget in milliseconds. The fix recovers later, but it does not make the first give-up less likely. This is a possible follow-up.</li>
+    <li><b>Up to 60 s still stuck</b> when no return comes. For example, the user opens the menu 20 s after the give-up. A refresh button for the Host Server in the menu would close this gap. Not built.</li>
+    <li>The changes are in the working tree of <code>muxify-mobile-topics</code> and are not committed.</li>
+  </ul>
+</section>
+</main>
+
+<script>
+  document.querySelectorAll('#check .q').forEach((q) => {
+    q.querySelectorAll('button[data-right]').forEach((b) => b.addEventListener('click', () => {
+      q.querySelectorAll('button[data-right]').forEach((o) => o.classList.remove('picked', 'btn-success', 'btn-error'));
+      b.classList.add('picked', b.dataset.right === 'true' ? 'btn-success' : 'btn-error');
+      const queue = q.querySelector('[data-queue]');
+      queue.classList.toggle('hidden', b.dataset.right === 'true');
+    }));
+    const queue = q.querySelector('[data-queue]');
+    queue.addEventListener('click', () => {
+      const key = queue.dataset.queue;
+      const text = `${key}: the section linked in the feedback did not teach this question.`;
+      if (window.lavish?.queue) window.lavish.queue({ queueKey: key, prompt: text });
+      else queue.textContent = 'Queued (open in Lavish to send)';
+    });
+  });
+</script>
+<script type="module">
+  import { FileDiff } from "https://esm.sh/@pierre/diffs@1.2.10?bundle";
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const options = { theme: { light: "github-light", dark: "github-dark" }, themeType: dark ? "dark" : "light", overflow: "wrap", diffStyle: "unified" };
+  const before = {
+    name: "src/ssh/host-connections.ts (return, and screen use)",
+    contents: `    setProblem(host, null);
+    begin(entry, dialed);
+    return { entry, dialed };
+…
+      for (const entry of [...entries.values()]) {
+        if (entry.attaches > 0) feedOf(entry)?.refresh();
+        else if (entry.server?.state().kind === 'live') askAfterReturn(entry, entry.server);
+        else void drop(entry, 'the app came back from the background');
+      }
+`,
+  };
+  const after = {
+    name: before.name,
+    contents: `    setProblem(host, null);
+    begin(entry, dialed);
+    // A minute apart, so a screen that reads again on each Sessions only cannot start the server in a loop.
+    entry.server?.tryAgain(STOP_WINDOW_MS);
+    return { entry, dialed };
+…
+      for (const entry of [...entries.values()]) {
+        if (entry.attaches > 0) {
+          // An Attach can hold one Connection for hours, so its Host Server is asked again here, not on a new dial.
+          entry.server?.tryAgain();
+          feedOf(entry)?.refresh();
+        } else if (entry.server?.state().kind === 'live') askAfterReturn(entry, entry.server);
+        else void drop(entry, 'the app came back from the background');
+      }
+`,
+  };
+  const sBefore = {
+    name: "src/ssh/host-server.ts",
+    contents: `  function sessionsOnly(why: Unavailable): void {
+    generation += 1;
+…
+      if (end.cause.kind === 'no-hello') {
+        sessionsOnly(unavailable.noAnswer());
+…
+    if (stops.length >= MAX_STOPS) {
+      sessionsOnly(unavailable.stoppedRepeatedly(line));
+…
+    close() {
+`,
+  };
+  const sAfter = {
+    name: sBefore.name,
+    contents: `  function sessionsOnly(why: Unavailable, { canPass = false } = {}): void {
+    passingSince = canPass ? clock.now() : null;
+    generation += 1;
+…
+      if (end.cause.kind === 'no-hello') {
+        sessionsOnly(unavailable.noAnswer(), { canPass: true });
+…
+    if (stops.length >= MAX_STOPS) {
+      sessionsOnly(unavailable.stoppedRepeatedly(line), { canPass: true });
+…
+    tryAgain(after = 0) {
+      if (current.kind !== 'sessions-only' || passingSince === null || clock.now() - passingSince < after) return;
+      say('trying again after Sessions only');
+      passingSince = null;
+      stops = [];
+      void start();
+    },
+
+    close() {
+`,
+  };
+  const root = document.querySelector('#diff');
+  for (const [oldFile, newFile] of [[sBefore, sAfter], [before, after]]) {
+    const el = document.createElement('div');
+    root.appendChild(el);
+    new FileDiff(options).render({ containerWrapper: el, oldFile, newFile });
+  }
+</script>
+</body>
+</html>
