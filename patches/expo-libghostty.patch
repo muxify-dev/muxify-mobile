@@ -388,7 +388,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda58
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..3e2317fca78a325656105adfc9f204ce0a96a448 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..a79b1e9c4d2f784232d9d5317fd9ce98da937c84 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -592,7 +592,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..3e2317fca78a325656105adfc9f204ce
        }
      )
      self.session = session
-@@ -66,21 +219,280 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +219,281 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -844,7 +844,9 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..3e2317fca78a325656105adfc9f204ce
 +  /// views, so it applies while the keyboard is up.
 +  func setAccessoryBar(visible: Bool) {
 +    #if !targetEnvironment(macCatalyst)
-+      terminalView.inputAccessoryItems = visible ? TerminalInputAccessoryItem.defaultItems : []
++      let items = visible ? TerminalInputAccessoryItem.defaultItems : []
++      guard terminalView.inputAccessoryItems != items else { return }
++      terminalView.inputAccessoryItems = items
 +    #endif
 +  }
 +
@@ -869,7 +871,6 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..3e2317fca78a325656105adfc9f204ce
 +          item.leadingBarButtonGroups = []
 +          item.trailingBarButtonGroups = []
 +        }
-+        if responder.isFirstResponder { responder.reloadInputViews() }
 +      }
 +    #endif
 +  }
@@ -2036,28 +2037,51 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305c1bb7af3 100644
+index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3f1ebb155 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-@@ -12,18 +12,47 @@
+@@ -12,19 +12,69 @@
      extension UITerminalView {
          override open func pressesBegan(
              _ presses: Set<UIPress>,
 -            with _: UIPressesEvent?
 +            with event: UIPressesEvent?
          ) {
-+            // Command-V is left for UIKit, which answers a press nobody took
-+            // with the system's Paste command. See onPasteCommand.
-+            if onPasteCommand != nil, presses.contains(where: { isPasteCommand($0.key) }) {
-+                super.pressesBegan(presses, with: event)
-+                return
-+            }
-             for press in presses {
+-            for press in presses {
++            let system = presses.filter { usesSystemKeyboard($0.key) }
++            for press in system { systemKeyPresses.add(press) }
++            if !system.isEmpty { super.pressesBegan(system, with: event) }
++            for press in presses.subtracting(system) {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_PRESS)
              }
          }
  
++        private func usesSystemKeyboard(_ key: UIKey?) -> Bool {
++            guard let key else { return true }
++            if onPasteCommand != nil, isPasteCommand(key) { return true }
++            let held = key.modifierFlags.intersection([.command, .control, .alternate, .shift])
++            // UIKit tracks Control through release while its keyboard picker is open.
++            if key.keyCode == .keyboardLeftControl || key.keyCode == .keyboardRightControl { return true }
++            if key.keyCode == .keyboardSpacebar, held == .control { return true }
++
++            // UIKit translates ordinary typing with the active layout and commits composed text.
++            if held.subtracting(.shift).isEmpty {
++                let text = key.charactersIgnoringModifiers
++                if !text.isEmpty, text.unicodeScalars.allSatisfy({
++                    !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value)
++                }) { return true }
++                // A dead key can start composition without producing a character.
++                if text.isEmpty, (0x04...0x27).contains(key.keyCode.rawValue) || (0x2D...0x38).contains(key.keyCode.rawValue) { return true }
++            }
++
++            // Let UIKit handle textless keys that the terminal cannot encode.
++            guard key.characters.isEmpty, key.charactersIgnoringModifiers.isEmpty else { return false }
++            guard let usage = UInt16(exactly: key.keyCode.rawValue) else { return true }
++            return TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: usage)
++                == TerminalHardwareKeyRouter.unidentifiedAppKitKeyCode
++        }
++
 +        static let controlKeyCodes: Set<UIKeyboardHIDUsage> = [
 +            .keyboardReturnOrEnter, .keypadEnter, .keyboardTab,
 +            .keyboardDeleteOrBackspace, .keyboardEscape,
@@ -2082,14 +2106,22 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
 -            with _: UIPressesEvent?
 +            with event: UIPressesEvent?
          ) {
-+            if onPasteCommand != nil, presses.contains(where: { isPasteCommand($0.key) }) {
-+                super.pressesEnded(presses, with: event)
-+                return
-+            }
-             for press in presses {
+-            for press in presses {
++            let system = presses.filter { systemKeyPresses.contains($0) }
++            for press in system { systemKeyPresses.remove(press) }
++            if !system.isEmpty { super.pressesEnded(system, with: event) }
++            for press in presses.subtracting(system) {
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
-@@ -48,6 +77,103 @@
+             }
+@@ -36,5 +86,6 @@
+             with event: UIPressesEvent?
+         ) {
+             hardwareKeyHandled = false
++            for press in presses { systemKeyPresses.remove(press) }
+             super.pressesCancelled(presses, with: event)
+         }
+@@ -48,6 +99,103 @@
                  return
              }
  
@@ -2193,7 +2225,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
              let filteredModifierFlags = filteredModifierFlags(for: key)
              let isCommandModified = filteredModifierFlags.contains(.command)
              let mods = TerminalInputModifiers(from: filteredModifierFlags)
-@@ -57,21 +183,15 @@
+@@ -57,21 +205,15 @@
                  filteredModifierFlags: filteredModifierFlags
              )
  
@@ -2217,7 +2249,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
              )
  
              if action == GHOSTTY_ACTION_RELEASE, delivery.isDirectInput {
-@@ -99,13 +219,30 @@
+@@ -99,13 +241,30 @@
              // translate the documented HID usage value from UIKey into the
              // corresponding AppKit keycode here.
              keyEvent.keycode = TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
@@ -2249,7 +2281,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
              keyEvent.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
  
              guard action == GHOSTTY_ACTION_PRESS || action == GHOSTTY_ACTION_REPEAT else {
-@@ -129,7 +266,10 @@
+@@ -129,7 +288,10 @@
                  return
              }
  
@@ -2261,7 +2293,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
                    !text.isEmpty
              else {
                  _ = surface.sendKeyEvent(keyEvent)
-@@ -179,7 +319,7 @@
+@@ -179,7 +341,7 @@
              return true
          }
  
@@ -2270,7 +2302,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
              var flags = key.modifierFlags
              let isFunctionKey =
                  TerminalInputText.filteredFunctionKeyText(key.characters) == nil ||
-@@ -191,7 +331,7 @@
+@@ -191,7 +353,7 @@
          }
  
          private func commandZoomDirection(
@@ -2279,7 +2311,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..d45080a2dc71882712440ed80c0ce305
              action: ghostty_input_action_e,
              filteredModifierFlags: UIKeyModifierFlags
          ) -> KeyboardZoomDirection? {
-@@ -243,4 +383,29 @@
+@@ -243,4 +405,29 @@
              case decrease
          }
      }
@@ -2422,7 +2454,7 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..7de5c45f25352727de96f0159dd6d8d5f3731c59 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..0afe64f87f687a3c27e06f19ce03ec4d5f0ad450 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 @@ -7,8 +7,51 @@
@@ -2477,8 +2509,12 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..7de5c45f25352727de96f0159dd6d8d5
      @MainActor
      open class UITerminalView: UIView {
          let core = TerminalSurfaceCoordinator()
-@@ -29,6 +72,82 @@
+@@ -27,8 +70,86 @@
+             var suppressNextIndirectPointerTouchEnd = false
+         #endif
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
++        let systemKeyPresses = NSHashTable<UIPress>.weakObjects()
++        override open var textInputContextIdentifier: String? { "MuxifyTerminal" }
          var hardwareKeyHandled = false
          let touchScrollMultiplier: CGFloat = 3.0
 +
@@ -2560,7 +2596,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..7de5c45f25352727de96f0159dd6d8d5
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
-@@ -128,6 +247,9 @@
+@@ -128,6 +249,9 @@
              core.onPostRender = { [weak self] in
                  self?.enforceSublayerScale()
              }
@@ -2838,3 +2874,15 @@ index 0000000000000000000000000000000000000000..ec95f3fda278479e693142d8b37ae2d8
 +export function swipeTick(): void {
 +  void native?.swipeTick?.();
 +}
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
+index 62a3ec9fb3355358f15ed8e3e81c7e1248260af8..7566929554c7570eb8227808b7e9c361b2feaeea 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
+@@ -221,7 +221,4 @@
+             )
+             view.inputDelegate?.selectionWillChange(view)
+             view.inputDelegate?.selectionDidChange(view)
+-            if view.isFirstResponder {
+-                view.reloadInputViews()
+-            }
+         }
