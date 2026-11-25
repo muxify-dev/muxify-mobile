@@ -1,31 +1,19 @@
 /**
- * The back swipe, one rule for the whole app: the left edge always goes back.
+ * The back swipe, one rule for the whole app: only the left edge goes back.
  *
- * Each screen takes a mode, with `useBackSwipe`. On most screens a drag right from anywhere goes
- * back, as iOS 26 does. A screen whose content is its own sideways move (the
- * Pane Swipe) keeps the content for that move and goes back only from a band
- * at the left edge. Each layer that has its own sideways drag (also the Host
- * Screen's tab swipe, on its tab control and the bar at the bottom) gives a
- * drag right that starts in the band to back, with `startsAtBackEdge`, so the
- * two never compete. See ADR 0025.
+ * A drag right goes back only when the finger landed in the band at the left
+ * edge of the screen. A drag that lands anywhere else is the content's: a
+ * page's scroll, a Pane Swipe, a swipe action. Each layer that has its own
+ * sideways drag (the Surface, the Mouse Layer, the Host Screen's tab swipe)
+ * gives a drag right that starts in the band to back, with `startsAtBackEdge`,
+ * so the two never compete. A screen turns the back swipe off with
+ * `useBackSwipe`. See ADR 0034.
  */
 
-export type BackSwipe = 'anywhere' | 'edge' | 'off';
+export type BackSwipe = 'edge' | 'off';
 
 /** The width of the edge band, in points. The one number for every layer. */
 export const BACK_EDGE = 24;
-
-/**
- * How far a finger has moved when the stack asks whether its back swipe may
- * begin. The stack measures where the finger is then, not where it landed, so
- * its limit is the band plus this travel.
- */
-// TODO(back-swipe band): the layers decide by where the finger landed, the
-// stack by where it is when its pop begins. Measured: on the Mouse Layer a drag
-// that lands at x = 28 or 32 goes back, and on the Surface a slow drag from
-// x = 20 does nothing. Decide: patch react-native-screens to check the landing
-// point too, or accept this. See ADR 0025.
-const TRAVEL_AT_BEGIN = 16;
 
 type StackOptions = {
   gestureEnabled: boolean;
@@ -33,20 +21,22 @@ type StackOptions = {
   gestureResponseDistance: { start: number; end: number; top: number; bottom: number };
 };
 
-const ANYWHERE = { start: -1, end: -1, top: -1, bottom: -1 };
-const AT_THE_EDGE = { ...ANYWHERE, end: BACK_EDGE + TRAVEL_AT_BEGIN };
+/** The band, as the stack's limit on where its back swipe may begin. */
+const IN_THE_BAND = { start: -1, end: BACK_EDGE, top: -1, bottom: -1 };
 
 /**
  * The native stack's options for a mode. The layout's screenOptions use
- * 'anywhere'. `contentPop` is whether the system has its own back swipe from
- * anywhere, as iOS 26 does. Before it, the stack would draw one of its own,
- * so the back swipe stays at UIKit's edge there.
+ * 'edge'. `contentPop` is whether the system has a content pop, as iOS 26
+ * does. The stack checks its limit against where the finger landed
+ * (patches/react-native-screens.patch), so the pop begins only in the band.
+ * Before iOS 26 the stack would draw a pop of its own, so the back swipe is
+ * UIKit's edge pop there.
  */
 export function backSwipeOptions(mode: BackSwipe, contentPop: boolean): StackOptions {
   return {
-    gestureEnabled: mode !== 'off',
+    gestureEnabled: mode === 'edge',
     fullScreenGestureEnabled: contentPop,
-    gestureResponseDistance: mode === 'edge' ? AT_THE_EDGE : ANYWHERE,
+    gestureResponseDistance: IN_THE_BAND,
   };
 }
 

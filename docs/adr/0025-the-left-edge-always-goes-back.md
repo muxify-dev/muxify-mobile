@@ -1,5 +1,11 @@
 # The left edge always goes back
 
+> **Status: superseded in part by [ADR 0034](0034-only-the-left-edge-goes-back.md).**
+> Only the left edge goes back now, on every screen. The "Three modes" and
+> "'edge'" points no longer apply. On the Host Screen, a drag right on the
+> list no longer goes back, and the tab swipe waits for no content pop. The
+> edge band and the layers that yield in it still apply.
+
 The Terminal Screen had no reliable Back Swipe. Its full-screen back swipe was
 off, because a swipe right is the previous Pane (5cae908). Only UIKit's strict
 edge pop was left. It raced the Surface's one-finger pan, which takes a drag

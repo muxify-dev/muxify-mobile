@@ -176,7 +176,7 @@ that starts on the tab control or on the bar at the bottom. The two lists
 follow the finger as one strip, with the numbers of the Pane Swipe, and the
 tab control changes at the commit point, with the tick. A swipe toward no tab
 springs back. The list keeps its own drags: a swipe on a Topic card is its
-swipe action, and a drag right from the list goes back.
+swipe action. Only a drag from the left edge goes back.
 
 The row of the Session that the Attach is on shows the phase of the Attach,
 and a swipe on it offers Disconnect.
@@ -653,15 +653,18 @@ while output arrives. Part of the local patch to `expo-libghostty`.
 _Avoid_: overlay, text view
 
 **Back Swipe**:
-A drag right that takes a pushed screen off and shows the one under it. The
-left edge always goes back: a drag right that starts in the edge band, the 24
-points at the left edge of the screen. On most screens a drag right from
-anywhere goes back too, as on iOS 26, also on the list of the Host Screen.
-The Terminal Screen keeps the rest of the screen for its Pane Swipe. On the
-Host Screen, a drag right that starts on the tab control or the bar at the
-bottom changes the tab, and from the edge band it goes back. The Terminal
-Screen has no Back Swipe while a Selection is open, because a handle can be
-at the edge. Back in the Header always works. See ADR 0025.
+A drag right that takes a pushed screen off and shows the one under it. Only
+the left edge goes back, on every screen: a drag right that starts at the
+left edge of the screen. A drag right from anywhere else is the content's. It
+scrolls a page, changes the Pane on the Terminal Screen, opens a swipe action
+or does nothing. It never goes back. Each layer with its own sideways drag
+gives a drag right that starts in the edge band, the 24 points at the left
+edge, to the Back Swipe. On the Host Screen, a drag right that starts on the
+tab control or the bar at the bottom changes the tab. The Terminal Screen has
+no Back Swipe while a Selection is open, because a handle can be at the
+edge. On iPad, a two-finger scroll to the right on a trackpad is a Back Swipe
+only when the pointer is in the edge band. Back in the Header always works.
+See ADR 0034.
 _Avoid_: swipe back, edge swipe, pop gesture
 
 **Pane Swipe**:
@@ -688,8 +691,9 @@ right.
 
 On iPad, a continuous two-finger scroll on a physical trackpad uses the same
 axis lock and Pane Swipe thresholds. A horizontal gesture cycles from the
-active Pane, including when the pointer is above an inactive Pane or at the
-Terminal area's left edge. A vertical gesture scrolls the Pane under the
+active Pane, also when the pointer is above an inactive Pane. A gesture to
+the right with the pointer in the edge band is the Back Swipe, not a Pane
+Swipe. A vertical gesture scrolls the Pane under the
 pointer when the gesture starts. It keeps
 that Pane and its grid until the gesture ends. It does not select or focus the
 Pane. Fractional lines belong to that gesture only. A vertical gesture during

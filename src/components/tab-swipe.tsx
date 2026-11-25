@@ -32,7 +32,8 @@ const SPRING_BACK = { mass: 1, stiffness: 320, damping: 36 };
  * A screen's tabs side by side, and a swipe between them that starts on
  * `header` or on the screen's bar at the bottom.
  *
- * The rows keep their own swipe actions, and a drag right on them goes back.
+ * The rows keep their own swipe actions. Only a drag from the left edge goes
+ * back.
  * The tabs are one strip that follows the finger. Past the commit point the
  * phone ticks and `header` gets the tab the swipe goes to, so a segmented
  * control there changes with the tick. A tap that changes `tab` slides the
