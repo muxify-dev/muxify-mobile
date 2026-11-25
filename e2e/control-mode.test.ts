@@ -71,10 +71,10 @@ const host = (over: Partial<Host> = {}): Host => ({
   ...over,
 });
 
-/** Everything the Attach writes down, kept in memory. */
-function memoryStore() {
+/** Everything the Attach writes down, kept in memory, with the Host record it reads back. */
+function memoryStore(record: Host) {
   const wrote: string[] = [];
-  const records: Records = { hosts: [host()], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, places: [] };
+  const records: Records = { hosts: [record], identities: [], fingerprints: [], recentSessions: [], lastPlace: null, places: [] };
   const store: HostStore = {
     load: () => Promise.resolve(records),
     saveHost: () => Promise.reject(new Error('not used by this check')),
@@ -194,9 +194,9 @@ function recordingSurface() {
 
 function attachTo(options: { sessionName?: string; record?: Host; colours?: PaneColours; tap?: LinkTap } = {}) {
   const children: ChildProcess[] = [];
-  const { store, wrote } = memoryStore();
-  const phases: AttachPhase[] = [];
   const record = options.record ?? host();
+  const { store, wrote } = memoryStore(record);
+  const phases: AttachPhase[] = [];
 
   const attach = openAttach({
     host: record,
@@ -228,6 +228,14 @@ function attachTo(options: { sessionName?: string; record?: Host; colours?: Pane
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function until(what: string, done: () => boolean, within = 8000): Promise<void> {
+  const end = Date.now() + within;
+  while (!done()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await wait(50);
+  }
+}
 
 /** Waits for the Attach to reach a phase, or gives up with what it saw. */
 async function reaches(attach: Attach, kind: AttachPhase['kind'], within = 8000): Promise<void> {
@@ -275,11 +283,11 @@ describe('the Attach, against a real tmux', () => {
     // Stamped on a Session that actually opened.
     expect(wrote).toContain(`e2e-host:${SESSION}`);
 
-    // Size first, so the Window is the Surface's shape before anything is
-    // captured from it. `refresh-client -C` is the only thing that moved it.
-    expect(
-      tmux(['display-message', '-p', '-t', SESSION, '#{window_width}x#{window_height}']),
-    ).toContain('40x20');
+    // The Attach opens unsized and asks for the Surface's grid once it
+    // settles. `refresh-client -C` is the only thing that moves the Window.
+    const windowSize = () =>
+      tmux(['display-message', '-p', '-t', SESSION, '#{window_width}x#{window_height}']).trim();
+    await until('the Window at the Surface grid', () => windowSize() === '40x20');
 
     const paneId = state.topology.activePane?.id as string;
     const screen = recordingSurface();
@@ -717,14 +725,6 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
 
   /** A Session whose one Pane runs `cat`: the terminal shows each typed character once. */
   const startServer = () => tmux(['new-session', '-d', '-s', TYPED, '-x', '80', '-y', '24', 'cat']);
-
-  async function until(what: string, done: () => boolean, within = 8000): Promise<void> {
-    const end = Date.now() + within;
-    while (!done()) {
-      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-      await wait(50);
-    }
-  }
 
   /** The Topology is read after the phase says connected. */
   async function activePane(attach: Attach): Promise<string> {
