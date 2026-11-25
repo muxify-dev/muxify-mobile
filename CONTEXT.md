@@ -44,7 +44,10 @@ _Avoid_: desktop CLI, desktop Muxify (when you mean the `muxify` command), remot
 The Host CLI serving the phone over one channel of a Host's Connection, for as
 long as the Connection lives. Through it the Host Screen and the Topic Screen
 show the Host's changes as they happen. When it cannot run, the Host Screen
-shows only Sessions and says why Topics are unavailable.
+shows only Sessions and says why Topics are unavailable. When the cause can
+pass, as with no answer in time or repeated stops, the next return from the
+background, or a use of the Connection a minute later, starts it again. See
+ADR 0025 and ADR 0033.
 _Avoid_: daemon, remote server, helper
 
 **Fingerprint**:

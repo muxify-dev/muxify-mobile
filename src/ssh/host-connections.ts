@@ -5,7 +5,7 @@ import { describeError } from '@/lib/describe-error';
 import { HostProblem } from '@/ssh/failures';
 import type { KeyVerdict } from '@/ssh/host-key';
 import { followListing, type ListingFeed, type LiveListing } from '@/ssh/host-listing-feed';
-import { createHostServer, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
+import { createHostServer, STOP_WINDOW_MS, type HostServer, type OpenServerChannel } from '@/ssh/host-server';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 import type { ConnectStep, HostConnection, LifecyclePhase, OpenConnection } from '@/tmux/attach';
@@ -441,6 +441,8 @@ export function createHostConnections(options: {
     }
     setProblem(host, null);
     begin(entry, dialed);
+    // A minute apart, so a screen that reads again on each Sessions only cannot start the server in a loop.
+    entry.server?.tryAgain(STOP_WINDOW_MS);
     return { entry, dialed };
   }
 
@@ -643,8 +645,11 @@ export function createHostConnections(options: {
       // died with nothing to say so. One that an Attach holds is the Attach's
       // to check; if the Attach drops it, the next Connection's feed replaces this one.
       for (const entry of [...entries.values()]) {
-        if (entry.attaches > 0) feedOf(entry)?.refresh();
-        else if (entry.server?.state().kind === 'live') askAfterReturn(entry, entry.server);
+        if (entry.attaches > 0) {
+          // An Attach can hold one Connection for hours, so its Host Server is asked again here, not on a new dial.
+          entry.server?.tryAgain();
+          feedOf(entry)?.refresh();
+        } else if (entry.server?.state().kind === 'live') askAfterReturn(entry, entry.server);
         else void drop(entry, 'the app came back from the background');
       }
     },

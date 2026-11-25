@@ -62,6 +62,7 @@ export function fakeHostServer() {
       return Object.assign(promise, { cancel: () => cancel() });
     },
     installAnswered: () => {},
+    tryAgain: () => {},
     close: () => {},
   };
   return fake;

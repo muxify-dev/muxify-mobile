@@ -34,6 +34,7 @@ function fakeServer(initial: HostServerState) {
       return Object.assign(ended, { cancel: () => { entry.cancelled = true; } });
     },
     installAnswered: () => {},
+    tryAgain: () => {},
     close: () => {},
   };
   return {

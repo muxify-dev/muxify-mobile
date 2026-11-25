@@ -15,6 +15,8 @@ import {
   IDLE_MS,
   type Dialed,
 } from './host-connections';
+import { HELLO_TIMEOUT_MS } from './host-server-channel';
+import { STOP_WINDOW_MS } from './host-server';
 
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => { throw new Error('the tests give the Connections'); } }));
@@ -66,6 +68,8 @@ function setup(options: {
   silentOn?: string;
   /** Each Connection can run a Host Server, which says this `hello` once its channel opens. */
   serverHello?: string;
+  /** A Host Server channel opened while this says so never says its `hello`. */
+  serverSilent?: () => boolean;
   /** Each prune of Session Places fails while this says so. */
   pruneFails?: () => boolean;
 } = {}) {
@@ -151,7 +155,7 @@ function setup(options: {
           },
         };
         link.servers.push(channel);
-        setTimeout(() => channel.print(`MUXIFY-PROTOCOL\n${options.serverHello}\n`), 0);
+        if (!options.serverSilent?.()) setTimeout(() => channel.print(`MUXIFY-PROTOCOL\n${options.serverHello}\n`), 0);
         return Promise.resolve({
           write: (bytes: Uint8Array) => {
             for (const line of new TextDecoder().decode(bytes).split('\n')) {
@@ -705,6 +709,65 @@ describe('the Host Server', () => {
     expect(logged).toContain(
       "connections: Mac: Host Server: Sessions only: the Host's muxify is too old (muxify 1a2b3c4 1763100000)",
     );
+  });
+
+  describe('a Sessions only that a later try can change, on a Connection an Attach holds', () => {
+    /** An Attach holds the Connection, and its Host Server says no `hello`: Sessions only, "did not answer". */
+    async function stuck() {
+      let silent = true;
+      const world = setup({ serverHello: CAPABLE, serverSilent: () => silent });
+      await world.connections.openConnection(HOST);
+      await settle();
+      await settle();
+      world.clock.advance(HELLO_TIMEOUT_MS);
+      await settle();
+      expect(world.connections.hostServer(HOST.id)?.state()).toEqual({ kind: 'sessions-only', reason: 'the Host Server did not answer' });
+      silent = false;
+      return world;
+    }
+
+    it('starts the Host Server again when the app comes back from the background', async () => {
+      const { links, connections } = await stuck();
+
+      connections.lifecycleChanged('background');
+      connections.lifecycleChanged('active');
+      await settle();
+      await settle();
+
+      expect(links).toHaveLength(1);
+      expect(connections.listing(HOST.id)?.server).toMatchObject({ kind: 'live' });
+    });
+
+    it('starts the Host Server again on a screen read a minute after it gave up', async () => {
+      const { clock, links, connections } = await stuck();
+
+      await connections.read(HOST, ls);
+      await settle();
+      expect(connections.hostServer(HOST.id)?.state()).toMatchObject({ kind: 'sessions-only' });
+
+      clock.advance(STOP_WINDOW_MS);
+      await connections.read(HOST, ls);
+      await settle();
+      await settle();
+
+      expect(links).toHaveLength(1);
+      expect(connections.listing(HOST.id)?.server).toMatchObject({ kind: 'live' });
+    });
+
+    it('stays in Sessions only on a return when the Host’s muxify is too old', async () => {
+      const { links, connections } = setup({ serverHello: BARE });
+      await connections.openConnection(HOST);
+      await settle();
+      await settle();
+
+      connections.lifecycleChanged('background');
+      connections.lifecycleChanged('active');
+      await settle();
+      await settle();
+
+      expect(links[0]?.servers).toHaveLength(1);
+      expect(connections.hostServer(HOST.id)?.state()).toMatchObject({ kind: 'sessions-only', tooOld: 'host' });
+    });
   });
 
   it('gives the Listing of the Host’s latest Connection, and says when it changes', async () => {

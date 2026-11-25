@@ -111,6 +111,7 @@ function fakeServer(initial: HostServerState) {
       return never();
     },
     installAnswered: () => {},
+    tryAgain: () => {},
     close: () => {},
   };
   return {

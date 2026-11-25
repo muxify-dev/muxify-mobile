@@ -106,6 +106,7 @@ function fakeServer() {
       return Object.assign(new Promise<unknown>(() => {}), { cancel: () => { entry.cancelled = true; } });
     },
     installAnswered: () => {},
+    tryAgain: () => {},
     close: () => {},
   };
   return Object.assign(fake, {
