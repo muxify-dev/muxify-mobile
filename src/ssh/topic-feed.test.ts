@@ -32,6 +32,7 @@ function fakeServer(initial: HostServerState) {
       return Object.assign(promise, { cancel: () => { entry.cancelled = true; } });
     },
     installAnswered: () => {},
+    tryAgain: () => {},
     close: () => {},
   };
   return {

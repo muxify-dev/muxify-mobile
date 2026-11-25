@@ -94,6 +94,13 @@ export interface HostServer {
   subscribe(payload: object, onItem: (item: unknown) => void): HostServerCall<unknown>;
   /** The Host CLI install of this Connection answered. */
   installAnswered(result: HostCliInstall): void;
+  /**
+   * Starts again from a Sessions only that a later try can change: no `hello`
+   * in time, or 3 stops in a minute. It does so only when the Sessions only
+   * began at least `after` ms ago, and the new start has 3 stops of its own.
+   * A Sessions only that needs another `muxify` stays.
+   */
+  tryAgain(after?: number): void;
   /** Its Connection closed: the channel ends, and every waiting request fails. */
   close(): void;
 }
@@ -134,7 +141,7 @@ interface Queued {
  *   stops within 60 s, or with no `hello` in 10 s, no shared protocol, a
  *   missing capability or a `muxify` with no `server` verb, the link stays in
  *   Sessions only. Nothing retries in the background: the next Connection
- *   tries again.
+ *   tries again, and `tryAgain` does when the cause can pass.
  */
 export function createHostServer(options: HostServerOptions): HostServer {
   const clock = options.clock ?? systemClock;
@@ -148,6 +155,8 @@ export function createHostServer(options: HostServerOptions): HostServer {
   let stops: number[] = [];
   let installed: HostCliInstall | null = null;
   let lastBuild: string | null = null;
+  /** When the current Sessions only began, if a later try can change it. */
+  let passingSince: number | null = null;
 
   function become(next: HostServerState): void {
     current = next;
@@ -165,7 +174,8 @@ export function createHostServer(options: HostServerOptions): HostServer {
     old?.close();
   }
 
-  function sessionsOnly(why: Unavailable): void {
+  function sessionsOnly(why: Unavailable, { canPass = false } = {}): void {
+    passingSince = canPass ? clock.now() : null;
     generation += 1;
     retire();
     say(`Sessions only: ${why.reason}`);
@@ -245,7 +255,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
         return;
       }
       if (end.cause.kind === 'no-hello') {
-        sessionsOnly(unavailable.noAnswer());
+        sessionsOnly(unavailable.noAnswer(), { canPass: true });
         return;
       }
       if (end.cause.kind === 'no-shared-protocol') {
@@ -261,7 +271,7 @@ export function createHostServer(options: HostServerOptions): HostServer {
     const now = clock.now();
     stops = [...stops.filter((at) => now - at < STOP_WINDOW_MS), now];
     if (stops.length >= MAX_STOPS) {
-      sessionsOnly(unavailable.stoppedRepeatedly(line));
+      sessionsOnly(unavailable.stoppedRepeatedly(line), { canPass: true });
       return;
     }
     void start();
@@ -324,6 +334,14 @@ export function createHostServer(options: HostServerOptions): HostServer {
         return;
       }
       if (current.kind === 'installing') sessionsOnly(unavailable.notInstalled(result.line));
+    },
+
+    tryAgain(after = 0) {
+      if (current.kind !== 'sessions-only' || passingSince === null || clock.now() - passingSince < after) return;
+      say('trying again after Sessions only');
+      passingSince = null;
+      stops = [];
+      void start();
     },
 
     close() {
