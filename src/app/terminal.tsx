@@ -1253,6 +1253,7 @@ export default function TerminalScreen() {
                 key={slot.pane.id}
                 slot={slot}
                 painted={painted.has(slot.pane.id)}
+                physicalKeyboard={physicalKeyboard}
                 font={fontSize}
                 ligatures={settings.ligatures}
                 terminal={terminal}
@@ -1534,6 +1535,7 @@ async function pasteInto(destination: () => Attach | null, read: () => Promise<P
  */
 function PaneSurfaceView({
   slot,
+  physicalKeyboard,
   painted,
   font,
   ligatures,
@@ -1554,6 +1556,7 @@ function PaneSurfaceView({
   onPaste,
 }: {
   slot: PaneSlot;
+  physicalKeyboard: boolean;
   /** Whether the Attach has painted this Pane's Surface. */
   painted: boolean;
   font: number;
@@ -1643,7 +1646,7 @@ function PaneSurfaceView({
         // and the iPad's undo, redo and Paste bar, both turned off by a local
         // patch. The Key Row stands in their place; see ADR 0003.
         accessoryBar={false}
-        shortcutBar={false}
+        shortcutBar={physicalKeyboard}
         theme={{
           background: terminal.background,
           foreground: terminal.foreground,
