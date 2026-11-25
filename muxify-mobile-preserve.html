@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Debrief: Live Pages keep the Web View's page across navigation</title>
+<script>
+  const q = matchMedia('(prefers-color-scheme: dark)');
+  const set = () => document.documentElement.dataset.theme = q.matches ? 'dark' : 'light';
+  set(); q.addEventListener('change', set);
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, li, td, th, .badge) { overflow-wrap: anywhere; }
+  svg { max-width: 100%; height: auto; }
+  body { background: var(--color-base-100); color: var(--color-base-content); }
+  code { font-size: .9em; background: var(--color-base-200); padding: 0 .25em; border-radius: 4px; }
+  .badge-soft, .alert-soft { color: var(--color-base-content) !important; }
+  .fig text { fill: currentColor; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+  .fig .box { fill: var(--color-base-200); stroke: currentColor; stroke-opacity: .35; }
+  .fig .hot { fill: color-mix(in oklab, var(--color-success) 22%, var(--color-base-100)); stroke: var(--color-success); }
+  .fig .bad { fill: color-mix(in oklab, var(--color-error) 18%, var(--color-base-100)); stroke: var(--color-error); }
+  .fig .arrow { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .fig .muted { opacity: .55; }
+  .wide { overflow-x: auto; }
+  .wide > svg { min-width: 620px; }
+  .wide > table { min-width: 680px; }
+  #check .feedback { display: none; }
+  #check .picked .feedback { display: block; }
+</style>
+</head>
+<body>
+<main class="mx-auto max-w-5xl p-4 sm:p-8 space-y-10">
+
+<header class="space-y-3">
+  <p class="text-sm opacity-70">Debrief · branch <code>muxify-mobile-preserve</code> · uncommitted work · 2026-11-25</p>
+  <h1 class="text-3xl font-bold">A page in the Web View now stays loaded when you leave it. Close Page or the closure of its Topic releases it.</h1>
+  <div class="alert alert-soft alert-info" role="note">
+    <div>
+      <p><strong>Did the work do what was asked?</strong> Mostly. The cause is found, the fix is in the code, and the unit tests pass (2066 tests). Hide and close are now different actions. Pages are released on Close Page and when their Topic closes, and each Topic has its own page.</p>
+      <p class="mt-2"><strong>What differs:</strong> the check on the simulator <em>was not done</em>. The disk was full (639 MB free) and the Release build stopped. An e2e suite for the form, navigation and Topic cases is written but did not run.</p>
+    </div>
+  </div>
+</header>
+
+<section class="space-y-3">
+  <h2 class="text-xl font-bold">Words this page uses</h2>
+  <div class="wide rounded-box border border-base-content/10">
+  <table class="table table-sm">
+    <thead><tr><th>Term</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Browser Tab</strong></td><td>A page open in a Window's Browser on the Mac (the Host). The phone reads its URL and loads that URL again on the phone.</td></tr>
+      <tr><td><strong>Web View</strong></td><td>The phone screen that shows a Browser Tab's page, in the Terminal Screen's place.</td></tr>
+      <tr><td><strong>Live Page</strong> <span class="badge badge-soft badge-success">new</span></td><td>The page the phone loaded for one Tab of one owner on one Host. It stays loaded while no Web View shows it.</td></tr>
+      <tr><td><strong>Owner</strong></td><td>The Place owner: the Topic the Attach holds, or the Session when there is no Topic.</td></tr>
+      <tr><td><strong>Place</strong></td><td>The phone's record of where the user was in a Topic or Session: Session, Window, Pane and, if one was on top, the Tab's URL and scroll. It is on disk and survives a restart.</td></tr>
+      <tr><td><strong>Listing</strong></td><td>The Host's list of Sessions and open Topics, which its Host Server pushes to the phone.</td></tr>
+      <tr><td><strong>Hide / Close</strong></td><td>Hide: Back, the edge swipe, a pick in the Title Sheet, another Tab. Close: the new <strong>Close Page</strong> (✕) button.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="s1" class="space-y-3">
+  <h2 class="text-xl font-bold">1 · The page was lost because the WebView lived inside the screen that Back unmounts</h2>
+  <p>Example: you type <code>draft-a</code> in a form on a page, tap Back, and open the Topic again. Before, the Web View screen held the <code>WebView</code>. Back unmounted the screen, and the page ended with it. The Place kept only the URL and the scroll, so the page loaded again from the start with an empty form. <code>sessionStorage</code> and the page's script state were also lost. Now the WebView lives in a provider above the navigator, and only its native view moves into the screen.</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <figure class="card card-border p-3">
+      <figcaption class="font-semibold mb-2">Before</figcaption>
+      <div class="wide"><svg class="fig" viewBox="0 0 360 230" role="img" aria-label="Before: the WebView is inside the Web View screen">
+        <title>Before: the WebView is a child of the screen</title>
+        <rect class="box" x="10" y="10" width="340" height="40" rx="6" /><text x="22" y="35">Navigator (stack of screens)</text>
+        <rect class="box" x="30" y="70" width="300" height="130" rx="6" /><text x="42" y="92">Web View screen</text>
+        <rect class="bad" x="60" y="110" width="240" height="60" rx="6" /><text x="74" y="136">WebView (the page)</text><text x="74" y="156">form text, sessionStorage</text>
+        <text x="30" y="222">Back unmounts the screen → the page ends</text>
+      </svg></div>
+    </figure>
+    <figure class="card card-border p-3">
+      <figcaption class="font-semibold mb-2">After</figcaption>
+      <div class="wide"><svg class="fig" viewBox="0 0 360 230" role="img" aria-label="After: the WebView is in LivePagesProvider and moves into the screen">
+        <title>After: LivePagesProvider owns the WebView; teleport moves it</title>
+        <rect class="hot" x="10" y="10" width="340" height="70" rx="6" /><text x="22" y="32">LivePagesProvider (above the navigator)</text>
+        <rect class="hot" x="30" y="42" width="140" height="30" rx="5" /><text x="40" y="62">WebView, page 1</text>
+        <rect class="box" x="190" y="42" width="140" height="30" rx="5" /><text x="200" y="62">WebView, page 2</text>
+        <rect class="box" x="30" y="110" width="300" height="90" rx="6" /><text x="42" y="132">Web View screen</text>
+        <rect class="box" x="60" y="145" width="240" height="40" rx="5" stroke-dasharray="4 3" /><text x="74" y="170">PortalHost "live-page-1"</text>
+        <path class="arrow" d="M100 72 C100 100, 140 120, 150 145" marker-end="url(#a1)" />
+        <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" /></marker></defs>
+        <text x="30" y="222">Back unmounts only the host → the page waits</text>
+      </svg></div>
+    </figure>
+  </div>
+  <p class="text-sm">The provider is mounted in <code>src/app/_layout.tsx:24</code>, inside <code>AttachProvider</code>, so it is also above the navigator. Each page is rendered in a <code>&lt;Portal hostName="live-page-N"&gt;</code> (<code>src/browser/live-pages-context.tsx:185</code>). The screen renders <code>&lt;LivePageHost&gt;</code>, a <code>PortalHost</code> (<code>live-pages-context.tsx:127</code>, <code>src/app/web-view.tsx:256</code>). <code>react-native-teleport</code> moves the native <code>WKWebView</code> into the host without a remount. When the host goes, it moves the view back under the screens, out of sight.</p>
+</section>
+
+<section id="s2" class="space-y-3">
+  <h2 class="text-xl font-bold">2 · Hiding keeps the page; only four events release it</h2>
+  <div class="wide"><svg class="fig" viewBox="0 0 720 255" role="img" aria-label="Lifecycle of a Live Page">
+    <title>Live Page lifecycle</title>
+    <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" /></marker></defs>
+    <rect class="hot" x="20" y="90" width="150" height="54" rx="8" /><text x="40" y="114">Shown</text><text x="40" y="132">(in a Web View)</text>
+    <rect class="hot" x="290" y="90" width="150" height="54" rx="8" /><text x="310" y="114">Hidden</text><text x="310" y="132">(loaded, out of sight)</text>
+    <rect class="bad" x="560" y="90" width="140" height="54" rx="8" /><text x="580" y="122">Released</text>
+    <path class="arrow" d="M170 105 L290 105" marker-end="url(#a2)" /><text x="178" y="96">Back · pick · other Tab</text>
+    <path class="arrow" d="M290 130 L170 130" marker-end="url(#a2)" /><text x="182" y="150">same owner opens Tab</text>
+    <path class="arrow" d="M440 117 L560 117" marker-end="url(#a2)" /><text x="448" y="80">Listing lacks owner</text><text x="448" y="62">Host deleted</text>
+    <path class="arrow" d="M95 90 C95 20, 630 20, 630 90" marker-end="url(#a2)" /><text x="190" y="18">Listing lacks owner (also while shown)</text>
+    <path class="arrow" d="M95 144 C95 220, 630 220, 630 144" marker-end="url(#a2)" /><text x="190" y="214">Close Page (✕) · Tab gone from the Host when a Place opens it</text>
+    <text x="20" y="245" class="muted">Start: the first open of a Tab by an owner loads it from the Tab URL, or from the Place's page and scroll</text>
+  </svg></div>
+  <ul class="list-disc pl-6 space-y-1 text-sm">
+    <li><strong>Close Page</strong>: <code>web-view.tsx:143–147</code> calls <code>leave()</code>, then <code>kept.pages.close(page.id)</code>. The toolbar button is at <code>web-view.tsx:245</code>. The Attach's <code>leaveTab</code> clears the Tab from the Place.</li>
+    <li><strong>Tab gone</strong>: when a restore finds that the Host no longer lists the Tab, <code>web-view.tsx:194</code> closes the page.</li>
+    <li><strong>Owner gone</strong>: on each Listing, <code>live-pages-context.tsx:81–88</code> calls <code>prune</code>. It releases a page whose Topic is not open, or whose Session the Host does not have (<code>live-pages.ts:87–93</code>). This can also happen while the page is shown: then the Terminal Screen takes its place (<code>web-view.tsx:149–155</code>).</li>
+    <li><strong>Host deleted</strong>: <code>src/components/hosts-section.tsx:82</code> calls <code>releaseHost</code>.</li>
+  </ul>
+  <p class="text-sm"><strong>The Place and the Live Page are separate.</strong> A Window pick in the Title Sheet clears the Tab from the Place, so opening the Topic again shows the Terminal Screen. But the pick only hides the page: if you open the same Tab again, you get the same page with its form text. Only the four release events end a page.</p>
+  <p class="text-sm">A page opened <em>after</em> a Listing was received is not pruned by that Listing (<code>page.openedAt &gt;= readAt</code>, <code>live-pages.ts:90</code>), because its Topic can be newer than the Listing. A Disconnect releases nothing. An app restart loses all Live Pages, and then the Place loads the page again at its URL and scroll.</p>
+</section>
+
+<section id="s3" class="space-y-3">
+  <h2 class="text-xl font-bold">3 · Each Topic has its own page of the same Tab, so text cannot go from one Topic to another</h2>
+  <p>Example: Tab <code>http://100.x.x.x:3000/</code> is open in Topic A with <code>draft-a</code> in its form. You open Topic B and the same Tab. B gets a new page with an empty form. Back in A, <code>draft-a</code> is still there. The key is (Host, owner, Tab URL): <code>findLivePage</code>, <code>live-pages.ts:57</code>. The screen files a page under the owner that the Attach holds when the Tab is shown (<code>ownerOf</code>, <code>web-view.tsx:41</code>). A cold start uses the Last Place's owner (<code>web-view.tsx:85–88</code>).</p>
+  <div class="alert alert-soft alert-warning" role="note"><span>Separate pages, not a separate browser. Cookies and <code>localStorage</code> stay in the shared persistent web data store (ADR 0017). Only form text, <code>sessionStorage</code> and page script state are kept per Topic.</span></div>
+</section>
+
+<section id="s4" class="space-y-3">
+  <h2 class="text-xl font-bold">4 · Every asked item is in the code; the simulator check is the open one</h2>
+  <p class="text-sm opacity-80">Source of every item: the user's request in this conversation.</p>
+  <div class="wide rounded-box border border-base-content/10">
+  <table class="table table-sm">
+    <thead><tr><th>ID</th><th>Asked (quoted)</th><th>Status</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>A1</td><td>"Investigate why leaving and reopening a browser tab or switching views loses the browsing session or an unfinished form"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Section 1. ADR <code>docs/adr/0033-a-live-page-outlives-its-web-view.md</code></td></tr>
+      <tr><td>A2</td><td>"Preserve live state of open tabs across ordinary navigation in the app"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td><code>live-pages-context.tsx:59–106</code>, <code>web-view.tsx:92–99</code>, <code>_layout.tsx:24</code></td></tr>
+      <tr><td>A3</td><td>"Distinguish hiding a tab from explicitly closing it"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Close Page <code>web-view.tsx:143, 245</code>. Hide paths leave the page in the store.</td></tr>
+      <tr><td>A4</td><td>"Release tabs on explicit close"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td><code>web-view.tsx:146</code>, <code>live-pages.ts:84</code></td></tr>
+      <tr><td>A5</td><td>"… and on closure of their owning Topic"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td><code>live-pages-context.tsx:81–88</code>, <code>live-pages.ts:87–93</code></td></tr>
+      <tr><td>A6</td><td>"Verify unsent form state through navigation and cleanup without cross-Topic leaks"</td><td><span class="badge badge-soft badge-warning">◐ partly</span></td><td>Unit tests check the store's keys and release rules. The device check <code>e2e/live-pages.sh</code> is written but <em>did not run</em>.</td></tr>
+      <tr><td>A7</td><td>"Read repository rules and glossary and run pop conventions get implementation before editing"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Done before the first edit in this conversation. The glossary was updated: <code>CONTEXT.md</code> (Web View, Live Page)</td></tr>
+      <tr><td>A8</td><td>"Use ios-sim for simulator checks"</td><td><span class="badge badge-soft badge-error">✗ not done</span></td><td>The build failed with "No space left on device", so nothing was installed on the simulator</td></tr>
+      <tr><td>A9</td><td>"Work in this assigned worktree … Leave changes here for review"</td><td><span class="badge badge-soft badge-success">✓ done</span></td><td>Uncommitted on <code>muxify-mobile-preserve</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="s5" class="space-y-3">
+  <h2 class="text-xl font-bold">5 · Four choices go further than the request; each has a reason</h2>
+  <ul class="list-disc pl-6 space-y-2 text-sm">
+    <li><strong>A new native dependency, <code>react-native-teleport</code></strong> (<code>package.json</code>, <code>pnpm-lock.yaml</code>). An overlay above the navigator needs no native code, but the page would not move with the push and pop animations, and it would cover the cold start's Connection Screen and the load-failure message. A dev client built before this must be built again.</li>
+    <li><strong>Pages of a Session with no Topic are released too</strong> when the Host no longer has the Session. This matches the release of Topic pages, and without it a renamed Session's pages would never be released.</li>
+    <li><strong>A Tab gone from the Host releases its page.</strong> The Place already forgot such a Tab. The request did not name this case.</li>
+    <li><strong>No limit on the number of pages.</strong> Each page is one <code>WKWebView</code> in memory until a release.</li>
+  </ul>
+</section>
+
+<section id="s6" class="space-y-3">
+  <h2 class="text-xl font-bold">6 · The evidence is unit tests, lint and types; there is no device run</h2>
+  <div class="wide rounded-box border border-base-content/10">
+  <table class="table table-sm">
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>npx jest</code> (whole suite)</td><td><span class="badge badge-soft badge-success">✓</span> 119 suites, 2066 tests passed</td></tr>
+      <tr><td><code>src/browser/live-pages.test.ts</code></td><td><span class="badge badge-soft badge-success">✓</span> 7 tests: same page on reopen; one page per owner and per Host; Close Page releases, and a reopen loads a new page; prune by Topic or Session on one Host only; a page newer than the Listing is kept; Host deletion; listeners hear only real changes</td></tr>
+      <tr><td><code>npx eslint src</code></td><td><span class="badge badge-soft badge-success">✓</span> no issues</td></tr>
+      <tr><td><code>npx tsc --noEmit</code></td><td><span class="badge badge-soft badge-success">✓</span> no new errors. The 2 errors that remain were there before, in files this work did not change (<code>e2e/host-cli.test.ts</code>, <code>src/constants/theme.ts</code>)</td></tr>
+      <tr><td>Release build for the simulator</td><td><span class="badge badge-soft badge-error">✗</span> "No space left on device". The 4.2 GB of build output was removed afterwards</td></tr>
+      <tr><td><code>e2e/live-pages.sh</code> (7 steps)</td><td><span class="badge badge-soft badge-warning">not run</span> needs the build</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="text-sm">The provider and the screen (the teleport move, the scroll restore, the Close Page button) have no unit test. Only the e2e suite covers them.</p>
+</section>
+
+<section id="s7" class="space-y-3">
+  <h2 class="text-xl font-bold">7 · No item asked for the docs and the e2e suite, but they record the decision</h2>
+  <ul class="list-disc pl-6 space-y-1 text-sm">
+    <li><code>docs/adr/0033-a-live-page-outlives-its-web-view.md</code>: the decision, the options that were rejected, and the results.</li>
+    <li><code>CONTEXT.md</code>: the new term <em>Live Page</em>, and Close Page in <em>Web View</em>.</li>
+    <li><code>e2e/live-pages.sh</code> and <code>pnpm e2e:live-pages</code>. Each page load writes a random load id, so the same id means the page did not load again.</li>
+    <li><code>.env.local</code>, copied from the main checkout for e2e. Git ignores it, and also the generated <code>ios/</code> folder.</li>
+  </ul>
+</section>
+
+<section id="check" class="space-y-4">
+  <h2 class="text-xl font-bold">Check yourself</h2>
+  <p class="text-sm">Make sure you understand it well enough before you decide.</p>
+
+  <div class="card card-border p-4 q" data-q="Q1">
+    <p class="font-semibold">Q1. You type <code>draft-a</code> in a form on Tab X in Topic A and press Back. Then you open Topic B and the same Tab X. What does B show?</p>
+    <div class="flex flex-col gap-2 mt-2">
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. The key includes the owner, so B never gets A's page.">A's page, with draft-a in the form</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="1" data-why="Right. The key is (Host, owner, URL), so B gets its own Live Page. A's page waits, hidden.">A new page with an empty form, and A's page stays loaded</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. Opening a Tab in another owner never releases a page. Only Close Page, a gone Tab, a gone owner or a deleted Host do.">A new page, and A's page is released</button>
+    </div>
+    <div class="feedback mt-2 text-sm"><p class="why"></p><a class="link" href="#s3">Section 3 teaches this</a> <button class="btn btn-xs btn-ghost queue" data-queue-key="check-Q1" data-prompt="Section 3 did not teach Q1 (one page per owner).">Report that section 3 did not teach this</button></div>
+  </div>
+
+  <div class="card card-border p-4 q" data-q="Q2">
+    <p class="font-semibold">Q2. On a page with text in its form, you pick a Window in the Web View's Title Sheet. Later you open the same Tab again from the Terminal Screen's Title Sheet. What do you get?</p>
+    <div class="flex flex-col gap-2 mt-2">
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. The Window pick clears the Tab from the Place, but the Live Page is not released.">A new page, because the Window pick cleared the Tab from the Place</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="1" data-why="Right. A pick hides the page. Only Close Page (and the other release events) ends it.">The same page with the text still there</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. Nothing reloads a Live Page when it is shown again.">The same URL loaded again at the scroll the Place saved</button>
+    </div>
+    <div class="feedback mt-2 text-sm"><p class="why"></p><a class="link" href="#s2">Section 2 teaches this</a> <button class="btn btn-xs btn-ghost queue" data-queue-key="check-Q2" data-prompt="Section 2 did not teach Q2 (a pick hides, it does not close).">Report that section 2 did not teach this</button></div>
+  </div>
+
+  <div class="card card-border p-4 q" data-q="Q3">
+    <p class="font-semibold">Q3. The phone stops the app, and you start it again. The Topic's Place has a Tab on top. What does the page show?</p>
+    <div class="flex flex-col gap-2 mt-2">
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. Live Pages are only in memory and do not survive a restart.">The page as you left it, form text included</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="0" data-why="No. The Place is on disk, so the page opens again.">The Terminal Screen, because the page was released</button>
+      <button class="btn btn-sm btn-outline justify-start" data-right="1" data-why="Right. The Place opens the page again at its URL and scroll, as before this change, so the form is empty.">The page loaded again at the Place's URL and scroll, with an empty form</button>
+    </div>
+    <div class="feedback mt-2 text-sm"><p class="why"></p><a class="link" href="#s2">Section 2 teaches this</a> <button class="btn btn-xs btn-ghost queue" data-queue-key="check-Q3" data-prompt="Section 2 did not teach Q3 (Live Pages do not survive a restart).">Report that section 2 did not teach this</button></div>
+  </div>
+</section>
+
+<section class="space-y-3">
+  <h2 class="text-xl font-bold">Not done, and what to do next</h2>
+  <ol class="list-decimal pl-6 space-y-1 text-sm">
+    <li><strong>Free disk space</strong>, then build: <code>xcodebuild … -configuration Release -sdk iphonesimulator</code>. <code>ios/</code> is already generated with the new pod. Most of the space is in <code>~/Library/Developer/Xcode/DerivedData</code> (22 GB, mostly <code>muxify-*</code>); that is for the user to clear.</li>
+    <li>Install with <code>ios-sim run iphone</code>, and run <code>pnpm e2e:live-pages</code>. Also run <code>e2e:browser-tabs</code> and <code>e2e:topic-place</code>, to look for regressions in the Web View paths that changed.</li>
+    <li>Check by eye that the page moves with the push and pop animations and with the edge swipe.</li>
+    <li>Decide whether Live Pages need a limit on their number, or a release when memory is low.</li>
+    <li>Commit when the device run passes.</li>
+  </ol>
+</section>
+
+</main>
+<script>
+  document.querySelectorAll('#check .q').forEach((q) => {
+    q.querySelectorAll('button[data-right]').forEach((b) => b.addEventListener('click', () => {
+      q.classList.add('picked');
+      q.querySelectorAll('button[data-right]').forEach((o) => o.classList.remove('btn-success', 'btn-error'));
+      b.classList.add(b.dataset.right === '1' ? 'btn-success' : 'btn-error');
+      q.querySelector('.why').textContent = (b.dataset.right === '1' ? '✓ ' : '✗ ') + b.dataset.why;
+      q.querySelector('.queue').style.display = b.dataset.right === '1' ? 'none' : '';
+    }));
+    q.querySelector('.queue').addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      window.lavish?.queuePrompt?.(btn.dataset.prompt, { tag: 'check', queueKey: btn.dataset.queueKey, element: btn });
+      btn.textContent = 'Queued';
+    });
+  });
+</script>
+</body>
+</html>
