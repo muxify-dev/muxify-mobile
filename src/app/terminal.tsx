@@ -1768,6 +1768,9 @@ const TAP_SLOP = 10;
 /** How long a finger stays still to be a long press: the Selection Layer's own 0.35 s. */
 const LONG_PRESS_MS = 350;
 
+/** How far a finger held for a long press may drift: the Selection Layer's `allowableMovement`. */
+const LONG_PRESS_SLOP = 20;
+
 /** What the Jump to latest pill claims beyond its own edges, to reach 44pt. */
 const PILL_SLOP = { top: 8, bottom: 8, left: 12, right: 12 };
 
@@ -1942,24 +1945,25 @@ function MouseLayer({
         movedAt.current = Date.now();
         track.current.add(nativeEvent.locationY, movedAt.current);
         // The application takes every touch here, so the long press that
-        // the Surface would see is timed here.
-        const press = { x: nativeEvent.locationX, y: nativeEvent.locationY };
+        // the Surface would see is timed here. It starts where the finger is
+        // when it fires, as the Surface's does, not where it landed.
+        lastPoint.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
         held.current = false;
         stopHolding();
         holding.current = setTimeout(() => {
           holding.current = null;
           held.current = true;
-          lastPoint.current = press;
-          onLongPress(press);
+          onLongPress(lastPoint.current);
         }, LONG_PRESS_MS);
       }}
       onResponderMove={({ nativeEvent }: GestureResponderEvent) => {
-        const travelled = nativeEvent.locationY - previous.current;
-        previous.current = nativeEvent.locationY;
         if (axis.current === null) {
+          lastPoint.current = { x: nativeEvent.locationX, y: nativeEvent.locationY };
           const dx = nativeEvent.locationX - origin.current.x;
           const dy = nativeEvent.locationY - origin.current.y;
-          if (Math.hypot(dx, dy) > TAP_SLOP) {
+          // A drag starts only past the long press's slop, as on the
+          // Surface: a finger held to select drifts.
+          if (Math.hypot(dx, dy) > LONG_PRESS_SLOP) {
             const way = panAxis(dx, dy);
             if (way !== 'horizontal') {
               axis.current = way;
@@ -1982,7 +1986,9 @@ function MouseLayer({
           onPressMove(lastPoint.current);
           return;
         }
-        if (axis.current === 'back') return;
+        // Still a press: the program gets no wheel yet. The drift is spent
+        // once the drag turns out to be a scroll.
+        if (axis.current === null || axis.current === 'back') return;
         if (axis.current === 'horizontal') {
           sideways.current.add(nativeEvent.locationX, Date.now());
           swipe.drag(nativeEvent.locationX - swipeFrom.current, size.current.width, true);
@@ -1995,7 +2001,8 @@ function MouseLayer({
         movedAt.current = Date.now();
         track.current.add(nativeEvent.locationY, movedAt.current);
 
-        spend(travelled);
+        spend(nativeEvent.locationY - previous.current);
+        previous.current = nativeEvent.locationY;
       }}
       onResponderRelease={({ nativeEvent }: GestureResponderEvent) => {
         const { width, height } = size.current;
@@ -2024,6 +2031,11 @@ function MouseLayer({
           return;
         }
         if (width <= 0 || height <= 0) return;
+        // A finger that drifted inside the press's slop and lifted early is
+        // neither a drag nor a tap.
+        const dx = nativeEvent.locationX - origin.current.x;
+        const dy = nativeEvent.locationY - origin.current.y;
+        if (Math.hypot(dx, dy) > TAP_SLOP) return;
         onTap(
           cellOf(nativeEvent.locationX, cell?.width, width, grid.cols),
           cellOf(nativeEvent.locationY, cell?.height, height, grid.rows),

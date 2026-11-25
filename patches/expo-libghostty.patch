@@ -388,7 +388,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda58
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..a79b1e9c4d2f784232d9d5317fd9ce98da937c84 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8af2286788 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -592,7 +592,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..a79b1e9c4d2f784232d9d5317fd9ce98
        }
      )
      self.session = session
-@@ -66,21 +219,281 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +219,284 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -630,6 +630,9 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..a79b1e9c4d2f784232d9d5317fd9ce98
 +    selectionLayer.onPaste = { [weak self] in self?.pasteFromSystem() }
 +    #if !targetEnvironment(macCatalyst)
 +      terminalView.onPasteCommand = { [weak self] in self?.pasteFromSystem() }
++      // A drag begins only when the finger has moved too far to be a long
++      // press, so a finger held to select is never taken by a swipe or a scroll.
++      terminalView.touchScrollPan?.require(toFail: selectionLayer.press)
 +    #endif
 +  }
 +
@@ -877,10 +880,10 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..a79b1e9c4d2f784232d9d5317fd9ce98
  }
 diff --git a/ios/TerminalSelectionLayer.swift b/ios/TerminalSelectionLayer.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..81273c61d0759c2b4d25b9301fe25a61f0bd980c
+index 0000000000000000000000000000000000000000..313214fe6f3f5fa56460573d2ecbdea3cb4e2986
 --- /dev/null
 +++ b/ios/TerminalSelectionLayer.swift
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,879 @@
 +import UIKit
 +import UIKit.UIGestureRecognizerSubclass
 +
@@ -1050,7 +1053,9 @@ index 0000000000000000000000000000000000000000..81273c61d0759c2b4d25b9301fe25a61
 +
 +  private let textInteraction = UITextInteraction(for: .nonEditable)
 +  private lazy var menu = UIEditMenuInteraction(delegate: self)
-+  private let press = UILongPressGestureRecognizer()
++  /// The long press that opens a selection. The host makes its own drags
++  /// wait for this one to fail.
++  let press = UILongPressGestureRecognizer()
 +  private let tracker = TouchTracker()
 +
 +  /// The touch that is dragging a handle, or nil. UIKit does not say that a
@@ -1084,6 +1089,9 @@ index 0000000000000000000000000000000000000000..81273c61d0759c2b4d25b9301fe25a61
 +    // Shorter than the 0.5 s iOS uses: the rows are a round trip away, and
 +    // the selection was slow to come. Muxify's mouse layer times the same.
 +    press.minimumPressDuration = 0.35
++    // A finger held for a selection drifts. With the 10 points iOS allows, a
++    // small drift became a swipe or a scroll. Muxify's mouse layer allows the same.
++    press.allowableMovement = 20
 +    press.addTarget(self, action: #selector(pressed(_:)))
 +    addGestureRecognizer(press)
 +
@@ -1780,6 +1788,20 @@ index 727f71041296a83fa2edcdd2a1f75b4841e6f200..f15edc080936e1fffab7a3db430cdc47
      private static let ghosttyKeyToAppKitCode: [UInt32: UInt16] = {
          var result: [UInt32: UInt16] = [:]
          for (code, key) in appKitMap {
+diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
+index 62a3ec9fb3355358f15ed8e3e81c7e1248260af8..7566929554c7570eb8227808b7e9c361b2feaeea 100644
+--- a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
++++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
+@@ -221,9 +221,6 @@
+             )
+             view.inputDelegate?.selectionWillChange(view)
+             view.inputDelegate?.selectionDidChange(view)
+-            if view.isFirstResponder {
+-                view.reloadInputViews()
+-            }
+         }
+ 
+         private var shouldNotifySelectionChange: Bool {
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift
 index 809e7dd6f1887dc5c2b0267e4c786587c49aec57..2f06e769170b60bf8c676417b758fd1aa437c98e 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+InputAccessory.swift
@@ -2114,13 +2136,14 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
              }
-@@ -36,5 +86,6 @@
+@@ -36,6 +86,7 @@
              with event: UIPressesEvent?
          ) {
              hardwareKeyHandled = false
 +            for press in presses { systemKeyPresses.remove(press) }
              super.pressesCancelled(presses, with: event)
          }
+ 
 @@ -48,6 +99,103 @@
                  return
              }
@@ -2454,7 +2477,7 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..0afe64f87f687a3c27e06f19ce03ec4d5f0ad450 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..8a0ecad90fcb42d3df03947fa0995737a5f58aa8 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 @@ -7,8 +7,51 @@
@@ -2509,7 +2532,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..0afe64f87f687a3c27e06f19ce03ec4d
      @MainActor
      open class UITerminalView: UIView {
          let core = TerminalSurfaceCoordinator()
-@@ -27,8 +70,86 @@
+@@ -27,8 +70,87 @@
              var suppressNextIndirectPointerTouchEnd = false
          #endif
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
@@ -2552,8 +2575,9 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..0afe64f87f687a3c27e06f19ce03ec4d
 +        var touchDownInWindow: CGPoint = .zero
 +
 +        /// The one-finger pan that scrolls, kept so that
-+        /// `gestureRecognizerShouldBegin` can tell it from the other pans.
-+        weak var touchScrollPan: UIPanGestureRecognizer?
++        /// `gestureRecognizerShouldBegin` can tell it from the other pans, and
++        /// so that a host app can make it wait for a gesture of its own.
++        public internal(set) weak var touchScrollPan: UIPanGestureRecognizer?
 +
 +        /// The axis of the pan in progress. See `touchPanMayBegin`.
 +        var touchPanAxis: TerminalPanAxis = .vertical
@@ -2596,7 +2620,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..0afe64f87f687a3c27e06f19ce03ec4d
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
-@@ -128,6 +249,9 @@
+@@ -128,6 +250,9 @@
              core.onPostRender = { [weak self] in
                  self?.enforceSublayerScale()
              }
@@ -2874,15 +2898,3 @@ index 0000000000000000000000000000000000000000..ec95f3fda278479e693142d8b37ae2d8
 +export function swipeTick(): void {
 +  void native?.swipeTick?.();
 +}
-diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
-index 62a3ec9fb3355358f15ed8e3e81c7e1248260af8..7566929554c7570eb8227808b7e9c361b2feaeea 100644
---- a/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
-+++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/TerminalTextInputHandler@UIKit.swift
-@@ -221,7 +221,4 @@
-             )
-             view.inputDelegate?.selectionWillChange(view)
-             view.inputDelegate?.selectionDidChange(view)
--            if view.isFirstResponder {
--                view.reloadInputViews()
--            }
-         }

@@ -671,9 +671,13 @@ _Avoid_: swipe back, edge swipe, pop gesture
 A horizontal drag of one finger on the Surface. A swipe left goes to the next
 Pane of the Window and a swipe right to the previous one, in index order, and
 past either end it comes round to the other: tmux's `select-pane -t :.+` and
-`:.-`. The Zoom is kept. A drag is locked to one axis when it leaves the tap
-slop: horizontal when it sets off more than one and a half times further
-sideways than up or down. It is a swipe when the finger lifts past the commit
+`:.-`. The Zoom is kept. A drag begins only when the finger has moved more
+than 20 points, the slop of the long press that starts a Selection. A finger
+held to select that drifts less than that is still a long press, and no drag
+takes it. On a Pane of a split that is not the active one, which has no long
+press, a drag begins after the tap slop. A drag is locked to one axis when it
+begins: horizontal when it sets off more than one and a half times further
+sideways than up or down. See ADR 0035. It is a swipe when the finger lifts past the commit
 point, a quarter of the Surface's width from where the drag began, or lifts
 faster than 600 points a second the way the drag went. The phone gives one
 light tick each time the drag crosses the commit point, out and back. In a
