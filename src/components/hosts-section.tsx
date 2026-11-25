@@ -23,6 +23,7 @@ import {
   truncationMode,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { useLivePages } from '@/browser/live-pages-context';
 import { LogMenu } from '@/components/log-menu';
 import { SectionHeader } from '@/components/section-header';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
@@ -44,6 +45,7 @@ export function HostsSection({ palette }: { palette: Appearance }) {
   const router = useRouter();
   const copyLog = useCopyLog('Settings');
   const [hosts, setHosts] = useState<Host[]>([]);
+  const { pages: livePages } = useLivePages();
 
   const reload = useCallback(async () => {
     setHosts((await deviceHostStore().load()).hosts);
@@ -77,6 +79,7 @@ export function HostsSection({ palette }: { palette: Appearance }) {
         onPress: () => {
           void (async () => {
             await deviceHostStore().removeHost(host.id);
+            livePages.releaseHost(host.id);
             await Promise.all([deviceGoToCache().forget(host.id), deviceRankedGoToCache().forget(host.id)]);
             await reload();
           })();

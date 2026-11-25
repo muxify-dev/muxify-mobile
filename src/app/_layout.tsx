@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider } from 'expo-rout
 import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 
+import { LivePagesProvider } from '@/browser/live-pages-context';
 import { chromeHeaderColors } from '@/constants/app-theme';
 import { KeyCommandsProvider, useKeyboardShortcuts } from '@/keyboard/key-commands';
 import { backSwipeOptions } from '@/navigation/back-swipe';
@@ -18,9 +19,13 @@ export default function RootLayout() {
           screen, so the thing that holds it cannot be inside one. Going Home
           changes what is on top and nothing else. See ADR 0007. */}
       <AttachProvider>
-        <KeyCommandsProvider>
-          <AppStack />
-        </KeyCommandsProvider>
+        {/* Above the navigator for the same reason: a Live Page outlives the
+            Web View that shows it. See ADR 0033. */}
+        <LivePagesProvider>
+          <KeyCommandsProvider>
+            <AppStack />
+          </KeyCommandsProvider>
+        </LivePagesProvider>
       </AttachProvider>
     </SettingsProvider>
   );
