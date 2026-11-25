@@ -4,12 +4,16 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import * as Clipboard from 'expo-clipboard';
 
 import { currentLaunchId, deviceLog, describeApp, describeDevice, deviceLogs } from '@/diagnostics/device-log';
+import { lastEntries, newestFirst } from '@/diagnostics/log';
 import { nativeReports } from '@/diagnostics/native-reports';
 import { useSettings } from '@/settings/settings-context';
 
+/** About the last few minutes of use: enough for one reproduced problem, short enough to paste. */
+const RECENT_ENTRIES = 500;
+
 export default function LogsScreen() {
   const { palette } = useSettings();
-  const [selected, select] = useState<{ title: string; text: string } | null>(null);
+  const [selected, select] = useState<{ title: string; text: string; app: boolean } | null>(null);
   const readLogs = () => {
     const archive = deviceLogs();
     const launches = archive.launches();
@@ -28,9 +32,8 @@ export default function LogsScreen() {
   const previous = launches.find((launch) => launch.id !== current)?.id;
   const textStyle = { color: palette.toolbarTint };
   const rowStyle = [styles.row, { backgroundColor: palette.rowSurface }];
-  const copy = () => {
-    if (!selected) return;
-    void Clipboard.setStringAsync(selected.text).then(
+  const copy = (text: string) => {
+    void Clipboard.setStringAsync(text).then(
       () => Alert.alert('Log copied', 'The report is on the clipboard.'),
       () => Alert.alert('Could not copy log', 'Try again.'),
     );
@@ -45,17 +48,24 @@ export default function LogsScreen() {
             <Text style={textStyle}>All logs</Text>
           </Pressable>
           <Text style={[styles.heading, textStyle]}>{selected.title}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="Copy log" onPress={copy} style={rowStyle}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Copy log" onPress={() => copy(selected.text)} style={rowStyle}>
             <Text style={textStyle}>Copy log</Text>
           </Pressable>
-          <Text selectable style={[styles.report, textStyle]}>{selected.text}</Text>
+          {selected.app ? <>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Copy last ${RECENT_ENTRIES} entries`}
+              onPress={() => copy(lastEntries(selected.text, RECENT_ENTRIES))} style={rowStyle}>
+              <Text style={textStyle}>Copy last {RECENT_ENTRIES} entries</Text>
+            </Pressable>
+            <Text style={textStyle}>Newest entries first. A copy keeps the order in which they happened.</Text>
+          </> : null}
+          <Text selectable style={[styles.report, textStyle]}>{selected.app ? newestFirst(selected.text) : selected.text}</Text>
         </> : <>
           <Text style={textStyle}>Logs stay on this phone until you copy them. Saved launches can include force quits and system stops. They do not confirm a crash.</Text>
           {unavailable ? <Text accessibilityRole="alert" style={textStyle}>Saved logs unavailable. Some recent events may be missing.</Text> : null}
           <Text style={[styles.heading, textStyle]}>App logs</Text>
           {launches.map((launch) => {
             const title = launch.id === current ? 'Current launch' : launch.id === previous ? 'Previous launch' : `Launch ${new Date(launch.startedAt).toLocaleString()}`;
-            return <Pressable key={launch.id} accessibilityRole="button" accessibilityLabel={title} onPress={() => select({ title, text: launch.text })} style={rowStyle}>
+            return <Pressable key={launch.id} accessibilityRole="button" accessibilityLabel={title} onPress={() => select({ title, text: launch.text, app: true })} style={rowStyle}>
               <Text style={textStyle}>{title}</Text>
               <Text style={textStyle}>{new Date(launch.startedAt).toLocaleString()}</Text>
               <Text style={textStyle}>{launch.app}</Text>
@@ -68,7 +78,7 @@ export default function LogsScreen() {
           {native.available && native.reports.length === 0 ? <Text style={textStyle}>No iOS reports received yet.</Text> : null}
           {native.reports.map((report) => {
             const title = `iOS report ${new Date(Number(report.id.split('-')[0])).toLocaleString()}`;
-            return <Pressable key={report.id} accessibilityRole="button" accessibilityLabel={title} onPress={() => select({ title, text: report.text })} style={rowStyle}>
+            return <Pressable key={report.id} accessibilityRole="button" accessibilityLabel={title} onPress={() => select({ title, text: report.text, app: false })} style={rowStyle}>
               <Text style={textStyle}>{title}</Text>
             </Pressable>;
           })}

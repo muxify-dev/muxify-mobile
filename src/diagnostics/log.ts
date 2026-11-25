@@ -136,3 +136,40 @@ export function timeOfDay(at: number): string {
   const millis = String(date.getMilliseconds()).padStart(3, '0');
   return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}.${millis}`;
 }
+
+/** The start of a line that `formatEntry` wrote: its time of day. */
+const ENTRY_LINE = /^\d{2}:\d{2}:\d{2}\.\d{3} /;
+/** The start of a JavaScript error that the archive wrote into a launch. */
+const ERROR_LINE = /^JavaScript (fatal )?error$/;
+
+/**
+ * A launch's text as the Logs screen reads it: its head, then one block per
+ * entry. The head ends at the first blank line. A line that does not start
+ * an entry or an error belongs to the block above it, so an error keeps its
+ * stack and a long entry keeps its lines.
+ */
+function logBlocks(text: string): { head: string; blocks: string[] } {
+  const end = text.indexOf('\n\n');
+  if (end === -1) return { head: text, blocks: [] };
+  const blocks: string[][] = [];
+  for (const line of text.slice(end + 2).split('\n')) {
+    if (blocks.length === 0 || ENTRY_LINE.test(line) || ERROR_LINE.test(line)) blocks.push([line]);
+    else blocks[blocks.length - 1].push(line);
+  }
+  return {
+    head: text.slice(0, end),
+    blocks: blocks.map((lines) => lines.join('\n').trim()).filter((block) => block !== ''),
+  };
+}
+
+/** A launch's text with the newest entry first, under the same head. */
+export function newestFirst(text: string): string {
+  const { head, blocks } = logBlocks(text);
+  return [head, '', ...blocks.reverse()].join('\n');
+}
+
+/** A launch's head and its last `count` entries, oldest first, as a report reads. */
+export function lastEntries(text: string, count: number): string {
+  const { head, blocks } = logBlocks(text);
+  return [head, '', ...blocks.slice(-count)].join('\n');
+}

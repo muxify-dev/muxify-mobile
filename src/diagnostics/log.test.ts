@@ -1,6 +1,6 @@
 import { createTestClock } from '@/lib/test-clock';
 
-import { createLog, formatEntry, LOG_LINE_LIMIT, speakingAs, timeOfDay } from './log';
+import { createLog, formatEntry, lastEntries, LOG_LINE_LIMIT, newestFirst, speakingAs, timeOfDay } from './log';
 
 describe('recording', () => {
   it('keeps what was said, who said it, and when', () => {
@@ -78,5 +78,46 @@ describe('reading it back', () => {
     const at = new Date(2026, 8, 21, 9, 5, 3, 42).getTime();
     expect(timeOfDay(at)).toBe('09:05:03.042');
     expect(formatEntry({ at, tag: 'x', text: 'y' })).toBe('09:05:03.042 x          y');
+  });
+});
+
+describe('reading a launch', () => {
+  const launch = [
+    'Launch: 2026-11-25T10:00:00.000Z',
+    'App: Muxify 1.0 build 1',
+    'Device: iPad · iPadOS 26.1',
+    '',
+    '10:00:00.000 attach     connected',
+    '10:00:01.000 pane %1    keyboard: focus',
+    '',
+    'JavaScript error',
+    'boom',
+    'at somewhere (app.js:1:1)',
+    '10:00:02.000 terminal   physical keyboard disconnected',
+    '',
+  ].join('\n');
+
+  it('shows the newest entry first, under the head, with an error kept whole', () => {
+    expect(newestFirst(launch)).toBe([
+      'Launch: 2026-11-25T10:00:00.000Z',
+      'App: Muxify 1.0 build 1',
+      'Device: iPad · iPadOS 26.1',
+      '',
+      '10:00:02.000 terminal   physical keyboard disconnected',
+      'JavaScript error\nboom\nat somewhere (app.js:1:1)',
+      '10:00:01.000 pane %1    keyboard: focus',
+      '10:00:00.000 attach     connected',
+    ].join('\n'));
+  });
+
+  it('copies the head and the last entries in the order they happened', () => {
+    expect(lastEntries(launch, 2)).toBe([
+      'Launch: 2026-11-25T10:00:00.000Z',
+      'App: Muxify 1.0 build 1',
+      'Device: iPad · iPadOS 26.1',
+      '',
+      'JavaScript error\nboom\nat somewhere (app.js:1:1)',
+      '10:00:02.000 terminal   physical keyboard disconnected',
+    ].join('\n'));
   });
 });
