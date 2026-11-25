@@ -12,11 +12,14 @@ public class TrackpadScrollModule: Module {
       Prop("contextEpoch") { (view: TrackpadScrollView, epoch: Int) in
         view.contextEpoch = epoch
       }
+      Prop("backEdge") { (view: TrackpadScrollView, edge: Double) in
+        view.backEdge = CGFloat(edge)
+      }
     }
   }
 }
 
-internal final class TrackpadScrollView: ExpoView {
+internal final class TrackpadScrollView: ExpoView, UIGestureRecognizerDelegate {
   let onTrackpadScroll = EventDispatcher()
   var enabled = false {
     didSet { if enabled != oldValue { resetRecognizer() } }
@@ -24,6 +27,8 @@ internal final class TrackpadScrollView: ExpoView {
   var contextEpoch = 0 {
     didSet { if contextEpoch != oldValue { resetRecognizer() } }
   }
+  /// The back swipe's band at the left edge of the window, in points.
+  var backEdge: CGFloat = 0
   private var gestureId = 0
   private var activeEpoch: Int?
   private var start = CGPoint.zero
@@ -35,6 +40,7 @@ internal final class TrackpadScrollView: ExpoView {
     pan.allowedTouchTypes = []
     pan.cancelsTouchesInView = false
     pan.isEnabled = false
+    pan.delegate = self
     addGestureRecognizer(pan)
     NotificationCenter.default.addObserver(self, selector: #selector(becameInactive),
       name: UIApplication.willResignActiveNotification, object: nil)
@@ -47,6 +53,18 @@ internal final class TrackpadScrollView: ExpoView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     resetRecognizer()
+  }
+
+  /// A scroll right with the pointer in the band is the stack's back swipe,
+  /// which takes trackpad scrolls too: this pan fails, and the back swipe
+  /// begins. The pointer stays put during a scroll, so where it is now is
+  /// where the gesture started.
+  override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    guard gestureRecognizer === pan else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+    let pointer = pan.location(in: nil)
+    let moved = pan.translation(in: self)
+    let backSwipe = pointer.x < backEdge && moved.x > 0 && abs(moved.x) > abs(moved.y)
+    return !backSwipe
   }
 
   @objc private func becameInactive() {

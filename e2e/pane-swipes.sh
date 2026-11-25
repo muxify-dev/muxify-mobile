@@ -111,8 +111,8 @@ swipe_left;  expect_window "2 1" "a swipe left from Pane 1"
 swipe_left;  expect_window "0 1" "a swipe left from the last Pane"
 swipe_right; expect_window "2 1" "a swipe right from Pane 0"
 swipe_right; expect_window "1 1" "a swipe right from Pane 2"
-# Most of the way across. From iOS 26 the system's back swipe starts anywhere
-# on a screen, and this is the drag it would take.
+# Most of the way across: the drag the iOS 26 back swipe from anywhere would
+# take. The app lets it begin only in the edge band (ADR 0034).
 drag 60 400 280 0
 expect_window "0 1" "a swipe right across the Surface"
 agent-device is exists 'label="Open Terminal chooser" enabled=true' >/dev/null 2>&1 \

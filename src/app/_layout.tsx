@@ -77,7 +77,9 @@ function AppStack() {
           // came from is a word the user already read.
           headerBackButtonDisplayMode: 'minimal',
           contentStyle: { backgroundColor: palette.background },
-          ...backSwipeOptions('anywhere', CONTENT_POP),
+          // Back from the left edge only: a drag in the content is the
+          // content's. See ADR 0034.
+          ...backSwipeOptions('edge', CONTENT_POP),
         }}>
         <Stack.Screen name="index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />

@@ -14,24 +14,15 @@ describe('startsAtBackEdge', () => {
 });
 
 describe('backSwipeOptions', () => {
-  it('goes back from anywhere by default', () => {
-    expect(backSwipeOptions('anywhere', true)).toMatchObject({
-      gestureEnabled: true,
-      fullScreenGestureEnabled: true,
-      gestureResponseDistance: { end: -1 },
-    });
-  });
-
-  it('goes back only near the band on a screen with its own sideways move', () => {
-    const { gestureEnabled, gestureResponseDistance } = backSwipeOptions('edge', true);
+  it('lets the back swipe begin only in the band', () => {
+    const { gestureEnabled, fullScreenGestureEnabled, gestureResponseDistance } = backSwipeOptions('edge', true);
     expect(gestureEnabled).toBe(true);
-    expect(gestureResponseDistance.start).toBe(-1);
-    expect(gestureResponseDistance.end).toBeGreaterThan(BACK_EDGE);
-    expect(gestureResponseDistance.end).toBeLessThan(2 * BACK_EDGE);
+    expect(fullScreenGestureEnabled).toBe(true);
+    expect(gestureResponseDistance).toEqual({ start: -1, end: BACK_EDGE, top: -1, bottom: -1 });
   });
 
-  it('keeps the back swipe at the edge before iOS 26', () => {
-    expect(backSwipeOptions('anywhere', false).fullScreenGestureEnabled).toBe(false);
+  it('keeps UIKit\'s edge pop before iOS 26', () => {
+    expect(backSwipeOptions('edge', false).fullScreenGestureEnabled).toBe(false);
   });
 
   it('does not go back at all when off', () => {

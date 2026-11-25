@@ -1,0 +1,87 @@
+diff --git a/ios/RNSScreenStack.mm b/ios/RNSScreenStack.mm
+index 192f5d2c77192f323844b0d11ee179081891e7a4..814ee15a130c6429929e4cef6e0b6d4554d61603 100644
+--- a/ios/RNSScreenStack.mm
++++ b/ios/RNSScreenStack.mm
+@@ -172,6 +172,9 @@ @implementation RNSScreenStackView {
+   NSMutableArray<RNSScreenView *> *_reactSubviews;
+   BOOL _invalidated;
+   BOOL _isFullWidthSwipingWithPanGesture; // used only for content swipe with RNSPanGestureRecognizer
++  // Where the finger landed for the content pop, in its view: by the time the pop asks to begin, the
++  // finger has moved. A trackpad scroll has no touch, and its pointer stays put, so it needs none.
++  CGPoint _contentPopLanding;
+   RNSPercentDrivenInteractiveTransition *_interactionController;
+   __weak RNSScreenStackManager *_manager;
+   BOOL _updateScheduled;
+@@ -1014,8 +1017,16 @@ - (UIViewController *)reactViewController
+ - (BOOL)isInGestureResponseDistance:(UIGestureRecognizer *)gestureRecognizer topScreen:(RNSScreenView *)topScreen
+ {
+   NSDictionary *gestureResponseDistanceValues = topScreen.gestureResponseDistance;
+-  float x = [gestureRecognizer locationInView:gestureRecognizer.view].x;
+-  float y = [gestureRecognizer locationInView:gestureRecognizer.view].y;
++  CGPoint location = [gestureRecognizer locationInView:gestureRecognizer.view];
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26, *)) {
++    if (gestureRecognizer == _controller.interactiveContentPopGestureRecognizer && gestureRecognizer.numberOfTouches > 0) {
++      location = _contentPopLanding;
++    }
++  }
++#endif // check for iOS >= 26
++  float x = location.x;
++  float y = location.y;
+   BOOL isRTL = _controller.view.semanticContentAttribute == UISemanticContentAttributeForceRightToLeft;
+   if (isRTL) {
+     x = _controller.view.frame.size.width - x;
+@@ -1136,9 +1147,33 @@ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceive
+ 
+ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
+ {
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26, *)) {
++    if (gestureRecognizer == _controller.interactiveContentPopGestureRecognizer &&
++        gestureRecognizer.numberOfTouches == 0) {
++      _contentPopLanding = [touch locationInView:gestureRecognizer.view];
++    }
++  }
++#endif // check for iOS >= 26
+   return [self gestureRecognizer:gestureRecognizer shouldReceivePressOrTouchEvent:touch];
+ }
+ 
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++// A screen that limits where its content pop begins gives that area to the pop: a touch that
++// landed there pops even over a scroll view that scrolls sideways, as the edge pop does.
++- (BOOL)isContentPopLimitedAndLandedInside:(UIGestureRecognizer *)gestureRecognizer API_AVAILABLE(ios(26.0))
++{
++  if (gestureRecognizer != _controller.interactiveContentPopGestureRecognizer) {
++    return NO;
++  }
++  RNSScreenView *topScreen = _reactSubviews.lastObject;
++  NSDictionary *distance = topScreen.gestureResponseDistance;
++  BOOL limited = [distance[@"start"] floatValue] != -1 || [distance[@"end"] floatValue] != -1 ||
++      [distance[@"top"] floatValue] != -1 || [distance[@"bottom"] floatValue] != -1;
++  return limited && [self isInGestureResponseDistance:gestureRecognizer topScreen:topScreen];
++}
++#endif // check for iOS >= 26
++
+ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
+     shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
+ {
+@@ -1169,6 +1204,9 @@ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
+       // ScrollView should take precedence when scrolling horizontally (it should be required to fail).
+       // However, if it does not allow for horizontal scrolling, there should be no such restriction,
+       // and swiping horizontally should dismiss the screen.
++      if ([self isContentPopLimitedAndLandedInside:gestureRecognizer]) {
++        return NO;
++      }
+       return [self scrollViewHasHorizontalPart:static_cast<UIScrollView *>(otherGestureRecognizer.view)];
+     }
+   }
+@@ -1188,7 +1226,8 @@ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
+     // fails, but rather the opposite & that the ScrollView recognizer has a higher priority See also
+     // gestureRecognizer:shouldRequireFailureOfGestureRecognizer
+     isEdgeSwipeGestureRecognizer =
+-        isEdgeSwipeGestureRecognizer && gestureRecognizer != _controller.interactiveContentPopGestureRecognizer;
++        (isEdgeSwipeGestureRecognizer && gestureRecognizer != _controller.interactiveContentPopGestureRecognizer) ||
++        [self isContentPopLimitedAndLandedInside:gestureRecognizer];
+   }
+ #endif // check for iOS >= 26
+ 

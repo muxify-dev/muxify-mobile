@@ -24,7 +24,8 @@ public class TabSwipeModule: Module {
 /// iOS 26, as a floating bar). So the drag sits on the navigation
 /// controller's view and takes only the touches that land on this view or on
 /// that bar, while this screen is on top. Elsewhere on the screen, a drag is
-/// the list's or the stack's back swipe.
+/// the list's. The stack's back swipe begins only at the left edge, where
+/// this drag fails (see `SidewaysDrag`).
 internal final class TabSwipeView: ExpoView, UIGestureRecognizerDelegate {
   let onTabSwipe = EventDispatcher()
   /// Off cancels a drag in progress.
@@ -55,16 +56,6 @@ internal final class TabSwipeView: ExpoView, UIGestureRecognizerDelegate {
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
     guard let touched = touch.view, isOnTop else { return false }
     return touched.isDescendant(of: self) || isOnBarAtBottom(touched)
-  }
-
-  /// The stack's back swipe from anywhere waits for this drag to fail, so a
-  /// sideways drag on the control or the bar is the tab swipe.
-  func gestureRecognizer(
-    _ gestureRecognizer: UIGestureRecognizer,
-    shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
-  ) -> Bool {
-    guard #available(iOS 26, *) else { return false }
-    return otherGestureRecognizer === navigation?.interactiveContentPopGestureRecognizer
   }
 
   /// The view controller of the screen this view is on.

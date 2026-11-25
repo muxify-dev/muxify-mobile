@@ -8,3 +8,4 @@ allowBuilds:
 
 patchedDependencies:
   expo-libghostty: patches/expo-libghostty.patch
+  react-native-screens: patches/react-native-screens.patch

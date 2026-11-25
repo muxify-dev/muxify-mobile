@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# The back swipe: the left edge always goes back. See ADR 0025.
+# The back swipe: only the left edge goes back. See ADR 0034.
 #
 # What this proves, against the sandbox's Session 0:
 #
@@ -15,15 +15,23 @@
 #   5  on the Host Screen, a sideways drag on the tab control or on the bar
 #      at the bottom changes the tab, one on a row does not, a tap on the
 #      control, the Go to field and ＋ still works, a drag right from the
-#      middle of the list goes back to Home, and so does a drag from the edge
-#      on the tab control
-#   6  on Settings, a drag right goes back from the edge and from the middle
+#      middle of the list does not go back, and a drag from the edge on the
+#      list and on the tab control goes back to Home
+#   6  on Settings, a drag right from the middle does not go back, and one
+#      from the edge does
+#   7  on the Web View, a drag right from the middle of a page does not go
+#      back, also on a page as narrow as the screen, which has no sideways
+#      scroll to take the drag. A page wider than the screen scrolls
+#      sideways. A drag from the edge goes back from both pages
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Which screen is on top comes from the Header, and the
 # active Pane from tmux.
 #
-# Requires a configured .env.local and a booted simulator.
+# The pages of step 7 are served at this Mac's Tailscale address, as in
+# browser-tabs.sh.
+#
+# Requires a configured .env.local, a booted simulator and Tailscale up on this Mac.
 # Usage:  bash e2e/back-swipe.sh
 
 [ -n "${MUXIFY_E2E_ROOT:-}" ] || exec bash "$(dirname "$0")/sandbox.sh" bash "$0" "$@"
@@ -62,6 +70,8 @@ open_host() {
 
 attach() {
   open_host
+  # Step 5 left the Host Screen on Board, and it keeps the tab.
+  agent-device press 'label="Sessions"' >/dev/null 2>&1
   agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
   agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
   agent-device wait 'label="Open Terminal chooser" enabled=true' 20000 >/dev/null 2>&1 \
@@ -89,7 +99,7 @@ on_host "tmux send-keys -t '$PANE' 'echo hello world' Enter; \
     tmux split-window -h -t '$PANE' \"$SHELL_COMMAND\"; \
     tmux select-pane -t '$PANE'"
 
-echo "1/6  on the Terminal Screen, a drag from the left edge goes back"
+echo "1/7  on the Terminal Screen, a drag from the left edge goes back"
 attach
 expect_window "0 1" "after the Attach"
 drag 2 400 220 0
@@ -97,7 +107,7 @@ on_host_screen || fail "a drag from the left edge did not leave the Terminal Scr
 expect_window "0 1" "a drag from the left edge"
 echo "     the Host Screen is on top, and the Pane did not change"
 
-echo "2/6  outside the band, a drag right is a Pane Swipe"
+echo "2/7  outside the band, a drag right is a Pane Swipe"
 attach
 drag 60 400 220 0
 on_terminal || fail "a drag right from x = 60 left the Terminal Screen"
@@ -106,7 +116,7 @@ drag 320 400 -220 0
 expect_window "0 1" "a drag left back to Pane 0"
 echo "     the Pane changed, and the Terminal Screen stayed"
 
-echo "3/6  with a Selection open, a drag from the edge does not go back"
+echo "3/7  with a Selection open, a drag from the edge does not go back"
 agent-device longpress 30 140 800 >/dev/null 2>&1
 sleep 1.5
 agent-device is exists 'label="Copy"' >/dev/null 2>&1 || fail "the long press opened no Selection"
@@ -114,7 +124,7 @@ drag 2 400 220 0
 on_terminal || fail "a drag from the edge with a Selection open left the Terminal Screen"
 echo "     the Terminal Screen stayed"
 
-echo "4/6  in a Pane that listens for the mouse, a drag from the edge goes back"
+echo "4/7  in a Pane that listens for the mouse, a drag from the edge goes back"
 # `cat -v` echoes the SGR of every mouse event it is sent. See pane-swipes.sh.
 attach
 on_host "tmux send-keys -t '$PANE' 'clear; printf \"\\033[?1049h\\033[?1000h\\033[?1006h\"; cat -v' Enter"
@@ -131,7 +141,7 @@ expect_window "0 1" "a drag from the edge on the mouse layer"
   || fail "the program got mouse events from the back swipe"
 echo "     the Host Screen is on top, and the program got nothing"
 
-echo "5/6  on the Host Screen, the tab control and the bar change the tab, and the list goes back"
+echo "5/7  on the Host Screen, the tab control and the bar change the tab, and only the edge goes back"
 # The centre of the first node with label $1, or of type $2 when $1 is empty, as "x y".
 centre() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
@@ -169,23 +179,87 @@ agent-device press 200 450 >/dev/null 2>&1
 agent-device wait absent 'label="New Topic"' 3000 >/dev/null 2>&1 || fail "the ＋ menu did not close"
 expect_tab board "after Go to and ＋"
 drag 150 500 220 0
-on_home || fail "a drag right from the middle of the list did not go back to Home"
+on_host_screen || fail "a drag right from the middle of the list left the Host Screen"
+expect_tab board "a drag right from the middle of the list"
+drag 2 500 220 0
+on_home || fail "a drag right from the left edge on the list did not go back to Home"
 open_host
 drag 2 "$CONTROL_Y" 220 0
 on_home || fail "a drag right from the left edge on the tab control did not go back to Home"
-echo "     the control and the bar changed the tab, the row and the taps kept theirs, the list and the edge went back"
+echo "     the control and the bar changed the tab, the row, the list and the taps kept theirs, the edge went back"
 
-echo "6/6  on Settings, a drag right goes back from the edge and from the middle"
+echo "6/7  on Settings, a drag right goes back from the edge only"
 agent-device press 'role=button label="Settings"' >/dev/null 2>&1
 agent-device wait 'label="Add Host"' 8000 >/dev/null 2>&1 || fail "Settings did not open"
 sleep 1
+drag 150 500 220 0
+agent-device is exists 'label="Add Host"' >/dev/null 2>&1 || fail "a drag from the middle left Settings"
 drag 2 500 220 0
 agent-device is exists 'label="Add Host"' >/dev/null 2>&1 && fail "a drag from the edge did not leave Settings"
-agent-device press 'role=button label="Settings"' >/dev/null 2>&1
-agent-device wait 'label="Add Host"' 8000 >/dev/null 2>&1 || fail "Settings did not open again"
-sleep 1
+echo "     the middle stayed, the edge went back to Home"
+
+echo "7/7  on the Web View, a drag right from the middle stays on the page, and the edge goes back"
+ADDRESS=$(tailscale ip -4 2>/dev/null | head -1)
+[ -n "$ADDRESS" ] || fail "this Mac has no Tailscale address: start Tailscale"
+PORT=$(python3 -c 'import socket, sys; s = socket.socket(); s.bind((sys.argv[1], 0)); print(s.getsockname()[1])' "$ADDRESS")
+mkdir -p "$MUXIFY_E2E_ROOT/www"
+# The page says where it is scrolled to in a line that stays in view.
+cat >"$MUXIFY_E2E_ROOT/www/page.html" <<'HTML'
+<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
+<p id="at" style="position:fixed;top:40px;left:40px;margin:0">at 0</p>
+<div id="wide" style="height:2000px"></div>
+<script>
+  if (location.search === '?wide') document.getElementById('wide').style.width = '3000px';
+  addEventListener('scroll', () => { document.getElementById('at').textContent = scrollX > 0 ? 'moved' : 'at 0'; });
+</script>
+HTML
+python3 -m http.server "$PORT" --bind "$ADDRESS" --directory "$MUXIFY_E2E_ROOT/www" >/dev/null 2>&1 &
+SERVER=$!
+trap 'kill $SERVER 2>/dev/null' EXIT
+NARROW="http://$ADDRESS:$PORT/page.html?narrow"
+WIDE="http://$ADDRESS:$PORT/page.html?wide"
+WINDOW_ID=$(on_host "tmux display-message -p -t '$WINDOW' '#{window_id}'")
+on_web_view() { agent-device is exists 'id="web-view-title"' >/dev/null 2>&1; }
+# Opens the page at $1, the Tab at index $2, from Session 0. The Session may
+# open on its Window's active Tab, or on the Terminal Screen, whose Title
+# Sheet then opens the Tab.
+open_page() {
+  stored-tabs "$WINDOW_ID" "$2" "$NARROW" "$WIDE" || fail "could not store the Tabs of $WINDOW_ID"
+  open_host
+  # Step 5 left the Host Screen on Board, and it keeps the tab.
+  agent-device press 'label="Sessions"' >/dev/null 2>&1
+  agent-device wait "label=\"Session $SESSION\"" 15000 >/dev/null 2>&1
+  agent-device press "label=\"Session $SESSION\"" >/dev/null 2>&1
+  agent-device wait 'label="Open Terminal chooser" enabled=true' 20000 >/dev/null 2>&1 || fail "never reached Connected"
+  sleep 2
+  if ! agent-device is exists "text=\"$1\"" >/dev/null 2>&1; then
+    agent-device press 'label="Open Terminal chooser"' >/dev/null 2>&1
+    agent-device wait "label=\"Tab $1\"" 15000 >/dev/null 2>&1 || fail "the Title Sheet does not list $1"
+    sleep 1
+    agent-device press "label=\"Tab $1\"" >/dev/null 2>&1
+  fi
+  agent-device wait 'text="at 0"' 20000 >/dev/null 2>&1 || fail "the Web View did not show $1"
+  on_web_view || fail "$1 did not open in the Web View"
+  sleep 1
+}
+# The wide page first: a page that Back keeps alive stops the next page
+# from scrolling (a known issue of the Live Pages).
+open_page "$WIDE" 1
+drag 300 500 -200 0
+agent-device is exists 'text="moved"' >/dev/null 2>&1 || fail "a drag left on a wide page did not scroll it"
 drag 150 500 220 0
-agent-device is exists 'label="Add Host"' >/dev/null 2>&1 && fail "a drag from the middle did not leave Settings"
-echo "     both went back to Home"
+on_web_view || fail "a drag right from the middle of a wide page left the Web View"
+agent-device is exists 'text="at 0"' >/dev/null 2>&1 || fail "a drag right on a wide page did not scroll it back"
+drag 300 500 -200 0
+drag 2 500 220 0
+on_host_screen || fail "a drag from the edge on a scrolled wide page did not go back to the Host Screen"
+open_page "$NARROW" 0
+drag 60 500 250 0
+on_web_view || fail "a drag right from x = 60 on a narrow page left the Web View"
+drag 150 500 220 0
+on_web_view || fail "a drag right from the middle of a narrow page left the Web View"
+drag 2 500 220 0
+on_host_screen || fail "a drag from the edge on a narrow page did not go back to the Host Screen"
+echo "     the middle stayed on both pages, the wide page scrolled, the edge went back"
 
 echo "PASS"

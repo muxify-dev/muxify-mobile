@@ -4,11 +4,13 @@ import { AppState, type NativeSyntheticEvent, type ViewProps } from 'react-nativ
 
 import { createTrackpadGesture, type TrackpadEvent, type TrackpadTarget } from '@/lib/trackpad-gesture';
 import type { PaneSwipe } from '@/hooks/use-pane-swipe';
+import { BACK_EDGE } from '@/navigation/back-swipe';
 import type { Attach } from '@/tmux/attach';
 
 type NativeProps = ViewProps & {
   enabled: boolean;
   contextEpoch: number;
+  backEdge: number;
   onTrackpadScroll(event: NativeSyntheticEvent<TrackpadEvent>): void;
 };
 
@@ -53,7 +55,8 @@ export function TrackpadScroll({ enabled, context, targets, selectionPane, scrol
     return () => listener.remove();
   }, []);
 
-  return <NativeTrackpadScroll {...view} enabled={enabled && active} contextEpoch={epoch}
+  // A scroll right from the edge band is the back swipe's, not a Pane Swipe.
+  return <NativeTrackpadScroll {...view} enabled={enabled && active} contextEpoch={epoch} backEdge={BACK_EDGE}
     onTrackpadScroll={({ nativeEvent }) => gesture.current?.receive(nativeEvent)}>
     {children}
   </NativeTrackpadScroll>;
