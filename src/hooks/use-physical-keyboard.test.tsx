@@ -2,7 +2,7 @@ import type { ReactTestRenderer } from 'react-test-renderer';
 
 type Cause = 'connect' | 'disconnect' | 'check';
 type NativeListener = (event: { connected: boolean; cause: Cause }) => void;
-type KeyboardListener = (event?: { endCoordinates: { height: number } }) => void;
+type KeyboardListener = (event?: { endCoordinates: { screenY?: number; height: number } }) => void;
 
 let connected = false;
 let mockNative: { isConnected: jest.Mock; addListener: jest.Mock };
@@ -124,4 +124,17 @@ it('does not load the iOS module on an unsupported platform', () => {
       Platform.OS = previous;
     }
   });
+});
+
+it('writes each input, with where the keyboard frame sits, and the presence it leaves to the Log', async () => {
+  connected = true;
+  await mount(load());
+  await act(async () => {
+    keyboard.get('keyboardDidChangeFrame')?.({ endCoordinates: { screenY: 1194, height: 336 } });
+  });
+  const lines = require('@/diagnostics/device-log').deviceLog().entries().map((entry: { text: string }) => entry.text);
+  expect(lines).toEqual(expect.arrayContaining([
+    'presence: GameController first check, connected → reported true, overruled false, attached',
+    expect.stringMatching(/^presence: keyboardDidChangeFrame, y 1194, height 336, screen \d+ → reported true, overruled true, not attached$/),
+  ]));
 });
