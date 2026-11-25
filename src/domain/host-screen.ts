@@ -131,7 +131,7 @@ export function rowCard(row: HostScreenRow): BoardCard | null {
 export type OpenableRow = 'no-topic' | 'bench';
 
 export interface HostScreenSection {
-  id: 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench' | 'no-topic';
+  id: 'status' | 'sessions' | 'topics' | 'pinned' | 'in-play' | 'guests' | 'bench' | 'no-topic';
   /** Null when the section starts with its own named row. */
   title: string | null;
   rows: HostScreenRow[];
@@ -167,15 +167,33 @@ export interface HostScreenInput {
  * Bench row, and the No Topic row. The Sessions tab is the Mac's Sessions
  * view: every running Session in the order the Host lists them, with its Topic
  * under the name, and no Bench.
+ *
+ * Above them, the status section holds what is happening to the Host or to
+ * the list on show: the Host Problem, "Updating…", "Not updated", and the
+ * install or update of the Host CLI. It has no title and comes first, so a
+ * status row never sits under the title of a list, as Pinned.
  */
 export function hostScreen({ tab, listing, topics, attach, opened, appearance, problem, freshness }: HostScreenInput): HostScreenSection[] {
-  const sections = tab === 'board'
+  const { status, sections } = tab === 'board'
     ? boardSections(topics, { opened, appearance, withNoTopic: true, attach, freshness })
-    : [sessionsList(listing, topics, freshness)];
-  if (problem === null) return sections;
+    : sessionsList(listing, topics, freshness);
   // One row for the Host Problem, however many reads of the Host met it.
-  const [first, ...rest] = sections;
-  return [{ ...first, rows: [{ kind: 'host-problem', ...problem }, ...first.rows] }, ...rest];
+  const problemRows: HostScreenRow[] = problem === null ? [] : [{ kind: 'host-problem', ...problem }];
+  return withStatus([...problemRows, ...status], sections);
+}
+
+/** The rows of one tab: the status rows, and the lists under them. */
+interface TabSections {
+  status: HostScreenRow[];
+  sections: HostScreenSection[];
+}
+
+/** The status section first, when it has rows, then each list that has rows. */
+function withStatus(status: HostScreenRow[], sections: HostScreenSection[]): HostScreenSection[] {
+  return [
+    ...(status.length === 0 ? [] : [topicsSection('status', null, status)]),
+    ...sections.filter((section) => section.rows.length > 0),
+  ];
 }
 
 /**
@@ -199,7 +217,8 @@ export function firstReadAnswered({ listing, topics }: Pick<HostScreenInput, 'li
  * there are none. The Bench is open, because nothing opens in place there.
  */
 export function topicSections(topics: HostTopics, appearance: ColorAppearance): HostScreenSection[] {
-  return boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null, freshness: { kind: 'current' } })
+  const { status, sections } = boardSections(topics, { opened: BENCH_OPENED, appearance, withNoTopic: false, attach: null, freshness: { kind: 'current' } });
+  return withStatus(status, sections)
     .map((section) => ({
       ...section,
       title: SECTION_TITLES[section.id],
@@ -208,7 +227,8 @@ export function topicSections(topics: HostTopics, appearance: ColorAppearance): 
     .filter((section) => section.rows.length > 0);
 }
 
-const SECTION_TITLES: Record<HostScreenSection['id'], string> = {
+const SECTION_TITLES: Record<HostScreenSection['id'], string | null> = {
+  status: null,
   sessions: 'Sessions',
   topics: 'Topics',
   pinned: 'Pinned',
@@ -234,22 +254,21 @@ interface CardsContext {
 
 /**
  * The Board. Before a snapshot, it is one Board section with a row that
- * says why. A failure and a Host CLI update put their row above
- * the last snapshot's cards. A Host Problem drops the list: one empty section
- * with no title, where the Host Screen puts the Host Problem row.
+ * stands in for the cards and says why. With the last snapshot's cards on
+ * show, a failure, an update of the list or of the Host CLI is a status row
+ * above them. A Host Problem drops the list, and the Host Screen shows only
+ * the Host Problem row.
  */
-function boardSections(topics: HostTopics, context: CardsContext): HostScreenSection[] {
-  if (topics.kind === 'host-problem') return [topicsSection('topics', null, [])];
+function boardSections(topics: HostTopics, context: CardsContext): TabSections {
+  if (topics.kind === 'host-problem') return { status: [], sections: [] };
   const last = lastSnapshot(topics);
-  if (topics.kind === 'absent') return [topicsSection('topics', 'Board', [{ kind: 'note', text: 'No Topics on this Host' }])];
-  if (topics.kind === 'loading' && last === null) {
-    return [topicsSection('topics', 'Board', [{ kind: 'checking', text: 'Checking Topics…' }])];
-  }
+  const board = (rows: HostScreenRow[]): TabSections => ({ status: [], sections: [topicsSection('topics', 'Board', rows)] });
+  if (topics.kind === 'absent') return board([{ kind: 'note', text: 'No Topics on this Host' }]);
+  if (topics.kind === 'loading' && last === null) return board([{ kind: 'checking', text: 'Checking Topics…' }]);
   const said = freshnessRows(context.freshness);
   const notice = said.length > 0 ? said : topicsNotice(topics);
-  if (last === null) return [topicsSection('topics', 'Board', notice)];
-  const [first, ...rest] = cardSections(last, context);
-  return [{ ...first, rows: [...notice, ...first.rows] }, ...rest];
+  if (last === null) return board(notice);
+  return { status: notice, sections: cardSections(last, context) };
 }
 
 /**
@@ -424,9 +443,10 @@ function cardRow(card: Card, { section, names, colors, sessions }: CardRowContex
  * The Sessions tab: every running Session in the order the Host lists them,
  * which is the order the Mac's Sessions view shows. A Host with Topics says
  * which Topic each Session is in. A row above them says why the Host has no
- * Board tab, when the Host CLI is being installed or updated, or failed.
+ * Board tab. A status row says when the Host CLI is being installed or
+ * updated, or failed.
  */
-function sessionsList(listing: Listing, topics: HostTopics, freshness: Freshness): HostScreenSection {
+function sessionsList(listing: Listing, topics: HostTopics, freshness: Freshness): TabSections {
   const running = runningSessions(listing, topics);
   const rows: HostScreenRow[] = running === undefined
     ? unansweredRows(listing)
@@ -442,7 +462,12 @@ function sessionsList(listing: Listing, topics: HostTopics, freshness: Freshness
   // A failed update drops the Sessions for its refusal row, so only an update on its way has an old list to speak of.
   const updating = freshness.kind === 'updating' && running !== undefined ? freshnessRows(freshness) : [];
   const notice = hostScreenTabs(topics).includes('board') ? [] : topicsNotice(topics);
-  return { id: 'sessions', title: null, rows: [...updating, ...notice, ...rows] };
+  // A Host with no Host Server keeps its line above the Sessions: it says why
+  // there is no Board tab, and does not pass. The Host CLI's install, update or
+  // failure is status.
+  const why = notice.filter((row) => row.kind === 'note');
+  const status = notice.filter((row) => row.kind !== 'note');
+  return { status: [...updating, ...status], sections: [{ id: 'sessions', title: null, rows: [...why, ...rows] }] };
 }
 
 /** A running Session of the Listing, joined with what the Host's Topics say of it. */

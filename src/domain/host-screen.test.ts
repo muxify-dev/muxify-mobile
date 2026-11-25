@@ -31,6 +31,7 @@ import {
   lastSnapshot,
   listedSessions,
   TOPICS_UNASKED,
+  topicsUnavailable,
   withHostCli,
   type Freshness,
   type HostTopics,
@@ -55,6 +56,7 @@ const installDone = (kind: HostCliOutcome, text: string): HostCliState => ({
 
 const topicsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'topics', title: 'Board', rows });
 const sessionsSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'sessions', title: null, rows });
+const statusSection = (...rows: HostScreenRow[]): HostScreenSection => ({ id: 'status', title: null, rows });
 
 // What the Board list shows before the Host has answered about Topics.
 const TOPICS = topicsSection({ kind: 'checking', text: 'Checking Topics…' });
@@ -232,19 +234,15 @@ describe('the Board tab of the Host Screen', () => {
       ],
     },
     {
-      name: 'with In Play, shows the error of a failed read above the first section',
+      name: 'with In Play, shows the error of a failed read in the status section, above Pinned',
       topics: {
         kind: 'failed',
         error: 'muxify exited with status 1',
         last: got(snapshot({ pinned: [topicCard('p')], unpinned: inPlay() })),
       },
       sections: [
-        section(
-          'pinned',
-          'Pinned',
-          { kind: 'refused', message: 'muxify exited with status 1' },
-          topicRow('p', { pinned: true, section: 'pinned' }),
-        ),
+        statusSection({ kind: 'refused', message: 'muxify exited with status 1' }),
+        section('pinned', 'Pinned', topicRow('p', { pinned: true, section: 'pinned' })),
         section('in-play', 'In Play', OPEN_PLACE_ROW),
       ],
     },
@@ -503,7 +501,8 @@ describe('the Board tab of the Host Screen', () => {
         last: got(snapshot({ unpinned: inPlay({ places: [topicCard('t1')] }) })),
       },
       sections: [
-        inPlaySection({ kind: 'refused', message: 'muxify exited with status 1' }, topicRow('t1')),
+        statusSection({ kind: 'refused', message: 'muxify exited with status 1' }),
+        inPlaySection(topicRow('t1')),
       ],
     },
   ])('$name', ({ topics, attach = null, opened = CLOSED, appearance = 'light', sections }) => {
@@ -672,8 +671,15 @@ describe('the Sessions tab of the Host Screen', () => {
       topics: withHostCli({ kind: 'absent' }, installDone('failed', 'neither curl nor wget')),
       row: { kind: 'refused', message: 'Could not install Muxify on this Host: neither curl nor wget' },
     },
-  ])('says above the Sessions why the Host has no Board tab, when $name', ({ topics, row }) => {
-    expect(sessions(answered([running('main')]), topics)).toEqual([sessionsSection(row, sessionRow('main', null, 1))]);
+  ])('says in the status section why the Host has no Board tab, when $name', ({ topics, row }) => {
+    expect(sessions(answered([running('main')]), topics)).toEqual([statusSection(row), sessionsSection(sessionRow('main', null, 1))]);
+  });
+
+  it('says above the Sessions why a Host with no Host Server has no Board tab', () => {
+    const topics: HostTopics = { kind: 'unavailable', host: 'Mac', reason: 'x' };
+    expect(sessions(answered([running('main')]), topics)).toEqual([
+      sessionsSection(note(topicsUnavailable('Mac', 'x')), sessionRow('main', null, 1)),
+    ]);
   });
 
   it('says nothing above the Sessions of a Host with no Host CLI, or of one whose Board tab has the error', () => {
@@ -759,28 +765,45 @@ describe('the Bench peek, which shows where the Attach is while the Bench row hi
 
 describe('the freshness row of the Host Screen', () => {
   const kept = got(snapshot({ sessions: [snapshotSession('$1', 'work', 't1')], unpinned: inPlay({ places: [topicCard('t1')] }) }));
+  const keptWithPinned = got(snapshot({
+    sessions: [snapshotSession('$1', 'work', 't1')],
+    pinned: [topicCard('p')],
+    unpinned: inPlay({ places: [topicCard('t1')] }),
+  }));
   const screen = (tab: 'board' | 'sessions', topics: HostTopics, freshness: Freshness, listing: Listing = answered([running('work')])) =>
     hostScreen({ tab, listing, topics, attach: null, opened: CLOSED, appearance: 'light', problem: null, freshness });
+  const ids = (sections: HostScreenSection[]) => sections.map((shown) => shown.id);
 
-  it.each(['board', 'sessions'] as const)('says "Updating…" above the old list on the %s tab, and keeps its rows', (tab) => {
-    const [first] = screen(tab, { kind: 'loading', last: kept }, { kind: 'updating' });
+  it.each(['board', 'sessions'] as const)('says "Updating…" in the status section above the old list on the %s tab, and keeps its rows', (tab) => {
+    const [status, ...lists] = screen(tab, { kind: 'loading', last: kept }, { kind: 'updating' });
 
-    expect(first?.rows[0]).toEqual({ kind: 'checking', text: 'Updating…' });
-    expect(first?.rows.slice(1).map((row) => row.kind)).toEqual(tab === 'board' ? ['topic'] : ['session']);
+    expect(status).toEqual(statusSection({ kind: 'checking', text: 'Updating…' }));
+    expect(lists.flatMap((shown) => shown.rows).map((row) => row.kind)).toEqual(tab === 'board' ? ['topic'] : ['session']);
+  });
+
+  it('keeps "Updating…" out of Pinned, which holds the pinned cards only', () => {
+    const shown = screen('board', { kind: 'loading', last: keptWithPinned }, { kind: 'updating' });
+
+    expect(ids(shown)).toEqual(['status', 'pinned', 'in-play']);
+    expect(shown[1]).toEqual(section('pinned', 'Pinned', topicRow('p', { pinned: true, section: 'pinned' })));
   });
 
   it('says nothing while a recent list waits quietly', () => {
     const quiet = screen('board', { kind: 'listed', ...kept, doubt: { since: 0, asked: 0 } }, { kind: 'quiet', until: 30_000 });
 
     expect(quiet).toEqual(screen('board', { kind: 'listed', ...kept }, CURRENT));
+    expect(ids(quiet)).toEqual(['in-play']);
   });
 
-  it('says how old a list it could not update is, in place of the refusal row', () => {
-    const failed: HostTopics = { kind: 'failed', error: 'no route', last: kept };
-    const [first] = screen('board', failed, { kind: 'not-updated', at: 5, error: 'no route' }, refused('no route'));
+  it.each([
+    { name: 'with no pinned Topics', last: kept, lists: ['in-play'] },
+    { name: 'with pinned Topics', last: keptWithPinned, lists: ['pinned', 'in-play'] },
+  ])('says how old a list it could not update is in the status section, in place of the refusal row, $name', ({ last, lists }) => {
+    const failed: HostTopics = { kind: 'failed', error: 'no route', last };
+    const shown = screen('board', failed, { kind: 'not-updated', at: 5, error: 'no route' }, refused('no route'));
 
-    expect(first?.rows.map((row) => row.kind)).toEqual(['not-updated', 'topic']);
-    expect(first?.rows[0]).toEqual({ kind: 'not-updated', at: 5, message: 'no route' });
+    expect(ids(shown)).toEqual(['status', ...lists]);
+    expect(shown[0]).toEqual(statusSection({ kind: 'not-updated', at: 5, message: 'no route' }));
   });
 });
 
@@ -802,10 +825,21 @@ describe('the Host Problem on the Host Screen', () => {
     last: got(snapshot({ pinned: [topicCard('pinned')], unpinned: inPlay({ places: [topicCard('playing')] }) })),
   };
 
-  it.each(['sessions', 'board'] as const)('drops the cached Topics on the %s tab, and stands in a section of its own', (tab) => {
+  it.each(['sessions', 'board'] as const)('drops the cached Topics on the %s tab, and stands alone in the status section', (tab) => {
     const sections = hostScreen({ tab, listing: HOST_PROBLEM, topics: cached, attach: null, opened: CLOSED, appearance: 'light', problem, freshness: CURRENT });
 
-    expect(sections).toEqual([{ id: tab === 'board' ? 'topics' : tab, title: null, rows: [{ kind: 'host-problem', ...problem }] }]);
+    expect(sections).toEqual([statusSection({ kind: 'host-problem', ...problem })]);
+  });
+
+  it.each([
+    { name: 'with no pinned Topics', pinned: [], lists: ['in-play'] },
+    { name: 'with pinned Topics', pinned: [topicCard('p')], lists: ['pinned', 'in-play'] },
+  ])('puts the Host Problem in the status section above a list still on show, $name', ({ pinned, lists }) => {
+    const topics = listed({ pinned, unpinned: inPlay({ places: [topicCard('t1')] }) });
+    const sections = hostScreen({ tab: 'board', listing: answered([]), topics, attach: null, opened: CLOSED, appearance: 'light', problem, freshness: { kind: 'updating' } });
+
+    expect(sections.map((shown) => shown.id)).toEqual(['status', ...lists]);
+    expect(sections[0]).toEqual(statusSection({ kind: 'host-problem', ...problem }, { kind: 'checking', text: 'Updating…' }));
   });
 
   it('drops the cached Topics from the Title Sheet too', () => {
