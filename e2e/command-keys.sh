@@ -17,7 +17,9 @@
 # and ⌘D then reaches ghostty, ⌘K clears the Pane and its Scrollback, and a
 # chord no Keyboard Shortcut claims reaches ghostty's keybind for the line:
 # ⌘⌫ from the Key Row, ⌘← from the hardware keyboard. The recorder gets ⌘,
-# although ⌘, is Open Settings.
+# although ⌘, is Open Settings. From the hardware keyboard, ← and ↑ with no
+# modifier reach the Pane: UIKit names these keys, and the name is not text
+# for UIKit to type.
 #
 # The hardware ⌘⌫ is not checked: XCUITest's ⌘ and delete never reaches the
 # app on the simulator (UIApplication.sendEvent gets no event for it), while
@@ -99,6 +101,9 @@ check() {
       ;;
     line-removed) sleep 1; expect line "$(typed_line)" '$' ;;
     x-at-line-start) sleep 1; expect line "$(typed_line)" '$ Xecho one two' ;;
+    x-before-last) sleep 1; expect line "$(typed_line)" '$ echo one twXo' ;;
+    # fresh ran `clear` last.
+    history-recalled) sleep 1; expect line "$(typed_line)" '$ clear' ;;
     *) echo "no check named $1" ;;
   esac
 }
