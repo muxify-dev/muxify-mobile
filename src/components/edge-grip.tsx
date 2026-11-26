@@ -34,8 +34,8 @@ export function EdgeGrip({
   onHold: (at: Point) => void;
   onHeldMove: (to: Point) => void;
   onHeldLift: (to: Point) => void;
-  /** VoiceOver's activate: the drawer opens with no finger held. */
-  onOpen: () => void;
+  /** VoiceOver's activate: the drawer opens with no finger held, at the Grip's centre. */
+  onOpen: (at: Point) => void;
   /** The Terminal Screen's Pane Swipe, with the width a Pane slides across. */
   swipe?: { swipe: PaneSwipe; width: number };
 }) {
@@ -110,7 +110,8 @@ export function EdgeGrip({
   };
 
   if (!gripShown({ width: screenWidth, height: screen })) return null;
-  const top = area ? gripCentre(area, screen, screenWidth >= WIDE_DRAWER_SCREEN) - area.top - GRIP_BAND.height / 2 : null;
+  const centre = area ? gripCentre(area, screen, screenWidth >= WIDE_DRAWER_SCREEN) : null;
+  const top = area && centre !== null ? centre - area.top - GRIP_BAND.height / 2 : null;
   return (
     <View
       ref={areaView}
@@ -126,7 +127,7 @@ export function EdgeGrip({
           accessibilityLabel="Destinations"
           accessibilityHint="Lists the Panes, Windows, Sessions and Tabs you can go to"
           accessibilityState={{ disabled: !enabled }}
-          onAccessibilityTap={enabled ? onOpen : undefined}
+          onAccessibilityTap={enabled && centre !== null ? () => onOpen({ x: screenWidth, y: centre }) : undefined}
           onStartShouldSetResponder={() => enabled}
           // The finger is the drawer's once it opens: a scroll under it must not take it.
           onResponderTerminationRequest={() => touch.current?.phase !== 'held'}

@@ -40,6 +40,8 @@ page of 26 Nov 2026:
   the drawer's list reads from the bottom up: the attached Session's card
   is by the finger. The drawer closes at the pick, and the move goes on
   behind it, so an open drawer never covers the Grip while a move runs.
+  Later the panel ended at the finger and became as tall as its list
+  (ADR 0037).
 - **D3, the scope:** first the Topic the Attach holds, or the attached
   Session, then a group with the other live Topics and the Sessions in no
   Topic. After use Gleb removed the group, and the setting that chose what
