@@ -1,5 +1,5 @@
 import {
-  AUTOSCROLL_EDGE, AUTOSCROLL_MAX, autoScrollSpeed, GRIP_BAND, gripCentre, gripShown, GRIP_SLOP, liftGrip, moveGrip, type DrawerFrame, type GripTouch,
+  AUTOSCROLL_EDGE, AUTOSCROLL_MAX, autoScrollSpeed, DRAWER_ROW_REACH, drawerBottom, GRIP_BAND, gripCentre, gripShown, GRIP_SLOP, liftGrip, moveGrip, type DrawerFrame, type GripTouch,
 } from './grip';
 
 const from = { x: 380, y: 400 };
@@ -100,5 +100,15 @@ describe('gripShown', () => {
   it('shows the Grip on an iPad either way', () => {
     expect(gripShown({ width: 834, height: 1194 })).toBe(true);
     expect(gripShown({ width: 1194, height: 834 })).toBe(true);
+  });
+});
+
+describe('drawerBottom', () => {
+  it('ends the panel just below the finger, so the last row is level with it', () => {
+    expect(drawerBottom(437, 832)).toBe(437 + DRAWER_ROW_REACH);
+  });
+
+  it('keeps the panel above the keyboard or the home indicator', () => {
+    expect(drawerBottom(820, 832)).toBe(832);
   });
 });

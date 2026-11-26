@@ -763,7 +763,11 @@ Lane, on the header or on no row, or in the Cancel Zone. The drawer has no
 close button and no tap. Only VoiceOver, which has no held finger, opens
 it with no hold, and then it stays open for its rows to be activated. The finger cannot scroll the
 list, so near the list's top or bottom the list scrolls by itself, faster
-as the finger goes nearer the edge. The panel ends at the keyboard's top.
+as the finger goes nearer the edge. The panel ends at the finger that held
+the Grip, so the last row is level with it, and is as tall as its list, up
+to the top of the screen. It stays above the keyboard and the home
+indicator. It does not move with the finger. With VoiceOver it ends at the
+Grip's centre (ADR 0037).
 On a phone it covers 85 % of the width over a scrim. On an iPad it is a
 320-point column with no scrim, and the terminal beside it stays live. A Dormant or Empty
 Topic has no live Session, so it is not in the drawer: the Title Sheet or the

@@ -10,7 +10,7 @@ import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
 import type { DestinationRow } from '@/domain/destinations';
 import { directoryName } from '@/lib/paths';
 import {
-  autoScrollSpeed, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
+  autoScrollSpeed, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
 } from '@/navigation/grip';
 import { useSettings } from '@/settings/settings-context';
 
@@ -30,6 +30,12 @@ export interface EdgeDrawerState {
 /** Where the drawer is on screen, measured when it lays out, for a held finger to be checked against. */
 interface Measured {
   overlay: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * The panel's top and height inside its column, which starts
+   * `PANEL_MARGIN` below the overlay's top. Only up and down: the panel
+   * slides in from the right, so a measure of its x would catch the slide.
+   */
+  panel: { top: number; height: number } | null;
   /** The list's top inside the panel, and how tall the list and its content are. */
   listTop: number;
   listHeight: number;
@@ -50,23 +56,26 @@ interface Measured {
  * with no hold, and the drawer stays open for its rows to be activated.
  */
 export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
-  const measured = useRef<Measured>({ overlay: null, listTop: 0, listHeight: 0, contentHeight: 0, scrollY: 0, rows: new Map() });
+  const measured = useRef<Measured>({ overlay: null, panel: null, listTop: 0, listHeight: 0, contentHeight: 0, scrollY: 0, rows: new Map() });
   const heldAt = useRef<Point | null>(null);
   /** Where the held finger is now, for the scroll loop to read each frame. */
   const finger = useRef<Point | null>(null);
   const list = useRef<ScrollView>(null);
   /** The scroll loop's next frame and the time of its last one, while a held finger is near the list's top or bottom. */
   const scrolling = useRef<{ frame: number; last: number } | null>(null);
+  /** Where the finger held the Grip, on screen, for the panel to end at: see drawerBottom. */
+  const [anchorY, setAnchorY] = useState<number | null>(null);
   /** While the finger that opened the drawer is down: the row it lights, and whether it is in the Cancel Zone or the Lift Lane. */
   const [hold, setHold] = useState<{ lit: string | null; cancelling: boolean } | null>(null);
   const { width } = useWindowDimensions();
   const panelWidth = drawerWidth(width);
 
   const frame = useCallback((): DrawerFrame | null => {
-    const overlay = measured.current.overlay;
-    if (!overlay) return null;
+    const { overlay, panel } = measured.current;
+    if (!overlay || !panel) return null;
     const right = overlay.x + overlay.width;
-    return { left: right - PANEL_MARGIN - panelWidth, right, top: overlay.y, bottom: overlay.y + overlay.height, lane: LIFT_LANE };
+    const top = overlay.y + PANEL_MARGIN + panel.top;
+    return { left: right - PANEL_MARGIN - panelWidth, right, top, bottom: top + panel.height, lane: LIFT_LANE };
   }, [panelWidth]);
   /**
    * What the drawer reports as it lays out and scrolls. The list reads from
@@ -88,6 +97,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
     };
     return {
       overlay: (frame: NonNullable<Measured['overlay']>) => { measured.current.overlay = frame; },
+      panel: (top: number, height: number) => { measured.current.panel = { top, height }; },
       list: (top: number, height: number) => {
         const gap = fromEnd();
         measured.current.listTop = top;
@@ -103,18 +113,19 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
       row: (key: string, top: number, bottom: number) => { measured.current.rows.set(key, { top, bottom }); },
     };
   }, []);
-  /** Each open starts at the list's end: its sizes come again as it mounts. */
-  const opening = useCallback(() => {
-    Object.assign(measured.current, { listHeight: 0, contentHeight: 0, scrollY: 0 });
+  /** Each open starts at the list's end and ends at `at`: its sizes come again as it mounts. */
+  const opening = useCallback((at: Point) => {
+    Object.assign(measured.current, { panel: null, listHeight: 0, contentHeight: 0, scrollY: 0 });
+    setAnchorY(at.y);
     open();
   }, [open]);
 
   const { rows, onPick, onDismiss } = state;
   const rowAt = useCallback((point: Point): string | null => {
-    const { overlay, listTop, scrollY } = measured.current;
+    const { listTop, scrollY } = measured.current;
     const panel = frame();
-    if (!overlay || !panel || point.x < panel.left || inLiftLane(point, panel)) return null;
-    const y = point.y - overlay.y - listTop + scrollY;
+    if (!panel || point.x < panel.left || inLiftLane(point, panel)) return null;
+    const y = point.y - panel.top - listTop + scrollY;
     // Only the rows listed now: a row of an earlier open keeps its old place in the map.
     const row = rows.find((each) => {
       const place = measured.current.rows.get(each.key);
@@ -159,8 +170,8 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
       const to = finger.current;
       const at = heldAt.current;
       const panel = frame();
-      const { overlay, listTop, listHeight, contentHeight, scrollY } = measured.current;
-      const window: ListWindow | null = overlay ? { top: overlay.y + listTop, bottom: overlay.y + listTop + listHeight } : null;
+      const { listTop, listHeight, contentHeight, scrollY } = measured.current;
+      const window: ListWindow | null = panel ? { top: panel.top + listTop, bottom: panel.top + listTop + listHeight } : null;
       const away = to !== null && at !== null && Math.hypot(to.x - at.x, to.y - at.y) > GRIP_SLOP;
       const speed = away && panel && window ? autoScrollSpeed(to, panel, window) : 0;
       if (!to || speed === 0 || !scrolling.current) {
@@ -186,7 +197,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
       heldAt.current = at;
       finger.current = at;
       setHold({ lit: null, cancelling: false });
-      opening();
+      opening(at);
     },
     onHeldMove: (to: Point) => {
       finger.current = to;
@@ -211,6 +222,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
   const drawer = {
     ...state,
     width: panelWidth,
+    anchorY,
     wide: width >= WIDE_DRAWER_SCREEN,
     held: hold !== null,
     lit: hold?.lit ?? null,
@@ -223,8 +235,9 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
 }
 
 /**
- * The Edge Drawer: a column at the right edge that lists every Destination,
- * from the Grip. On a phone it covers most of the screen over a scrim, and a
+ * The Edge Drawer: a panel at the right edge that lists every Destination,
+ * from the Grip. It ends at the finger that held the Grip and is as tall as
+ * its list, up to the top of the screen, so the last row is by the finger. On a phone it covers most of the screen over a scrim, and a
  * tap on the scrim closes it. On an iPad it is a column with no scrim, and
  * the terminal beside it stays live.
  *
@@ -235,7 +248,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
  * drawer with no pick. It is not drawn.
  */
 export function EdgeDrawer({
-  open, rows, error, busy, onDismiss, width, wide, held, lit, cancelling, onPickKey, measure, list,
+  open, rows, error, busy, onDismiss, width, anchorY, wide, held, lit, cancelling, onPickKey, measure, list,
 }: ReturnType<typeof useEdgeSwitcher>['drawer']) {
   const { palette: chrome, sheetPalette: palette, appearance } = useSettings();
   const insets = useSafeAreaInsets();
@@ -243,9 +256,23 @@ export function EdgeDrawer({
   const layout = useMemo(() => drawerLayout(rows), [rows]);
   const keyboard = useKeyboardFrame();
   const screenHeight = useWindowDimensions().height;
+  /**
+   * The panel is as tall as its title and rows, up to its column. These are
+   * set from the layout and from the list's content as Tabs arrive: a
+   * ScrollView left to size itself by its rows does not grow when rows come
+   * after it lays out, so the last row was cut off.
+   */
+  const [columnHeight, setColumnHeight] = useState<number | null>(null);
+  const [titleHeight, setTitleHeight] = useState(0);
+  const [rowsHeight, setRowsHeight] = useState(0);
   if (!open) return null;
-  // The list ends at the keyboard's top, as its last rows are the ones by the Grip.
+  const panelHeight = columnHeight === null || rowsHeight === 0
+    ? columnHeight ?? undefined
+    : Math.min(columnHeight, titleHeight + rowsHeight + 2 * StyleSheet.hairlineWidth);
   const keyboardCovers = keyboard !== null && keyboard.height > 0 ? Math.max(screenHeight - keyboard.y, 0) : 0;
+  const floorY = screenHeight - (keyboardCovers > 0 ? keyboardCovers : insets.bottom) - PANEL_MARGIN;
+  // The overlay ends at the screen's bottom, so a y on screen is this far up from its bottom.
+  const bottom = screenHeight - (anchorY === null ? floorY : drawerBottom(anchorY, floorY));
 
   const scrim = !wide || held;
   return (
@@ -261,58 +288,74 @@ export function EdgeDrawer({
           accessibilityLabel="Close Destinations"
           accessibilityRole="button">
           {held ? (
-            <View style={[styles.cancel, { right: width }]} pointerEvents="none">
+            <View style={[styles.cancel, { right: width, bottom }]} pointerEvents="none">
               <SymbolView name="xmark.circle.fill" size={22} tintColor={cancelling ? '#ffffff' : 'rgba(255,255,255,0.7)'} />
               <Text style={[styles.cancelText, { opacity: cancelling ? 1 : 0.7 }]}>Lift here to close</Text>
             </View>
           ) : null}
         </Pressable>
       ) : null}
+      {/*
+        * The slide is on a full-screen layer whose size never changes: an
+        * Animated.View with an entering animation keeps the size it mounted
+        * with, and the panel's height changes as Tabs arrive.
+        */}
       <Animated.View
         entering={SlideInRight.duration(180)}
         exiting={SlideOutRight.duration(150)}
-        style={[styles.panel, {
-          width, borderColor: palette.stroke,
-          bottom: (keyboardCovers > 0 ? keyboardCovers : insets.bottom) + PANEL_MARGIN,
-        }]}
-        accessibilityViewIsModal={!wide}
-        onAccessibilityEscape={onDismiss}>
-        {isGlassEffectAPIAvailable() ? (
-          <GlassView pointerEvents="none" style={StyleSheet.absoluteFill} glassEffectStyle="regular" colorScheme={appearance} />
-        ) : (
-          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: palette.sheet }]} />
-        )}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[styles.kicker, { color: palette.secondary }]}>{layout.kicker}</Text>
-            <Text style={[styles.title, { color: palette.primary }]} numberOfLines={1}>{layout.title}</Text>
-          </View>
-          {busy ? <Text style={[styles.detail, { color: palette.secondary }]}>Going…</Text> : null}
-        </View>
-        {error ? <Text style={[styles.error, { color: chrome.destructive }]}>{error}</Text> : null}
-        <View style={styles.body} onLayout={({ nativeEvent: { layout: box } }) => measure.list(box.y, box.height)}>
-          <ScrollView
-            ref={list}
-            style={styles.list}
-            scrollEnabled={!held}
-            onContentSizeChange={(_, height) => measure.content(height)}
-            onScroll={({ nativeEvent }) => measure.scroll(nativeEvent.contentOffset.y)}
-            scrollEventThrottle={16}
-            contentContainerStyle={styles.fromBottom}>
-            {layout.items.map((item) => (
-              <View
-                key={item.key}
-                onLayout={({ nativeEvent: { layout: box } }) => measure.row(item.key, box.y, box.y + box.height)}>
-                {item.kind === 'header' ? (
-                  <SectionHeader item={item} lit={lit === item.key} onPress={() => onPickKey(item.key)} />
-                ) : (
-                  <DestinationRowView item={item} lit={lit === item.key} onPress={() => onPickKey(item.key)} />
-                )}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="box-none">
+        {/* The column the panel can fill; the panel sits at its bottom and is as tall as its list. */}
+        <View
+          style={[styles.column, { width, bottom }]}
+          pointerEvents="box-none"
+          onLayout={({ nativeEvent: { layout: box } }) => setColumnHeight(box.height)}>
+          <View
+            style={[styles.panel, { borderColor: palette.stroke, height: panelHeight }]}
+            onLayout={({ nativeEvent: { layout: box } }) => measure.panel(box.y, box.height)}
+            accessibilityViewIsModal={!wide}
+            onAccessibilityEscape={onDismiss}>
+            {isGlassEffectAPIAvailable() ? (
+              <GlassView pointerEvents="none" style={StyleSheet.absoluteFill} glassEffectStyle="regular" colorScheme={appearance} />
+            ) : (
+              <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: palette.sheet }]} />
+            )}
+            <View style={styles.top} onLayout={({ nativeEvent: { layout: box } }) => setTitleHeight(box.height)}>
+              <View style={styles.header}>
+                <View style={styles.headerText}>
+                  <Text style={[styles.kicker, { color: palette.secondary }]}>{layout.kicker}</Text>
+                  <Text style={[styles.title, { color: palette.primary }]} numberOfLines={1}>{layout.title}</Text>
+                </View>
+                {busy ? <Text style={[styles.detail, { color: palette.secondary }]}>Going…</Text> : null}
               </View>
-            ))}
-          </ScrollView>
-          {/* The Lift Lane: bare glass, so the rows stop short of the finger. */}
-          <View style={{ width: LIFT_LANE - PANEL_MARGIN }} pointerEvents="none" />
+              {error ? <Text style={[styles.error, { color: chrome.destructive }]}>{error}</Text> : null}
+            </View>
+            {/* Its right margin is the Lift Lane: bare glass, so the rows stop short of the finger. */}
+            <ScrollView
+              ref={list}
+              style={styles.list}
+              onLayout={({ nativeEvent: { layout: box } }) => measure.list(box.y, box.height)}
+              scrollEnabled={!held}
+              onContentSizeChange={(_, height) => {
+                setRowsHeight(height);
+                measure.content(height);
+              }}
+              onScroll={({ nativeEvent }) => measure.scroll(nativeEvent.contentOffset.y)}
+              scrollEventThrottle={16}
+              contentContainerStyle={styles.listContent}>
+              {layout.items.map((item) => (
+                <View
+                  key={item.key}
+                  onLayout={({ nativeEvent: { layout: box } }) => measure.row(item.key, box.y, box.y + box.height)}>
+                  {item.kind === 'header' ? (
+                    <SectionHeader item={item} lit={lit === item.key} onPress={() => onPickKey(item.key)} />
+                  ) : (
+                    <DestinationRowView item={item} lit={lit === item.key} onPress={() => onPickKey(item.key)} />
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
         </View>
       </Animated.View>
     </View>
@@ -440,10 +483,8 @@ const SCRIM = 'rgba(0, 0, 0, 0.35)';
 const CANCEL_TINT = 'rgba(160, 30, 30, 0.45)';
 
 const styles = StyleSheet.create({
+  column: { position: 'absolute', top: PANEL_MARGIN, right: PANEL_MARGIN, justifyContent: 'flex-end' },
   panel: {
-    position: 'absolute',
-    top: PANEL_MARGIN,
-    right: PANEL_MARGIN,
     borderRadius: 26,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
@@ -454,9 +495,9 @@ const styles = StyleSheet.create({
   kicker: { fontSize: 11, fontWeight: '600', letterSpacing: 0.6 },
   title: { fontSize: 20, fontWeight: '700' },
   error: { fontSize: 13, paddingHorizontal: 18, paddingBottom: 8 },
-  body: { flex: 1, flexDirection: 'row' },
-  list: { flex: 1 },
-  fromBottom: { flexGrow: 1, justifyContent: 'flex-end', paddingLeft: 10, paddingBottom: 10 },
+  top: { flexShrink: 0 },
+  list: { flex: 1, marginRight: LIFT_LANE - PANEL_MARGIN },
+  listContent: { paddingLeft: 10, paddingBottom: 10 },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 6, borderRadius: 10,
   },
@@ -469,6 +510,6 @@ const styles = StyleSheet.create({
   rowText: { flex: 1 },
   name: { fontSize: 16 },
   detail: { fontSize: 12 },
-  cancel: { position: 'absolute', left: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 4 },
+  cancel: { position: 'absolute', left: 0, top: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 6, paddingHorizontal: 4, paddingBottom: 12 },
   cancelText: { color: '#ffffff', fontSize: 11, fontWeight: '600', textAlign: 'center' },
 });

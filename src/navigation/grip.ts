@@ -98,6 +98,23 @@ export interface DrawerFrame {
  */
 export const LIFT_LANE = 44;
 
+/**
+ * How far below the finger that opened the drawer the panel ends: the
+ * list's bottom padding (10) and half a row's least height (24), so the
+ * last row is level with the finger and a slide left from the Lift Lane
+ * lands on it. It follows those two sizes in components/edge-drawer.tsx.
+ */
+export const DRAWER_ROW_REACH = 34;
+
+/**
+ * Where the drawer's panel ends on screen, as a y: just below `anchorY`,
+ * where the finger held the Grip, but never below `floorY`, the top of the
+ * keyboard or of the home indicator. The panel grows up from there.
+ */
+export function drawerBottom(anchorY: number, floorY: number): number {
+  return Math.min(anchorY + DRAWER_ROW_REACH, floorY);
+}
+
 /** Whether a held finger at `point` is in the Lift Lane. */
 export function inLiftLane(point: Point, drawer: DrawerFrame): boolean {
   return !inCancelZone(point, drawer) && point.x >= drawer.right - drawer.lane;
