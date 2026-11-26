@@ -10,6 +10,8 @@ import { placeTabRoute } from '@/browser/place-tab-route';
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import { tabRestoreOf, type BrowserTab } from '@/browser/tabs';
 import { ConnectionScreen } from '@/components/connection-screen';
+import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
+import { EdgeGrip } from '@/components/edge-grip';
 import { HeaderBand } from '@/components/header-band';
 import { HeaderTitleButton, type HeaderTitle } from '@/components/terminal-header';
 import { TitleSheet } from '@/components/title-sheet';
@@ -69,7 +71,7 @@ export default function WebViewScreen() {
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   const focused = useIsFocused();
-  const { appearance, palette } = useSettings();
+  const { appearance, palette, settings } = useSettings();
   const attach = useCurrentAttach();
   const state = useAttachState(attach);
   // A cold start whose Place has a Tab opens here, with no Terminal Screen
@@ -174,6 +176,7 @@ export default function WebViewScreen() {
   }, [leave, router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved,
     onReplacingStopped: opening.forgetLookup });
+  const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
 
   // A page that a Place opened: once the Attach is back in the Place's
   // Window, the Host must still list the Tab. A Tab closed on the Mac sends the
@@ -253,16 +256,24 @@ export default function WebViewScreen() {
           detailTestID="page-title"
         />
       )}
-      {page ? <LivePageHost id={page.id} /> : <View style={styles.fill} />}
-      {failure === null ? null : (
-        <View style={[styles.failure, { backgroundColor: palette.background }]}>
-          <Text style={[styles.reason, { color: palette.destructive }]}>{failure}</Text>
-          <Text style={[styles.address, { color: palette.secondaryLabel }]}>{shown.page}</Text>
-          <Pressable accessibilityRole="button" onPress={reload}>
-            <Text style={[styles.retry, { color: palette.controlAccent }]}>Try again</Text>
-          </Pressable>
-        </View>
-      )}
+      <View style={styles.fill}>
+        {page ? <LivePageHost id={page.id} /> : <View style={styles.fill} />}
+        {failure === null ? null : (
+          <View style={[styles.failure, { backgroundColor: palette.background }]}>
+            <Text style={[styles.reason, { color: palette.destructive }]}>{failure}</Text>
+            <Text style={[styles.address, { color: palette.secondaryLabel }]}>{shown.page}</Text>
+            <Pressable accessibilityRole="button" onPress={reload}>
+              <Text style={[styles.retry, { color: palette.controlAccent }]}>Try again</Text>
+            </Pressable>
+          </View>
+        )}
+        {/* Over the page at the right edge: the page scrolls under the rest. */}
+        <EdgeGrip
+          enabled={state?.typing.kind === 'open' && !chooser.sheet.isPresented && cover.kind !== 'connection-screen'}
+          {...switcher.grip}
+        />
+        <EdgeDrawer {...switcher.drawer} />
+      </View>
       {coldStart && cover.kind === 'connection-screen' ? (
         <ConnectionScreen
           cover={cover}

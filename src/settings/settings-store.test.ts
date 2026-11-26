@@ -23,6 +23,7 @@ const CHANGED: Settings = {
   zoomMultipaneWindows: false,
   hostScreenTabs: { host1: 'sessions' },
   reconnectOnStart: true,
+  hidePanesPicker: true,
   quickActions: {
     ctrl: [null, 'interrupt-twice', null, 'suspend'],
     cmd: ['paste', null, 'copy-pane', null],

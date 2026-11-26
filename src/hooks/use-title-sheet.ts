@@ -13,7 +13,9 @@ import { actionsFor } from '@/domain/cover';
 import { lastAnswer } from '@/domain/host-listing';
 import { topicSections } from '@/domain/host-screen';
 import { titleSheetNotice } from '@/domain/title-sheet-notice';
+import type { DestinationRow } from '@/domain/destinations';
 import { sessionTitleRows, topicTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
+import { useEdgeDrawerRows } from '@/hooks/use-edge-drawer-rows';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useLiveListing } from '@/hooks/use-host-listing';
 import { useHostReading } from '@/hooks/use-host-reading';
@@ -30,8 +32,16 @@ import { MENU_ITEM, sessionActions, type SessionAction, type SessionOnHost, type
 
 const say = speakingAs(deviceLog(), 'screen');
 
-/** `sessionsOnly` is the sheet opened by Choose a Session, on a Session that has ended. */
-type TitleSheetState = { open: false } | { open: true; revision: number; error?: string; sessionsOnly?: boolean };
+/**
+ * The chooser, open in one of its two presentations: the Title Sheet, from
+ * the Header title, or the Edge Drawer, from the Grip. They share the picks,
+ * the revision that a late answer is checked against, and the error a pick
+ * leaves. `sessionsOnly` is the sheet opened by Choose a Session, on a
+ * Session that has ended.
+ */
+type TitleSheetState =
+  | { open: false }
+  | { open: true; via: 'sheet' | 'drawer'; revision: number; error?: string; sessionsOnly?: boolean };
 
 export interface TitleSheetOptions {
   attach: Attach | null;
@@ -51,9 +61,11 @@ export interface TitleSheetOptions {
 }
 
 /**
- * The Title Sheet's state and what its picks do, for each screen that has the
- * Header: the Terminal Screen and the Web View. Each renders `<TitleSheet>`
- * with `sheet`, so the two cannot drift apart.
+ * The Title Sheet's and the Edge Drawer's state and what their picks do, for
+ * each screen that has the Header: the Terminal Screen and the Web View. Each
+ * renders `<TitleSheet>` with `sheet` and `<EdgeDrawer>` with `drawer`, so the
+ * two screens cannot drift apart, and a pick in the drawer does what the
+ * same pick in the sheet does.
  */
 export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, beforeOpen, onReplacingStopped }: TitleSheetOptions) {
   const holder = useAttachHolder();
@@ -80,6 +92,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     () => (topicsOn ? topicSections(hostTopics, appearance) : []),
     [topicsOn, hostTopics, appearance],
   );
+  const drawerOpen = titleSheet.open && titleSheet.via === 'drawer';
   const hostEntry = useHostEntry(hostId ?? '', entered, true);
   const handover = useRef<ReturnType<typeof setTimeout> | null>(null);
   useFocusEffect(useCallback(() => () => {
@@ -204,24 +217,25 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   const [windowTabs, setWindowTabs] = useState<{ revision: number; session: string | undefined; window: string; tabs: BrowserTab[] } | null>(null);
   const activeWindowId = state?.topology.activeWindow?.id;
   const titleRevision = titleSheet.open ? titleSheet.revision : null;
+  const sheetRevision = titleSheet.open && titleSheet.via === 'sheet' ? titleSheet.revision : null;
   useEffect(() => {
     setWindowTabs(null);
-    if (!windowsOn || titleRevision === null || !hostId || !activeWindowId) return;
+    if (!windowsOn || sheetRevision === null || !hostId || !activeWindowId) return;
     let current = true;
     void readBrowserTabs(hostId, activeWindowId).then((read) => {
-      if (current && chooserRevision.current === titleRevision && holder.current() === attach &&
+      if (current && chooserRevision.current === sheetRevision && holder.current() === attach &&
           attach?.state().sessionName === sessionName && attach?.state().topology.activeWindow?.id === activeWindowId) {
-        setWindowTabs({ revision: titleRevision, session: sessionName, window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
+        setWindowTabs({ revision: sheetRevision, session: sessionName, window: activeWindowId, tabs: read.kind === 'listed' ? read.tabs : NO_TABS });
       }
     });
     return () => { current = false; };
-  }, [windowsOn, titleRevision, hostId, activeWindowId, sessionName, attach, holder]);
+  }, [windowsOn, sheetRevision, hostId, activeWindowId, sessionName, attach, holder]);
 
   const openTitleSheet = useCallback(() => {
     if (!attach) return;
     if (handover.current) clearTimeout(handover.current);
     beforeOpen?.();
-    setTitleSheet({ open: true, revision: ++chooserRevision.current });
+    setTitleSheet({ open: true, via: 'sheet', revision: ++chooserRevision.current });
     attach.refreshTopology();
     if (sessionsOn) attach.capturePreviews((state?.sessions ?? []).map((session) => `${session.name}:`));
     if (topicsOn) void readHost();
@@ -247,7 +261,8 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   }, [state, topic]);
 
   const chooserBusy = useRef(false);
-  const choose = useCallback((pick: TitlePick, explicitTopic: boolean) => {
+  /** `then` runs in place of the move's own end once the Attach is there: a Tab opened in the Window it went to. */
+  const choose = useCallback((pick: TitlePick, explicitTopic: boolean, then?: () => void) => {
     if (!attach || !state || chooserBusy.current) return;
     const revision = chooserRevision.current;
     const current = () => chooserRevision.current === revision && holder.current() === attach;
@@ -267,16 +282,23 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
         }
         if (!current() || attach.state().sessionName !== (pick.session ?? state.sessionName)) return;
         if (pick.window !== null) await attach.selectWindow(pick.window);
+        if (!current()) return;
+        if (then) {
+          closeChooser();
+          then();
+          return;
+        }
         // A Topic held now that lists the Session keeps it, and the Session Place does not apply.
-        if (current()) entered(attach.state().topic === null ? restore?.tab ?? null : null);
+        entered(attach.state().topic === null ? restore?.tab ?? null : null);
       } catch (error) {
+        say(`a move to ${pick.session ?? state.sessionName} failed: ${describeError(error)}`);
         if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
       } finally {
         chooserBusy.current = false;
         setSwitchingTo(null);
       }
     })();
-  }, [attach, state, topic, holder, entered, hostId]);
+  }, [attach, state, topic, holder, entered, closeChooser, hostId]);
   const selectSession = useCallback((session: string) => {
     if (!sessionsFromHost) {
       choose({ session, window: null }, false);
@@ -292,7 +314,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
   const openSessionsOnly = useCallback(() => {
     if (handover.current) clearTimeout(handover.current);
     beforeOpen?.();
-    setTitleSheet({ open: true, revision: ++chooserRevision.current, sessionsOnly: true });
+    setTitleSheet({ open: true, via: 'sheet', revision: ++chooserRevision.current, sessionsOnly: true });
     void readHost();
   }, [readHost, beforeOpen]);
   const pickTitleRow = useCallback((pick: TitlePick) => choose(pick, true), [choose]);
@@ -310,12 +332,12 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       attach?.reconnect();
     }
   }, [attach, readHost, rereadTopic]);
-  const notice = titleSheet.open
+  const notice = titleSheet.open && titleSheet.via === 'sheet'
     ? titleSheetNotice({ actionError: titleSheet.error, problem, hostName: attach?.hostName ?? 'the Host', topic: topicView })
     : null;
 
   const sheet: TitleSheetProps = {
-    isPresented: titleSheet.open,
+    isPresented: titleSheet.open && titleSheet.via === 'sheet',
     onDismiss: closeChooser,
     lists: titleSheet.open && titleSheet.sessionsOnly ? SESSIONS_ONLY : chooserLists,
     rows: titleRows,
@@ -338,11 +360,69 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     onOpenTab: openTab,
   };
 
+  const drawerRows = useEdgeDrawerRows({ open: drawerOpen, revision: titleRevision, attach, state, hostId, topic, titleRows });
+  /**
+   * Closes the Edge Drawer at a pick and keeps the pick's revision, so the
+   * move goes on: the drawer is a quick switch, and an open drawer would
+   * cover the Grip until the move ends. A move that fails says so in the
+   * log only.
+   */
+  const leaveDrawer = useCallback(() => setTitleSheet((previous) => (previous.open && previous.via === 'drawer' ? { open: false } : previous)), []);
+  const openDrawer = useCallback(() => {
+    if (!attach) return;
+    if (handover.current) clearTimeout(handover.current);
+    beforeOpen?.();
+    setTitleSheet({ open: true, via: 'drawer', revision: ++chooserRevision.current });
+    attach.refreshTopology();
+    attach.refreshSessions();
+    void readHost();
+  }, [attach, beforeOpen, readHost]);
+  /** A pick in the Edge Drawer: what the same pick in the Title Sheet does. */
+  const pickDestination = useCallback((row: DestinationRow) => {
+    say(`picked ${row.key} in the Edge Drawer`);
+    switch (row.kind) {
+      case 'session':
+        leaveDrawer();
+        choose({ session: row.name, window: null }, true);
+        return;
+      case 'window':
+        leaveDrawer();
+        choose({ session: row.session, window: row.window.index }, true);
+        return;
+      case 'pane':
+        closeChooser();
+        attach?.selectPane(row.pane.id);
+        onMoved?.(null);
+        return;
+      case 'tab':
+        // A Tab belongs to the Place of its own Window: the Attach goes there first.
+        if (row.window.current) {
+          openTab(row.tab);
+          return;
+        }
+        leaveDrawer();
+        choose({ session: row.session, window: row.window.index }, true, () => onOpenTab(row.tab));
+        return;
+      case 'topic':
+        closeChooser();
+        return;
+    }
+  }, [choose, closeChooser, leaveDrawer, attach, onMoved, openTab, onOpenTab]);
+
   /** A Topic picked in the sheet is on its way: the Attach can already be in it. */
   const openingTopic = hostEntry.busyCard !== null;
   return {
     sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic,
     attachedSession, actOnAttachedSession: sessionMenu.act,
+    drawer: {
+      open: drawerOpen,
+      rows: drawerRows,
+      error: titleSheet.open && titleSheet.via === 'drawer' ? titleSheet.error : undefined,
+      busy: switchingTo !== null || openingTopic,
+      onPick: pickDestination,
+      onDismiss: closeChooser,
+    },
+    openDrawer,
   };
 }
 

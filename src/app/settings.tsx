@@ -203,6 +203,24 @@ export default function SettingsScreen() {
           </Section>
 
           <Section
+            header={<SectionHeader palette={palette}>Destinations</SectionHeader>}
+            footer={
+              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
+                Hold the line at the right edge to open the Panes, Windows, Sessions and Tabs of the
+                Topic or Session on screen. This trial hides every way into the Panes picker, so the
+                Grip is the way to a Pane. The title tap stays. Zoom and Split stay in Options.
+              </Text>
+            }
+            modifiers={[listRowBackground(palette.rowSurface)]}>
+            <Toggle
+              label="Hide the Panes picker"
+              isOn={value.hidePanesPicker}
+              onIsOnChange={(on) => update({ hidePanesPicker: on })}
+              modifiers={[tint(palette.controlAccent)]}
+            />
+          </Section>
+
+          <Section
             header={<SectionHeader palette={palette}>Keyboard</SectionHeader>}
             modifiers={[listRowBackground(palette.rowSurface)]}>
             <Button
