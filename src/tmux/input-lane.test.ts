@@ -12,6 +12,7 @@ import {
   type Key,
   type Lane,
   type LaneEvent,
+  type Typed,
   type MessageId,
   type PaneMark,
   type Seq,
@@ -34,6 +35,7 @@ const mark = (over: Partial<PaneMark> = {}): PaneMark => ({
   ...over,
 });
 const answered = (result: DeliverResult): LaneEvent => ({ kind: 'answered', result });
+const parked = (...keys: Key[]): LaneEvent => ({ kind: 'parked', keys: keys.map((key): Typed => ({ ...key, typedAt: 1_000 })) });
 
 /**
  * A Lane with the Outbox's part played by hand: the clock, and the Seq count
@@ -283,6 +285,91 @@ describe('a Lane across a break', () => {
     expect(noticeOf(run.lane)?.kind).toBe('discarded');
     run.send({ kind: 'dismissed' });
     expect(noticeOf(run.lane)).toBeNull();
+  });
+});
+
+describe('keys of a Pane that was never made', () => {
+  it('holds them for the user at once on a live Lane with nothing in flight, and sends none', () => {
+    const run = live();
+    run.send(parked(text('ls'), named('Enter')));
+
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['verb-refused'] });
+    expect(run.delivered()).toEqual([]);
+    expect(noticeOf(run.lane)).toMatchObject({ kind: 'held', preview: 'ls⏎', reasons: ['verb-refused'] });
+  });
+
+  it('waits behind a Batch in flight, which is still confirmed, and then asks about every key behind it', () => {
+    const run = live();
+    run.send(typed(text('a')), typed(text('b')), parked(text('cd')));
+    expect(run.lane.phase).toEqual({ kind: 'live' });
+    expect(run.delivered()).toEqual(['1:a']);
+
+    run.send(answered(mark({ ack: seq(1) })));
+
+    expect(run.lane.delivered).toBe(seq(1));
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['verb-refused'] });
+    expect(run.delivered()).toEqual(['1:a']);
+    expect(pendingKeys(run.lane).map((key) => previewOf([key])).join('')).toBe('bcd');
+  });
+
+  it('keeps the other reason when the Batch in flight is refused', () => {
+    const run = live();
+    run.send(typed(text('a')), parked(text('b')), answered({ refused: 'tmux said no' }));
+
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: ['refused', 'verb-refused'] });
+  });
+
+  it('adds its reason to a Lane that is held already, and Send types every key in order', () => {
+    const run = live();
+    run.send(typed(text('rm')), typed(named('Enter')));
+    run.send(answered(mark({ ack: seq(1) })));
+    run.send(typed(named('C-c')), answered(mark({ ack: seq(2) })));
+    run.send(answered(mark({ program: 'vim' })));
+    run.send(typed(text('x')), { kind: 'lost' }, { kind: 'connected' }, answered(mark({ program: 'vim', ack: seq(3) })));
+    expect(run.lane.phase.kind).toBe('held');
+
+    run.send(parked(text('yz')))
+    expect(run.lane.phase).toMatchObject({ kind: 'held', reasons: expect.arrayContaining(['program-changed', 'verb-refused']) });
+
+    run.send({ kind: 'released' }, answered(mark({ program: 'vim', ack: seq(4) })));
+    expect(run.delivered().slice(-2)).toEqual(['4:x', '5:yz']);
+  });
+
+  it('holds them on a Lane with no Connection, and asks when the Connection comes back', () => {
+    const run = driver(false);
+    run.send(parked(text('ls')));
+    expect(run.lane.phase).toEqual({ kind: 'adrift' });
+
+    run.send({ kind: 'connected' }, answered(mark()));
+
+    expect(run.lane.phase).toEqual({ kind: 'held', reasons: expect.arrayContaining(['verb-refused']) });
+    expect(run.delivered()).toEqual([]);
+  });
+
+  it('discards them with the Lane when the Pane is gone', () => {
+    const run = live();
+    run.send(typed(text('a')), parked(text('b')), answered('gone'));
+
+    expect(run.lane.phase).toEqual({ kind: 'live' });
+    expect(run.lane.dropped).toMatchObject({ reason: 'pane-gone' });
+    expect(run.lane.parking).toBe(false);
+  });
+
+  it('gives them back with Move to Composer', () => {
+    const run = live();
+    run.send(parked(text('ls')));
+
+    run.send({ kind: 'taken' });
+
+    expect(run.lane.phase).toEqual({ kind: 'live' });
+    expect(run.lane.waiting).toEqual([]);
+    expect(run.lane.parking).toBe(false);
+  });
+
+  it('puts nothing on the Lane for no keys', () => {
+    const run = live();
+    run.send(parked());
+    expect(run.lane.phase).toEqual({ kind: 'live' });
   });
 });
 

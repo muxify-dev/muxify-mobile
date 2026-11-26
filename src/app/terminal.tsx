@@ -761,8 +761,9 @@ export default function TerminalScreen() {
   /**
    * Bytes typed into one Pane's Surface.
    *
-   * Aimed at the Surface that had first responder, which is the only one the
-   * keyboard was ever talking to — so a split needs no routing of its own.
+   * Aimed at the Surface that sent them. Where they go is the Attach's to say:
+   * a key from a Surface that no longer holds the keyboard, or one typed while
+   * a split is being made, goes to the Pane in use.
    */
   const handlePaneInput = useCallback(
     (paneId: string, data: string) => {

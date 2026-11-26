@@ -90,7 +90,9 @@ export type HoldReason =
   | 'unwitnessed'
   /** A paste written before the break, on a tmux that cannot refuse its late copy. */
   | 'unguarded'
-  | 'refused';
+  | 'refused'
+  /** Typed for a new Pane that tmux never made: they wait here, on the Pane they were typed in. */
+  | 'verb-refused';
 
 export type DiscardReason = 'pane-gone' | 'server-restarted' | 'pane-replaced';
 
@@ -119,6 +121,12 @@ export interface Lane {
   /** Typed and never written. */
   readonly waiting: readonly Typed[];
   /**
+   * Keys of a verb that made no Pane joined `waiting`, and the Lane goes held
+   * as soon as nothing is in flight: a Batch that tmux has the line of must
+   * keep its place, and be confirmed or judged first. See `parked`.
+   */
+  readonly parking: boolean;
+  /**
    * A Seq that a late line of a lost Connection must find on the Pane, after
    * the user took back or the Lane discarded the Batch with that Seq. Written
    * first on each Connection until a mark shows it.
@@ -136,6 +144,12 @@ export type LaneEvent =
   | { readonly kind: 'answered'; readonly result: DeliverResult }
   /** The answer to a `burn` effect. */
   | { readonly kind: 'burned'; readonly result: DeliverResult }
+  /**
+   * Keys typed for a Pane that was never made. They go behind the keys of this
+   * Lane, and the user decides about all of them. A Batch in flight is
+   * not touched: the answer to it is still the answer of this Lane.
+   */
+  | { readonly kind: 'parked'; readonly keys: readonly Typed[] }
   /** Send on a held Lane. */
   | { readonly kind: 'released' }
   /** Move to Composer or Discard on a held Lane. The caller reads `pendingKeys` first. */
@@ -172,6 +186,7 @@ export function newLane(paneId: string, connected: boolean): Lane {
     delivered: NO_SEQ,
     unconfirmed: null,
     waiting: [],
+    parking: false,
     owedBurn: null,
     dropped: null,
   };
@@ -258,24 +273,36 @@ function discard(lane: Lane, reason: DiscardReason, witness: PaneMark | null): L
     witness,
     unconfirmed: null,
     waiting: [],
+    parking: false,
     dropped: keys.length === 0 ? lane.dropped : { keys: [...(lane.dropped?.keys ?? []), ...keys], reason },
   };
+}
+
+/** Writes on, or, with parked keys waiting, asks the user about them all. */
+function pumpOrPark(lane: Lane, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
+  return lane.parking ? { lane: parkedHeld(lane, []), effects: [] } : pump(lane, ctx);
+}
+
+/** The Lane waits for the user, with the reasons the Lane had, and the one of the parked keys. */
+function parkedHeld(lane: Lane, reasons: readonly HoldReason[]): Lane {
+  const all = reasons.includes('verb-refused') ? reasons : [...reasons, 'verb-refused' as const];
+  return { ...lane, parking: false, phase: { kind: 'held', reasons: all } };
 }
 
 /** A problem with the Batch in flight. A gesture is not worth a question, so it goes. */
 function hold(lane: Lane, reason: HoldReason, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
   if (lane.unconfirmed && isGesture(lane.unconfirmed.key)) {
-    const next = pump({ ...lane, unconfirmed: null }, ctx);
+    const next = pumpOrPark({ ...lane, unconfirmed: null }, ctx);
     return { lane: next.lane, effects: [{ kind: 'gestures-dropped', count: 1 }, ...next.effects] };
   }
-  return { lane: { ...lane, phase: { kind: 'held', reasons: [reason] } }, effects: [] };
+  return { lane: lane.parking ? parkedHeld(lane, [reason]) : { ...lane, phase: { kind: 'held', reasons: [reason] } }, effects: [] };
 }
 
 /** Starts a live Lane again: the unconfirmed Batch goes first, with the Seq it has. */
 function resume(lane: Lane, ctx: LaneContext): { lane: Lane; effects: Effect[] } {
   const live: Lane = { ...lane, phase: { kind: 'live' } };
   if (live.unconfirmed) return { lane: live, effects: [{ kind: 'deliver', batch: live.unconfirmed }] };
-  return pump(live, ctx);
+  return pumpOrPark(live, ctx);
 }
 
 /** Bars a late line that carries this Seq, until a mark shows that the Pane has it. */
@@ -298,13 +325,13 @@ function answer(lane: Lane, result: DeliverResult, ctx: LaneContext): { lane: La
     if (result === 'gone') return { lane: discard(lane, 'pane-gone', null), effects: [] };
     if ('refused' in result) return hold(lane, 'refused', ctx);
     if (result.ack === null || result.ack < lane.unconfirmed.seq) return hold(lane, 'unsure-delivered', ctx);
-    return pump({ ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null, witness: result }, ctx);
+    return pumpOrPark({ ...lane, delivered: lane.unconfirmed.seq, unconfirmed: null, witness: result }, ctx);
   }
   if (lane.phase.kind !== 'checking') return { lane, effects: [] };
 
   if (result !== 'gone' && 'refused' in result) {
     return lane.phase.crossed
-      ? { lane: { ...lane, phase: { kind: 'held', reasons: ['refused'] } }, effects: [] }
+      ? { lane: lane.parking ? parkedHeld(lane, ['refused']) : { ...lane, phase: { kind: 'held', reasons: ['refused'] } }, effects: [] }
       : resume(lane, ctx);
   }
   const { acked, verdict } = judge({ ...lane, crossed: lane.phase.crossed, read: result, now: ctx.now, ttlMs: ctx.ttlMs });
@@ -320,7 +347,10 @@ function answer(lane: Lane, result: DeliverResult, ctx: LaneContext): { lane: La
   }
   const witnessed: Lane = { ...confirmed, witness: result === 'gone' ? null : result };
   if (verdict.kind === 'hold') {
-    return { lane: { ...witnessed, phase: { kind: 'held', reasons: verdict.reasons } }, effects: [] };
+    return {
+      lane: witnessed.parking ? parkedHeld(witnessed, verdict.reasons) : { ...witnessed, phase: { kind: 'held', reasons: verdict.reasons } },
+      effects: [],
+    };
   }
   return resume(witnessed, ctx);
 }
@@ -333,6 +363,16 @@ export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: La
         return { lane, effects: [{ kind: 'gestures-dropped', count: 1 }] };
       }
       return pump({ ...lane, waiting: append(lane.waiting, event.key, ctx.now) }, ctx);
+    }
+
+    case 'parked': {
+      if (event.keys.length === 0) return { lane, effects: [] };
+      const waiting = [...lane.waiting, ...event.keys];
+      const { phase } = lane;
+      if (phase.kind === 'held') return { lane: parkedHeld({ ...lane, waiting }, phase.reasons), effects: [] };
+      // Behind a Batch in flight, or a Lane that has no Connection or is reading its mark: the user is asked when that is over.
+      if (lane.unconfirmed !== null || phase.kind !== 'live') return { lane: { ...lane, waiting, parking: true }, effects: [] };
+      return { lane: parkedHeld({ ...lane, waiting }, []), effects: [] };
     }
 
     case 'connected': {
@@ -357,7 +397,7 @@ export function step(lane: Lane, event: LaneEvent, ctx: LaneContext): { lane: La
 
     case 'taken': {
       if (lane.phase.kind !== 'held') return { lane, effects: [] };
-      const emptied: Lane = { ...lane, phase: { kind: 'live' }, unconfirmed: null, waiting: [] };
+      const emptied: Lane = { ...lane, phase: { kind: 'live' }, unconfirmed: null, waiting: [], parking: false };
       return lane.unconfirmed ? owe(emptied, lane.unconfirmed.seq) : { lane: emptied, effects: [] };
     }
 

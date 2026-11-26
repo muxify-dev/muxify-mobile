@@ -90,6 +90,7 @@ function fakeServer() {
   const panes = new Map([
     ['%0', { pid: 200, ack: 0, typed: [] as string[] }],
     ['%2', { pid: 201, ack: 0, typed: [] as string[] }],
+    ['%3', { pid: 202, ack: 0, typed: [] as string[] }],
   ]);
   const buffers = new Map<string, string>();
   const mark = (paneId: string): string => {
@@ -763,6 +764,159 @@ describe('the keyboard the user wants', () => {
       await settle();
 
       expect(kit.attach.state().keyboard).toBe('down');
+    });
+  });
+
+  describe('while a Pane is being made', () => {
+    /** One tmux 3.8 server that two links reach, with %0 the only Pane the Topology lists. */
+    async function making() {
+      const server = fakeServer();
+      const sessions = fakeSessions(server.pid);
+      const kit = attachOn({ hosts: [fakeHost(server, sessions), fakeHost(server, sessions)] });
+      await connected(kit);
+      kit.attach.surfaceForPane('%0', fakeSurface(), GRID);
+      await settle();
+      return { kit, server, sessions };
+    }
+
+    it('types keys that were typed meanwhile into the new Pane, and none into the old one', async () => {
+      const { kit, server } = await making();
+      kit.hosts[0].hold('if-shell');
+
+      const split = kit.attach.split('right');
+      await settle();
+      type(kit, '%0', 'ab');
+      kit.attach.view('%0').press('Enter');
+      await settle();
+      expect(server.typed('%0')).toBe('');
+
+      kit.hosts[0].release();
+      await split;
+      await settle();
+
+      expect(server.typed('%2')).toBe('ab<Enter>');
+      expect(server.typed('%0')).toBe('');
+      expect(kit.attach.state().keyboard).toBe('up');
+    });
+
+    it('keeps typing into the new Pane until the Topology says which Pane is active', async () => {
+      const { kit, server } = await making();
+      kit.hosts[0].hold('if-shell');
+      const split = kit.attach.split('right');
+      await settle();
+      type(kit, '%0', 'a');
+
+      // tmux made the Pane, and the Topology is not read yet.
+      kit.hosts[0].hold('list-windows');
+      kit.hosts[0].release('if-shell');
+      await settle();
+      type(kit, '%0', 'b');
+
+      kit.hosts[0].release();
+      await split;
+      await settle();
+      expect(server.typed('%2')).toBe('ab');
+      expect(server.typed('%0')).toBe('');
+      type(kit, '%0', 'c');
+      await settle();
+
+      // The Topology is read: it says %0 is active, so this is the rule of the active Pane again.
+      expect(server.typed('%0')).toBe('c');
+      expect(server.typed('%2')).toBe('ab');
+    });
+
+    it('holds them as Held keys on the old Pane when tmux refuses the split, and the keyboard stays down', async () => {
+      const { kit, server, sessions } = await making();
+      sessions.refuse('no space for new pane');
+      kit.hosts[0].hold('if-shell');
+      const split = kit.attach.split('down');
+      await settle();
+      type(kit, '%0', 'ls');
+
+      kit.hosts[0].release();
+      await expect(split).rejects.toThrow('no space for new pane');
+      await settle();
+
+      expect(server.typed('%0')).toBe('');
+      expect(kit.attach.state().keyboard).toBe('down');
+      expect(kit.attach.state().input).toEqual([
+        expect.objectContaining({ kind: 'held', paneId: '%0', preview: 'ls', reasons: ['verb-refused'] }),
+      ]);
+
+      expect(kit.attach.heldInput('%0', 'send')).toBe(true);
+      await settle();
+      expect(server.typed('%0')).toBe('ls');
+    });
+
+    it('holds them on the old Pane when the verb is dropped across a break', async () => {
+      const { kit, server, sessions } = await making();
+      kit.hosts[0].hold('if-shell');
+      const split = kit.attach.split('right');
+      await settle();
+      type(kit, '%0', 'ls');
+      kit.hosts[0].drop();
+      await split;
+      sessions.end('work');
+
+      kit.hosts[1].accept();
+      await settle();
+
+      expect(server.typed('%0')).toBe('');
+      expect(kit.attach.state().input).toEqual([
+        expect.objectContaining({ kind: 'held', paneId: '%0', reasons: expect.arrayContaining(['verb-refused']) }),
+      ]);
+    });
+
+    it('types them into the Pane that the break hid, once the next Connection learns that tmux made it', async () => {
+      const { kit, server } = await making();
+      kit.hosts[0].mute();
+      const split = kit.attach.split('right');
+      await settle();
+      type(kit, '%0', 'ls');
+      kit.hosts[0].drop();
+      await split;
+      expect(server.typed('%2')).toBe('');
+
+      kit.hosts[1].accept();
+      await settle();
+
+      expect(server.typed('%2')).toBe('ls');
+      expect(server.typed('%0')).toBe('');
+    });
+
+    it('gives each of two quick taps the keys that came after it', async () => {
+      const { kit, server } = await making();
+      kit.hosts[0].hold('if-shell');
+      const first = kit.attach.split('right');
+      await settle();
+      type(kit, '%0', 'one');
+      const second = kit.attach.split('down');
+      await settle();
+      type(kit, '%0', 'two');
+
+      kit.hosts[0].release();
+      await Promise.all([first, second]);
+      await settle();
+
+      expect(server.typed('%2')).toBe('one');
+      expect(server.typed('%3')).toBe('two');
+      expect(server.typed('%0')).toBe('');
+    });
+
+    it('takes the clear and the paste of the active Pane into the new Pane as well', async () => {
+      const { kit, server } = await making();
+      kit.hosts[0].hold('if-shell');
+      const split = kit.attach.split('right');
+      await settle();
+      kit.attach.clearPane();
+      await kit.attach.paste({ kind: 'text', text: 'pasted' }, async () => true);
+
+      kit.hosts[0].release();
+      await split;
+      await settle();
+
+      expect(server.typed('%2')).toBe('<C-l><clear-history>pasted');
+      expect(server.typed('%0')).toBe('');
     });
   });
 

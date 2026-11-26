@@ -15,6 +15,7 @@ import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDet
 
 import { toDraftText, type InputNotice, type Key } from './input-lane';
 import { createOutbox, type PaneInput } from './input-outbox';
+import { NO_HOLDS, stepHold, type HoldEffect, type HoldEvent } from './make-hold';
 import { createVerbGuard, describeVerb, type Verb } from './verb-guard';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
@@ -568,6 +569,31 @@ export function openAttach(options: AttachOptions): Attach {
     onRefused: (error) => change({ trouble: error }),
   });
 
+  /**
+   * The keys typed since each split or New Window was tapped, until it ends.
+   * See make-hold.ts. Beside the Outbox because it ends in one, and beside the
+   * Verb guard because that is what ends it.
+   */
+  let holds = NO_HOLDS;
+  let taps = 0;
+
+  function holding(event: HoldEvent): void {
+    const next = stepHold(holds, event);
+    holds = next.holds;
+    for (const effect of next.effects) runHold(effect);
+  }
+
+  function runHold(effect: HoldEffect): void {
+    if (effect.kind === 'send') {
+      say(`${effect.keys.length} keys typed while the Pane was made go to ${effect.paneId}`);
+      const lane = outbox.lane(effect.paneId);
+      for (const key of effect.keys) replay(lane, key);
+      return;
+    }
+    say(`${effect.keys.length} keys typed for a Pane that was not made wait in ${effect.paneId}`);
+    outbox.park(effect.paneId, effect.keys);
+  }
+
   const sizing: ClientSizing = createClientSizing(async (grid) => {
     const current = client;
     // Thrown, not shrugged off: the sizing module must not record a size it
@@ -686,6 +712,18 @@ export function openAttach(options: AttachOptions): Attach {
   }
 
   /**
+   * Where the keys typed for the Pane in use go.
+   *
+   * While a split or New Window is being made, into its make hold: they are
+   * for the Pane that does not exist yet. Otherwise to `addressed`, a Pane
+   * that the caller names.
+   */
+  function typedKey(key: Key, addressed: string): void {
+    if (holds.length > 0) holding({ kind: 'typed', key, at: clock.now() });
+    else replay(outbox.lane(addressed), key);
+  }
+
+  /**
    * Where the keys of one Pane's Surface go.
    *
    * Only the active Pane's Surface holds the keyboard, so a key that comes
@@ -696,13 +734,13 @@ export function openAttach(options: AttachOptions): Attach {
    */
   function inputFor(paneId: string): Pick<PaneInput, 'type' | 'press'> {
     const own = outbox.lane(paneId);
-    const typed = (): Pick<PaneInput, 'type' | 'press'> => {
-      const activeId = state.topology.activePane?.id;
-      return activeId === undefined || activeId === paneId ? own : outbox.lane(activeId);
-    };
+    const addressed = () => state.topology.activePane?.id ?? paneId;
     return {
-      type: (bytes, gesture = false) => (gesture ? own : typed()).type(bytes, gesture),
-      press: (key) => typed().press(key),
+      type: (bytes, gesture = false) => {
+        if (gesture) own.type(bytes, true);
+        else if (bytes.length > 0) typedKey({ kind: 'text', bytes: Array.from(bytes), gesture: false }, addressed());
+      },
+      press: (key) => typedKey({ kind: 'key', key }, addressed()),
     };
   }
 
@@ -1373,6 +1411,7 @@ export function openAttach(options: AttachOptions): Attach {
             ? (paneFacts.get(activeId ?? '') ?? UNREAD_PANE)
             : {}),
         });
+        holding({ kind: 'listed', panes: new Set(next.panes.map((pane) => pane.id)) });
         const size = windowGrid(next);
         if (!size) return;
         sizing.windowSized(size);
@@ -1656,6 +1695,7 @@ export function openAttach(options: AttachOptions): Attach {
     // does not already have.
     expectFocus({ kind: 'window-pane-changed', window: state.topology.activeWindow?.id ?? '', pane: paneId });
     model.activate(paneId);
+    holding({ kind: 'known' });
     void (async () => {
       try {
         await current.selectPane(currentSessionTarget(), windowIndex, pane.index);
@@ -1683,6 +1723,8 @@ export function openAttach(options: AttachOptions): Attach {
       await current.setZoom(currentSessionTarget(), state.zoomed);
       if (stale(mine)) return;
       await topology?.refresh();
+      // Read after the verb, so the active Pane is whichever tmux says.
+      if (!stale(mine)) holding({ kind: 'known' });
     } finally {
       zoomsSettling -= 1;
       visitShownPanes();
@@ -1693,7 +1735,14 @@ export function openAttach(options: AttachOptions): Attach {
     const mine = generation;
     if (!client) return;
     say(describeVerb(verb));
+    const from = state.topology.activePane?.id;
+    const tap = (taps += 1);
+    if (from !== undefined) holding({ kind: 'tapped', id: tap, from });
     await verbs.run(verb, currentSessionTarget(), (fate) => {
+      if (from !== undefined) {
+        const listed = fate.kind === 'made' && state.topology.panes.some((pane) => pane.id === fate.paneId);
+        holding({ kind: 'settled', id: tap, fate, listed });
+      }
       // A Pane the phone made takes the keyboard, when the verb ends as made,
       // which after a break is later than this call. A refused split leaves it where it was.
       if (fate.kind === 'made') attach.setKeyboard('up');
@@ -1851,6 +1900,7 @@ export function openAttach(options: AttachOptions): Attach {
       // Settles nothing, as selectPane does not: tmux's notifications carry
       // the new active Pane.
       background(mine, () => current.selectPaneToward(currentSessionTarget(), direction));
+      holding({ kind: 'known' });
       // Toward a neighbour, so in the Window shown.
       reportWindowColours();
     },
@@ -1915,14 +1965,14 @@ export function openAttach(options: AttachOptions): Attach {
         if (program && !program.bracketedPaste && !(await runLines())) return;
       }
       say(`pasting into ${pane.id} (${text.length} characters)`);
-      outbox.lane(pane.id).paste(text, null);
+      if (text.length > 0) typedKey({ kind: 'paste', text, message: null }, pane.id);
     },
 
     clearPane(): void {
       const pane = state.topology.activePane;
       if (!pane) return;
       say(`clearing ${pane.id}`);
-      outbox.lane(pane.id).clear();
+      typedKey({ kind: 'clear' }, pane.id);
     },
 
     refreshSessions,
@@ -2144,6 +2194,24 @@ export function openAttach(options: AttachOptions): Attach {
   void connect();
 
   return attach;
+}
+
+/** Types a Key into a Pane's Lane. */
+function replay(input: PaneInput, key: Key): void {
+  switch (key.kind) {
+    case 'text':
+      input.type(Uint8Array.from(key.bytes), key.gesture);
+      return;
+    case 'key':
+      input.press(key.key);
+      return;
+    case 'paste':
+      input.paste(key.text, key.message);
+      return;
+    case 'clear':
+      input.clear();
+      return;
+  }
 }
 
 /** The Place a destination asks to go back to, when it is for the owner the destination names. */

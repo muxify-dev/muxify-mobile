@@ -318,7 +318,8 @@ export function createVerbGuard(options: VerbGuardOptions): VerbGuard {
     const mine = epoch;
     const server = await current.verbServer();
     if (mine !== epoch) return drop('the Connection broke before it was sent');
-    if (closed || guard.phase.kind !== 'idle') return;
+    if (closed) return;
+    if (guard.phase.kind !== 'idle') return drop('another verb was waiting for tmux');
     const done = new Promise<void>((resolve, reject) => taps.set(guard.nextOp, { resolve, reject }));
     if (onFate) fates.set(guard.nextOp, onFate);
     apply({ kind: 'tapped', verb, session, ...server });
