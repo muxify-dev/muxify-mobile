@@ -1047,9 +1047,24 @@ Attach decides it and publishes it. The cursor, the keyboard, the Key Row, the
 trackpad and the Cover read only it. A cursor shows only while Typing is open,
 in the active Pane, after Muxify has painted that Pane, and where the program
 in it shows one. The keyboard goes down when Typing stops and comes back when
-it opens, if it was up. A Pane's first paint is not part of Typing: before it,
-the Connection is up and tmux takes keys.
+it opens, if the Keyboard Intent is up. A Pane's first paint is not part of
+Typing: before it, the Connection is up and tmux takes keys.
 _Avoid_: connected (which is one phase of the Attach), input enabled, ready
+
+**Keyboard Intent**:
+Whether the user wants the system keyboard up: `up` or `down`. The Attach holds
+it, so it stays through a split, a Pane change, a Composer, a sheet, and a trip
+to the Host Screen and back. Only a user act changes it: the Keyboard key, a tap
+on the Pane, a hardware keyboard that leaves while the Pane holds the keyboard,
+and a Pane that the phone makes (a split, a New Window, a Session made on the
+phone), which sets it `up` when tmux has made the Pane. A new Attach starts
+`down`, unless the phone made the Pane it opens on. One rule turns the intent
+into the keyboard: only the active Pane's Surface holds it, and only while
+Typing is open. A hardware keyboard always wants the active Pane. The Composer,
+a Selection, a sheet, the Edge Drawer, and another screen hold input
+themselves, and the rule touches nothing while they do. A key from any other
+Surface goes to the active Pane. See ADR 0039.
+_Avoid_: keyboard state, keyboard visible (the system's own fact, which the Key Row reads)
 
 **Cover**:
 What the Terminal Screen draws over the Window while Typing is not open, and
@@ -1096,14 +1111,21 @@ Move to Composer and Discard; the open Composer shows the same for its Pane.
 Plain text and arrows are sent again without a question. Keys for a Pane that
 is gone are discarded, and the card says so until it is dismissed. A discarded
 Composer message stays in its Draft, and Move to Composer brings it to the
-Pane on screen.
+Pane on screen. Keys that were typed for a new Pane that tmux never made (a
+refused or dropped split or New Window) are held on the Pane they were typed
+in, behind its other keys, with the same card.
 
 **Verb guard**:
 What makes a split or a New Window happen one time across a break. Each verb
 gets a number from one count that only grows (its Op), and the Session keeps
 the highest Op it took. tmux runs a verb only while the Session's Op is below
 the verb's. One verb with no answer is kept through a break and sent again only
-when the Session does not have its Op. See ADR 0023.
+when the Session does not have its Op. The Session also keeps the Pane that the
+Op made, so the guard ends every verb as made (with that Pane), refused, or
+dropped, also after a break. Keys typed between the tap and that end are kept
+in a make hold, one for each tap in the order tapped. They go to the new Pane
+when the verb is made, and are held on the old Pane when it is not. See ADR 0023
+and ADR 0039.
 _Avoid_: retry, queue (a verb tapped with no Connection does nothing)
 
 ### Diagnosing
