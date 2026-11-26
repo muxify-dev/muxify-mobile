@@ -51,7 +51,8 @@ export interface KeyRowProps {
   onKey: (key: NamedKey) => void;
   /** One symbol of a pair: the main one on a tap, the alternate one on a drag down. */
   onSymbol: (symbol: string) => void;
-  onPanes: () => void;
+  /** Undefined while the trial setting hides the Panes picker: the key is gone. */
+  onPanes?: () => void;
   onKeyboard: () => void;
   /** Which way the Keyboard button points. */
   keyboardVisible: boolean;
@@ -172,13 +173,15 @@ export function KeyRow(props: KeyRowProps) {
         />
         <Divider palette={palette} />
         <ArrowStick disabled={keysDisabled} palette={palette} onKey={onKey} onBubble={setBubble} />
-        <FixedKey
-          label="Panes"
-          disabled={props.panesDisabled}
-          palette={palette}
-          onPress={props.onPanes}
-          symbol="square.grid.2x2"
-        />
+        {props.onPanes ? (
+          <FixedKey
+            label="Panes"
+            disabled={props.panesDisabled}
+            palette={palette}
+            onPress={props.onPanes}
+            symbol="square.grid.2x2"
+          />
+        ) : null}
         {fixedKey(COMMAND_KEY)}
         <FixedKey
           label="Keyboard"

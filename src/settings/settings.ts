@@ -51,6 +51,14 @@ export interface Settings {
    * nobody asked for.
    */
   reconnectOnStart: boolean;
+  /**
+   * Whether every way into the Panes picker (the Layout Map, the Panes key
+   * and Options › Panes) is hidden, so the Edge Drawer is the way to a Pane.
+   * The Header title's tap stays. Zoom and Split keep their own items in
+   * Options. A trial setting, off by default: whether to retire them is
+   * decided after use (D6 of the right-edge switcher proposal).
+   */
+  hidePanesPicker: boolean;
   chooserListPreferences?: Readonly<Record<string, ChooserLists>>;
   /** The Keyboard Shortcuts the user changed. The rest keep their defaults. */
   keyboardShortcuts?: KeyboardShortcuts;
@@ -136,6 +144,7 @@ export const DEFAULT_SETTINGS: Settings = {
   darkTheme: 'ghostty',
   zoomMultipaneWindows: true,
   reconnectOnStart: false,
+  hidePanesPicker: false,
 };
 
 /** Keeps a font size inside what the Surface will accept. */
@@ -223,6 +232,7 @@ export function parseSettings(raw: unknown): Settings {
   const ligatures = record.ligatures;
   const zoom = record.zoomMultipaneWindows;
   const reconnect = record.reconnectOnStart;
+  const hide = record.hidePanesPicker;
 
   const chooser = record.chooserListPreferences;
   const chooserListPreferences = typeof chooser === 'object' && chooser !== null && !Array.isArray(chooser)
@@ -245,5 +255,6 @@ export function parseSettings(raw: unknown): Settings {
       typeof zoom === 'boolean' ? zoom : DEFAULT_SETTINGS.zoomMultipaneWindows,
     reconnectOnStart:
       typeof reconnect === 'boolean' ? reconnect : DEFAULT_SETTINGS.reconnectOnStart,
+    hidePanesPicker: typeof hide === 'boolean' ? hide : DEFAULT_SETTINGS.hidePanesPicker,
   };
 }

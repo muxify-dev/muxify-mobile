@@ -38,6 +38,7 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: false,
         hostScreenTabs: { host1: 'sessions' },
         reconnectOnStart: true,
+        hidePanesPicker: true,
       }),
     ).toEqual({
       fontSize: 14,
@@ -48,6 +49,7 @@ describe('parseSettings', () => {
       zoomMultipaneWindows: false,
       hostScreenTabs: { host1: 'sessions' },
       reconnectOnStart: true,
+      hidePanesPicker: true,
     });
   });
 
@@ -120,6 +122,7 @@ describe('parseSettings', () => {
         zoomMultipaneWindows: 'yes',
         hostScreenTabs: 7,
         reconnectOnStart: 'yes',
+        hidePanesPicker: 'yes',
       }),
     ).toEqual({
       fontSize: 13,
@@ -129,6 +132,7 @@ describe('parseSettings', () => {
       darkTheme: 'dracula',
       zoomMultipaneWindows: true,
       reconnectOnStart: false,
+      hidePanesPicker: false,
     });
   });
 

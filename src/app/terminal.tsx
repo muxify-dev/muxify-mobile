@@ -20,6 +20,8 @@ import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
 import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
 import { inputNoticeCopy, shownInputNotice } from '@/lib/input-notice-copy';
 import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
+import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
+import { EdgeGrip } from '@/components/edge-grip';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
@@ -232,6 +234,9 @@ export default function TerminalScreen() {
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
     onReplacingStopped: forgetLookup });
   const { closeChooser, openTitleSheet, openSessionsOnly, topic, attachedSession, actOnAttachedSession } = chooser;
+  const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
+  /** The trial of the Edge Drawer as the way to a Pane: see Settings.hidePanesPicker. */
+  const hidePanesPicker = settings.hidePanesPicker;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
 
   const fontSize = fontSizeInForce(settings.fontSize);
@@ -1056,7 +1061,8 @@ export default function TerminalScreen() {
         toggleComposer,
         { disabled: !activePaneId },
       ),
-      action('panes', 'Panes', 'square.grid.2x2', openPanes, { disabled: !open }),
+      // Zoom and the Splits keep their own items in Options while the trial hides the picker.
+      ...(hidePanesPicker ? [] : [action('panes', 'Panes', 'square.grid.2x2', openPanes, { disabled: !open })]),
       action('keyboard', 'Keyboard', 'keyboard', toggleKeyboard),
       ...(state?.topic ? [{
         kind: 'menu' as const, id: 'topic', label: 'Topic', systemImage: 'rectangle.stack' as const,
@@ -1146,6 +1152,7 @@ export default function TerminalScreen() {
     composerOpen,
     toggleComposer,
     openPanes,
+    hidePanesPicker,
     toggleKeyboard,
     activePaneId,
     state?.zoomed,
@@ -1335,7 +1342,7 @@ export default function TerminalScreen() {
           ) : null}
 
           {/* Last, so it is over the mouse layer and a tap on it is the map's. */}
-          {(state?.topology.panes.length ?? 0) > 1 ? (
+          {!hidePanesPicker && (state?.topology.panes.length ?? 0) > 1 ? (
             <LayoutMap
               panes={state?.topology.panes ?? []}
               appearance={appearance}
@@ -1343,6 +1350,15 @@ export default function TerminalScreen() {
               onPress={openPanes}
             />
           ) : null}
+
+          {/* Under the cover's dim, which takes its touches with the rest. Off
+              while a Selection is open, as the back swipe is: a handle can be
+              at the edge. */}
+          <EdgeGrip
+            enabled={open && !selecting && !sheetOpen}
+            {...switcher.grip}
+            swipe={{ swipe, width: activeSlot?.box.width ?? containerSize.width }}
+          />
 
           {/* The last content, dimmed, and every touch with it: nothing on it
               can be typed into, scrolled or tapped until Typing opens. */}
@@ -1404,7 +1420,7 @@ export default function TerminalScreen() {
           onArm={armModifier}
           onKey={pressKey}
           onSymbol={pressSymbol}
-          onPanes={openPanes}
+          onPanes={hidePanesPicker ? undefined : openPanes}
           onKeyboard={toggleKeyboard}
           keyboardVisible={keyboardVisible}
           keysDisabled={!open || composerOpen || sheetOpen || !screenFocused}
@@ -1450,6 +1466,8 @@ export default function TerminalScreen() {
             ) : null}
           </View>
         </View>
+
+        <EdgeDrawer {...switcher.drawer} />
 
         {cover.kind === 'connection-screen' ? (
           <ConnectionScreen

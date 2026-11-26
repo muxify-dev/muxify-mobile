@@ -28,6 +28,11 @@ export function TagMarks({ tags, palette }: { tags: TagMark[]; palette: Appearan
   );
 }
 
+/** The symbol and colour of a mark, for a view drawn outside SwiftUI. */
+export function markSymbol(mark: Mark, palette: Appearance): { symbol: SFSymbol; color: string } {
+  return MARKS[mark](palette);
+}
+
 const MARKS: Record<Mark, (palette: Appearance) => { symbol: SFSymbol; color: string }> = {
   blocked: (palette) => ({ symbol: 'hand.raised.fill', color: palette.destructive }),
   failed: (palette) => ({ symbol: 'xmark.octagon.fill', color: palette.destructive }),

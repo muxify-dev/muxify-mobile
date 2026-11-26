@@ -691,7 +691,7 @@ drag is vertical and moves the Scrollback, or is the wheel for a program that
 listens for the mouse. That program gets nothing from a horizontal drag. While
 a Selection is open a horizontal drag is for its handles and changes no Pane.
 A drag right that starts in the edge band is the Back Swipe, not a swipe
-right.
+right. A drag that starts on the Grip is still a Pane Swipe.
 
 On iPad, a continuous two-finger scroll on a physical trackpad uses the same
 axis lock and Pane Swipe thresholds. A horizontal gesture cycles from the
@@ -716,8 +716,84 @@ _Avoid_: page, slide (that is the keyboard's), flick
 The small diagram in the top right of the Surface area: the Window's Layout,
 with the active Pane in the accent colour. It shows which Pane the zoomed
 Window is on, and it follows a Pane Swipe. A tap opens the Panes picker. A
-Window with one Pane has no map.
+Window with one Pane has no map. The trial setting "Hide the Panes picker"
+hides the map (see Edge Drawer).
 _Avoid_: minimap, Pane indicator, thumbnail
+
+**Grip**:
+The small Liquid Glass line, 6 × 48 points, at the right edge: in the
+middle of a phone's screen, where the thumb rests and just above where the
+keyboard comes, so it stays in one place with the keyboard up or down; three quarters down an iPad's. It is on
+the Terminal Screen and on the Web View, but not on a phone on its side. The touch lands in a band round it, 28 × 110 points.
+From the touch the line fills with the accent colour. A finger that stays
+on it for 400 ms with less than 20 points of drift opens the Edge Drawer,
+with a tick; the line then glows, and the finger stays down for the
+drawer. A finger that
+moves 20 points first is a drag: on the Terminal Screen a sideways drag is
+the Pane Swipe, as on a Pane that is not the active one. A tap on it does
+nothing. The band takes every touch that lands in it, so a page does not
+scroll from there. The Grip is off while a Selection is open, while a sheet
+is open, and while keys cannot reach the active Pane (see Typing). See ADR
+0036.
+_Avoid_: handle, edge button, tab
+
+**Edge Drawer**:
+The chooser that the Grip opens: a floating Liquid Glass panel at the right
+that lists the Destinations of the place on screen, and nothing of other
+Topics or Sessions; the Host Screen reaches those. It is the Title Sheet's
+second presentation: a pick in it does what the same pick in the Title
+Sheet does. Its title is the Topic the Attach holds, or the attached Session
+when it holds none. Each Session of the Topic is a header and a rounded
+card, as an iOS grouped list has: its Windows in the Title Sheet's order and
+marks, the Panes of the Window on screen under it when it has more than one,
+and the Browser Tabs of each Window under that Window. The drawer reads the
+Tabs of every Window it lists each time it opens, and shows each Window's
+Tabs as they arrive. The current Window and Pane have a checkmark. The
+attached Session's card is last, at the bottom by the Grip, and the list
+opens at its end. A lift on a Session's header goes to that Session. A pick
+of a Tab of another Window goes to that Window first, so the Tab is in the
+Place of its own Window. A Pane pick from the Web View goes to the Terminal
+Screen; the Live Page is hidden, not ended.
+
+While the finger that opened it is down, the row under the finger is lit,
+and the drawer is a quick switch: each lift closes it, and a pick goes on
+after it closes. A move that fails says so in the log only. A lift on a row
+picks the row. A lift anywhere else picks nothing: on the Grip, in the Lift
+Lane, on the header or on no row, or in the Cancel Zone. The drawer has no
+close button and no tap. Only VoiceOver, which has no held finger, opens
+it with no hold, and then it stays open for its rows to be activated. The finger cannot scroll the
+list, so near the list's top or bottom the list scrolls by itself, faster
+as the finger goes nearer the edge. The panel ends at the keyboard's top.
+On a phone it covers 85 % of the width over a scrim. On an iPad it is a
+320-point column with no scrim, and the terminal beside it stays live. A Dormant or Empty
+Topic has no live Session, so it is not in the drawer: the Title Sheet or the
+Host Screen opens it.
+
+The trial setting "Hide the Panes picker", off by default, hides every way
+into the Panes picker: the Layout Map, the Panes key and Options › Panes. So
+the Grip is the way to a Pane. The Header title's tap stays at all times.
+Zoom and Split keep their own items in Options. Whether to retire them is
+decided after use. See ADR 0036.
+_Avoid_: switcher overlay, quick switcher, sidebar
+
+**Destination**:
+One place the Edge Drawer goes to: a Pane, a Window, a Session or a Browser
+Tab.
+_Avoid_: target, location
+
+**Cancel Zone**:
+While the finger that opened the Edge Drawer is down, the area outside the
+drawer's column. It says "Lift here to close", and turns red while the finger
+is in it. A lift there closes the drawer and picks nothing.
+_Avoid_: dismiss area, close zone
+
+**Lift Lane**:
+The 44-point strip at the right of the Edge Drawer, beside its rows, past
+the Grip's band, so the finger that opened the drawer starts in it. It is
+not drawn: the rows stop short of it, on the bare glass. That finger can
+move up and down in it, and a lift there closes the drawer and picks
+nothing.
+_Avoid_: dead zone, gutter, safe area
 
 **Header**:
 The native bar at the top of the Terminal Screen, and of the Web View with
