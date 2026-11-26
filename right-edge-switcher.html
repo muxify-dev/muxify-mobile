@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en" data-lavish-annotate="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Debrief · Switch destinations with a right-edge hold</title>
+<script>
+  const q = matchMedia('(prefers-color-scheme: dark)');
+  const set = () => document.documentElement.dataset.theme = q.matches ? 'dark' : 'light';
+  set(); q.addEventListener('change', set);
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, li, dd, td, th, .badge) { overflow-wrap: anywhere; }
+  body { background: var(--color-base-100); color: var(--color-base-content); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 1.9rem; font-weight: 800; line-height: 1.2; }
+  h2 { font-size: 1.35rem; font-weight: 750; line-height: 1.3; margin: 0 0 .6rem; }
+  h3 { font-size: 1.05rem; font-weight: 700; margin: .8rem 0 .3rem; }
+  section.page-sec { margin-top: 2.6rem; padding-top: 1rem; border-top: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent); }
+  .sec-no { font-size: .8rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
+  .lede { font-size: 1.05rem; max-width: 70ch; }
+  p, li { max-width: 75ch; }
+  .prop { display: inline-block; font-size: .72rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px dashed currentColor; margin-left: 4px; vertical-align: middle; }
+  .callout { border: 1px solid color-mix(in oklab, var(--color-base-content) 20%, transparent); border-left: 5px solid var(--color-primary); border-radius: 12px; padding: 14px 16px; margin: 1.2rem 0; background: color-mix(in oklab, var(--color-primary) 5%, var(--color-base-100)); }
+  .callout.open-q { border-left-color: var(--color-warning); background: color-mix(in oklab, var(--color-warning) 7%, var(--color-base-100)); }
+  .callout h3 { margin-top: 0; }
+  .opt-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid color-mix(in oklab, var(--color-base-content) 14%, transparent); margin: 6px 0; cursor: pointer; }
+  .opt-row:has(input:checked) { border-color: var(--color-primary); background: color-mix(in oklab, var(--color-primary) 8%, transparent); }
+  .opt-row input { margin-top: 4px; }
+  .rec { font-size: .72rem; font-weight: 700; border: 1px solid var(--color-success); border-radius: 999px; padding: 0 7px; margin-left: 6px; }
+  .state { font-size: .75rem; font-weight: 700; border-radius: 999px; padding: 1px 9px; border: 1px solid color-mix(in oklab, var(--color-base-content) 30%, transparent); }
+  .state[data-v="chosen"] { border-color: var(--color-info); }
+  .state[data-v="queued"] { border-color: var(--color-success); }
+  .state[data-v="queued"]::before { content: "✓ "; }
+  .state[data-v="decided"] { border-color: var(--color-success); font-weight: 700; }
+  .state[data-v="decided"]::before { content: "✓ "; }
+  .figs { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; margin: 1rem 0; }
+  .fig { display: flex; flex-direction: column; gap: 6px; }
+  .fig figcaption { font-size: .85rem; max-width: 300px; }
+  .wide-frame { overflow-x: auto; max-width: 100%; padding-bottom: 6px; }
+  .steps-list { counter-reset: s; list-style: none; padding: 0; }
+  .steps-list li { counter-increment: s; position: relative; padding-left: 30px; margin: 6px 0; }
+  .steps-list li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: .78rem; font-weight: 700; border: 1.5px solid currentColor; }
+  .gc { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .gc > div { border: 1px solid color-mix(in oklab, var(--color-base-content) 14%, transparent); border-radius: 12px; padding: 10px 14px; }
+  .gc h4 { font-weight: 700; margin-bottom: 4px; }
+  table.cmp { border-collapse: collapse; min-width: 760px; width: 100%; font-size: .9rem; }
+  table.cmp th, table.cmp td { border: 1px solid color-mix(in oklab, var(--color-base-content) 15%, transparent); padding: 7px 9px; vertical-align: top; text-align: left; }
+  table.cmp thead th { background: color-mix(in oklab, var(--color-base-content) 6%, transparent); }
+  .good { background: color-mix(in oklab, var(--color-success) 12%, transparent); }
+  .bad { background: color-mix(in oklab, var(--color-error) 10%, transparent); }
+  .mid { background: color-mix(in oklab, var(--color-warning) 10%, transparent); }
+  .chk-opt { display: block; width: 100%; text-align: left; margin: 5px 0; }
+  .chk-fb { display: none; margin: 6px 0 4px; padding: 8px 12px; border-radius: 10px; border: 1px solid; }
+  .chk-fb.show { display: block; }
+  .chk-fb.right { border-color: var(--color-success); }
+  .chk-fb.wrong { border-color: var(--color-error); }
+
+  .st-ok { border: 1px solid var(--color-success); border-radius: 999px; padding: 0 8px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+  .st-mid { border: 1px dotted color-mix(in oklab, var(--color-base-content) 55%, transparent); border-radius: 999px; padding: 0 8px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+  .st-diff { border: 1px dashed var(--color-warning); border-radius: 999px; padding: 0 8px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+  .st-no { border: 1px solid var(--color-error); border-radius: 999px; padding: 0 8px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+  code { font-size: .85em; }
+  q { font-style: italic; }
+  .flow { width: 560px; min-width: 560px; height: auto; display: block; }
+  table.cmp td:first-child b { white-space: nowrap; }
+  .flow text { fill: var(--color-base-content); font: 13px system-ui, sans-serif; }
+  .flow .small { font-size: 12px; }
+  .flow rect { fill: var(--color-base-100); stroke: color-mix(in oklab, var(--color-base-content) 45%, transparent); stroke-width: 1.5; }
+  .flow rect.hi { stroke: var(--color-primary); stroke-width: 2.5; }
+  .flow path { fill: none; stroke: color-mix(in oklab, var(--color-base-content) 55%, transparent); stroke-width: 1.5; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <p class="sec-no">Muxify Mobile · Debrief · Task “Switch destinations with a right-edge hold” · second edition</p>
+  <h1>The Grip and the Edge Drawer are built, then reshaped on the iPhone and the iPad. They are now a glass line and a drag-only view of the place on screen.</h1>
+  <p class="lede mt-3"><b>Question:</b> What does the build do now, after the six decisions and the feedback on the devices, and what differs from what was asked?</p>
+  <p class="lede mt-2"><b>Answer:</b> A 400 ms hold on a small Liquid Glass line at the right edge opens a floating glass panel. It lists only the Topic or Session on screen, from the bottom up. You slide onto a row and lift to go there; every lift closes the panel. Three decisions changed by Gleb's feedback: D2 (now drag only), D3 (no other Topics or Sessions) and D6 (the title tap stays). Not done: a page scroll and a tap through the band, Panes of other Windows, the iPad pointer, and the device suite.</p>
+  <div class="alert mt-4" style="color:var(--color-base-content);border:1px solid color-mix(in oklab,var(--color-base-content) 25%,transparent)">
+    <div>
+      <b>State of the work:</b> not committed, on <code>master</code> in <code>/Users/glebglazov/private/Dev/work/muxify-mobile</code>. 10 new files and 10 changed files. Sources: the decided <a class="link" href="right-edge-switcher-proposal.html">planning page</a>, the saved Task, and Gleb's messages in the session. The latest Release build is on the iPhone. The iPad has an older build: it refused the last five installs (CoreDevice error 4016, most likely a locked screen).
+    </div>
+  </div>
+</header>
+
+<section class="page-sec" id="s1">
+  <p class="sec-no">Section 1 · Terms</p>
+  <h2>Five terms name the parts. All five are in CONTEXT.md</h2>
+  <div class="wide-frame">
+  <table class="cmp" style="min-width:560px">
+    <thead><tr><th>Term</th><th>What it is</th><th>Unit</th></tr></thead>
+    <tbody>
+      <tr><td><b>Grip</b></td><td>The small Liquid Glass line at the right edge. A hold on it opens the Edge Drawer. Not shown on a phone on its side.</td><td>Line 6 × 48 pt; touch band 28 × 110 pt; centre at 1/2 of a phone's height, 3/4 of an iPad's; hold 400 ms; slop 20 pt</td></tr>
+      <tr><td><b>Edge Drawer</b></td><td>The floating glass panel at the right that lists the Destinations of the Topic or Session on screen. The Title Sheet's second presentation.</td><td>Phone: 85 % of the width, at most 420 pt. iPad (≥ 700 pt): 320 pt</td></tr>
+      <tr><td><b>Destination</b></td><td>One place the drawer goes to: a Pane, a Window, a Session or a Browser Tab.</td><td>—</td></tr>
+      <tr><td><b>Cancel Zone</b></td><td>While the finger that opened the drawer is down: the area outside the panel. It says “Lift here to close”.</td><td>—</td></tr>
+      <tr><td><b>Lift Lane</b> <span class="st-diff">new</span></td><td>The strip at the panel's right, past the Grip's band, where the finger starts. It is not drawn. A lift there closes the drawer and picks nothing.</td><td>44 pt</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="page-sec" id="s2">
+  <p class="sec-no">Section 2 · What was asked, against the result</p>
+  <h2>All six decisions are built; Gleb's feedback changed three of them. Of 18 feedback items, 13 are done, 1 is likely fixed, 3 were replaced by later ones, and 1 is open</h2>
+  <p>D1–D6 are the planning page's decisions. A-items come from the Task, P-items from the planning page's text, G-items from Gleb's comments in Lavish, and F-items from his messages in this session, in order. A changed status means a later F-item changed the decision.</p>
+  <div class="wide-frame">
+  <table class="cmp" style="min-width:680px">
+    <thead><tr><th>ID</th><th>Source, quoted</th><th>Status</th><th>What the code does now</th></tr></thead>
+    <tbody>
+      <tr><td>A1</td><td>Task: <q>a transparent, barely visible control halfway down the right edge</q></td><td><span class="st-ok">✓ done</span></td><td>A clear glass line with a thin light rim, halfway down a phone (F15). On an iPad at 3/4. <code>src/navigation/grip.ts:25</code></td></tr>
+      <tr><td>A2</td><td>Task: <q>Keep it available in both the terminal and the web view</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/app/terminal.tsx:1357</code>, <code>src/app/web-view.tsx:271</code></td></tr>
+      <tr><td>A3</td><td>Task: <q>open an overlay with all available destinations</q></td><td><span class="st-diff">◐ differs</span></td><td>Only the Topic or Session on screen (F11), and Panes only of the Window on screen. <code>src/domain/destinations.ts:38</code></td></tr>
+      <tr><td>D1</td><td>Planning page: <q>A · Edge Drawer</q></td><td><span class="st-ok">✓ done</span></td><td>Now a floating glass panel with grouped cards (F12). <code>src/components/edge-drawer.tsx:237</code></td></tr>
+      <tr><td>D2</td><td><q>Both: a lift on the Grip keeps the overlay open, and a lift on a row picks it.</q></td><td><span class="st-diff">◐ changed by F5</span></td><td>Drag only: a lift on a row picks it; every other lift closes the drawer. <code>liftGrip</code>, <code>src/navigation/grip.ts:115</code></td></tr>
+      <tr><td>G2</td><td>Lavish, on D2: <q>Lets make some area in which whn i lift my finger, drawer just hides</q></td><td><span class="st-ok">✓ done</span></td><td>The Cancel Zone. <code>src/navigation/grip.ts:122</code></td></tr>
+      <tr><td>D3</td><td><q>the current Topic first, then “Other Topics and Sessions”, closed on the iPhone</q></td><td><span class="st-diff">◐ changed by F11</span></td><td>The other group is gone. <code>src/domain/destinations.ts:38</code></td></tr>
+      <tr><td>D4</td><td><q>Tabs of every listed Window, read when the overlay opens</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/hooks/use-edge-drawer-rows.ts:37</code></td></tr>
+      <tr><td>D5</td><td><q>400 ms</q></td><td><span class="st-ok">✓ done</span></td><td><code>GRIP_HOLD_MS</code>, <code>src/navigation/grip.ts:39</code></td></tr>
+      <tr><td>D6</td><td><q>A setting hides them during the trial, so you can feel the app without them.</q></td><td><span class="st-diff">◐ changed by F16</span></td><td>“Hide the Panes picker” hides the Layout Map, the Panes key and Options › Panes. The title tap stays. <code>src/settings/settings.ts:61</code>, <code>src/app/terminal.tsx:1065</code>, <code>:1423</code></td></tr>
+      <tr><td>P1</td><td>§3: <q>A finger that moves that far before the hold duration ends starts a drag, as today … On the page it scrolls.</q></td><td><span class="st-diff">◐ differs</span></td><td>On the Terminal Screen the drag is a Pane Swipe. On the Web View the band does not scroll the page.</td></tr>
+      <tr><td>P2</td><td>Planning page §3: <q>A tap: goes to the Surface or the page, as now</q></td><td><span class="st-no">✗ not done</span></td><td>A tap in the band does nothing.</td></tr>
+      <tr><td>P3</td><td>§3: <q>While a Selection is open, the Grip is off</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/app/terminal.tsx:1357</code></td></tr>
+      <tr><td>P4</td><td>§3: <q>With a pointer, a hover makes the Grip brighter, and a click on it opens the overlay at once.</q></td><td><span class="st-no">✗ not done</span></td><td>A pointer press is a touch to React Native, so it must also be held.</td></tr>
+      <tr><td>P6</td><td>§9: <q>A pick from the overlay does what the same pick in the Title Sheet does</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/hooks/use-title-sheet.ts:381</code></td></tr>
+      <tr><td>P7</td><td>§4: <q>A tap on “3 Panes ›” opens that Window's Panes in place.</q></td><td><span class="st-no">✗ not done</span></td><td><code>src/domain/destinations.ts:55</code></td></tr>
+      <tr><td>F1</td><td><q>please add autoscroll when i am on the bottom of the drawer … same with top</q></td><td><span class="st-ok">✓ done</span></td><td>From 56 pt in from the list's edge, up to 900 pt/s; it waits until the finger leaves the Grip. <code>src/navigation/grip.ts:147</code>, <code>src/components/edge-drawer.tsx:156</code></td></tr>
+      <tr><td>F2</td><td><q>add to settings what to show: board or seaasions</q></td><td><span class="st-mid">↺ replaced by F11</span></td><td>Built, then removed with the other group.</td></tr>
+      <tr><td>F3</td><td><q>if i press-and-hold and even move my finger vertically, i should be able to just lift a finger without picking</q></td><td><span class="st-ok">✓ done</span></td><td>The Lift Lane. <code>src/navigation/grip.ts:99</code></td></tr>
+      <tr><td>F4</td><td><q>i should be able to click lift strip to quickly close it</q></td><td><span class="st-mid">↺ replaced by F5</span></td><td>Built, then removed: the drawer has no taps.</td></tr>
+      <tr><td>F5</td><td><q>make it only drag-based and not click-based … remove 'x' symbol … when i lift finger in lift strip it should right away close the drawer</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/navigation/grip.ts:115</code>, <code>src/components/edge-drawer.tsx:196</code></td></tr>
+      <tr><td>F6</td><td><q>make that a liquid glass circular button … in the bottom centered-right corner</q></td><td><span class="st-mid">↺ replaced by F14</span></td><td>Built, then went back to a line at the edge.</td></tr>
+      <tr><td>F7</td><td><q>reverse the options so that this sessions options are right there near the finger</q></td><td><span class="st-ok">✓ done</span></td><td>The attached Session's card is last, and the list opens at its end. <code>src/components/edge-drawer.tsx:333</code>, <code>:77</code></td></tr>
+      <tr><td>F8</td><td><q>rendered panel now doesn't take into consideration virtual keyboard</q></td><td><span class="st-ok">✓ done</span></td><td>The panel ends at the keyboard's top. <code>src/components/edge-drawer.tsx:248</code></td></tr>
+      <tr><td>F9</td><td><q>an almost transparent liquid glossy icon which, when clicked, starts to fill up with color and starts glowing</q></td><td><span class="st-ok">✓ done</span></td><td>Clear glass; it fills from the touch over 400 ms, then glows. <code>src/components/edge-grip.tsx:138</code>, <code>:143</code>, <code>:184</code></td></tr>
+      <tr><td>F10</td><td><q>from time to time the button just blocks</q></td><td><span class="st-diff">◐ likely fixed</span></td><td>See section 5. <code>src/hooks/use-title-sheet.ts:370</code></td></tr>
+      <tr><td>F11</td><td><q>just remove all the other topics from that menu … remove the settings option</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/domain/destinations.ts:38</code></td></tr>
+      <tr><td>F12</td><td><q>make the list have more of an iOS-y look</q></td><td><span class="st-ok">✓ done</span></td><td>See section 4. <code>src/components/edge-drawer.tsx:281</code>, <code>:333</code></td></tr>
+      <tr><td>F13</td><td><q>let's not show that there's lift area and just use liquid glass container</q></td><td><span class="st-ok">✓ done</span></td><td>The Lift Lane is bare glass.</td></tr>
+      <tr><td>F14</td><td><q>make it a small liquid glassy line on the right side after all</q></td><td><span class="st-ok">✓ done</span></td><td><code>GRIP_LINE</code>, <code>src/navigation/grip.ts:17</code></td></tr>
+      <tr><td>F15</td><td><q>let's do 2/4 on iphone … roughly in the middle of the phone</q></td><td><span class="st-ok">✓ done</span></td><td>A fixed share of the screen, the same with the keyboard up or down. <code>src/navigation/grip.ts:25</code>, <code>:33</code></td></tr>
+      <tr><td>F16</td><td><q>leave the option to click title at all times</q></td><td><span class="st-ok">✓ done</span></td><td><code>src/app/terminal.tsx:1188</code>, <code>src/app/web-view.tsx:254</code></td></tr>
+      <tr><td>F17</td><td><q>disable this control on iphones in landscape mode</q></td><td><span class="st-ok">✓ done</span></td><td>A phone is a screen whose short side is under 700 pt. <code>src/navigation/grip.ts:58</code>, <code>src/components/edge-grip.tsx:112</code></td></tr>
+      <tr><td>F18</td><td><q>i can't move cursor with arrows of physical keyboard</q></td><td><span class="st-no">✗ open</span></td><td>Cause not found. This work changes no keyboard code. The iPad log could not be copied.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="page-sec" id="s3">
+  <p class="sec-no">Section 3 · How a touch on the Grip goes</p>
+  <h2>One finger decides: a drag before 400 ms is a Pane Swipe; after the hold, a lift on a row picks it and every other lift picks nothing</h2>
+  <p>Example: Gleb is on Window 0 of his iPhone. He puts his thumb on the line in the middle of the right edge. The line fills with colour. At 400 ms the phone ticks, the line glows, and the panel slides in with his Session's card at the bottom. He slides left onto “1  logs”, which lights, and lifts. The panel closes at once, and the Attach goes to Window 1. Had he lifted where he started, in the Lift Lane, the panel would close and nothing would be picked.</p>
+  <div class="wide-frame"><svg class="flow" viewBox="0 0 560 450" role="img" aria-label="The states of one touch on the Grip" style="min-width:520px">
+    <rect x="160" y="10" width="240" height="56" rx="10" /><text x="280" y="34" text-anchor="middle">waiting · finger down</text><text x="280" y="54" text-anchor="middle" class="small">the line fills with colour</text>
+    <path d="M210 66 L110 130" /><text x="20" y="100" class="small">moves &gt; 20 pt first</text>
+    <rect x="10" y="130" width="200" height="44" rx="10" /><text x="110" y="157" text-anchor="middle">dragging</text>
+    <path d="M110 174 L110 220" />
+    <rect x="10" y="220" width="200" height="56" rx="10" /><text x="110" y="244" text-anchor="middle">Pane Swipe</text><text x="110" y="264" text-anchor="middle" class="small">(Terminal Screen only)</text>
+    <path d="M350 66 L430 130" /><text x="400" y="100" class="small">still for 400 ms</text>
+    <rect class="hi" x="320" y="130" width="230" height="74" rx="10" /><text x="435" y="154" text-anchor="middle">held · panel open, line glows</text><text x="435" y="174" text-anchor="middle" class="small">row under finger is lit;</text><text x="435" y="192" text-anchor="middle" class="small">near top or bottom: autoscroll</text>
+    <path d="M435 204 L435 244" /><text x="447" y="230" class="small">lift · panel closes</text>
+    <rect class="hi" x="320" y="244" width="230" height="56" rx="10" /><text x="435" y="268" text-anchor="middle">on a row → pick it</text><text x="435" y="288" text-anchor="middle" class="small">the move goes on behind</text>
+    <rect x="320" y="312" width="230" height="74" rx="10" /><text x="435" y="336" text-anchor="middle">anywhere else → no pick</text><text x="435" y="356" text-anchor="middle" class="small">Lift Lane, header, no row,</text><text x="435" y="374" text-anchor="middle" class="small">or the Cancel Zone</text>
+  </svg></div>
+  <p>The rules are pure functions in <code>src/navigation/grip.ts</code>: <code>moveGrip</code> (line 79), <code>liftGrip</code> (line 115) and <code>autoScrollSpeed</code> (line 147). The view <code>EdgeGrip</code> runs the timer and keeps the finger once the panel opens, so a scroll under it cannot take the touch (<code>src/components/edge-grip.tsx:132</code>). VoiceOver has no held finger: its activate on the Grip opens a panel that stays open (<code>:129</code>).</p>
+</section>
+
+<section class="page-sec" id="s4">
+  <p class="sec-no">Section 4 · What the panel looks like</p>
+  <h2>The panel reads from the bottom up: a card per Session, the attached Session's card by the thumb</h2>
+  <div class="gc">
+    <div>
+      <div data-mockup style="background:#1c1f26;color:#f2f2f7;border-radius:22px;padding:14px 10px 10px;max-width:320px;font-family:-apple-system,system-ui,sans-serif;border:1px solid #3a3f4b">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.6px;color:#9aa0ab;padding:0 8px">TOPIC</div>
+        <div style="font-size:20px;font-weight:700;padding:0 8px 8px">Fix reward drop bug in GS</div>
+        <div style="font-size:12px;font-weight:600;color:#9aa0ab;padding:10px 12px 6px">GS-CLIENT</div>
+        <div style="background:#2a2f39;border-radius:14px;padding:10px 12px;margin-right:36px">1  claude <span style="float:right;color:#63a3ff">●</span></div>
+        <div style="font-size:12px;font-weight:600;color:#9aa0ab;padding:14px 12px 6px">GS-SERVER <span style="color:#63a3ff">CURRENT</span></div>
+        <div style="background:#2a2f39;border-radius:14px;margin-right:36px">
+          <div style="padding:10px 12px;border-bottom:1px solid #3a3f4b">1  editor <span style="float:right;color:#63a3ff">✓</span><div style="font-size:12px;color:#9aa0ab">nvim</div></div>
+          <div style="padding:10px 12px 10px 30px;border-bottom:1px solid #3a3f4b">Pane 0 · nvim <span style="float:right;color:#63a3ff">✓</span></div>
+          <div style="padding:10px 12px 10px 30px;border-bottom:1px solid #3a3f4b;background:#3b4660">Pane 1 · zsh</div>
+          <div style="padding:10px 12px 10px 30px;border-bottom:1px solid #3a3f4b">grafana</div>
+          <div style="padding:10px 12px">2  tests<div style="font-size:12px;color:#9aa0ab">pnpm</div></div>
+        </div>
+      </div>
+      <p class="mt-2" style="font-size:13px">Illustrative names, from the fixture in <code>src/domain/destinations.test.ts</code>. “Pane 1 · zsh” is lit under the finger. The empty strip at the right is the Lift Lane.</p>
+    </div>
+    <div>
+      <h4>What makes it iOS-like</h4>
+      <p>A rounded Liquid Glass panel that floats 8 pt in from the edges. The title is the Topic, or the Session when the Attach holds none, with a small TOPIC or SESSION above it. Each Session has a grey header and a rounded card. Rows have SF Symbols, inset separators, and a checkmark on the current Window and Pane. A lift on a Session's header goes to that Session.</p>
+      <h4 class="mt-3">Why the order is bottom up</h4>
+      <p>The thumb opens the panel at the right edge, low on the screen. <code>drawerLayout</code> puts the other Sessions first and the attached one last (<code>src/components/edge-drawer.tsx:333</code>). Inside a card the order is the Title Sheet's. The list keeps its distance from the end as it lays out, so it opens at its end, and Tabs that arrive later do not move the rows under the finger (<code>:77</code>).</p>
+    </div>
+  </div>
+</section>
+
+<section class="page-sec" id="s5">
+  <p class="sec-no">Section 5 · What differs, and why</p>
+  <h2>Four differences have four causes: the native Surface, React Native's touches, the Topology, and drag only</h2>
+  <div class="gc">
+    <div><h4>P1, P2 · No page scroll and no tap through the band</h4><p>The Surface's gestures are native, in the local patch to <code>expo-libghostty</code>. A recognizer of the app's own over the Surface loses the race to them, as the <code>MouseLayer</code> comment in <code>terminal.tsx</code> records. So the band is a view that takes every touch that lands in it.</p></div>
+    <div><h4>P4 · No pointer hover or click</h4><p>React Native gives the band a touch for a trackpad click, with no sign that it is a pointer. A click must also be held 400 ms.</p></div>
+    <div><h4>A3, P7 · Panes of the Window on screen only</h4><p>The Topology holds the Panes of the active Window only. A Pane in another Window is two picks.</p></div>
+    <div><h4>F10 · The drawer closes at the pick, and a failed move says so only in the log</h4><p>Before, a Window or Session pick kept the drawer open until the move ended, to show “Going…” or an error. The open panel covered the Grip, and on a phone its scrim covered the screen. After a failed move it stayed open with no close button. Now <code>leaveDrawer</code> closes it and keeps the pick's revision, so the move goes on (<code>src/hooks/use-title-sheet.ts:370</code>). A failure goes to the device log (<code>:294</code>). The glass is also not interactive any more, since its own touch handling could take the touch. That these were the only causes is not proven.</p></div>
+  </div>
+</section>
+
+<section class="page-sec" id="s6">
+  <p class="sec-no">Section 6 · Evidence</p>
+  <h2>Types, lint and 2102 unit tests pass; the builds run on the devices; the device suite has never run</h2>
+  <div class="wide-frame">
+  <table class="cmp" style="min-width:600px">
+    <thead><tr><th>Check</th><th>Result</th><th>What it covers</th></tr></thead>
+    <tbody>
+      <tr><td><code>npx tsc --noEmit</code></td><td><span class="st-ok">✓ 0 errors</span></td><td>Every file.</td></tr>
+      <tr><td><code>npx expo lint</code></td><td><span class="st-ok">✓ 0 errors</span></td><td>Warnings only, in files this work did not touch.</td></tr>
+      <tr><td><code>npx jest</code></td><td id="jest-result"><span class="st-ok">✓ 2102 tests</span></td><td>New: <code>src/navigation/grip.test.ts</code> (17), <code>src/domain/destinations.test.ts</code> (5), <code>src/hooks/use-title-sheet-drawer.test.tsx</code> (4). Changed: the settings parse tests.</td></tr>
+      <tr><td>Release build on Gleb's iPhone</td><td><span class="st-ok">✓ latest</span></td><td>Gleb tried each round by hand: the hold, the slide and lift, the Lift Lane, the autoscroll, the keyboard.</td></tr>
+      <tr><td>Release build on Gleb's iPad</td><td><span class="st-diff">◐ older build</span></td><td>The last good install had the round button. Five later installs failed with CoreDevice error 4016.</td></tr>
+      <tr><td><code>e2e/edge-drawer.sh</code></td><td id="e2e-result"><span class="st-no">✗ not run</span></td><td>Rewritten for drag only: it picks with <code>agent-device gesture drag</code> from the Grip to a row. Whether the tool finds a row that shows only after the hold is not known.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="page-sec" id="s7">
+  <p class="sec-no">Section 7 · What no item asked</p>
+  <h2>Six additions came from the design, not from a request</h2>
+  <ul class="list-disc pl-6">
+    <li><b>A Tab of another Window goes to its Window first,</b> so the Tab is in the Place of its own Window and the next restore keeps it.</li>
+    <li><b>The drawer is the Title Sheet's second presentation</b> (<code>via: 'sheet' | 'drawer'</code>, <code>src/hooks/use-title-sheet.ts:44</code>), so the picks are the sheet's own.</li>
+    <li><b>A tick when the panel opens, VoiceOver's activate on the Grip, and the escape gesture</b> to close the panel.</li>
+    <li><b>The autoscroll waits until the finger leaves the Grip,</b> because the finger opens the panel near the list's bottom edge.</li>
+    <li><b>A lift on a Session's header goes to that Session.</b> It replaces the Session row of the first build.</li>
+    <li><b>An e2e suite, an ADR and five glossary terms:</b> <code>e2e/edge-drawer.sh</code>, ADR 0036, <code>CONTEXT.md:723</code>. <code>markSymbol</code> is exported from <code>src/components/topic-marks.tsx:32</code>, and the Key Row's <code>onPanes</code> is optional (<code>src/components/key-row.tsx:55</code>).</li>
+  </ul>
+</section>
+
+<section class="page-sec" id="s8">
+  <p class="sec-no">Section 8 · Options not taken</p>
+  <h2>Each option left out failed on the device or in the code for one reason</h2>
+  <div class="wide-frame">
+  <table class="cmp" style="min-width:560px">
+    <thead><tr><th>Option</th><th>Why not</th></tr></thead>
+    <tbody>
+      <tr><td>A recognizer for the hold inside the Surface</td><td class="bad">✗ Loses the race to the Surface's native gestures.</td></tr>
+      <tr><td>A drawer with its own picks</td><td class="bad">✗ Two copies of the pick rules drift.</td></tr>
+      <tr><td>Keep the drawer open until the move ends</td><td class="bad">✗ It covered the Grip, and stayed open after a failure (F10).</td></tr>
+      <tr><td>Reverse every row, so a title sits under its rows</td><td class="bad">✗ Reads wrongly. Only the order of the Session cards is reversed.</td></tr>
+      <tr><td>Place the Grip from the area's bottom</td><td class="bad">✗ It moved when the keyboard came. A share of the screen's height keeps it still (F15).</td></tr>
+      <tr><td>A round button near the bottom right (F6)</td><td class="mid">◐ Easy to reach, but too visible. Gleb chose the line.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="page-sec" id="s9">
+  <p class="sec-no">Section 9 · Roll back</p>
+  <h2>Nothing is committed, so a roll back is a checkout and ten deletions, and a saved trial setting goes away by itself</h2>
+  <p><code>git checkout -- CONTEXT.md src/</code>, then delete the new files: <code>src/components/edge-drawer.tsx</code>, <code>src/components/edge-grip.tsx</code>, <code>src/domain/destinations.ts</code> and its test, <code>src/hooks/use-edge-drawer-rows.ts</code>, <code>src/hooks/use-title-sheet-drawer.test.tsx</code>, <code>src/navigation/grip.ts</code> and its test, <code>e2e/edge-drawer.sh</code> and ADR 0036.</p>
+  <p>A phone that saved <code>hidePanesPicker: true</code> keeps the value on disk. The old <code>parseSettings</code> does not know the field, so the next save drops it.</p>
+</section>
+
+<section class="page-sec" id="check">
+  <h2>Check yourself</h2>
+  <p>Make sure you understand it well enough before you decide.</p>
+  <div class="chk" data-q="Q1" data-sec="Section 3">
+    <p class="mt-3"><b>Q1.</b> Gleb holds the Grip until the panel opens, then lifts without moving the finger. What happens?</p>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. That was the first build's D2. The drawer is drag only now.">The panel stays open for a tap.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="1" data-fb="Right. The finger is in the Lift Lane, and every lift closes the panel; only a lift on a row picks.">The panel closes, and nothing is picked.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. The Lift Lane is beside the rows, so no row is under the finger there.">The row at that height is picked.</button>
+    <div class="chk-fb"></div>
+  </div>
+  <div class="chk" data-q="Q2" data-sec="Section 5">
+    <p class="mt-3"><b>Q2.</b> Gleb slides onto a Window of another Session and lifts, and the switch fails. What does he see?</p>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. The panel no longer waits for the move: an open panel blocked the Grip.">The panel stays open with the error.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="1" data-fb="Right. The panel closed at the lift; the failure is in the device log only.">The panel is already closed; the error is only in the device log.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. The pick was made, and the move ran behind the closed panel.">Nothing: the lift was not a pick.</button>
+    <div class="chk-fb"></div>
+  </div>
+  <div class="chk" data-q="Q3" data-sec="Section 2">
+    <p class="mt-3"><b>Q3.</b> With “Hide the Panes picker” on, how does Gleb open the Title Sheet?</p>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. The Grip opens the Edge Drawer, not the Title Sheet.">With a hold on the Grip.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="1" data-fb="Right. The title tap stays at all times (D6, changed by F16).">With a tap on the title, as always.</button>
+    <button class="btn btn-sm btn-ghost chk-opt" data-ok="0" data-fb="No. The first build hid the title tap; F16 brought it back.">He cannot until he turns the setting off.</button>
+    <div class="chk-fb"></div>
+  </div>
+</section>
+
+<section class="page-sec" id="s10">
+  <p class="sec-no">Section 10 · Not done, and follow-ups</p>
+  <h2>Two checks are open, one problem is unexplained, and three questions wait for a decision</h2>
+  <ol class="steps-list">
+    <li>Install the latest build on the iPad when it is unlocked, and try the line at 3/4 and the panel there.</li>
+    <li>Run <code>e2e/edge-drawer.sh</code>. If <code>agent-device gesture drag</code> cannot reach a row that shows after the hold, the picks stay a check by hand.</li>
+    <li>Find why the arrow keys of a physical keyboard do not move the cursor (F18). Copy the device log from an unlocked device and read the keyboard entries.</li>
+    <li>Decide where a failed move from the drawer shows, now that the log is the only place (F10).</li>
+    <li>Decide whether a page scroll and a tap pass through the band (P1, P2), whether other Windows list their Panes (P7), and the iPad pointer (P4).</li>
+    <li>Use the trial setting for a while, then decide D6 for good.</li>
+    <li>Commit the work. Nothing is committed yet.</li>
+  </ol>
+</section>
+
+</main>
+<script>
+document.querySelectorAll('.chk').forEach((q) => {
+  const fb = q.querySelector('.chk-fb');
+  q.querySelectorAll('.chk-opt').forEach((b) => b.addEventListener('click', () => {
+    const ok = b.dataset.ok === '1';
+    fb.className = 'chk-fb show ' + (ok ? 'right' : 'wrong');
+    fb.innerHTML = (ok ? '✓ ' : '✗ ') + b.dataset.fb + ' <a class="link" href="#s' + q.dataset.sec.replace('Section ', '') + '">Go to ' + q.dataset.sec + '</a>';
+    if (!ok) {
+      const t = document.createElement('button');
+      t.className = 'btn btn-xs btn-outline ml-2';
+      t.textContent = 'Tell the agent: ' + q.dataset.sec + ' did not teach this';
+      t.onclick = () => window.lavish?.queuePrompt?.(q.dataset.sec + ' did not teach ' + q.dataset.q + '.', { tag: 'check', queueKey: 'check-' + q.dataset.q, element: q });
+      fb.appendChild(t);
+    }
+  }));
+});
+</script>
+</body>
+</html>
