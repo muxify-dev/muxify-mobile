@@ -43,7 +43,7 @@ import type { NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { actionLabel, coverOf, type Cover, type CoverAction } from '@/domain/cover';
-import { keyboardMove } from '@/domain/typing';
+import { keyboardTarget } from '@/domain/keyboard';
 import { useCopyLog } from '@/hooks/use-copy-log';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
@@ -503,9 +503,12 @@ export default function TerminalScreen() {
       // Claude Code, was a Pane you could click but never type into. A tap
       // that only got as far as leaving the Scrollback is not that tap: it
       // spent itself coming back to the present.
-      if (!wasScrolled) view.focusKeyboard();
+      if (!wasScrolled) {
+        view.focusKeyboard();
+        attach?.setKeyboard('up');
+      }
     },
-    [activeView],
+    [activeView, attach],
   );
 
   /** A drag, already counted in whole lines by whoever owned the finger. */
@@ -565,48 +568,45 @@ export default function TerminalScreen() {
   const activeSlot = slots.find((slot) => slot.pane.id === activePaneId);
 
   /**
-   * With a hardware keyboard, the active Pane takes the keyboard by itself, so
-   * the user can type at once: on Attach, after a pick in the title chooser,
-   * after a Pane change, and when the keyboard connects. The Composer, a
-   * Selection, a sheet or another screen holds input while it is up, and the
-   * Pane takes it back when that closes. Without a hardware keyboard a focus
-   * would raise the on-screen keyboard, so nothing happens.
-   */
-  const takesKeyboard = physicalKeyboard && activeSlot !== undefined && canType && screenFocused
-    && !composerOpen && !selecting && !sheetOpen;
-  useEffect(() => {
-    if (takesKeyboard) activeView()?.focusKeyboard();
-  }, [takesKeyboard, activeView, sessionName]);
-
-  /**
    * Each Pane's Surface, as the Pane view sees it. Kept here as well, because
    * the keyboard rule below must reach the Surface after a lost Connection
    * has released its view, and because a key is pressed into it.
    */
   const surfaces = useRef(new Map<string, ScreenSurface>());
-  /** Whether the active Surface had the keyboard when typing last stopped. */
-  const keyboardRemembered = useRef(false);
-  const inputElsewhere = composerOpen || selecting || sheetOpen || !screenFocused;
-  /**
-   * The system keyboard follows whether keys can reach the active Pane. It
-   * goes down when they cannot, so no key goes nowhere, and comes back when
-   * they can if it was up. See keyboardMove.
-   */
-  const moveKeyboard = useEffectEvent((can: boolean) => {
-    const paneId = activePaneId;
-    const surface = surfaces.current.get(paneId);
-    const elsewhere = inputElsewhere;
-    void (async () => {
-      const focused = !can && surface ? await surface.isFocused() : false;
-      const move = keyboardMove({ canType: can, focused, remembered: keyboardRemembered.current, inputElsewhere: elsewhere });
-      keyboardRemembered.current = move.remembered;
-      if (move.act === 'none') return;
-      say(`keyboard: ${move.act} ${paneId}, as keys ${can ? 'reach it again' : 'no longer reach it'}`);
-      if (move.act === 'blur') surface?.blur();
-      else surface?.focus();
-    })();
+  const keyboardIntent = state?.keyboard ?? 'down';
+  /** The Edge Drawer is input too: its open, and the finger that holds its Grip, own the touches. */
+  const inputElsewhere = composerOpen || selecting || sheetOpen || chooser.drawer.open || !screenFocused;
+  const target = keyboardTarget({
+    intent: keyboardIntent,
+    physicalKeyboard,
+    activePaneId: activeSlot ? activePaneId : null,
+    typingOpen: open,
+    inputElsewhere,
   });
-  useEffect(() => moveKeyboard(canType), [canType]);
+  const targetKind = target.kind;
+  const targetPaneId = target.kind === 'pane' ? target.paneId : null;
+  /**
+   * The one place the system keyboard is moved. Only the active Pane's Surface
+   * holds it: a Pane that takes it from another needs no blur first, because
+   * a first responder gives way to the next. See keyboardTarget.
+   */
+  useEffect(() => {
+    if (targetKind === 'elsewhere') return;
+    if (targetPaneId !== null) {
+      say('keyboard: focus');
+      surfaces.current.get(targetPaneId)?.focus();
+      return;
+    }
+    say('keyboard: blur');
+    for (const surface of surfaces.current.values()) surface.blur();
+  }, [targetKind, targetPaneId]);
+  // A hardware keyboard that leaves while the active Pane holds the keyboard
+  // leaves the system keyboard up on it: that is what the user now has.
+  const heldForHardware = useRef(false);
+  useLayoutEffect(() => {
+    if (heldForHardware.current && !physicalKeyboard) attach?.setKeyboard('up');
+    heldForHardware.current = physicalKeyboard && targetKind === 'pane';
+  }, [attach, physicalKeyboard, targetKind]);
   const mouseGrid = activeSlot
     ? activeSlot.fillsWindow
       ? visibleGrid
@@ -761,8 +761,9 @@ export default function TerminalScreen() {
   /**
    * Bytes typed into one Pane's Surface.
    *
-   * Aimed at the Surface that had first responder, which is the only one the
-   * keyboard was ever talking to — so a split needs no routing of its own.
+   * Aimed at the Surface that sent them. Where they go is the Attach's to say:
+   * a key from a Surface that no longer holds the keyboard, or one typed while
+   * a split is being made, goes to the Pane in use.
    */
   const handlePaneInput = useCallback(
     (paneId: string, data: string) => {
@@ -813,8 +814,11 @@ export default function TerminalScreen() {
     }
     const view = activeView();
     say(view ? `Keyboard button, for ${activePaneId}` : 'Keyboard button, with no active Pane to ask');
-    void view?.toggleKeyboard();
-  }, [activeView, activePaneId, composerOpen, keyboardVisible]);
+    // The Surface has the keyboard or not, and the toggle says what the user now wants.
+    void view?.toggleKeyboard().then((intent) => {
+      if (intent !== null) attach?.setKeyboard(intent);
+    });
+  }, [activeView, activePaneId, attach, composerOpen, keyboardVisible]);
 
   const toggleComposer = useCallback(() => {
     if (composerOpen) void composerInput.current?.blur();
@@ -1279,6 +1283,7 @@ export default function TerminalScreen() {
                 onSelectionEnd={endSelection}
                 onSelectionEdge={scrollSelection}
                 onPaste={pasteFromSurface}
+                onKeyboardTap={(focused) => attach?.setKeyboard(focused ? 'up' : 'down')}
               />
             ))}
 
@@ -1573,6 +1578,7 @@ function PaneSurfaceView({
   onSelectionEnd,
   onSelectionEdge,
   onPaste,
+  onKeyboardTap,
 }: {
   slot: PaneSlot;
   physicalKeyboard: boolean;
@@ -1601,6 +1607,8 @@ function PaneSurfaceView({
   /** A handle of the Selection is held at the top or bottom edge. */
   onSelectionEdge: (paneId: string, grid: Grid, direction: 'up' | 'down') => void;
   onPaste: (paneId: string, pasted: TerminalPasteEvent) => void;
+  /** A tap on the Surface raised the keyboard (true) or dismissed it (false). */
+  onKeyboardTap: (focused: boolean) => void;
 }) {
   /**
    * The grid this Surface last reported, or null before it has.
@@ -1714,6 +1722,7 @@ function PaneSurfaceView({
           onSelectionEdge(slot.pane.id, own.current, nativeEvent.direction)
         }
         onPaste={({ nativeEvent }) => onPaste(slot.pane.id, nativeEvent)}
+        onKeyboardTap={({ nativeEvent }) => onKeyboardTap(nativeEvent.focused)}
       />
 
       {/* The seam, and only the seam. A rectangle per Pane drew a rule along

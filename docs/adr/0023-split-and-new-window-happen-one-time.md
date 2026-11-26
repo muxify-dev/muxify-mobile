@@ -41,3 +41,22 @@ options are left there. They show in `tmux show-options`.
 
 On tmux below 3.2 there is no compare. The verb runs without the guard, and a
 verb with no answer is dropped at the break, never sent again.
+
+## The Pane the verb made
+
+A verb that makes a Pane must say which one (ADR 0039). So the guarded line
+also records the new Pane next to the Op, in `@muxify-op-pane-<token>`, with
+`set-option -F` and `#{pane_id}`. The option is apart from the Op, because the
+compare of the Op reads a number. The read after the verb gets the Op, this
+Pane, and the Pane that is active now, in that order.
+
+The read after a break takes the recorded Pane. The active Pane would be
+wrong then: the user can have moved since. A tmux below 3.2 has no guarded
+line and no break read, so it takes the active Pane right after the verb.
+
+The guard ends every tap as made (with the Pane), refused, or dropped, and
+reports it once. Before, it said nothing after a break. Now a verb that ran
+before the break ends as made. A Session that is gone, a server that started
+again, a read that failed, a verb of tmux below 3.2 that was lost, and a tap
+that was never sent all end as dropped. A tap whose promise ended at the
+break still gets its end later.

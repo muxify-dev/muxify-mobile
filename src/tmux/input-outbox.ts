@@ -18,6 +18,7 @@ import {
   type MessageFate,
   type MessageId,
   type Seq,
+  type Typed,
 } from './input-lane';
 import type { KeyPress } from './key-press';
 
@@ -54,6 +55,11 @@ export interface Outbox {
   lane(paneId: string): PaneInput;
   connected(link: OutboxLink): void;
   lost(): void;
+  /**
+   * Keys typed for a Pane that was never made, put behind the keys of the Pane
+   * they were typed in. The user decides about them all: see the `verb-refused` reason.
+   */
+  park(paneId: string, keys: readonly Typed[]): void;
   /** Send on a held Lane. False when the Lane is not held. */
   release(paneId: string): boolean;
   /** Empties a held Lane and answers with its keys. Move to Composer and Discard. */
@@ -207,6 +213,11 @@ export function createOutbox(options: OutboxOptions): Outbox {
       link = null;
       epoch += 1;
       everyLane({ kind: 'lost' });
+    },
+
+    park(paneId: string, keys: readonly Typed[]): void {
+      ensure(paneId);
+      apply(paneId, { kind: 'parked', keys });
     },
 
     release(paneId: string): boolean {

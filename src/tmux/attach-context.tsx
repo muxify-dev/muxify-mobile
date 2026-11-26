@@ -132,11 +132,13 @@ export function useOpenSession() {
     destination: SessionDestination;
     origin?: AttachOrigin;
     isCurrent?: () => boolean;
+    /** Set when the phone made the Pane this opens on: the keyboard comes up on it. */
+    keyboard?: 'up';
   }): Promise<Attach> => {
     const records = await deviceHostStore().load();
     const host = records.hosts.find((candidate) => candidate.id === request.hostId);
     if (!host) throw new Error('This Host is no longer saved.');
     return holder.open({ host, destination: request.destination, origin: request.origin, isCurrent: request.isCurrent,
-      zoomed: settings.zoomMultipaneWindows });
+      keyboard: request.keyboard, zoomed: settings.zoomMultipaneWindows });
   }, [holder, settings.zoomMultipaneWindows]);
 }

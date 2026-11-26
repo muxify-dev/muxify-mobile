@@ -1,4 +1,5 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
+import type { KeyboardIntent } from '@/domain/keyboard';
 import type { Clock, Timer } from '@/lib/clock';
 import { systemClock } from '@/lib/clock';
 import { clickSequence, cursorKeys, LINES_PER_NOTCH, wheelSequence } from '@/lib/mouse-wheel';
@@ -138,8 +139,11 @@ export interface PaneView {
   setCursor(shown: boolean): void;
   /** Raises the keyboard on this Pane, whatever it was doing. */
   focusKeyboard(): void;
-  /** Raises it if it is down and dismisses it if it is up. */
-  toggleKeyboard(): Promise<void>;
+  /**
+   * Raises it if it is down and dismisses it if it is up. Answers the intent
+   * that results, or null when nothing was toggled.
+   */
+  toggleKeyboard(): Promise<KeyboardIntent | null>;
   /** Whether this Pane's Surface has the keyboard right now. */
   keyboardFocused(): Promise<boolean>;
   /**
@@ -745,11 +749,11 @@ export function createPaneView(
       surface?.focus();
     },
 
-    async toggleKeyboard(): Promise<void> {
+    async toggleKeyboard(): Promise<KeyboardIntent | null> {
       const current = surface;
       if (disposed || !current) {
         say('keyboard: toggle asked with no Surface');
-        return;
+        return null;
       }
       // Asked of the Surface rather than of a global keyboard listener: React
       // Native's registry never heard of this view — the Surface is a native
@@ -760,11 +764,12 @@ export function createPaneView(
       const focused = await current.isFocused();
       if (disposed || surface !== current) {
         say('keyboard: toggle dropped, the Surface changed meanwhile');
-        return;
+        return null;
       }
       say(`keyboard: toggle, Surface ${focused ? 'has it → blur' : 'lacks it → focus'}`);
       if (focused) current.blur();
       else current.focus();
+      return focused ? 'down' : 'up';
     },
 
     keyboardFocused: () => surface?.isFocused() ?? Promise.resolve(false),

@@ -36,6 +36,15 @@ describe('what a notice says', () => {
     );
   });
 
+  it('says that the new Pane they were typed for was not made, and for which Pane they wait', () => {
+    expect(inputNoticeCopy(held('%1', { reasons: ['verb-refused'] }), '%1').reason).toBe(
+      'Not sent: it was typed for a new Pane, and tmux did not make one.',
+    );
+    expect(inputNoticeCopy(held('%1', { reasons: ['verb-refused'] }), '%2').reason).toBe(
+      'Typed in another Pane. Not sent: it was typed for a new Pane, and tmux did not make one.',
+    );
+  });
+
   it('names the keys that Move to Composer drops, before the tap', () => {
     expect(inputNoticeCopy(held('%1'), '%1').compose).toBe('Move to Composer');
     expect(inputNoticeCopy(held('%1', { draft: { text: 'x', dropped: ['↑', '^C'] } }), '%1').compose).toBe(

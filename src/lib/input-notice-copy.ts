@@ -11,6 +11,7 @@ const HELD: Record<HoldReason, string> = {
   unwitnessed: 'the Pane was not read before the break',
   unguarded: 'tmux on the Host is older than 3.2, and it can paste it two times',
   refused: 'tmux refused it',
+  'verb-refused': 'it was typed for a new Pane, and tmux did not make one',
 };
 
 const DISCARDED: Record<DiscardReason, string> = {

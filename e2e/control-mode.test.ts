@@ -997,6 +997,42 @@ describe('typed keys, against a real tmux and a link that breaks', () => {
     }, 60000);
   });
 
+  describe('a split and a New Window name the Pane they made', () => {
+    /** One Window with one Pane, and an Attach on it. */
+    async function oneWindow() {
+      tmux(['kill-window', '-a', '-t', `${TYPED}:`]);
+      tmux(['kill-pane', '-a', '-t', `${TYPED}:`]);
+      return catPane();
+    }
+
+    it.each([
+      ['a split', (attach: Attach) => attach.split('right')],
+      ['a New Window', (attach: Attach) => attach.newWindow()],
+    ])('raises the keyboard when %s is made, also when the reply was lost and the next Connection learns it', async (what, verb) => {
+      ownServer();
+      const pane = await oneWindow();
+      const { attach, tap } = pane;
+      check('the keyboard starts down', attach.state().keyboard, 'down');
+
+      await verb(attach);
+      check(`the keyboard is up after ${what}`, attach.state().keyboard, 'up');
+
+      attach.setKeyboard('down');
+      tap.deafFrom = "'if-shell'";
+      const lost = verb(attach);
+      await wait(600);
+      const reopen = await pane.breakLink();
+      await lost;
+      check(`the keyboard stays down while the reply of ${what} is unknown`, attach.state().keyboard, 'down');
+      reopen();
+      await reaches(attach, 'connected');
+      await until('the keyboard up', () => attach.state().keyboard === 'up');
+      check(`the keyboard is up once the Connection reads the Pane that ${what} made`, attach.state().keyboard, 'up');
+
+      await attach.close();
+    }, 60000);
+  });
+
   describe('a paste and a Composer Send, across a break', () => {
     it('sends a Composer message once, whether tmux took its line before the break or not', async () => {
       ownServer();

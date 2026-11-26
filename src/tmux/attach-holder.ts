@@ -24,6 +24,8 @@ export interface AttachRequest {
   isCurrent?: () => boolean;
   /** The Zoom preference at the moment it is opened. */
   zoomed: boolean;
+  /** Set when the phone made the Pane this opens on: the keyboard comes up on it. */
+  keyboard?: 'up';
 }
 
 export interface AttachHolder {
@@ -66,7 +68,7 @@ export interface AttachHolder {
  * which Attach to tell.
  */
 export function createAttachHolder(
-  open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed'> & { colours: PaneColours | null }) => Attach,
+  open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed' | 'keyboard'> & { colours: PaneColours | null }) => Attach,
   lastPlace: Pick<HostStore, 'forgetLastPlace'>,
   log: Log = silentLog,
 ): AttachHolder {
@@ -105,6 +107,7 @@ export function createAttachHolder(
           // Opening the Session the Attach lost is the user asking for it again.
           // The same Attach reconnects, so its Drafts and held keys stay.
           if (attached.state().phase.kind === 'disconnected') attached.reconnect();
+          if (request.keyboard) attached.setKeyboard(request.keyboard);
           return attached;
         }
 
@@ -124,7 +127,7 @@ export function createAttachHolder(
 
         if (mine !== revision) throw new Error('The Attach was disconnected before the Session opened.');
         if (request.isCurrent && !request.isCurrent()) throw new Error('This Session request is no longer current.');
-        const next = open({ host: request.host, destination: request.destination, zoomed: request.zoomed, colours });
+        const next = open({ host: request.host, destination: request.destination, zoomed: request.zoomed, keyboard: request.keyboard, colours });
         current = next;
         publish();
         return next;

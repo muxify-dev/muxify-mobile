@@ -734,40 +734,77 @@ export function newWindowCommand(sessionName: string): TmuxArgv {
 }
 
 /**
- * The Session option that holds the highest Op the Session took from one
- * Verb guard. A user option, which tmux and other clients do not read.
+ * The two Session options of one Verb guard: the highest Op the Session took,
+ * and the Pane that Op made. User options, which tmux and other clients do
+ * not read. The Pane is kept apart from the Op, which a comparison reads as a
+ * number.
  */
-export function verbOption(token: OutboxToken): string {
-  return `@muxify-op-${token}`;
+export interface VerbOptions {
+  readonly op: string;
+  readonly pane: string;
+}
+
+export function verbOptions(token: OutboxToken): VerbOptions {
+  return { op: `@muxify-op-${token}`, pane: `@muxify-op-pane-${token}` };
 }
 
 /**
  * Reads a Session's Op after its id, so a reply that is not this read shows,
- * and the server's pid, so a read of a server that started again shows.
+ * and the server's pid, so a read of a server that started again shows. Then
+ * the Pane that Op made, and the Pane that is active now.
  */
-export function sessionOpCommand(sessionName: string, option: string): TmuxArgv {
-  return ['display-message', '-p', '-t', currentPaneTarget(sessionName), `#{session_id}:#{pid}:#{${option}}`];
-}
-
-/** The reply of sessionOpCommand: the Session's Op, 0 for none. Null when it is not that read. */
-export function parseSessionOp(line: string | undefined): { held: number; serverPid: number } | null {
-  const read = /^\$\d+:(\d+):(\d*)$/.exec(line ?? '');
-  return read ? { held: Number(read[2] || 0), serverPid: Number(read[1]) } : null;
+export function sessionOpCommand(sessionName: string, options: VerbOptions): TmuxArgv {
+  return [
+    'display-message',
+    '-p',
+    '-t',
+    currentPaneTarget(sessionName),
+    `#{session_id}:#{pid}:#{${options.op}}:#{${options.pane}}:#{pane_id}`,
+  ];
 }
 
 /**
- * The line that runs one Session verb: the verb, then the Session's new Op,
- * then a read of the Op. Run it with `runChain`.
+ * The reply of sessionOpCommand: the Session's Op, 0 for none. Null when it is not that read.
+ *
+ * `madePane` is the Pane the Op made, as the guarded line recorded it, and
+ * `activePane` the one active now, which is the made Pane only right after
+ * the verb.
+ */
+export function parseSessionOp(
+  line: string | undefined,
+): { held: number; serverPid: number; madePane: string | null; activePane: string | null } | null {
+  const read = /^\$\d+:(\d+):(\d*):(%\d+)?:(%\d+)?$/.exec(line ?? '');
+  return read
+    ? { held: Number(read[2] || 0), serverPid: Number(read[1]), madePane: read[3] ?? null, activePane: read[4] ?? null }
+    : null;
+}
+
+/**
+ * The line that runs one Session verb: the verb, then the Session's new Op and
+ * the Pane the verb made, then a read of both. Run it with `runChain`.
  *
  * As with deliverCommands, tmux skips the Op when the verb failed. With
  * `guarded`, tmux runs nothing when the Session already has this Op: a line
- * of a lost Connection ran it, and this one is the copy.
+ * of a lost Connection ran it, and this one is the copy. Only a guarded line
+ * records the Pane: it is the only line that a read after a break can
+ * judge, and a tmux below 3.2 never asks for that read.
  */
-export function verbCommands(sessionName: string, verb: Verb, op: Op, option: string, guarded: boolean): TmuxArgv[] {
+export function verbCommands(sessionName: string, verb: Verb, op: Op, options: VerbOptions, guarded: boolean): TmuxArgv[] {
   const target = currentPaneTarget(sessionName);
   const run = verb.kind === 'split' ? splitWindowCommand(sessionName, verb.direction) : newWindowCommand(sessionName);
-  const record = ['set-option', '-t', target, option, String(op)];
-  const read = sessionOpCommand(sessionName, option);
+  const record = ['set-option', '-t', target, options.op, String(op)];
+  const recordPane = ['set-option', '-F', '-t', target, options.pane, '#{pane_id}'];
+  const read = sessionOpCommand(sessionName, options);
   if (!guarded) return [run, record, read];
-  return [['if-shell', '-F', '-t', target, optionBelow(option, op), [run, record].map(renderControlCommand).join(' ; ')], read];
+  return [
+    [
+      'if-shell',
+      '-F',
+      '-t',
+      target,
+      optionBelow(options.op, op),
+      [run, record, recordPane].map(renderControlCommand).join(' ; '),
+    ],
+    read,
+  ];
 }

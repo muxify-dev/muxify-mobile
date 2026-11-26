@@ -346,8 +346,11 @@ describe('what the Log says of typed input', () => {
 });
 
 describe('a split or New Window that runs one time', () => {
-  it('runs the verb and records its Op only while the Session is below the Op, then reads the Op', () => {
-    const line = verbCommands('$3', { kind: 'split', direction: 'right' }, 4 as Op, '@muxify-op-k7f2', true);
+  const OPTIONS = { op: '@muxify-op-k7f2', pane: '@muxify-op-pane-k7f2' };
+  const READ = '#{session_id}:#{pid}:#{@muxify-op-k7f2}:#{@muxify-op-pane-k7f2}:#{pane_id}';
+
+  it('runs the verb and records its Op and Pane only while the Session is below the Op, then reads both', () => {
+    const line = verbCommands('$3', { kind: 'split', direction: 'right' }, 4 as Op, OPTIONS, true);
     expect(line).toEqual([
       [
         'if-shell',
@@ -355,25 +358,31 @@ describe('a split or New Window that runs one time', () => {
         '-t',
         '$3:',
         '#{e|<:#{e|+:0,#{@muxify-op-k7f2}},4}',
-        "'split-window' '-h' '-t' '$3:' ; 'set-option' '-t' '$3:' '@muxify-op-k7f2' '4'",
+        "'split-window' '-h' '-t' '$3:' ; 'set-option' '-t' '$3:' '@muxify-op-k7f2' '4' ; " +
+          "'set-option' '-F' '-t' '$3:' '@muxify-op-pane-k7f2' '#{pane_id}'",
       ],
-      ['display-message', '-p', '-t', '$3:', '#{session_id}:#{pid}:#{@muxify-op-k7f2}'],
+      ['display-message', '-p', '-t', '$3:', READ],
     ]);
   });
 
-  it('runs the verb with no guard on a tmux below 3.2', () => {
-    expect(verbCommands('0', { kind: 'new-window' }, 1 as Op, '@muxify-op-k7f2', false)).toEqual([
+  it('runs the verb with no guard on a tmux below 3.2, and reads the active Pane after it', () => {
+    expect(verbCommands('0', { kind: 'new-window' }, 1 as Op, OPTIONS, false)).toEqual([
       ['new-window', '-a', '-t', '0:'],
       ['set-option', '-t', '0:', '@muxify-op-k7f2', '1'],
-      ['display-message', '-p', '-t', '0:', '#{session_id}:#{pid}:#{@muxify-op-k7f2}'],
+      ['display-message', '-p', '-t', '0:', READ],
     ]);
   });
 
   it.each([
-    ['$3:812:4', { held: 4, serverPid: 812 }],
-    ['$3:812:', { held: 0, serverPid: 812 }],
-    ['$3:4', null],
-    ['$3::4', null],
+    ['$3:812:4:%7:%7', { held: 4, serverPid: 812, madePane: '%7', activePane: '%7' }],
+    ['$3:812:4:%7:%9', { held: 4, serverPid: 812, madePane: '%7', activePane: '%9' }],
+    ['$3:812:::%9', { held: 0, serverPid: 812, madePane: null, activePane: '%9' }],
+    ['$3:812:4::%9', { held: 4, serverPid: 812, madePane: null, activePane: '%9' }],
+    ['$3:812:::', { held: 0, serverPid: 812, madePane: null, activePane: null }],
+    ['$3:812:4', null],
+    ['$3:812:4:%7', null],
+    ['$3::4:%7:%7', null],
+    ['$3:812:4:x:%7', null],
     ['4', null],
     ['', null],
     [undefined, null],

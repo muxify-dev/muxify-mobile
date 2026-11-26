@@ -107,6 +107,7 @@ it('selects without a write, then creates once and reuses the Session after Atta
   await act(async () => { retry(); retry(); });
   expect(mockOpen).toHaveBeenCalledTimes(2);
   expect(mockOpen.mock.calls[1][0].destination.sessionName).toBe('new-session');
+  expect(mockOpen.mock.calls[1][0].keyboard).toBe('up');
   expect(mockAdd).toHaveBeenCalledTimes(1);
   expect(mockDismiss).toHaveBeenCalledWith('/terminal');
 });

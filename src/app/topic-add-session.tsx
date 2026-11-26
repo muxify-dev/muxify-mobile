@@ -93,7 +93,7 @@ export default function TopicAddSessionScreen() {
     setMade(session);
     step('attaching');
     if (origin && !origin.attach) throw new Error('The Attach has ended. Open the Session from Home.');
-    await openSession({ hostId, destination: { sessionName: session, topic: { id: topicId as TopicId, seed } }, origin });
+    await openSession({ hostId, destination: { sessionName: session, topic: { id: topicId as TopicId, seed } }, origin, keyboard: 'up' });
     return true as const;
   };
   const opened = (done: true | undefined) => { if (done && !closed.current) router.dismissTo('/terminal'); };

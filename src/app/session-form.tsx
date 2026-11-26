@@ -55,7 +55,7 @@ export default function SessionFormScreen() {
   const attach = async (session: string, step: HostWriteRun['step']) => {
     setMade(session);
     step('attaching');
-    await openSession({ hostId, destination: { sessionName: session, topic: null } });
+    await openSession({ hostId, destination: { sessionName: session, topic: null }, keyboard: 'up' });
     return true as const;
   };
   const opened = (done: true | undefined) => { if (done) router.dismissTo('/terminal'); };

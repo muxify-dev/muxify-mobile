@@ -34,7 +34,7 @@ export function useGoToPick(hostId: string, onOpened: () => void) {
   const attach = async (session: string, folder: string, host: Host, step: HostWriteRun['step']) => {
     if (!focused.current) return undefined;
     step('attaching');
-    await openSession({ hostId, destination: { sessionName: session, topic: null }, origin: captureAttachOrigin(holder.current()) });
+    await openSession({ hostId, destination: { sessionName: session, topic: null }, origin: captureAttachOrigin(holder.current()), keyboard: 'up' });
     recordVisit(host, folder);
     return true as const;
   };

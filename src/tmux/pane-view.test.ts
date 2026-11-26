@@ -563,7 +563,7 @@ describe('the keyboard, which belongs to the Surface', () => {
     const kit = viewOn(host);
     await paints(kit);
 
-    await kit.view.toggleKeyboard();
+    await expect(kit.view.toggleKeyboard()).resolves.toBe('up');
 
     expect(kit.screen.keyboard).toEqual(['focus']);
     await expect(kit.view.keyboardFocused()).resolves.toBe(true);
@@ -576,7 +576,7 @@ describe('the keyboard, which belongs to the Surface', () => {
     kit.view.focusKeyboard();
     kit.screen.keyboard.length = 0;
 
-    await kit.view.toggleKeyboard();
+    await expect(kit.view.toggleKeyboard()).resolves.toBe('down');
 
     expect(kit.screen.keyboard).toEqual(['blur']);
   });
@@ -603,7 +603,7 @@ describe('the keyboard, which belongs to the Surface', () => {
   it('does nothing at all for a Pane with no Surface', async () => {
     const host = fakePane();
     const kit = viewOn(host);
-    await kit.view.toggleKeyboard();
+    await expect(kit.view.toggleKeyboard()).resolves.toBeNull();
     await expect(kit.view.keyboardFocused()).resolves.toBe(false);
   });
 });
