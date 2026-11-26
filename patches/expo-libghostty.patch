@@ -2062,7 +2062,7 @@ diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.s
 index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3f1ebb155 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-@@ -12,19 +12,69 @@
+@@ -12,19 +12,77 @@
      extension UITerminalView {
          override open func pressesBegan(
              _ presses: Set<UIPress>,
@@ -2086,6 +2086,14 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
 +            // UIKit tracks Control through release while its keyboard picker is open.
 +            if key.keyCode == .keyboardLeftControl || key.keyCode == .keyboardRightControl { return true }
 +            if key.keyCode == .keyboardSpacebar, held == .control { return true }
++
++            // UIKit names a key that types nothing, such as an arrow or Escape:
++            // "UIKeyInputLeftArrow". That name is not typing, so ghostty encodes
++            // the key. During composition UIKit keeps it to move through the
++            // candidate text.
++            if TerminalInputText.filteredFunctionKeyText(key.charactersIgnoringModifiers) == nil {
++                return inputHandler.hasMarkedText
++            }
 +
 +            // UIKit translates ordinary typing with the active layout and commits composed text.
 +            if held.subtracting(.shift).isEmpty {
@@ -2136,7 +2144,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
                  guard let key = press.key else { continue }
                  handleKeyPress(key, action: GHOSTTY_ACTION_RELEASE)
              }
-@@ -36,6 +86,7 @@
+@@ -36,6 +94,7 @@
              with event: UIPressesEvent?
          ) {
              hardwareKeyHandled = false
@@ -2144,7 +2152,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              super.pressesCancelled(presses, with: event)
          }
  
-@@ -48,6 +99,103 @@
+@@ -48,6 +107,103 @@
                  return
              }
  
@@ -2248,7 +2256,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              let filteredModifierFlags = filteredModifierFlags(for: key)
              let isCommandModified = filteredModifierFlags.contains(.command)
              let mods = TerminalInputModifiers(from: filteredModifierFlags)
-@@ -57,21 +205,15 @@
+@@ -57,21 +213,15 @@
                  filteredModifierFlags: filteredModifierFlags
              )
  
@@ -2272,7 +2280,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              )
  
              if action == GHOSTTY_ACTION_RELEASE, delivery.isDirectInput {
-@@ -99,13 +241,30 @@
+@@ -99,13 +249,30 @@
              // translate the documented HID usage value from UIKey into the
              // corresponding AppKit keycode here.
              keyEvent.keycode = TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(
@@ -2304,7 +2312,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              keyEvent.consumed_mods = TerminalInputModifiers(from: consumedFlags).ghosttyMods
  
              guard action == GHOSTTY_ACTION_PRESS || action == GHOSTTY_ACTION_REPEAT else {
-@@ -129,7 +288,10 @@
+@@ -129,7 +296,10 @@
                  return
              }
  
@@ -2316,7 +2324,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
                    !text.isEmpty
              else {
                  _ = surface.sendKeyEvent(keyEvent)
-@@ -179,7 +341,7 @@
+@@ -179,7 +349,7 @@
              return true
          }
  
@@ -2325,7 +2333,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              var flags = key.modifierFlags
              let isFunctionKey =
                  TerminalInputText.filteredFunctionKeyText(key.characters) == nil ||
-@@ -191,7 +353,7 @@
+@@ -191,7 +361,7 @@
          }
  
          private func commandZoomDirection(
@@ -2334,7 +2342,7 @@ index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3
              action: ghostty_input_action_e,
              filteredModifierFlags: UIKeyModifierFlags
          ) -> KeyboardZoomDirection? {
-@@ -243,4 +405,29 @@
+@@ -243,4 +413,29 @@
              case decrease
          }
      }

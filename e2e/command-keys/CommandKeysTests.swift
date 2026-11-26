@@ -70,9 +70,19 @@ final class CommandKeysTests: XCTestCase {
     host("cleared")
 
     host("typed")
+    focusPane()
     hardware(XCUIKeyboardKey.leftArrow.rawValue)
     app.typeText("X")
     host("x-at-line-start")
+
+    // A key that types nothing goes to the Pane without ⌘ too.
+    host("typed")
+    bare(XCUIKeyboardKey.leftArrow.rawValue)
+    app.typeText("X")
+    host("x-before-last")
+    host("typed")
+    bare(XCUIKeyboardKey.upArrow.rawValue)
+    host("history-recalled")
   }
 
   /// Split right is on ⌘E now, from the hardware half.
@@ -118,6 +128,19 @@ final class CommandKeysTests: XCTestCase {
 
   private func hardware(_ key: String) {
     app.typeKey(key, modifierFlags: .command)
+    sleep(1)
+  }
+
+  /// Settings takes the focus, and `typeText` needs the Pane to have it.
+  private func focusPane() {
+    if app.keyboards.count == 0 {
+      app.buttons.matching(NSPredicate(format: "label == 'Keyboard'")).firstMatch.tap()
+      sleep(1)
+    }
+  }
+
+  private func bare(_ key: String) {
+    app.typeKey(key, modifierFlags: [])
     sleep(1)
   }
 
