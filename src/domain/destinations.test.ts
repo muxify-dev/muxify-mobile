@@ -29,9 +29,12 @@ const base: DestinationInput = {
   attachedSession: 'gs-server',
   panes: [pane(0, true), pane(1)],
   tabs: new Map([['@1', [tab('grafana'), tab('pr-812')]], ['@7', [tab('docs')]]]),
+  onScreen: { kind: 'pane' },
 };
 
 const keys = (input: DestinationInput) => destinationRows(input).map((row) => row.key);
+/** The keys of the rows marked as on screen. */
+const here = (input: DestinationInput) => destinationRows(input).filter((row) => 'here' in row && row.here).map((row) => row.key);
 
 describe('destinationRows', () => {
   it('lists the Topic, its Sessions and Windows, the Panes of the Window on screen, and each Window’s Tabs, and nothing else', () => {
@@ -61,6 +64,34 @@ describe('destinationRows', () => {
   it('carries the Window and Session a Tab belongs to, so a pick can go there first', () => {
     const docs = destinationRows(base).find((row) => row.key === 'tab:@7:docs');
     expect(docs).toMatchObject({ kind: 'tab', session: 'gs-client', window: { id: '@7', index: 1 } });
+  });
+});
+
+describe('the row on screen', () => {
+  it('is the active Pane on the Terminal Screen, when the Panes are listed', () => {
+    expect(here(base)).toEqual(['pane:%0']);
+  });
+
+  it('is the Window on the Terminal Screen, when the Window has one Pane', () => {
+    expect(here({ ...base, panes: [pane(0, true)] })).toEqual(['window:gs-server:@1']);
+  });
+
+  it('is the shown Tab on the Web View, and no Pane or Window', () => {
+    expect(here({ ...base, onScreen: { kind: 'tab', url: 'https://pr-812.example.ts.net' } })).toEqual(['tab:@1:pr-812']);
+  });
+
+  it('is not a Tab of another Window with the same URL', () => {
+    const tabs = new Map([['@1', [tab('grafana')]], ['@7', [tab('pr-812')]]]);
+    expect(here({ ...base, tabs, onScreen: { kind: 'tab', url: 'https://pr-812.example.ts.net' } })).toEqual([]);
+  });
+
+  it('is no row on the Web View while the shown Tab is not listed', () => {
+    expect(here({ ...base, tabs: new Map(), onScreen: { kind: 'tab', url: 'https://pr-812.example.ts.net' } })).toEqual([]);
+  });
+
+  it('is the first of two Tabs with the same URL', () => {
+    const tabs = new Map([['@1', [tab('grafana'), { ...tab('copy'), url: 'https://grafana.example.ts.net' }]]]);
+    expect(here({ ...base, tabs, onScreen: { kind: 'tab', url: 'https://grafana.example.ts.net' } })).toEqual(['tab:@1:grafana']);
   });
 });
 

@@ -18,6 +18,7 @@ import { TitleSheet } from '@/components/title-sheet';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { coverOf } from '@/domain/cover';
+import type { OnScreen } from '@/domain/destinations';
 import { useCoverAction } from '@/hooks/use-cover-action';
 import { useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
@@ -174,8 +175,9 @@ export default function WebViewScreen() {
     leaving.current = true;
     setRelease(() => () => router.replace(placeTabRoute(tab)));
   }, [leave, router]);
+  const onScreen = useMemo((): OnScreen => ({ kind: 'tab', url: shown.url }), [shown.url]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved,
-    onReplacingStopped: opening.forgetLookup });
+    onReplacingStopped: opening.forgetLookup, onScreen });
   const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
 
   // A page that a Place opened: once the Attach is back in the Place's

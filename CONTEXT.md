@@ -748,7 +748,11 @@ card, as an iOS grouped list has: its Windows in the Title Sheet's order and
 marks, the Panes of the Window on screen under it when it has more than one,
 and the Browser Tabs of each Window under that Window. The drawer reads the
 Tabs of every Window it lists each time it opens, and shows each Window's
-Tabs as they arrive. The current Window and Pane have a checkmark. The
+Tabs as they arrive. The row that the screen shows has a tint of the
+accent: on the Web View the Tab it shows, on the Terminal Screen the active
+Pane, or the Window when the Panes are not listed. One row at most has it,
+and a shown Tab that the drawer does not list leaves every row plain
+(ADR 0038). The
 attached Session's card is last, at the bottom by the Grip, and the list
 opens at its end. A lift on a Session's header goes to that Session. A pick
 of a Tab of another Window goes to that Window first, so the Tab is in the

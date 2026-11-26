@@ -74,6 +74,8 @@ export interface SheetPalette {
   tile: string;
   /** A tile that is. */
   tileSelected: string;
+  /** The Edge Drawer's row that the screen shows: the accent, 28 % over a tile, so it is not the lit row's fill. */
+  tileHere: string;
   stroke: string;
   accent: string;
   primary: string;
@@ -88,6 +90,7 @@ export const SheetPalettes: Record<'light' | 'dark', SheetPalette> = {
     well: '#11131a',
     tile: '#33353c',
     tileSelected: '#232f4c',
+    tileHere: '#3e4e6e',
     stroke: '#3f424a',
     accent: '#5b8def',
     primary: '#eaeaea',
@@ -102,6 +105,7 @@ export const SheetPalettes: Record<'light' | 'dark', SheetPalette> = {
     well: '#e4e4ec',
     tile: '#ffffff',
     tileSelected: '#dce9ff',
+    tileHere: '#b8daff',
     stroke: '#cfcfd6',
     accent: '#007aff',
     primary: '#1c1c1e',

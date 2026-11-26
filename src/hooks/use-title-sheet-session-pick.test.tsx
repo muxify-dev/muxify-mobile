@@ -1,4 +1,6 @@
 import React from 'react';
+
+import { ON_PANE } from '@/domain/destinations';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { TitleSheetProps } from '@/components/title-sheet';
@@ -88,7 +90,7 @@ const moved = jest.fn();
 const shownRef: { current: TitleSheetProps | null } = { current: null };
 
 function Screen({ attach, seenRef }: { attach: Attach; seenRef: typeof shownRef }) {
-  const { sheet } = useTitleSheet({ attach, state: attach.state(), hostId: 'host', onOpenTab: () => {}, onMoved: moved });
+  const { sheet } = useTitleSheet({ attach, state: attach.state(), hostId: 'host', onOpenTab: () => {}, onMoved: moved, onScreen: ON_PANE });
   React.useEffect(() => { seenRef.current = sheet; });
   return null;
 }

@@ -1,4 +1,6 @@
 import React from 'react';
+
+import { ON_PANE } from '@/domain/destinations';
 import { Alert, type AlertButton } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Button, Text } from '@expo/ui/swift-ui';
@@ -152,7 +154,7 @@ function fakeAttach(sessions: { name: string; windowCount: number }[] = []): Att
 function Screen({ attach }: { attach: Attach }) {
   const [state, setState] = React.useState(() => attach.state());
   React.useEffect(() => attach.subscribe(setState), [attach]);
-  const { sheet, openTitleSheet } = useTitleSheet({ attach, state, hostId: 'host', onOpenTab: () => {} });
+  const { sheet, openTitleSheet } = useTitleSheet({ attach, state, hostId: 'host', onOpenTab: () => {}, onScreen: ON_PANE });
   React.useEffect(() => { openTitleSheet(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return <TitleSheet {...sheet} />;
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { BrowserTab } from '@/browser/tabs';
+import { ON_PANE, type OnScreen } from '@/domain/destinations';
 import type { Attach, AttachState } from '@/tmux/attach';
 
 import { useTitleSheet } from './use-title-sheet';
@@ -82,8 +83,8 @@ let chooser: Chooser;
 const moved = jest.fn();
 const openedTab = jest.fn();
 
-function Screen({ attach }: { attach: Attach }) {
-  const seen = useTitleSheet({ attach, state: attach.state(), hostId: 'host', onOpenTab: openedTab, onMoved: moved });
+function Screen({ attach, onScreen = ON_PANE }: { attach: Attach; onScreen?: OnScreen }) {
+  const seen = useTitleSheet({ attach, state: attach.state(), hostId: 'host', onOpenTab: openedTab, onMoved: moved, onScreen });
   React.useEffect(() => { chooser = seen; });
   return null;
 }
@@ -95,6 +96,9 @@ async function mountAndOpen() {
   await act(async () => { chooser.openDrawer(); });
   return fake;
 }
+
+/** The keys of the rows the drawer marks as on screen. */
+const marked = () => chooser.drawer.rows.filter((row) => 'here' in row && row.here).map((row) => row.key);
 
 const pick = (key: string) => act(async () => {
   const row = chooser.drawer.rows.find((each) => each.key === key);
@@ -150,4 +154,18 @@ it('goes to a Pane and tells the screen it moved, so the Web View gives way to t
   expect(asked).toEqual(['pane %1']);
   expect(moved).toHaveBeenCalledWith(null);
   expect(chooser.drawer.open).toBe(false);
+});
+
+it('marks the shown Tab on the Web View, and the active Pane once the screen is the terminal again', async () => {
+  const fake = fakeAttach();
+  mockAttach = fake.attach;
+  const page: OnScreen = { kind: 'tab', url: GRAFANA.url };
+  await act(async () => { renderer = create(<Screen attach={fake.attach} onScreen={page} />); });
+  await act(async () => { chooser.openDrawer(); });
+
+  expect(marked()).toEqual(['tab:@1:g']);
+
+  await act(async () => { renderer.update(<Screen attach={fake.attach} onScreen={ON_PANE} />); });
+
+  expect(marked()).toEqual(['pane:%0']);
 });
