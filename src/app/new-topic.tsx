@@ -136,7 +136,7 @@ export default function NewTopicScreen() {
   const attach = async (topic: TopicDetail, session: string, host: HostRecord, at: HostWriteRun['step'], visited?: string) => {
     setStep({ step: 'add-session', topic, made: session });
     at('attaching');
-    await openSession({ hostId, destination: { sessionName: session, topic: { id: topic.id, seed: topic } } });
+    await openSession({ hostId, destination: { sessionName: session, topic: { id: topic.id, seed: topic } }, keyboard: 'up' });
     if (visited !== undefined) recordVisit(host, visited);
     return true as const;
   };

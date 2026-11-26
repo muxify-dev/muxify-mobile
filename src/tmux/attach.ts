@@ -383,6 +383,8 @@ export interface AttachOptions {
   onHostServerChange?: (hostId: string, changed: () => void) => () => void;
   /** The Zoom preference this Session is opened with. */
   zoomed: boolean;
+  /** Set when the phone made the Pane it opens on: the keyboard starts up. */
+  keyboard?: KeyboardIntent;
   /** The Theme's colours, for the Panes to report. Null reports nothing until coloursChanged. */
   colours?: PaneColours | null;
   openConnection: OpenConnection;
@@ -524,7 +526,7 @@ export function openAttach(options: AttachOptions): Attach {
   let state: AttachState = {
     phase: { kind: 'connecting' },
     typing: { kind: 'waiting', for: 'connecting' },
-    keyboard: 'down',
+    keyboard: options.keyboard ?? 'down',
     step: 'connecting',
     painted: new Set(),
     paintedOnce: false,
@@ -1691,7 +1693,11 @@ export function openAttach(options: AttachOptions): Attach {
     const mine = generation;
     if (!client) return;
     say(describeVerb(verb));
-    await verbs.run(verb, currentSessionTarget());
+    await verbs.run(verb, currentSessionTarget(), (fate) => {
+      // A Pane the phone made takes the keyboard, when the verb ends as made,
+      // which after a break is later than this call. A refused split leaves it where it was.
+      if (fate.kind === 'made') attach.setKeyboard('up');
+    });
     const current = client;
     try {
       await settleAfterVerb(mine);

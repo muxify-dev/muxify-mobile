@@ -74,6 +74,6 @@ it('checks a create the Host did not answer, then attaches to the Session it fin
   mockListSessions.mockResolvedValueOnce([{ name: 'notes', windowCount: 1 }]);
   await act(async () => { button('Check').props.onPress(); });
   expect(mockCreateSession).toHaveBeenCalledTimes(1);
-  expect(mockOpen).toHaveBeenCalledWith({ hostId: 'host', destination: { sessionName: 'notes', topic: null } });
+  expect(mockOpen).toHaveBeenCalledWith({ hostId: 'host', destination: { sessionName: 'notes', topic: null }, keyboard: 'up' });
   expect(mockDismiss).toHaveBeenCalledWith('/terminal');
 });

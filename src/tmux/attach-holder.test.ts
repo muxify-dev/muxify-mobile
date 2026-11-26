@@ -25,7 +25,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
   const state = (): AttachState => ({
     phase,
     typing: typingOf({ phase, switching: false, keyChanged: false }),
-    keyboard: 'down',
+    keyboard: options.keyboard ?? 'down',
     step: 'connecting',
     painted: new Set(),
     paintedOnce: false,
@@ -64,7 +64,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     selectPaneToward: () => {},
     split: () => Promise.resolve(),
     newWindow: () => Promise.resolve(),
-    setKeyboard: () => {},
+    setKeyboard: (intent) => log.push(`keyboard ${options.destination.sessionName} ${intent}`),
     setZoom: () => {},
     capturePreviews: () => {},
     capturePaneText: () => Promise.resolve(''),
@@ -123,6 +123,56 @@ function holderOn() {
   holder.subscribe((attach) => seen.push(attach ? attach.state().sessionName : null));
   return { holder, log, seen, ends };
 }
+
+describe('the keyboard of a Pane the phone made', () => {
+  const open = { host: host('a'), zoomed: true } as const;
+
+  it('opens a new Attach with the keyboard up', async () => {
+    const { holder } = holderOn();
+
+    const attach = await holder.open({ ...open, destination: { sessionName: 'work', topic: null }, keyboard: 'up' });
+
+    expect(attach.state().keyboard).toBe('up');
+  });
+
+  it('leaves the keyboard down for a Session that the phone did not make', async () => {
+    const { holder } = holderOn();
+
+    const attach = await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+
+    expect(attach.state().keyboard).toBe('down');
+  });
+
+  it('raises it on the Attach it reuses, after the switch', async () => {
+    const { holder, log } = holderOn();
+    await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+    // Connected, as an Attach is once a Session was switched to.
+    await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+    log.length = 0;
+
+    await holder.open({ ...open, destination: { sessionName: 'play', topic: null }, keyboard: 'up' });
+
+    expect(log).toEqual(['keyboard work up']);
+  });
+
+  it('does not raise it when the request is refused', async () => {
+    const { holder, log } = holderOn();
+    const first = await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+    log.length = 0;
+
+    await expect(
+      holder.open({
+        ...open,
+        destination: { sessionName: 'play', topic: null },
+        keyboard: 'up',
+        origin: { attach: null, sessionName: 'elsewhere', topicId: null },
+      }),
+    ).rejects.toThrow();
+
+    expect(log).toEqual([]);
+    expect(first.state().keyboard).toBe('down');
+  });
+});
 
 describe('the Theme’s colours', () => {
   it('gives them to the Attach held now and to every one opened after', async () => {

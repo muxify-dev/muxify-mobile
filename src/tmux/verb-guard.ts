@@ -33,7 +33,16 @@ export interface VerbServer {
 
 /** What tmux said to a verb line, or to a read of the Session's Op. */
 export type VerbAnswer =
-  | { readonly kind: 'read'; readonly held: number; readonly serverPid: number; readonly error: string | null }
+  | {
+      readonly kind: 'read';
+      readonly held: number;
+      readonly serverPid: number;
+      readonly error: string | null;
+      /** The Pane the Session's Op made, when a guarded line recorded it. */
+      readonly madePane: string | null;
+      /** The Pane active now. Only right after the verb is it the one the verb made. */
+      readonly activePane: string | null;
+    }
   | { readonly kind: 'gone' }
   | { readonly kind: 'failed'; readonly error: string };
 
@@ -58,8 +67,21 @@ export type GuardEvent =
   | { readonly kind: 'lost' }
   | { readonly kind: 'connected' };
 
-/** What became of a tap, which its promise reports. */
-export type Outcome = { readonly kind: 'done' } | { readonly kind: 'waits' } | { readonly kind: 'refused'; readonly error: string };
+/**
+ * What became of a tap. Its promise reports every one but `dropped` as it
+ * ends, and the fate of a verb that was kept for a break arrives after it.
+ */
+export type Outcome =
+  /** tmux ran it, and `paneId` is the Pane it made: the new Pane of a split, the first Pane of a New Window. */
+  | { readonly kind: 'made'; readonly paneId: string }
+  /** The Connection broke before tmux answered. The verb is kept, and its fate comes with the next Connection. */
+  | { readonly kind: 'waits' }
+  | { readonly kind: 'refused'; readonly error: string }
+  /** It will never run, or ran and left no Pane to name. */
+  | { readonly kind: 'dropped'; readonly reason: string };
+
+/** How a verb ended: every Outcome but `waits`, which is not an end. Each tap gets exactly one. */
+export type VerbFate = Exclude<Outcome, { readonly kind: 'waits' }>;
 
 export type GuardEffect =
   | { readonly kind: 'send'; readonly sent: SentVerb }
@@ -75,6 +97,16 @@ export function describeVerb(verb: Verb): string {
 
 function label(sent: SentVerb): string {
   return `Op ${sent.op} (${describeVerb(sent.verb)} in ${sent.session})`;
+}
+
+/**
+ * A verb that tmux ran, as the read says. Which Pane it made is what the line
+ * recorded; a line that could not record it (tmux below 3.2) was read right
+ * after the verb, when the active Pane is the one it made.
+ */
+function ranOutcome(sent: SentVerb, answer: Extract<VerbAnswer, { kind: 'read' }>): Outcome {
+  const paneId = answer.madePane ?? (sent.guarded ? null : answer.activePane);
+  return paneId === null ? { kind: 'dropped', reason: 'tmux ran it but did not say which Pane it made' } : { kind: 'made', paneId };
 }
 
 /** The rules of the guard. Pure: the runner below does what the effects ask. */
@@ -99,7 +131,12 @@ export function step(guard: Guard, event: GuardEvent): { guard: Guard; effects: 
       if (phase.kind === 'sending') {
         const { sent } = phase;
         if (answer.kind === 'read' && answer.held >= sent.op) {
-          return idle({ kind: 'settled', op: sent.op, outcome: { kind: 'done' } });
+          const ran = ranOutcome(sent, answer);
+          return idle(...(ran.kind === 'dropped' ? [{ kind: 'say' as const, line: `${label(sent)} ${ran.reason}` }] : []), {
+            kind: 'settled',
+            op: sent.op,
+            outcome: ran,
+          });
         }
         const error =
           answer.kind === 'gone' ? 'the Session is gone' : (answer.error ?? 'tmux did not run it');
@@ -111,7 +148,11 @@ export function step(guard: Guard, event: GuardEvent): { guard: Guard; effects: 
       if (phase.kind === 'checking') {
         const { sent } = phase;
         if (answer.kind === 'read' && answer.serverPid !== sent.serverPid) {
-          return idle({ kind: 'say', line: `${label(sent)} dropped: the tmux server started again` });
+          const reason = 'the tmux server started again';
+          return idle(
+            { kind: 'say', line: `${label(sent)} dropped: ${reason}` },
+            { kind: 'settled', op: sent.op, outcome: { kind: 'dropped', reason } },
+          );
         }
         if (answer.kind === 'read' && answer.held < sent.op) {
           return {
@@ -122,13 +163,18 @@ export function step(guard: Guard, event: GuardEvent): { guard: Guard; effects: 
             ],
           };
         }
-        const line =
-          answer.kind === 'read'
-            ? `${label(sent)} ran before the break`
-            : answer.kind === 'gone'
-              ? `${label(sent)} dropped: the Session is gone`
-              : `${label(sent)} dropped: the Session's Op did not read: ${answer.error}`;
-        return idle({ kind: 'say', line });
+        if (answer.kind === 'read') {
+          const ran = ranOutcome(sent, answer);
+          return idle(
+            { kind: 'say', line: `${label(sent)} ran before the break${ran.kind === 'dropped' ? `, but ${ran.reason}` : ''}` },
+            { kind: 'settled', op: sent.op, outcome: ran },
+          );
+        }
+        const reason = answer.kind === 'gone' ? 'the Session is gone' : `the Session's Op did not read: ${answer.error}`;
+        return idle(
+          { kind: 'say', line: `${label(sent)} dropped: ${reason}` },
+          { kind: 'settled', op: sent.op, outcome: { kind: 'dropped', reason } },
+        );
       }
       return same;
     }
@@ -138,9 +184,10 @@ export function step(guard: Guard, event: GuardEvent): { guard: Guard; effects: 
       if (phase.kind !== 'sending') return same;
       const { sent } = phase;
       if (!sent.guarded) {
+        const reason = 'tmux is older than 3.2 and cannot refuse a copy, so it is not sent again';
         return idle(
-          { kind: 'say', line: `${label(sent)} dropped: tmux is older than 3.2 and cannot refuse a copy, so it is not sent again` },
-          { kind: 'settled', op: sent.op, outcome: { kind: 'waits' } },
+          { kind: 'say', line: `${label(sent)} dropped: ${reason}` },
+          { kind: 'settled', op: sent.op, outcome: { kind: 'dropped', reason } },
         );
       }
       return {
@@ -178,8 +225,13 @@ export interface VerbGuard {
    * Ends when tmux confirms the verb, or when the Connection breaks first: the
    * guard then keeps it for the next Connection. Rejects when tmux refuses it.
    * With no Connection it does nothing.
+   *
+   * `onFate` hears how the verb ended, once, also when that is after the
+   * promise: a verb kept through a break ends with the next Connection. It
+   * says `dropped` for a verb that was never sent. A guard that is closed says
+   * nothing.
    */
-  run(verb: Verb, session: string): Promise<void>;
+  run(verb: Verb, session: string, onFate?: (fate: VerbFate) => void): Promise<void>;
   connected(link: VerbLink): void;
   lost(): void;
   close(): void;
@@ -198,6 +250,8 @@ export function createVerbGuard(options: VerbGuardOptions): VerbGuard {
   let epoch = 0;
   let closed = false;
   const taps = new Map<Op, { resolve: () => void; reject: (error: Error) => void }>();
+  /** Who hears how each sent verb ends. It outlives the tap's promise, which a break can end early. */
+  const fates = new Map<Op, (fate: VerbFate) => void>();
   const wake: (() => void)[] = [];
   /** Taps run one after another: the guard has one unconfirmed verb at a time. */
   let queue: Promise<unknown> = Promise.resolve();
@@ -225,6 +279,11 @@ export function createVerbGuard(options: VerbGuardOptions): VerbGuard {
       } else {
         tap?.resolve();
       }
+      if (outcome.kind !== 'waits') {
+        const hear = fates.get(effect.op);
+        fates.delete(effect.op);
+        hear?.(outcome);
+      }
       return;
     }
     const current = link;
@@ -243,29 +302,32 @@ export function createVerbGuard(options: VerbGuardOptions): VerbGuard {
     );
   }
 
-  async function runOne(verb: Verb, session: string): Promise<void> {
-    const dropped = () => {
-      if (!closed) options.say(`${describeVerb(verb)} in ${session} dropped: the Connection broke before it was sent`);
+  async function runOne(verb: Verb, session: string, onFate?: (fate: VerbFate) => void): Promise<void> {
+    const drop = (reason: string) => {
+      if (closed) return;
+      options.say(`${describeVerb(verb)} in ${session} dropped: ${reason}`);
+      onFate?.({ kind: 'dropped', reason });
     };
     // A verb kept from a lost Connection goes first.
     while (guard.phase.kind !== 'idle') {
-      if (!link || closed) return dropped();
+      if (!link || closed) return drop('the Connection broke before it was sent');
       await new Promise<void>((resolve) => wake.push(resolve));
     }
     const current = link;
-    if (!current || closed) return;
+    if (!current || closed) return drop('there was no Connection');
     const mine = epoch;
     const server = await current.verbServer();
-    if (mine !== epoch) return dropped();
+    if (mine !== epoch) return drop('the Connection broke before it was sent');
     if (closed || guard.phase.kind !== 'idle') return;
     const done = new Promise<void>((resolve, reject) => taps.set(guard.nextOp, { resolve, reject }));
+    if (onFate) fates.set(guard.nextOp, onFate);
     apply({ kind: 'tapped', verb, session, ...server });
     return done;
   }
 
   return {
-    run(verb, session) {
-      const turn = queue.then(() => runOne(verb, session));
+    run(verb, session, onFate) {
+      const turn = queue.then(() => runOne(verb, session, onFate));
       queue = turn.catch(() => {});
       return turn;
     },
@@ -291,6 +353,7 @@ export function createVerbGuard(options: VerbGuardOptions): VerbGuard {
       epoch += 1;
       for (const tap of taps.values()) tap.resolve();
       taps.clear();
+      fates.clear();
       for (const resolve of wake.splice(0)) resolve();
     },
   };

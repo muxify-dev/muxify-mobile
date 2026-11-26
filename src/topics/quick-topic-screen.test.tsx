@@ -159,6 +159,7 @@ describe('the Add a Session step', () => {
     expect(mockOpen).toHaveBeenCalledWith(expect.objectContaining({
       hostId: 'host',
       destination: { sessionName: 'mobile/quick-topic', topic: expect.objectContaining({ id: 'new' }) },
+      keyboard: 'up',
     }));
     expect(mockVisit).toHaveBeenCalledWith({ folder: '/work/muxify mobile' });
     expect(mockRouter.dismissTo).toHaveBeenCalledWith('/terminal');

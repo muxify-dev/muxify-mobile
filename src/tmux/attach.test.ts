@@ -166,22 +166,34 @@ function fakeServer() {
 
 /**
  * The Sessions of a server as a split or a New Window meets them: the Op each
- * keeps, and every verb that ran. Every link to the server shares it.
+ * keeps and the Pane that Op made, and every verb that ran. Every link to the
+ * server shares it. The first Pane a verb makes is %2, then %3.
  */
 function fakeSessions(serverPid = () => 100) {
   const ops = new Map<string, number>();
+  /** The Pane each Session's last Op made, which only a guarded line records. */
+  const recorded = new Map<string, string>();
+  /** The active Pane of each Session: %0 until a verb makes another. */
+  const active = new Map<string, string>();
   const gone = new Set<string>();
   const ran: string[] = [];
   let refusing: string | null = null;
+  let made = 1;
   const nameOf = (target: string) => target.replace(/:$/, '');
   const read = (target: string): Block =>
-    gone.has(nameOf(target)) ? { error: `can't find session: ${nameOf(target)}` } : [`$1:${serverPid()}:${ops.get(nameOf(target)) ?? ''}`];
-  /** Runs `<verb> ; set-option`, and stops at a verb that fails, as tmux does. */
-  const runVerb = ([verb, ...args]: string[], [, , target, , op]: string[]): Block[] => {
+    gone.has(nameOf(target))
+      ? { error: `can't find session: ${nameOf(target)}` }
+      : [`$1:${serverPid()}:${ops.get(nameOf(target)) ?? ''}:${recorded.get(nameOf(target)) ?? ''}:${active.get(nameOf(target)) ?? '%0'}`];
+  /** Runs `<verb> ; set-option ; set-option -F`, and stops at a verb that fails, as tmux does. */
+  const runVerb = ([verb, ...args]: string[], [, , target, , op]: string[], recordsPane: boolean): Block[] => {
     if (refusing) return [{ error: refusing }];
     ran.push(`${verb} ${args.join(' ')}`);
     ops.set(nameOf(target), Number(op));
-    return [[], []];
+    made += 1;
+    active.set(nameOf(target), `%${made}`);
+    if (!recordsPane) return [[], []];
+    recorded.set(nameOf(target), `%${made}`);
+    return [[], [], []];
   };
   return {
     /** Each verb that ran, as `split-window -h -t work:`. */
@@ -190,6 +202,8 @@ function fakeSessions(serverPid = () => 100) {
     /** A new server, whose Sessions have no Op. */
     restart: () => {
       ops.clear();
+      recorded.clear();
+      active.clear();
       gone.clear();
     },
     refuse: (error: string | null) => {
@@ -201,7 +215,7 @@ function fakeSessions(serverPid = () => 100) {
       const [first] = commands;
       if (first[0] === 'display-message' && first.at(-1)?.includes('@muxify-op-')) return [read(first[3])];
       if (first[0] === 'split-window' || first[0] === 'new-window') {
-        const blocks = runVerb(first, commands[1]);
+        const blocks = runVerb(first, commands[1], false);
         // An error of a command of the line itself stops the rest of the line.
         return refusing ? blocks : [...blocks, read(commands[2][3])];
       }
@@ -211,7 +225,7 @@ function fakeSessions(serverPid = () => 100) {
       const op = Number(/,(\d+)\}$/.exec(condition)?.[1]);
       if ((ops.get(nameOf(target)) ?? 0) >= op) return [[], read(target)];
       const [verb, record] = commandsOf(then);
-      const blocks = runVerb(verb, record);
+      const blocks = runVerb(verb, record, true);
       return [[], ...blocks, read(target)];
     },
   };
@@ -677,6 +691,79 @@ describe('the keyboard the user wants', () => {
     await settle();
 
     expect(kit.attach.state().keyboard).toBe('up');
+  });
+
+  describe('after a split or a New Window', () => {
+    /** Two links to one tmux 3.8 server, so the second Connection sees what the first did. */
+    async function onServer() {
+      const server = fakeServer();
+      const sessions = fakeSessions(server.pid);
+      const kit = attachOn({ hosts: [fakeHost(server, sessions), fakeHost(server, sessions)] });
+      await connected(kit);
+      return { kit, sessions };
+    }
+
+    it.each([
+      ['a split', (attach: Attach) => attach.split('right')],
+      ['a New Window', (attach: Attach) => attach.newWindow()],
+    ])('comes up when %s is made', async (_what, run) => {
+      const { kit } = await onServer();
+      expect(kit.attach.state().keyboard).toBe('down');
+
+      await run(kit.attach);
+
+      expect(kit.attach.state().keyboard).toBe('up');
+    });
+
+    it('stays as it was when tmux refuses the split', async () => {
+      const { kit, sessions } = await onServer();
+      sessions.refuse('no space for new pane');
+
+      await expect(kit.attach.split('down')).rejects.toThrow('no space for new pane');
+
+      expect(kit.attach.state().keyboard).toBe('down');
+    });
+
+    it('stays down for a user who dismissed it, until the next Pane is made', async () => {
+      const { kit } = await onServer();
+      await kit.attach.split('right');
+      kit.attach.setKeyboard('down');
+
+      kit.attach.selectPane('%0');
+      expect(kit.attach.state().keyboard).toBe('down');
+      await kit.attach.split('down');
+      expect(kit.attach.state().keyboard).toBe('up');
+    });
+
+    it('comes up only when the Connection learns that the verb ran, if the answer was lost', async () => {
+      const { kit } = await onServer();
+      kit.hosts[0].mute();
+      const split = kit.attach.split('right');
+      await settle();
+      kit.hosts[0].drop();
+      await split;
+      expect(kit.attach.state().keyboard).toBe('down');
+
+      kit.hosts[1].accept();
+      await settle();
+
+      expect(kit.attach.state().keyboard).toBe('up');
+    });
+
+    it('stays down when the Session ended during the break and the verb was dropped', async () => {
+      const { kit, sessions } = await onServer();
+      kit.hosts[0].hold('if-shell');
+      const split = kit.attach.split('right');
+      await settle();
+      kit.hosts[0].drop();
+      await split;
+      sessions.end('work');
+
+      kit.hosts[1].accept();
+      await settle();
+
+      expect(kit.attach.state().keyboard).toBe('down');
+    });
   });
 
   it('types a key of a Surface that is not the active Pane into the active Pane', async () => {

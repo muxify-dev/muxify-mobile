@@ -29,7 +29,7 @@ import {
   stagePasteCommands,
   switchSessionCommand,
   verbCommands,
-  verbOption,
+  verbOptions,
   zoomPaneCommand,
   type PaneColours,
   type OutboxToken,
@@ -587,18 +587,19 @@ export class TmuxClient {
 
   /**
    * Runs a split or a New Window and answers with the Session's Op, which
-   * says whether it ran. Rejects only when the Connection ends.
+   * says whether it ran, and the Pane it made. Rejects only when the
+   * Connection ends.
    */
   async runVerb(sent: SentVerb, token: OutboxToken): Promise<VerbAnswer> {
     const { guarded } = await this.host();
     return verbAnswerOf(
-      await this.runner.runChain(verbCommands(sent.session, sent.verb, sent.op, verbOption(token), guarded && sent.guarded)),
+      await this.runner.runChain(verbCommands(sent.session, sent.verb, sent.op, verbOptions(token), guarded && sent.guarded)),
     );
   }
 
-  /** The Session's Op alone. Rejects only when the Connection ends. */
+  /** The Session's Op and the Pane it made. Rejects only when the Connection ends. */
   async readOp(sessionName: string, token: OutboxToken): Promise<VerbAnswer> {
-    return verbAnswerOf([await this.runner.run(sessionOpCommand(sessionName, verbOption(token)))]);
+    return verbAnswerOf([await this.runner.run(sessionOpCommand(sessionName, verbOptions(token)))]);
   }
 
   private async mustRun(what: string, argv: string[]): Promise<void> {
