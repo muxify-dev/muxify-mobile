@@ -3,6 +3,7 @@ import { createComposer, type Composer } from '@/composer/composer';
 import { type AttachmentFile, type Upload } from '@/composer/types';
 import type { Clock } from '@/lib/clock';
 import { describeError } from '@/lib/describe-error';
+import type { KeyboardIntent } from '@/domain/keyboard';
 import { sameTyping, typingOf, type Typing } from '@/domain/typing';
 import { systemClock } from '@/lib/clock';
 import { EXEC_DEADLINE_MS } from '@/ssh/host-connections';
@@ -13,7 +14,7 @@ import type { SessionId, TopicId } from '@/topics/environment';
 import { lastTopic, loadingTopic, settledTopic, topicStartingFrom, type TopicDetail, type TopicRead, type TopicView } from '@/topics/topic-detail';
 
 import { toDraftText, type InputNotice, type Key } from './input-lane';
-import { createOutbox } from './input-outbox';
+import { createOutbox, type PaneInput } from './input-outbox';
 import { createVerbGuard, describeVerb, type Verb } from './verb-guard';
 
 export interface TopicOrigin { id: TopicId; seed: TopicDetail | null }
@@ -132,6 +133,12 @@ export interface AttachState {
   phase: AttachPhase;
   /** Whether keys reach the active Pane now. See typingOf. */
   typing: Typing;
+  /**
+   * Whether the user wants the system keyboard up. Only a user act changes it
+   * (see setKeyboard), so it survives a split, a Pane change, a Composer and
+   * a trip to the Host Screen and back. See keyboardTarget for what holds it.
+   */
+  keyboard: KeyboardIntent;
   /** How far the current connect has gone. `attaching` once the Connection is open. */
   step: ConnectStep;
   /**
@@ -262,6 +269,8 @@ export interface Attach {
   selectPaneToward(direction: PaneDirection): void;
   split(direction: 'right' | 'down'): Promise<void>;
   newWindow(): Promise<void>;
+  /** The user raised or dismissed the keyboard: the Keyboard key, a tap on the Pane. */
+  setKeyboard(intent: KeyboardIntent): void;
   setZoom(on: boolean): void;
   /** Fills in the previews for a sheet that is already open. */
   capturePreviews(targets: string[]): void;
@@ -515,6 +524,7 @@ export function openAttach(options: AttachOptions): Attach {
   let state: AttachState = {
     phase: { kind: 'connecting' },
     typing: { kind: 'waiting', for: 'connecting' },
+    keyboard: 'down',
     step: 'connecting',
     painted: new Set(),
     paintedOnce: false,
@@ -673,6 +683,27 @@ export function openAttach(options: AttachOptions): Attach {
     if (paneId === state.topology.activePane?.id) change(fact);
   }
 
+  /**
+   * Where the keys of one Pane's Surface go.
+   *
+   * Only the active Pane's Surface holds the keyboard, so a key that comes
+   * from any other Surface is a late one: a split or a Pane change moved the
+   * keyboard, and the key was already on its way. It goes to the active Pane,
+   * which is where the user is looking. A scroll or a tap (a gesture) is of
+   * its own Surface, and goes to its own Pane.
+   */
+  function inputFor(paneId: string): Pick<PaneInput, 'type' | 'press'> {
+    const own = outbox.lane(paneId);
+    const typed = (): Pick<PaneInput, 'type' | 'press'> => {
+      const activeId = state.topology.activePane?.id;
+      return activeId === undefined || activeId === paneId ? own : outbox.lane(activeId);
+    };
+    return {
+      type: (bytes, gesture = false) => (gesture ? own : typed()).type(bytes, gesture),
+      press: (key) => typed().press(key),
+    };
+  }
+
   function viewFor(paneId: string): PaneView {
     const existing = views.get(paneId);
     if (existing) return existing;
@@ -689,7 +720,7 @@ export function openAttach(options: AttachOptions): Attach {
       if (stale(mine) || !client) throw new NoConnection();
       return client;
     };
-    const lane = outbox.lane(paneId);
+    const input = inputFor(paneId);
 
     const view = createPaneView(
       paneId,
@@ -704,11 +735,11 @@ export function openAttach(options: AttachOptions): Attach {
       {
         type: (bytes, gesture) => {
           if (sizing.reclaim() || taken) reclaimColours();
-          lane.type(bytes, gesture);
+          input.type(bytes, gesture);
         },
         press: (key) => {
           if (sizing.reclaim() || taken) reclaimColours();
-          lane.press(key);
+          input.press(key);
         },
       },
       {
@@ -1820,6 +1851,12 @@ export function openAttach(options: AttachOptions): Attach {
 
     split: (direction) => runSessionVerb({ kind: 'split', direction }),
     newWindow: () => runSessionVerb({ kind: 'new-window' }),
+
+    setKeyboard(intent: KeyboardIntent): void {
+      if (closed || state.keyboard === intent) return;
+      say(`keyboard intent ${intent}`);
+      change({ keyboard: intent });
+    },
 
     setZoom(on: boolean): void {
       const mine = generation;

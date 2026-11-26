@@ -87,7 +87,10 @@ function commandsOf(line: string): string[][] {
 function fakeServer() {
   let pid = 100;
   let program = 'zsh';
-  const panes = new Map([['%0', { pid: 200, ack: 0, typed: [] as string[] }]]);
+  const panes = new Map([
+    ['%0', { pid: 200, ack: 0, typed: [] as string[] }],
+    ['%2', { pid: 201, ack: 0, typed: [] as string[] }],
+  ]);
   const buffers = new Map<string, string>();
   const mark = (paneId: string): string => {
     const pane = panes.get(paneId);
@@ -629,6 +632,72 @@ describe('whether keys reach the active Pane', () => {
     await settle();
 
     expect(kit.dialled.map((host) => host.address)).toEqual(['10.0.0.2', '10.0.0.9']);
+  });
+});
+
+describe('the keyboard the user wants', () => {
+  const LAYOUT = 'b25d,49x41,0,0[49x20,0,0,0,49x20,0,21,2]';
+  /** A Window with %0 active and %2 beside it, on a server that types into both. */
+  async function split() {
+    const server = fakeServer();
+    const host = fakeHost(server);
+    host.answering('list-panes', [
+      `0\t%0\tzsh\t1\t/home/user\t${LAYOUT}`,
+      `1\t%2\tzsh\t0\t/home/user\t${LAYOUT}`,
+    ]);
+    const kit = attachOn({ hosts: [host] });
+    await connected(kit);
+    kit.attach.surfaceForPane('%0', fakeSurface(), { cols: 49, rows: 20 });
+    kit.attach.surfaceForPane('%2', fakeSurface(), { cols: 49, rows: 20 });
+    await settle();
+    return { kit, server };
+  }
+  const type = (kit: ReturnType<typeof attachOn>, paneId: string, text: string) =>
+    kit.attach.view(paneId).type(new TextEncoder().encode(text));
+
+  it('starts down, and only the user raises or dismisses it', async () => {
+    const kit = attachOn();
+    await connected(kit);
+    expect(kit.attach.state().keyboard).toBe('down');
+
+    kit.attach.setKeyboard('up');
+    expect(kit.attach.state().keyboard).toBe('up');
+    kit.attach.setKeyboard('down');
+    expect(kit.attach.state().keyboard).toBe('down');
+  });
+
+  it('keeps the intent through a break and a reconnect', async () => {
+    const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
+    await connected(kit);
+    kit.attach.setKeyboard('up');
+
+    kit.hosts[0].drop();
+    await settle();
+    kit.hosts[1].accept();
+    await settle();
+
+    expect(kit.attach.state().keyboard).toBe('up');
+  });
+
+  it('types a key of a Surface that is not the active Pane into the active Pane', async () => {
+    const { kit, server } = await split();
+
+    type(kit, '%2', 'abc');
+    await settle();
+
+    expect(server.typed('%0')).toBe('abc');
+    expect(server.typed('%2')).toBe('');
+  });
+
+  it('follows the active Pane when the user picks another one', async () => {
+    const { kit, server } = await split();
+
+    kit.attach.selectPane('%2');
+    type(kit, '%0', 'abc');
+    await settle();
+
+    expect(server.typed('%0')).toBe('');
+    expect(server.typed('%2')).toBe('abc');
   });
 });
 

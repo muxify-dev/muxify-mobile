@@ -7,6 +7,7 @@ import { renderReport } from './report';
 const state = (over: Partial<AttachState> = {}): AttachState => ({
   phase: { kind: 'connected' },
   typing: { kind: 'open' },
+  keyboard: 'down',
   step: 'attaching',
   painted: new Set(['%0']),
   paintedOnce: true,

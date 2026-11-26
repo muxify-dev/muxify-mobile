@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9d53b5ef3 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..816a840a5e64c724a78e05ecceb41bc04833b700 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -48,7 +48,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9
 +     * Any other name rejects. iOS only.
 +     */
 +    pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
-+};
+ };
 +/** The modifiers held with a key. `cmd` is ghostty's `super`. */
 +export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +/** One row of terminal text for the Selection Layer. */
@@ -63,7 +63,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9
 +    cells?: number[];
 +    /** Whether the row runs on into the next one, so a copy joins the two. */
 +    wraps: boolean;
- };
++};
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +/** What the user chose to paste: text, or an image saved to a file. */
@@ -71,7 +71,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -52,10 +106,95 @@ export type TerminalViewProps = {
+@@ -52,10 +106,101 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -164,6 +164,12 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..39224dd691f143e8367d276a96a17ae9
 +     * the system's own paste action, so iOS shows no prompt.
 +     */
 +    onPaste?: (event: { nativeEvent: TerminalPasteEvent }) => void;
++    /**
++     * A tap on the terminal raised the system keyboard (`focused: true`) or
++     * dismissed it (`false`). Only a user's tap sends it, not `focus` or
++     * `blur`, so the app can tell what the user wants from what it did.
++     */
++    onKeyboardTap?: (event: { nativeEvent: { focused: boolean } }) => void;
      /** Grid resized (layout, rotation, font change); forward to the PTY. */
      onResize?: (event: {
          nativeEvent: TerminalResizeEvent;
@@ -234,7 +240,7 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda582be5839e 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..602617ac3f8c8c25dc3feda1151457774f006460 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
 @@ -1,11 +1,21 @@
@@ -255,7 +261,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda58
 -      Events("onInput", "onResize")
 +      Events(
 +        "onInput", "onResize", "onScroll", "onSwipe", "onSwipeProgress", "onSwipeCancel",
-+        "onSelectionPress", "onSelectionEnd", "onSelectionEdge", "onPaste"
++        "onSelectionPress", "onSelectionEnd", "onSelectionEdge", "onPaste", "onKeyboardTap"
 +      )
  
        // Base font size in points (default 14). Changing it after mount
@@ -388,7 +394,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..b73386a37edde3d36947730b324fda58
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8af2286788 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88faa1179a88 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
 @@ -4,10 +4,55 @@ import GhosttyTerminal
@@ -488,7 +494,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8a
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -39,11 +111,81 @@ class ExpoLibghosttyView: ExpoView {
+@@ -39,11 +111,82 @@ class ExpoLibghosttyView: ExpoView {
          }
        }
      }
@@ -513,6 +519,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8a
 +  let onSelectionEnd = EventDispatcher()
 +  let onSelectionEdge = EventDispatcher()
 +  let onPaste = EventDispatcher()
++  let onKeyboardTap = EventDispatcher()
 +
 +  /// Take the one-finger pan for this view: a vertical pan as a scroll, in
 +  /// points, and a horizontal pan as a swipe that says how far it has gone.
@@ -570,7 +577,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8a
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +198,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +199,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -592,7 +599,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8a
        }
      )
      self.session = session
-@@ -66,21 +219,284 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +220,285 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -630,6 +637,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..7b37690e4dfd6f3cfeff8d95565b6d8a
 +    selectionLayer.onPaste = { [weak self] in self?.pasteFromSystem() }
 +    #if !targetEnvironment(macCatalyst)
 +      terminalView.onPasteCommand = { [weak self] in self?.pasteFromSystem() }
++      terminalView.onKeyboardTap = { [weak self] focused in self?.onKeyboardTap(["focused": focused]) }
 +      // A drag begins only when the finger has moved too far to be a long
 +      // press, so a finger held to select is never taken by a swipe or a scroll.
 +      terminalView.touchScrollPan?.require(toFail: selectionLayer.press)
@@ -1816,7 +1824,7 @@ index 809e7dd6f1887dc5c2b0267e4c786587c49aec57..2f06e769170b60bf8c676417b758fd1a
          ) -> (key: ghostty_input_key_e, extraModifiers: TerminalInputModifiers)? {
              guard text.count == 1, let char = text.first else { return nil }
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
-index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541ce31c56f 100644
+index 3f3eeb202351f474526690dc27937df833bdd7e3..4ea452574e9c30f267c41d8f76826c6e6da1d50b 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Interaction.swift
 @@ -14,6 +14,9 @@
@@ -1829,7 +1837,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
              if handleIndirectPointerTouches(touches, phase: .began, event: event) {
                  return
              }
-@@ -22,11 +25,22 @@
+@@ -22,11 +25,23 @@
                  becomeFirstResponder()
              #else
                  pendingKeyboardDismissOnTouchEnd = false
@@ -1844,6 +1852,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
 -                } else {
 +                } else if onScrollDelta == nil {
                      becomeFirstResponder()
++                    onKeyboardTap?(true)
 +                } else {
 +                    // A host that owns the scroll gesture cannot know at touch
 +                    // down whether this is a tap or a drag, and raising the
@@ -1854,19 +1863,22 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
                  }
              #endif
          }
-@@ -52,7 +66,11 @@
+@@ -51,8 +66,14 @@
+             #if !targetEnvironment(macCatalyst)
                  if pendingKeyboardDismissOnTouchEnd, !touchDidScrollDuringCurrentTouch {
                      resignFirstResponder()
-                 }
++                    onKeyboardTap?(false)
++                }
 +                if pendingKeyboardRaiseOnTouchEnd, !touchDidScrollDuringCurrentTouch {
 +                    becomeFirstResponder()
-+                }
++                    onKeyboardTap?(true)
+                 }
                  pendingKeyboardDismissOnTouchEnd = false
 +                pendingKeyboardRaiseOnTouchEnd = false
                  touchDidScrollDuringCurrentTouch = false
              #endif
              super.touchesEnded(touches, with: event)
-@@ -67,6 +85,7 @@
+@@ -67,6 +88,7 @@
              }
              #if !targetEnvironment(macCatalyst)
                  pendingKeyboardDismissOnTouchEnd = false
@@ -1874,7 +1886,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
                  touchDidScrollDuringCurrentTouch = false
              #endif
              super.touchesCancelled(touches, with: event)
-@@ -294,6 +313,10 @@
+@@ -294,6 +316,10 @@
              guard copySelectedTextToPasteboard() else { return }
          }
  
@@ -1885,7 +1897,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
          override open func canPerformAction(
              _ action: Selector,
              withSender sender: Any?
-@@ -301,6 +324,9 @@
+@@ -301,6 +327,9 @@
              if action == #selector(copy(_:)) {
                  return surface?.hasSelection() == true
              }
@@ -1895,7 +1907,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
              return super.canPerformAction(action, withSender: sender)
          }
  
-@@ -351,6 +377,7 @@
+@@ -351,6 +380,7 @@
                  gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
                  gesture.maximumNumberOfTouches = 1
                  addGestureRecognizer(gesture)
@@ -1903,7 +1915,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
  
                  let longPress = UILongPressGestureRecognizer(
                      target: self,
-@@ -511,9 +538,33 @@
+@@ -511,9 +541,33 @@
              }
          #endif
  
@@ -1937,7 +1949,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
              switch gesture.state {
              case .began:
                  guard activePointerButton == nil else { return }
-@@ -532,12 +583,16 @@
+@@ -532,12 +586,16 @@
                      "touch scroll changed translation=\(String(format: "%.2f", translation.x))x\(String(format: "%.2f", translation.y))"
                  )
  
@@ -1960,7 +1972,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
  
              case .ended:
                  guard activePointerButton == nil else { return }
-@@ -557,6 +612,51 @@
+@@ -557,6 +615,51 @@
              }
          }
  
@@ -2012,7 +2024,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
          func startMomentumScrolling(velocity: CGPoint) {
              guard abs(velocity.x) > 50 || abs(velocity.y) > 50 else { return }
  
-@@ -566,8 +666,10 @@
+@@ -566,8 +669,10 @@
                  "momentum start velocity=\(String(format: "%.2f", velocity.x))x\(String(format: "%.2f", velocity.y))"
              )
  
@@ -2025,7 +2037,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
  
              let link = CADisplayLink(
                  target: self,
-@@ -597,12 +699,16 @@
+@@ -597,12 +702,16 @@
                  "momentum frame velocity=\(String(format: "%.2f", momentumVelocity.x))x\(String(format: "%.2f", momentumVelocity.y)) delta=\(String(format: "%.2f", deltaX))x\(String(format: "%.2f", deltaY))"
              )
  
@@ -2048,7 +2060,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
          }
  
          func stopMomentumScrolling(sendTerminalEndEvent: Bool = true) {
-@@ -631,6 +737,9 @@
+@@ -631,6 +740,9 @@
              if gestureRecognizer is UILongPressGestureRecognizer {
                  return (delegate as? any TerminalSurfaceTextSelectionRequestDelegate) != nil
              }
@@ -2059,7 +2071,7 @@ index 3f3eeb202351f474526690dc27937df833bdd7e3..7c9989fea3a2b9575c8c199e3f04b541
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
-index 427aa9c21db8f930bd9e3246f5900b9d31377b02..97ed96e50229289012fa18afed2140b3f1ebb155 100644
+index 427aa9c21db8f930bd9e3246f5900b9d31377b02..8bb9124c094eb81cb45cac05164818f19a25e8be 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView+Keyboard.swift
 @@ -12,19 +12,77 @@
@@ -2485,7 +2497,7 @@ index f2fc42e015abe04eb3c9f5c2ced4b2f9771ee820..2a419ffd26b8f6268211390b856d2f9f
          }
  
 diff --git a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
-index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..8a0ecad90fcb42d3df03947fa0995737a5f58aa8 100644
+index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..5c3bfb214737b388d3a5d1ad4ac6c9b0ddf5726c 100644
 --- a/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 +++ b/ios/vendor/GhosttyTerminal/Platform/UIKit/UITerminalView.swift
 @@ -7,8 +7,51 @@
@@ -2540,7 +2552,7 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..8a0ecad90fcb42d3df03947fa0995737
      @MainActor
      open class UITerminalView: UIView {
          let core = TerminalSurfaceCoordinator()
-@@ -27,8 +70,87 @@
+@@ -27,8 +70,92 @@
              var suppressNextIndirectPointerTouchEnd = false
          #endif
          lazy var selectionContextMenuInteraction = UIContextMenuInteraction(delegate: self)
@@ -2625,10 +2637,15 @@ index 7bb1e9861c9640c197321a9eff2cd7f9e087c0a1..8a0ecad90fcb42d3df03947fa0995737
 +        /// Set while a touch is down that should raise the keyboard when it
 +        /// ends, if it turns out to have been a tap rather than a drag.
 +        var pendingKeyboardRaiseOnTouchEnd = false
++
++        /// Installed by the host app to hear a tap that raised the keyboard
++        /// (true) or dismissed it (false). The tap is the user's own act, which
++        /// no first-responder change can tell from the app's own focus and blur.
++        open var onKeyboardTap: ((Bool) -> Void)?
          #if !targetEnvironment(macCatalyst)
              var currentFontSize: Float = 14
              var lastPinchScale: CGFloat = 1.0
-@@ -128,6 +250,9 @@
+@@ -128,6 +255,9 @@
              core.onPostRender = { [weak self] in
                  self?.enforceSublayerScale()
              }
@@ -2682,7 +2699,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0d69d9acd 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..3c6cc88912d43d96f80eb50c47aa60d381edddfa 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2731,8 +2748,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0
 +   * Any other name rejects. iOS only.
 +   */
 +  pressKey(key: string, modifiers: TerminalKeyModifiers): Promise<void>;
-+};
-+
+ };
+ 
 +/** The modifiers held with a key. `cmd` is ghostty's `super`. */
 +export type TerminalKeyModifiers = { ctrl: boolean; alt: boolean; cmd: boolean };
 +
@@ -2748,8 +2765,8 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0
 +  cells?: number[];
 +  /** Whether the row runs on into the next one, so a copy joins the two. */
 +  wraps: boolean;
- };
- 
++};
++
 +/** A place on the view, in points from its top left. */
 +export type TerminalPoint = { x: number; y: number };
 +
@@ -2759,7 +2776,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
-@@ -57,8 +115,83 @@ export type TerminalViewProps = {
+@@ -57,8 +115,89 @@ export type TerminalViewProps = {
     * pass undefined fields to keep ghostty's defaults.
     */
    theme?: TerminalTheme;
@@ -2840,6 +2857,12 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..bc7ce56b926ecee9e4ca2f9abc8b28d0
 +   * the system's own paste action, so iOS shows no prompt.
 +   */
 +  onPaste?: (event: { nativeEvent: TerminalPasteEvent }) => void;
++  /**
++   * A tap on the terminal raised the system keyboard (`focused: true`) or
++   * dismissed it (`false`). Only a user's tap sends it, not `focus` or
++   * `blur`, so the app can tell what the user wants from what it did.
++   */
++  onKeyboardTap?: (event: { nativeEvent: { focused: boolean } }) => void;
    /** Grid resized (layout, rotation, font change); forward to the PTY. */
    onResize?: (event: { nativeEvent: TerminalResizeEvent }) => void;
    ref?: Ref<TerminalViewRef>;

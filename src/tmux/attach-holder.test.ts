@@ -25,6 +25,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
   const state = (): AttachState => ({
     phase,
     typing: typingOf({ phase, switching: false, keyChanged: false }),
+    keyboard: 'down',
     step: 'connecting',
     painted: new Set(),
     paintedOnce: false,
@@ -63,6 +64,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     selectPaneToward: () => {},
     split: () => Promise.resolve(),
     newWindow: () => Promise.resolve(),
+    setKeyboard: () => {},
     setZoom: () => {},
     capturePreviews: () => {},
     capturePaneText: () => Promise.resolve(''),
