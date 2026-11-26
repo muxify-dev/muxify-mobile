@@ -13,7 +13,7 @@ import { actionsFor } from '@/domain/cover';
 import { lastAnswer } from '@/domain/host-listing';
 import { topicSections } from '@/domain/host-screen';
 import { titleSheetNotice } from '@/domain/title-sheet-notice';
-import type { DestinationRow } from '@/domain/destinations';
+import type { DestinationRow, OnScreen } from '@/domain/destinations';
 import { sessionTitleRows, topicTitleRows, type TitleRow, type TitleWindowRow } from '@/domain/title-rows';
 import { useEdgeDrawerRows } from '@/hooks/use-edge-drawer-rows';
 import { useHostEntry } from '@/hooks/use-host-entry';
@@ -58,6 +58,8 @@ export interface TitleSheetOptions {
   beforeOpen?: () => void;
   /** A Session picked while the Attach has stopped, which opens a new Attach. */
   onReplacingStopped?: () => void;
+  /** What the screen shows, for the Edge Drawer to mark that row. */
+  onScreen: OnScreen;
 }
 
 /**
@@ -67,7 +69,7 @@ export interface TitleSheetOptions {
  * two screens cannot drift apart, and a pick in the drawer does what the
  * same pick in the sheet does.
  */
-export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, beforeOpen, onReplacingStopped }: TitleSheetOptions) {
+export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, beforeOpen, onReplacingStopped, onScreen }: TitleSheetOptions) {
   const holder = useAttachHolder();
   const navigation = useNavigation();
   const router = useRouter();
@@ -360,7 +362,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     onOpenTab: openTab,
   };
 
-  const drawerRows = useEdgeDrawerRows({ open: drawerOpen, revision: titleRevision, attach, state, hostId, topic, titleRows });
+  const drawerRows = useEdgeDrawerRows({ open: drawerOpen, revision: titleRevision, attach, state, hostId, topic, titleRows, onScreen });
   /**
    * Closes the Edge Drawer at a pick and keeps the pick's revision, so the
    * move goes on: the drawer is a quick switch, and an open drawer would

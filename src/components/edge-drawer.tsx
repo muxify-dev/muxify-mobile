@@ -421,7 +421,6 @@ function SectionHeader({ item, lit, onPress }: { item: Extract<DrawerItem, { kin
 function DestinationRowView({ item, lit, onPress }: { item: Extract<DrawerItem, { kind: 'row' }>; lit: boolean; onPress: () => void }) {
   const { palette: chrome, sheetPalette: palette } = useSettings();
   const { row } = item;
-  const current = (row.kind === 'window' && row.window.current) || (row.kind === 'pane' && row.pane.active);
   const parts = rowParts(row);
   const mark = (row.kind === 'window' && row.window.mark) || null;
   return (
@@ -429,20 +428,22 @@ function DestinationRowView({ item, lit, onPress }: { item: Extract<DrawerItem, 
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={parts.label}
-      accessibilityState={{ selected: current }}
+      accessibilityState={{ selected: row.here }}
       style={({ pressed }) => [
         styles.row,
-        { backgroundColor: lit || pressed ? palette.tileSelected : palette.tile, paddingLeft: 12 + parts.indent * 18 },
+        {
+          backgroundColor: lit || pressed ? palette.tileSelected : row.here ? palette.tileHere : palette.tile,
+          paddingLeft: 12 + parts.indent * 18,
+        },
         item.first && styles.firstRow,
         item.last && styles.lastRow,
       ]}>
       <SymbolView name={parts.icon} size={parts.indent ? 14 : 17} tintColor={parts.indent ? palette.secondary : palette.accent} style={styles.icon} />
       <View style={styles.rowText}>
-        <Text numberOfLines={1} style={[styles.name, { color: palette.primary }]}>{parts.name}</Text>
+        <Text numberOfLines={1} style={[styles.name, row.here && styles.nameHere, { color: palette.primary }]}>{parts.name}</Text>
         {parts.detail ? <Text numberOfLines={1} style={[styles.detail, { color: palette.secondary }]}>{parts.detail}</Text> : null}
       </View>
       {mark ? <MarkSymbol {...markSymbol(mark, chrome)} /> : null}
-      {current ? <SymbolView name="checkmark" size={14} tintColor={palette.accent} /> : null}
       {item.last ? null : <View style={[styles.separator, { left: 46 + parts.indent * 18, backgroundColor: palette.stroke }]} />}
     </Pressable>
   );
@@ -509,6 +510,7 @@ const styles = StyleSheet.create({
   icon: { width: 22, height: 22 },
   rowText: { flex: 1 },
   name: { fontSize: 16 },
+  nameHere: { fontWeight: '600' },
   detail: { fontSize: 12 },
   cancel: { position: 'absolute', left: 0, top: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 6, paddingHorizontal: 4, paddingBottom: 12 },
   cancelText: { color: '#ffffff', fontSize: 11, fontWeight: '600', textAlign: 'center' },

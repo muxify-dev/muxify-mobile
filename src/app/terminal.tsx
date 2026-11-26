@@ -21,6 +21,7 @@ import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
 import { inputNoticeCopy, shownInputNotice } from '@/lib/input-notice-copy';
 import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
 import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
+import { ON_PANE } from '@/domain/destinations';
 import { EdgeGrip } from '@/components/edge-grip';
 import { LayoutMap } from '@/components/layout-map';
 import { ComposerPanel } from '@/composer/composer-panel';
@@ -232,7 +233,7 @@ export default function TerminalScreen() {
     if (tab) router.replace(placeTabRoute(tab));
   }, [router]);
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved, beforeOpen: closePicker,
-    onReplacingStopped: forgetLookup });
+    onReplacingStopped: forgetLookup, onScreen: ON_PANE });
   const { closeChooser, openTitleSheet, openSessionsOnly, topic, attachedSession, actOnAttachedSession } = chooser;
   const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
   /** The trial of the Edge Drawer as the way to a Pane: see Settings.hidePanesPicker. */

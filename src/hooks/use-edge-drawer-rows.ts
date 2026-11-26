@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
-import { destinationRows, listedWindows, type DestinationRow } from '@/domain/destinations';
+import { deviceLog } from '@/diagnostics/device-log';
+import { speakingAs } from '@/diagnostics/log';
+import { destinationRows, listedWindows, type DestinationRow, type OnScreen } from '@/domain/destinations';
 import type { TitleRow } from '@/domain/title-rows';
 import type { Attach, AttachState } from '@/tmux/attach';
 import { useAttachHolder } from '@/tmux/attach-context';
 import type { TopicDetail } from '@/topics/topic-detail';
+
+const say = speakingAs(deviceLog(), 'screen');
 
 /**
  * What the Edge Drawer lists while it is open, for useTitleSheet.
@@ -15,8 +19,12 @@ import type { TopicDetail } from '@/topics/topic-detail';
  * Window, and shows each Window's Tabs as they arrive (D4). A read that
  * fails, or comes back after the drawer closed or the Attach changed, shows
  * nothing.
+ *
+ * It writes to the log which row it marks as on screen, each time that
+ * changes while it is open: the drawer closes at each lift, so the e2e reads
+ * the mark there.
  */
-export function useEdgeDrawerRows({ open, revision, attach, state, hostId, topic, titleRows }: {
+export function useEdgeDrawerRows({ open, revision, attach, state, hostId, topic, titleRows, onScreen }: {
   open: boolean;
   /** The chooser's revision while it is open, which each read is checked against. */
   revision: number | null;
@@ -25,6 +33,7 @@ export function useEdgeDrawerRows({ open, revision, attach, state, hostId, topic
   hostId: string | undefined;
   topic: TopicDetail | null;
   titleRows: TitleRow[];
+  onScreen: OnScreen;
 }) {
   const holder = useAttachHolder();
   const [tabs, setTabs] = useState<{ revision: number; byWindow: ReadonlyMap<string, BrowserTab[]> } | null>(null);
@@ -54,8 +63,14 @@ export function useEdgeDrawerRows({ open, revision, attach, state, hostId, topic
       attachedSession: state.sessionName,
       panes: state.topology.panes,
       tabs: tabs?.revision === revision ? tabs.byWindow : NO_TABS,
+      onScreen,
     });
-  }, [open, state, topic, titleRows, tabs, revision]);
+  }, [open, state, topic, titleRows, tabs, revision, onScreen]);
+
+  const hereKey = rows.find((row) => 'here' in row && row.here)?.key ?? null;
+  useEffect(() => {
+    if (open) say(`the Edge Drawer marks ${hereKey ?? 'no row'} as on screen`);
+  }, [open, hereKey]);
 
   return rows;
 }
