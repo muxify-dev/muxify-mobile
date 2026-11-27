@@ -1,6 +1,6 @@
 import type { OptionsItem } from '@/components/terminal-header';
 
-import { optionRun } from './option-run';
+import { optionGroups, optionRun } from './options-table';
 
 const run = jest.fn();
 const set = jest.fn();
@@ -30,6 +30,14 @@ it('finds an entry inside a menu', () => {
 it('flips a toggle', () => {
   optionRun(items, 'zoom')?.();
   expect(set).toHaveBeenCalledWith(false);
+});
+
+it('groups the entries by the dividers, and drops a group with no entry', () => {
+  const grouped = optionGroups([...items, { kind: 'divider', id: 'again' }, { kind: 'divider', id: 'last' }]);
+  expect(grouped.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([
+    ['first', ['compose', 'new-window', 'zoom']],
+    ['divider', ['split']],
+  ]);
 });
 
 it('gives nothing for an entry that is disabled or not in the table', () => {

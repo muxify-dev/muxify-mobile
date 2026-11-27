@@ -24,6 +24,7 @@ import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
 import { ON_PANE } from '@/domain/destinations';
 import { EdgeGrip } from '@/components/edge-grip';
 import { LayoutMap } from '@/components/layout-map';
+import { OptionsSheet } from '@/components/options-sheet';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
 import { stageFile } from '@/composer/staging';
@@ -75,7 +76,7 @@ import {
   type Modifiers,
 } from '@/lib/modifier-keys';
 import { NO_GRIP_ACTIONS, type GripActionRuns } from '@/lib/grip-actions';
-import { optionRun } from '@/lib/option-run';
+import { optionRun } from '@/lib/options-table';
 import { DEFAULT_QUICK_ACTIONS, quickActionLabel, type QuickAction, type QuickActionSlots } from '@/lib/quick-actions';
 import { runQuickAction } from '@/keyboard/run-quick-action';
 import { requestGoTo } from '@/keyboard/go-to-request';
@@ -244,6 +245,8 @@ export default function TerminalScreen() {
   const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
   /** The Grip's Fan is open under a held finger. */
   const [fanOpen, setFanOpen] = useState(false);
+  /** The Options sheet, which the Grip's Options action opens: the ⋯ menu cannot be opened from code. */
+  const [optionsOpen, setOptionsOpen] = useState(false);
   /** The trial of the Edge Drawer as the way to a Pane: see Settings.hidePanesPicker. */
   const hidePanesPicker = settings.hidePanesPicker;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
@@ -447,7 +450,7 @@ export default function TerminalScreen() {
   // Unread on visit: the Terminal Screen in focus shows the Attach's Panes, as a visit on the Mac does.
   useFocusEffect(useCallback(() => attach?.terminalFocused(), [attach]));
 
-  const sheetOpen = picker.open || chooser.sheet.isPresented;
+  const sheetOpen = picker.open || chooser.sheet.isPresented || optionsOpen;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
     paneId: slot.pane.id,
     box: slot.box,
@@ -1202,6 +1205,7 @@ export default function TerminalScreen() {
     ...NO_GRIP_ACTIONS,
     'go-to': hostId ? () => { requestGoTo(hostId); goHost(); } : undefined,
     compose: optionRun(options, 'compose'),
+    options: () => setOptionsOpen(true),
     keyboard: optionRun(options, 'keyboard'),
     'title-sheet': openTitleSheet,
     'host-screen': goHost,
@@ -1446,6 +1450,8 @@ export default function TerminalScreen() {
         />
 
         <TitleSheet {...chooser.sheet} />
+
+        <OptionsSheet isPresented={optionsOpen} items={options} onClose={() => setOptionsOpen(false)} />
 
         {composerOpen && attach && activePaneId ? (
           <ComposerPanel
