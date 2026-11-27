@@ -85,7 +85,7 @@ export default function NewTopicScreen() {
   const [highlighted, setHighlighted] = useState(0);
   const [listedAt] = useState(() => new Date());
   const adding = step.step === 'add-session';
-  const folders = useGoToPaths(hostId, true, adding && query.trim() === '');
+  const folders = useGoToPaths(hostId, true);
   const { ask } = folders;
   // Read when the sheet opens, so the list is there when the title is sent.
   useEffect(() => ask(''), [ask]);
@@ -293,7 +293,7 @@ export default function NewTopicScreen() {
             <GoToList
               rows={rows}
               highlighted={onShow}
-              reading={{ isPending: folders.isPending, failed: folders.error !== null, held: folders.held !== null }}
+              reading={{ isPending: folders.isPending, failed: folders.error !== null }}
               palette={palette}
               now={listedAt}
               locked={locked || step.made !== null}

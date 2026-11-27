@@ -29,11 +29,10 @@ export function goToRowKey(row: GoToRow): string {
   }
 }
 
-/** What the rows of a Go to list say about the read: it runs, it failed, or an answer waits. */
+/** What the rows of a Go to list say about the read: it runs, or it failed. */
 export interface GoToListReading {
   isPending: boolean;
   failed: boolean;
-  held: boolean;
 }
 
 /**
@@ -51,11 +50,12 @@ export function GoToList({
   locked,
   onPick,
   folderMenu,
-  hostRows = false,
+  listed,
   opening,
 }: {
   rows: readonly GoToRow[];
-  hostRows?: boolean;
+  /** How many rows the whole list has, mounted or not: the Host's and these. Nothing matches only when it is 0. */
+  listed?: number;
   /** The index of the row that Return picks. */
   highlighted: number;
   reading: GoToListReading;
@@ -71,10 +71,10 @@ export function GoToList({
   opening?: (row: GoToRow) => boolean;
 }) {
   const secondaryText = [font({ size: 15 }), foregroundColor(palette.secondaryLabel)];
-  const nothing = rows.length === 0 && !hostRows && !reading.isPending && !reading.failed && !reading.held;
+  const nothing = (listed ?? rows.length) === 0 && !reading.isPending && !reading.failed;
   return (
     <>
-      {rows.length || nothing || reading.held ? <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+      {rows.length || nothing ? <Section modifiers={[listRowBackground(palette.rowSurface)]}>
         {rows.map((row, index) => {
           const face = rowFace(row, now);
           const line = (
@@ -115,11 +115,7 @@ export function GoToList({
           );
         })}
         {/* After the rows, so no row moves when it comes or goes. Not a Button: no tap and no highlight. */}
-        {reading.held ? (
-          <Text modifiers={secondaryText}>
-            The Host sent a new list. It shows when you type.
-          </Text>
-        ) : nothing ? (
+        {nothing ? (
           <Text modifiers={secondaryText}>Nothing matches.</Text>
         ) : null}
       </Section> : null}

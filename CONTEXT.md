@@ -302,7 +302,8 @@ Screen, and the reads of Tags, folders and Topics that a sheet makes before
 the user can act. A screen owns each Host Read separately, and each one shows
 that it runs in the render of the tap: a progress line, or the reason with
 Try again. The last answer stays on screen, and the user can tap its rows,
-until a newer answer replaces it. A newer question cancels the older one on
+until a newer answer replaces it. Each open of Go to is a new search, with
+no rows until its first answer. A newer question cancels the older one on
 the Host Server, and a late answer to the older one changes nothing. Try
 again asks the same question again at once, and a second tap while it runs
 does nothing. A read that meets the Host Problem says it only on a screen
@@ -310,6 +311,14 @@ with no Host Problem row, such as a sheet. A Host Read changes nothing on
 the Host, so the phone can cancel it and ask it again freely. The Listing is a feed that the Host pushes, not a Host Read.
 See ADR 0040.
 _Avoid_: query, fetch, load, request (a Request belongs to a Host Write)
+
+**Screen Frame**:
+The part of a screen that the user acts on before its content comes: the
+header with Back, the title and Options, the tabs and the Go to bar. It shows
+in the render of the tap and takes taps and keys at once. The content area
+shows its progress line, and its rows mount a few at a time, after a push
+ends. See ADR 0041.
+_Avoid_: chrome, skeleton, shell
 
 **Client**:
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it

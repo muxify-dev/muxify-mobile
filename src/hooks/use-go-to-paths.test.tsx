@@ -6,13 +6,10 @@ import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths
 
 import { useGoToPaths } from './use-go-to-paths';
 
-const mockCached = jest.fn();
-const mockSave = jest.fn();
 const mockPaths = jest.fn();
 let mockServer = fakeHostServer();
 jest.mock('@/storage/device-store', () => ({
   deviceHostStore: () => ({ load: async () => ({ hosts: [{ id: 'host', displayName: 'Dev Host' }] }) }),
-  deviceGoToCache: () => ({ load: mockCached, save: mockSave }),
 }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 
@@ -25,20 +22,17 @@ const shown = () => ({ query: paths.dataKey ?? '', names: (paths.data ?? []).map
 
 let renderer: ReactTestRenderer;
 let paths: ReturnType<typeof useGoToPaths>;
-async function mount(enabled = true, still = false) {
-  function Screen({ still: now }: { still: boolean }) {
-    paths = useGoToPaths('host', enabled, now);
+async function mount(enabled = true) {
+  function Screen() {
+    paths = useGoToPaths('host', enabled);
     return null;
   }
-  await act(async () => { renderer = create(<Screen still={still} />); });
-  return (next: boolean) => act(async () => { renderer.update(<Screen still={next} />); });
+  await act(async () => { renderer = create(<Screen />); });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   jest.useFakeTimers();
-  mockCached.mockResolvedValue([]);
-  mockSave.mockResolvedValue(undefined);
   mockServer = fakeHostServer();
   mockServer.on.session_paths = mockPaths;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,46 +51,7 @@ it('asks the Host Server with no text for an empty field, and draws its rows in 
   expect(shown()).toEqual({ query: '', names: ['newest', 'older', 'oldest'] });
 });
 
-it('shows the list the phone kept before the Host answers, and then the answer of the Host', async () => {
-  mockCached.mockResolvedValue([row('kept')]);
-  let answer!: (value: unknown) => void;
-  mockPaths.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
-  await mount();
-  await act(async () => { paths.ask(''); });
-
-  expect(shown()).toEqual({ query: '', names: ['kept'] });
-  expect(paths.isPending).toBe(true);
-
-  await act(async () => { answer(listed('fresh', 'kept')); });
-  expect(shown()).toEqual({ query: '', names: ['fresh', 'kept'] });
-  expect(paths.isPending).toBe(false);
-  expect(mockSave).toHaveBeenCalledWith('host', [row('fresh'), row('kept')]);
-});
-
-it('does not move the rows under the finger: a new answer for an empty field waits while the list is still', async () => {
-  mockCached.mockResolvedValue([row('kept')]);
-  mockPaths.mockResolvedValue(listed('fresh', 'kept'));
-  const setStill = await mount(true, true);
-  await act(async () => { paths.ask(''); });
-
-  expect(shown().names).toEqual(['kept']);
-  expect(paths.held?.data.map((each) => each.name)).toEqual(['fresh', 'kept']);
-  expect(mockSave).toHaveBeenCalled();
-
-  await setStill(false);
-  expect(shown().names).toEqual(['fresh', 'kept']);
-  expect(paths.held).toBeNull();
-});
-
-it('shows the first answer at once when the phone kept no list', async () => {
-  mockPaths.mockResolvedValue(listed('fresh'));
-  await mount(true, true);
-  await act(async () => { paths.ask(''); });
-
-  expect(shown().names).toEqual(['fresh']);
-});
-
-it('asks the Host for the text when the field is still, and keeps no list for other text on the phone', async () => {
+it('waits for the typing to pause before it asks the Host for the text', async () => {
   mockPaths.mockResolvedValue(listed('gs-backend'));
   await mount();
   await act(async () => { paths.ask('g'); paths.ask('gs'); });
@@ -106,7 +61,6 @@ it('asks the Host for the text when the field is still, and keeps no list for ot
   expect(mockPaths).toHaveBeenCalledTimes(1);
   expect(mockPaths).toHaveBeenCalledWith({ query: 'gs' });
   expect(shown()).toEqual({ query: 'gs', names: ['gs-backend'] });
-  expect(mockSave).not.toHaveBeenCalled();
 });
 
 it('keeps the answer for the newest text when an older answer comes after it', async () => {
@@ -123,9 +77,9 @@ it('keeps the answer for the newest text when an older answer comes after it', a
 });
 
 it('keeps the rows on show and says why when the Host cannot be read', async () => {
-  mockCached.mockResolvedValue([row('kept')]);
-  mockPaths.mockRejectedValue(refused('no Config', 'config_invalid'));
+  mockPaths.mockResolvedValueOnce(listed('kept')).mockRejectedValue(refused('no Config', 'config_invalid'));
   await mount();
+  await act(async () => { paths.ask(''); });
   await act(async () => { paths.ask(''); });
 
   expect(shown().names).toEqual(['kept']);
@@ -136,16 +90,5 @@ it('asks nothing of a Host CLI that has no Go to', async () => {
   await mount(false);
   await act(async () => { paths.ask(''); jest.runAllTimers(); });
 
-  expect(mockCached).not.toHaveBeenCalled();
   expect(mockPaths).not.toHaveBeenCalled();
-});
-
-it('keeps an empty Host answer when a slow cache read finishes later', async () => {
-  let cached!: (rows: SessionPathRow[]) => void;
-  mockCached.mockImplementationOnce(() => new Promise((resolve) => { cached = resolve; }));
-  mockPaths.mockResolvedValue(listed());
-  await mount();
-  await act(async () => { paths.ask(''); });
-  await act(async () => { cached([row('old')]); });
-  expect(shown().names).toEqual([]);
 });

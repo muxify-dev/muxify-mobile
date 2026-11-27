@@ -1,13 +1,11 @@
 import { File, Paths } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 
-import { parseGoToSections, type GoToSection } from '@/topics/go-to-answer';
-
-import { createListCache, createGoToCache, type GoToCache } from './go-to-cache';
 import { createHostStore, type HostStore, type JsonFile, type Secrets } from './store';
 
 const RECORDS_FILE = 'muxify-records.json';
-const GO_TO_FILE = 'muxify-go-to.json';
+/** The files of the Go to caches, which an older version wrote. Go to shows no old rows now. */
+const RETIRED_FILES = ['muxify-go-to.json', 'muxify-go-to-sections.json'];
 
 /**
  * The real storage behind the Hosts list: a JSON file in the app's documents
@@ -43,22 +41,14 @@ const secrets: Secrets = {
 
 let store: HostStore | undefined;
 
-/** The app's one store. */
+/** The app's one store. Its first use deletes the retired files, which hold each Host's folders. */
 export function deviceHostStore(): HostStore {
-  store ??= createHostStore(jsonFile(RECORDS_FILE), secrets);
+  if (store === undefined) {
+    store = createHostStore(jsonFile(RECORDS_FILE), secrets);
+    for (const name of RETIRED_FILES) {
+      const file = new File(Paths.document, name);
+      if (file.exists) file.delete();
+    }
+  }
   return store;
-}
-
-let goToCache: GoToCache | undefined;
-
-/** The app's one copy of each Host's Go to paths. */
-export function deviceGoToCache(): GoToCache {
-  goToCache ??= createGoToCache(jsonFile(GO_TO_FILE));
-  return goToCache;
-}
-
-let rankedCache: GoToCache<GoToSection> | undefined;
-export function deviceRankedGoToCache(): GoToCache<GoToSection> {
-  rankedCache ??= createListCache(jsonFile('muxify-go-to-sections.json'), parseGoToSections, (sections) => ({ sections }));
-  return rankedCache;
 }

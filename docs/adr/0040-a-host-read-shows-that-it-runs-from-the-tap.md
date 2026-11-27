@@ -41,8 +41,9 @@ planning page (decisions D1 to D5). The rest is the design of this change.
   the answer is for, until a current answer replaces them. The kept rows look
   the same and the user can tap them, because each one is still a real Topic,
   Session or folder on the Host. The progress line stands above them. A
-  screen that must not move rows under the finger can hold the new answer, as
-  Go to does.
+  screen that must not move rows under the finger can hold the new answer.
+  Each open of Go to is a new search with no rows (ADR 0041): the last
+  answer stays only inside one search.
 - **The newest ask wins.** Each ask gets a ticket. A new ask, a cancel, an
   unmount or a loss of focus aborts the request in flight, and the read calls
   `cancel()` on its Host Server call. The machine drops an answer or an error

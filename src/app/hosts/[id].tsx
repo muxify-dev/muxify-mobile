@@ -1,6 +1,6 @@
 import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, StyleSheet } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import type { SearchBarCommands } from 'react-native-screens';
 
 import {
@@ -35,6 +35,7 @@ import { placeTabRoute } from '@/browser/place-tab-route';
 import { cardKey } from '@/topics/board-card';
 import { HostGoToList } from '@/components/host-go-to-list';
 import { HostReadRow } from '@/components/host-read-row';
+import { MoreRows } from '@/components/more-rows';
 import { FillPlaceSheet } from '@/components/fill-place-sheet';
 import { GoToList, type FolderRow } from '@/components/go-to-list';
 import {
@@ -70,6 +71,8 @@ import {
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useCardWrites } from '@/hooks/use-card-writes';
 import { rankedPaths, useGoToPaths, useHostGoTo } from '@/hooks/use-go-to-paths';
+import { limitRows, useRowBudget } from '@/hooks/use-row-budget';
+import { usePushEnded } from '@/navigation/use-push-ended';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
@@ -162,39 +165,53 @@ export default function HostScreen() {
   const [listedAt] = useState(() => new Date());
   const [goToTag, setGoToTag] = useState<string | null>(null);
   const ranked = hostRanksGoTo && goTo !== 'paths';
-  const still = goTo !== null && query.trim() === '';
-  const folders = useGoToPaths(id, hasGoTo && !ranked, still);
-  const hostList = useHostGoTo(id, hasGoTo && ranked, still, attachedHere?.sessionName, goToTag);
+  const folders = useGoToPaths(id, hasGoTo);
+  const hostList = useHostGoTo(id, hasGoTo && hostRanksGoTo, attachedHere?.sessionName, goToTag);
+  const readFor = (mode: GoToMode) => (hostRanksGoTo && mode !== 'paths' ? hostList : folders);
   const goToRead = ranked ? hostList : folders;
-  const { ask, cancel: cancelGoTo } = goToRead;
-  // The text in the field. A keystroke asks from its own handler; this is for
-  // the read on focus, and for a new question (the Session, the Tag, the list).
+  const { ask } = goToRead;
+  const { forget: forgetFolders } = folders;
+  const { forget: forgetHostList } = hostList;
+  // The text in the field. A keystroke asks from its own handler.
   const typed = useRef('');
-  useFocusEffect(useCallback(() => {
-    if (hasGoTo) ask(typed.current);
-    return cancelGoTo;
-  }, [hasGoTo, ask, cancelGoTo]));
+  // The mode of the open Go to, at once: a focus that follows a tap on New
+  // Session at a folder must not open Go to a second time.
+  const openMode = useRef<GoToMode | null>(null);
+  // The `ask` that answers what is on screen. A new question while Go to is
+  // open (the Session, the Tag) asks again from the render that changes it.
+  const askedWith = useRef(ask);
+  useEffect(() => {
+    if (openMode.current === null || askedWith.current === ask) return;
+    askedWith.current = ask;
+    ask(typed.current);
+  }, [ask]);
 
+  // Each open of Go to is a new search: it opens with no rows, and asks now.
+  const openGoTo = (mode: GoToMode) => {
+    if (openMode.current !== null) return;
+    openMode.current = mode;
+    setGoTo(mode);
+    const read = readFor(mode);
+    askedWith.current = read.ask;
+    read.ask('');
+  };
   const resetGoTo = useCallback(() => {
+    openMode.current = null;
+    forgetFolders();
+    forgetHostList();
     setGoTo(null);
     setGoToTag(null);
     setQuery('');
     typed.current = '';
     setHighlighted(0);
-  }, []);
+  }, [forgetFolders, forgetHostList]);
   useFocusEffect(useCallback(() => resetGoTo, [resetGoTo]));
-  // The field's own Cancel button has already ended the search. A second
-  // cancelSearch from its handler leaves the field deaf to the next tap.
-  // The list then answers the empty field again, as it did before the user typed.
-  const goToCancelled = useCallback(() => {
-    const typedText = typed.current.trim() !== '';
-    resetGoTo();
-    if (typedText) ask('');
-  }, [resetGoTo, ask]);
+  // The field's own Cancel button calls resetGoTo alone: it has already ended
+  // the search, and a second cancelSearch leaves the field deaf to the next tap.
   const closeGoTo = useCallback(() => {
     search.current?.cancelSearch();
-    goToCancelled();
-  }, [goToCancelled]);
+    resetGoTo();
+  }, [resetGoTo]);
   const entered = useCallback((tab: PlaceTab | null) => {
     closeGoTo();
     // A Place with a Tab: the page, in the Terminal Screen's place.
@@ -216,6 +233,7 @@ export default function HostScreen() {
   });
   const localRows = localRowsOf(rankedPaths(folders));
   const rows = [...rankedRows, ...localRows];
+  const goToBudget = useRowBudget(rows.length, goTo !== null);
   const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
 
   const pickLocked = pick.write.kind === 'running' || hostEntry.busy;
@@ -269,7 +287,7 @@ export default function HostScreen() {
 
   const newTopic = () => router.push({ pathname: hasGoTo ? '/new-topic' : '/topic-form', params: { hostId: id } });
   const newSessionAtFolder = () => {
-    setGoTo('paths');
+    openGoTo('paths');
     search.current?.focus();
   };
 
@@ -288,6 +306,9 @@ export default function HostScreen() {
   const picked = moving === null ? undefined : findCardRow(movingSections, moving);
   const targets = picked === undefined ? null : moveTargets(movingSections, cardOf(picked));
   const sections = targets === null ? hostScreen({ ...input, opened }) : movingSections;
+  // The tab's rows wait for the push to end, then mount a few a frame.
+  const tabRows = sections.reduce((count, section) => count + section.rows.length, 0);
+  const tabBudget = useRowBudget(tabRows, usePushEnded());
   // The Benched cards are choices even while the Bench row is closed. A Listing pushed while the sheet is open can fill the place, and the sheet closes with it.
   const choices = filling === null ? null : fillChoices(hostScreen({ ...input, opened: new Set([...opened, 'bench']) }), filling);
   // The bar mounts again each time this screen comes back. The Go to field
@@ -421,13 +442,15 @@ export default function HostScreen() {
   };
 
   const changeQuery = useCallback((event: { nativeEvent: { text?: string } }) => {
+    // iOS empties the field after its Cancel. That is not a search: Go to is closed.
+    if (openMode.current === null) return;
     const text = event.nativeEvent.text ?? '';
     setQuery(text);
     typed.current = text;
     setHighlighted(0);
     ask(text);
   }, [ask]);
-  const fieldFocused = useCallback(() => setGoTo((mode) => mode ?? 'all'), []);
+  const fieldFocused = () => openGoTo('all');
   // Return on the software keyboard. A hardware Return is the List Key, which the app takes before the field.
   const submit = useRef(() => {});
   useEffect(() => {
@@ -453,9 +476,9 @@ export default function HostScreen() {
     </Section>
   );
 
-  // While the Go to field has the keys, the Go to list stands in place of the tab.
-  const onShowTab =
-    goTo !== null ? (
+  // While the Go to field has the keys, the Go to list stands over the tab.
+  const goToContent =
+    goTo === null ? null : (
       <>
         <HostWriteRow
           write={pick.write}
@@ -470,7 +493,7 @@ export default function HostScreen() {
           onCheck={pick.check}
         />
         <HostReadRow read={goToRead} doing={ranked ? 'Reading Go to' : 'Reading folders'} palette={palette} hostProblemShown />
-        <HostGoToList sections={rankedSections} tags={lastSnapshot(topics)?.tags ?? []}
+        <HostGoToList sections={limitRows(rankedSections, goToBudget.budget)} tags={lastSnapshot(topics)?.tags ?? []}
           appearance={appearance} palette={palette} locked={pickLocked} onPick={pickRow} highlighted={onShow}
           opening={(row) => {
             const t = row.target;
@@ -481,10 +504,10 @@ export default function HostScreen() {
             return false;
           }} />
         <GoToList
-          hostRows={rankedRows.length > 0}
-          rows={localRows}
+          listed={rows.length}
+          rows={localRows.slice(0, Math.max(goToBudget.budget - rankedRows.length, 0))}
           highlighted={onShow - rankedRows.length}
-          reading={{ isPending: goToRead.isPending, failed: goToRead.error !== null, held: goToRead.held !== null }}
+          reading={{ isPending: goToRead.isPending, failed: goToRead.error !== null }}
           opening={(row) => row.kind === 'session' && hostEntry.busySession === row.name}
           palette={palette}
           now={listedAt}
@@ -492,12 +515,20 @@ export default function HostScreen() {
           onPick={pickRow}
           folderMenu={goTo === 'all' ? { label: 'New Session here', icon: 'plus', onPress: (row) => openFolder(row, true) } : undefined}
         />
+        {goToBudget.budget < rows.length ? <MoreRows onAppear={goToBudget.more} palette={palette} /> : null}
       </>
-    ) : !firstReadAnswered(input) ? (
+    );
+  const onShowTab =
+    !firstReadAnswered(input) ? (
       <Section modifiers={[listRowBackground(palette.rowSurface)]}>
         {renderRow({ kind: 'checking', text: `Reading ${host?.displayName ?? 'the Host'}…` }, 0)}
       </Section>
-    ) : sections.map(renderSection);
+    ) : (
+      <>
+        {limitRows(sections, tabBudget.budget).map(renderSection)}
+        {tabBudget.budget < tabRows ? <MoreRows onAppear={tabBudget.more} palette={palette} /> : null}
+      </>
+    );
 
   const swiftUIColors = [
     // See settings.tsx: SwiftUI follows the phone, not the app.
@@ -505,7 +536,7 @@ export default function HostScreen() {
     background(palette.background),
     tint(palette.controlAccent),
   ];
-  const pickerShown = tabs.length > 1 && goTo === null && targets === null && firstReadAnswered(input);
+  const pickerShown = tabs.length > 1 && targets === null && firstReadAnswered(input);
 
   // A SwiftUI Host keeps an old top inset when it moves, as when the tab
   // control comes and goes with Go to. So React Native puts the content below
@@ -558,7 +589,7 @@ export default function HostScreen() {
             onFocus={fieldFocused}
             onChangeText={changeQuery}
             onSearchButtonPress={fieldSubmitted}
-            onCancelButtonPress={goToCancelled}
+            onCancelButtonPress={resetGoTo}
           />
           <Stack.Toolbar placement="bottom">
             <Stack.Toolbar.SearchBarSlot />
@@ -575,41 +606,51 @@ export default function HostScreen() {
         </>
       ) : null}
 
-      <TabSwipe
-        tabs={tabs}
-        tab={tab}
-        enabled={pickerShown && filling === null}
-        onSwitch={(next) => rememberHostScreenTab(id, next)}
-        header={(shown) =>
-          pickerShown ? (
-            <Host matchContents={{ vertical: true }}>
-              <VStack modifiers={[...swiftUIColors, noTopInset]}>
-                <Picker
-                  selection={shown}
-                  onSelectionChange={(next) => rememberHostScreenTab(id, next)}
-                  modifiers={[pickerStyle('segmented'), accessibilityLabel('Host Screen view'), padding({ horizontal: 16, vertical: 8 })]}>
-                  {tabs.map((each) => <Text key={each} modifiers={[tag(each)]}>{TAB_NAMES[each]}</Text>)}
-                </Picker>
+      {/* Go to stands over the tab, which stays mounted under it: opening and closing Go to mounts no tab row. */}
+      <View style={styles.fill}>
+        <View style={styles.fill} accessibilityElementsHidden={goTo !== null} importantForAccessibility={goTo === null ? 'auto' : 'no-hide-descendants'}>
+          <TabSwipe
+            tabs={tabs}
+            tab={tab}
+            enabled={pickerShown && goTo === null && filling === null}
+            onSwitch={(next) => rememberHostScreenTab(id, next)}
+            header={(shown) =>
+              pickerShown ? (
+                <Host matchContents={{ vertical: true }}>
+                  <VStack modifiers={[...swiftUIColors, noTopInset]}>
+                    <Picker
+                      selection={shown}
+                      onSelectionChange={(next) => rememberHostScreenTab(id, next)}
+                      modifiers={[pickerStyle('segmented'), accessibilityLabel('Host Screen view'), padding({ horizontal: 16, vertical: 8 })]}>
+                      {tabs.map((each) => <Text key={each} modifiers={[tag(each)]}>{TAB_NAMES[each]}</Text>)}
+                    </Picker>
+                  </VStack>
+                </Host>
+              ) : null
+            }
+            renderTab={(each) => (
+              <Host style={styles.fill} matchContents={false}>
+                <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
+                  {/* A new push animates the rows it adds, drops or moves, as SwiftUI's List does. */}
+                  <Form modifiers={[scrollContentBackground('hidden'), animation(Animation.default, lastReceived(topics)?.at ?? 0)]}>
+                    {each === tab ? onShowTab : limitRows(hostScreen({ ...input, tab: each, opened }), tabBudget.budget).map(renderSection)}
+                  </Form>
+                </VStack>
+              </Host>
+            )}
+          />
+        </View>
+        {goToContent === null ? null : (
+          // A new List at each open, so Go to starts at the top.
+          <View style={StyleSheet.absoluteFill} testID="go-to-list">
+            <Host style={styles.fill} matchContents={false}>
+              <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
+                <Form modifiers={[scrollContentBackground('hidden')]}>{goToContent}</Form>
               </VStack>
             </Host>
-          ) : null
-        }
-        renderTab={(each) => (
-          <Host style={styles.fill} matchContents={false}>
-            <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
-              {/* A new push animates the rows it adds, drops or moves, as SwiftUI's List does. */}
-              {/*
-                A new key when Go to opens or closes gives a new SwiftUI List, at the top. The
-                same List keeps the tab's scroll offset, so a Go to list longer than that
-                offset opens cut at the top.
-              */}
-              <Form key={each === tab && goTo !== null ? 'go-to' : 'tab'} modifiers={[scrollContentBackground('hidden'), animation(Animation.default, lastReceived(topics)?.at ?? 0)]}>
-                {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
-              </Form>
-            </VStack>
-          </Host>
+          </View>
         )}
-      />
+      </View>
       <FillPlaceSheet choices={choices} onPick={fillPlace} onDismiss={() => setFilling(null)} />
     </HeaderBand>
   );

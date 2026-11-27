@@ -25,6 +25,8 @@ const mockRelease = jest.fn();
 let mockFocused = true;
 let mockConnections: Record<string, unknown>;
 
+// The push of the screen has ended, so its rows mount.
+jest.mock('@/navigation/use-push-ended', () => ({ usePushEnded: () => true }));
 jest.mock('expo-router', () => {
   const React = require('react');
   return {
@@ -60,11 +62,16 @@ jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, { get: (_, name) =>
 jest.mock('@/components/tappable-row', () => ({ TAPPABLE_ROW: {} }));
 jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: () => null }));
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
+// The budget has its own test. Here every row mounts in the first render.
+jest.mock('@/hooks/use-row-budget', () => ({
+  ...jest.requireActual('@/hooks/use-row-budget'),
+  useRowBudget: (total: number) => ({ budget: total, more: () => {} }),
+}));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null }) }));
 jest.mock('@/hooks/use-go-to-paths', () => {
   // A Go to list that was never asked: these tests are about the Listing.
-  const unasked = { isPending: false, data: undefined, dataKey: undefined, held: null, error: null, ask: () => {}, retry: () => {}, cancel: () => {}, release: () => {}, seed: () => {}, whenAnswered: () => {} };
+  const unasked = { isPending: false, data: undefined, dataKey: undefined, error: null, ask: () => {}, retry: () => {}, cancel: () => {}, forget: () => {}, whenAnswered: () => {} };
   return { ...jest.requireActual('@/hooks/use-go-to-paths'), useHostGoTo: () => unasked, useGoToPaths: () => unasked };
 });
 jest.mock('@/topics/act-on-card', () => ({
@@ -85,7 +92,6 @@ jest.mock('@/storage/device-store', () => ({
     load: async () => ({ hosts: [{ id: 'host', displayName: 'Dev Host' }] }),
     recentSessionsFor: async () => [],
   }),
-  deviceGoToCache: () => ({ load: async () => [], save: async () => {} }),
 }));
 jest.mock('@/tmux/attach-context', () => ({
   useAttachHolder: () => ({ current: () => null, disconnect: jest.fn() }),
@@ -211,13 +217,15 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
 
-const labels = () => renderer.root.findAllByType(Button).flatMap((node) =>
+/** What the user sees: the Go to list while it is open, which hides the tab under it from VoiceOver. */
+const shownRoot = () => renderer.root.findAll((node) => node.props.testID === 'go-to-list')[0] ?? renderer.root;
+const labels = () => shownRoot().findAllByType(Button).flatMap((node) =>
   (node.props.modifiers ?? []).flatMap((modifier: { name: string; value: unknown }) => (modifier.name === 'accessibilityLabel' ? [modifier.value as string] : [])));
-const button = (label: string) => renderer.root.findAllByType(Button)
+const button = (label: string) => shownRoot().findAllByType(Button)
   .find((node) => node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label))!;
-const labelled = (label: string) => renderer.root.findAllByType(Button)
+const labelled = (label: string) => shownRoot().findAllByType(Button)
   .filter((node) => node.props.modifiers?.some((modifier: { name: string; value: unknown }) => modifier.name === 'accessibilityLabel' && modifier.value === label));
-const texts = () => renderer.root.findAllByType('Text' as never).map((node) => node.props.children);
+const texts = () => shownRoot().findAllByType('Text' as never).map((node) => node.props.children);
 const topics = () => labels().filter((label) => label.startsWith('Topic '));
 
 describe('a live Host Screen', () => {

@@ -13,7 +13,8 @@
 # and the running Session then takes the place of its Session Path.
 #
 # On a slow link (e2e/slow-launch.sh), the rows on screen stay while the Host
-# reads the text typed, and a line above them says that Go to reads.
+# reads the text typed, and a line above them says that Go to reads. Each
+# open of Go to is a new search, with no rows until its answer.
 #
 # Go to opens at the top, also after a scroll down on the Board.
 #
@@ -258,6 +259,16 @@ agent-device wait absent "label=\"Folder $PROJECTS/alpha\"" 20000 >/dev/null || 
 on_screen "Reading Go to" && fail "the Reading Go to line stays after the answer"
 fast_each
 echo "ok: on a slow link the rows stay and Go to says it reads, until the answer replaces them"
+
+# Each open of Go to is a new search: the rows of the last search do not show.
+agent-device press 'label="close"' --settle >/dev/null
+slow_each
+open_go_to "a second time over the slow link"
+agent-device wait 'label="Reading Go to"' 5000 >/dev/null || fail "no Reading Go to line when Go to opens again"
+on_screen "Topic One" && fail "Go to opened again with the rows of the last search"
+agent-device wait 'label="Topic One"' 20000 >/dev/null || fail "the answer to the new search never came over the slow link"
+fast_each
+echo "ok: each open of Go to is a new search, with no rows until its answer"
 
 echo "== Go to after a scroll"
 # Enough Topics that the Board scrolls, and enough folders that the Go to list
