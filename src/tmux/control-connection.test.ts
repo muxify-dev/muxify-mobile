@@ -1,7 +1,9 @@
 import { bytesToUtf8 } from '@/lib/utf8';
 
+import { listWindowsCommand } from './commands';
 import { openControlConnection, type ControlConnection } from './control-connection';
 import type { ControlEvent } from './control-protocol';
+import { TmuxClient } from './tmux-client';
 import { TmuxError } from './tmux-error';
 import type { ControlChannel, ControlChannelEvents, TmuxTransport } from './transport';
 
@@ -256,6 +258,48 @@ describe('running commands', () => {
     const asked = connection.command(['list-sessions']);
     host.reply(2, ['work']);
     expect((await asked).map(bytesToUtf8)).toEqual(['work']);
+  });
+
+  it('drops a block tmux wrote for a hook, so every later command still gets its own reply', async () => {
+    // A foreground `run-shell` on `after-select-pane` runs in the phone's
+    // queue, and tmux writes its block with flags 0 between two replies.
+    const selected = connection.run(['select-pane', '-Z', '-t', 'work:0.1']);
+    const coloured = connection.run(['refresh-client', '-r', '%1:x']);
+    const windows = connection.command(['list-windows', '-t', 'work']);
+    host.reply(2);
+    host.say('%begin 1 3 0\n%end 1 3 0\n');
+    host.reply(4);
+    host.reply(5, ['@0\t0\t1']);
+    expect((await selected).ok).toBe(true);
+    expect((await coloured).lines).toEqual([]);
+    expect((await windows).map(bytesToUtf8)).toEqual(['@0\t0\t1']);
+  });
+
+  it('skips a block without the tag of the read it reached, and gives the read the next block that has it', async () => {
+    // A block that tmux marks as the phone's but that answers no command
+    // puts every later reply one out of step. A write cannot tell: each
+    // answers with no lines. The first read after it can.
+    const client = new TmuxClient(connection);
+    const coloured = connection.run(['refresh-client', '-r', '%1:x']);
+    const windows = client.listWindows('work');
+    const after = connection.run(['select-window', '-t', 'work:0']);
+    const { tag } = listWindowsCommand('work');
+    host.reply(2);
+    host.reply(3);
+    host.reply(4, [`${tag}@0\t0\t1\t2\t1\tshell\tzsh`]);
+    host.reply(5, ['the answer to select-window']);
+    expect((await coloured).ok).toBe(true);
+    expect(await windows).toEqual([
+      { id: '@0', index: 0, active: true, paneCount: 2, zoomed: true, name: 'shell', command: 'zsh' },
+    ]);
+    expect((await after).text).toEqual(['the answer to select-window']);
+  });
+
+  it('takes an %error as the answer of a read, which has no tag to show', async () => {
+    const client = new TmuxClient(connection);
+    const windows = client.listWindows('gone');
+    host.refuse(2, "can't find session: gone");
+    expect(await windows).toEqual([]);
   });
 
   it('quotes a Session name a shell would have mangled', async () => {

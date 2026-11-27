@@ -99,39 +99,41 @@ describe('attaching', () => {
 
 describe('reading what is there', () => {
   it('asks for the fields a Session picker shows', () => {
-    expect(listSessionsCommand()).toEqual([
+    const read = listSessionsCommand();
+    expect(read.argv).toEqual([
       'list-sessions',
       '-F',
-      '#{session_name}\t#{session_windows}',
+      `${read.tag}#{session_name}\t#{session_windows}`,
     ]);
   });
 
   it('never asks whether anyone is attached', () => {
     // That was a warning that joining would shrink somebody's Window, which a
     // control client cannot do. See ADR 0006.
-    expect(listSessionsCommand().join(' ')).not.toContain('session_attached');
+    expect(listSessionsCommand().argv.join(' ')).not.toContain('session_attached');
   });
 
   it('puts the Session name where a tab in it cannot shift the count', () => {
-    const fields = listSessionsCommand()[2].split('\t');
-    expect(fields[fields.length - 2]).toBe('#{session_name}');
+    const read = listSessionsCommand();
+    const fields = read.argv[2].split('\t');
+    expect(fields[fields.length - 2]).toBe(`${read.tag}#{session_name}`);
   });
 
   it('asks a Window for its layout rather than its Panes’ coordinates', () => {
-    const format = listPanesCommand('work', 1)[4];
+    const format = listPanesCommand('work', 1).argv[4];
     expect(format).toContain('#{window_layout}');
     expect(format).not.toContain('#{pane_left}');
   });
 
   it('addresses a Window as session:index', () => {
-    expect(listWindowsCommand('work')).toEqual([
+    expect(listWindowsCommand('work').argv).toEqual([
       'list-windows',
       '-t',
       'work',
       expect.any(String),
       expect.any(String),
     ]);
-    expect(listPanesCommand('work', 3)[2]).toBe('work:3');
+    expect(listPanesCommand('work', 3).argv[2]).toBe('work:3');
   });
 });
 
@@ -186,7 +188,8 @@ describe('reporting a Pane’s colours', () => {
   });
 
   it('lists the Panes of every Window of the Session, read as a Session', () => {
-    expect(listSessionPanesCommand('0')).toEqual(['list-panes', '-s', '-t', '0:', '-F', '#{pane_id}']);
+    const read = listSessionPanesCommand('0');
+    expect(read.argv).toEqual(['list-panes', '-s', '-t', '0:', '-F', `${read.tag}#{pane_id}`]);
   });
 });
 
@@ -259,7 +262,7 @@ describe('reading a Pane back', () => {
   });
 
   it('asks for what a resync and a scroll both need', () => {
-    const format = paneStateCommand('%2')[4];
+    const format = paneStateCommand('%2').argv[4];
     expect(format).toContain('#{cursor_x}');
     expect(format).toContain('#{cursor_y}');
     expect(format).toContain('#{alternate_on}');
@@ -347,7 +350,7 @@ describe('what the Log says of typed input', () => {
 
 describe('a split or New Window that runs one time', () => {
   const OPTIONS = { op: '@muxify-op-k7f2', pane: '@muxify-op-pane-k7f2' };
-  const READ = '#{session_id}:#{pid}:#{@muxify-op-k7f2}:#{@muxify-op-pane-k7f2}:#{pane_id}';
+  const READ = '<op>#{pid}:#{@muxify-op-k7f2}:#{@muxify-op-pane-k7f2}:#{pane_id}';
 
   it('runs the verb and records its Op and Pane only while the Session is below the Op, then reads both', () => {
     const line = verbCommands('$3', { kind: 'split', direction: 'right' }, 4 as Op, OPTIONS, true);
@@ -374,15 +377,15 @@ describe('a split or New Window that runs one time', () => {
   });
 
   it.each([
-    ['$3:812:4:%7:%7', { held: 4, serverPid: 812, madePane: '%7', activePane: '%7' }],
-    ['$3:812:4:%7:%9', { held: 4, serverPid: 812, madePane: '%7', activePane: '%9' }],
-    ['$3:812:::%9', { held: 0, serverPid: 812, madePane: null, activePane: '%9' }],
-    ['$3:812:4::%9', { held: 4, serverPid: 812, madePane: null, activePane: '%9' }],
-    ['$3:812:::', { held: 0, serverPid: 812, madePane: null, activePane: null }],
-    ['$3:812:4', null],
-    ['$3:812:4:%7', null],
-    ['$3::4:%7:%7', null],
-    ['$3:812:4:x:%7', null],
+    ['812:4:%7:%7', { held: 4, serverPid: 812, madePane: '%7', activePane: '%7' }],
+    ['812:4:%7:%9', { held: 4, serverPid: 812, madePane: '%7', activePane: '%9' }],
+    ['812:::%9', { held: 0, serverPid: 812, madePane: null, activePane: '%9' }],
+    ['812:4::%9', { held: 4, serverPid: 812, madePane: null, activePane: '%9' }],
+    ['812:::', { held: 0, serverPid: 812, madePane: null, activePane: null }],
+    ['812:4', null],
+    ['812:4:%7', null],
+    [':4:%7:%7', null],
+    ['812:4:x:%7', null],
     ['4', null],
     ['', null],
     [undefined, null],

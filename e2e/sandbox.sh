@@ -59,6 +59,11 @@
 # The sandbox starts as a fresh Host: a Config with the Tags personal and work,
 # and a tmux server with no tmux.conf and one Session, 0, running a bash whose
 # prompt is `$ `. Suites address its Window as 0:0.0 and read that prompt back.
+# The server has one hook, as a real Host often does: a foreground `run-shell`
+# on `after-select-pane`. It runs in the queue of the client that selected the
+# Pane, so tmux writes one more reply block to the app after each `select-pane`,
+# with flags 0. Without it, a suite cannot see an app that pairs that block
+# with one of its own commands.
 #
 # The suites drive the app with agent-device 0.21 or newer: an older one has no
 # --settle, no role= selectors and no long-press by selector.
@@ -236,6 +241,7 @@ sandboxed() {
 printf 'topics:\n  tags:\n    personal: {}\n    work: {}\n' >"$ROOT/config.yaml"
 sandboxed tmux -f /dev/null new-session -d -s 0 -c "$ROOT" \
   "env PS1='\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc" || exit 1
+sandboxed tmux set-hook -g after-select-pane 'run-shell "true"' || exit 1
 
 echo "sandbox: $ROOT, sshd on 127.0.0.1:$PORT"
 sandboxed "$@"

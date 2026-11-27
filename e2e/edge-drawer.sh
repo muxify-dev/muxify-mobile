@@ -88,6 +88,10 @@ expect_mark() {
   [ "$(marks "$2")" = "$wrong" ] || fail "$3: the drawer marked $2"
 }
 
+# How many times the app's log says the Topology has no Windows. After a Pane
+# switch that is the black screen: a reply paired with the wrong command.
+no_windows() { grep -rhF '"text":"no Windows"' "$DATA/muxify-logs" 2>/dev/null | wc -l | tr -d ' '; }
+
 # The drawer's header says SESSION only while it is open: the sandbox's Session is in no Topic.
 drawer_open() { agent-device is exists 'text="SESSION"' >/dev/null 2>&1; }
 # Holds the Grip past its 400 ms, slides onto the row with the label, and lifts there.
@@ -116,10 +120,12 @@ expect_now "0.0" "a lift on the Grip"
 echo "     closed, and still on Pane 0"
 
 echo "2/7  a slide onto a Pane row goes to that Pane"
+BLANK=$(no_windows)
 slide_to "Pane 1 bash" "a Pane"
 expect_now "0.1" "a slide onto Pane 1"
 drawer_open && fail "the drawer stayed open after the pick"
-echo "     on Pane 1, and the drawer closed"
+[ "$(no_windows)" = "$BLANK" ] || fail "after the pick, the app's log says the Topology has no Windows"
+echo "     on Pane 1, the drawer closed, and the Topology kept its Windows"
 
 echo "3/7  a quick drag that starts on the Grip is still a Pane Swipe"
 read -r GX GY <<<"$(grip_centre)"

@@ -284,3 +284,15 @@ describe('Session rename notifications', () => {
     },
   );
 });
+
+describe('whose a reply block is', () => {
+  it('reads flags 0 as a block tmux wrote by itself, and flags 1 or none as the answer to a line the phone wrote', () => {
+    // A hook such as `after-select-pane` with a foreground `run-shell` runs in
+    // the phone's queue, and tmux 3.8 writes its block with flags 0.
+    const input = ascii('%begin 1 7 0\n%end 1 7 0\n%begin 1 8 1\nx\n%end 1 8 1\n%begin 1 9\n%end 1 9\n');
+    const whose = (events: ControlEvent[]) =>
+      events.flatMap((event) => (event.kind === 'reply' ? [[event.id, event.mine]] : []));
+    expect(whose(parseAll(input))).toEqual([[7, false], [8, true], [9, true]]);
+    expect(whose(parseByByte(input))).toEqual([[7, false], [8, true], [9, true]]);
+  });
+});

@@ -1,5 +1,5 @@
 import type { CommandReply, CommandRunner } from './control-connection';
-import { renderExecCommand, type TmuxArgv } from './commands';
+import { argvOf, renderExecCommand, type TmuxCommand } from './commands';
 import type { TmuxTransport } from './transport';
 
 /**
@@ -18,8 +18,8 @@ export function execCommandRunner(
   transport: TmuxTransport,
   tmuxExecutablePath?: string,
 ): CommandRunner {
-  async function run(argv: TmuxArgv): Promise<CommandReply> {
-    const result = await transport.exec(renderExecCommand(argv, tmuxExecutablePath));
+  async function run(command: TmuxCommand): Promise<CommandReply> {
+    const result = await transport.exec(renderExecCommand(argvOf(command), tmuxExecutablePath));
     const ok = result.exitCode === 0;
     // A failure says what went wrong on stderr — "no server running", "can't
     // find session" — and the caller reads that to tell "nothing there" from
@@ -36,12 +36,12 @@ export function execCommandRunner(
 
   return {
     run,
-    async runAll(commands: TmuxArgv[]): Promise<CommandReply[]> {
+    async runAll(commands: TmuxCommand[]): Promise<CommandReply[]> {
       const replies: CommandReply[] = [];
       // One channel each, in order. There are only ever one or two, and the
       // batching that makes the Control Connection worth having has nothing to
       // coalesce here.
-      for (const argv of commands) replies.push(await run(argv));
+      for (const command of commands) replies.push(await run(command));
       return replies;
     },
     // A shell hands back one stream, so the replies of a line cannot be told

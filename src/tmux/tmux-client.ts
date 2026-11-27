@@ -8,6 +8,7 @@ import {
   createSessionCommand,
   deliverCommands,
   guardsLateLines,
+  hostCommand,
   inputOption,
   listClientsCommand,
   listPanesCommand,
@@ -18,6 +19,7 @@ import {
   paneStateCommand,
   parsePaneMark,
   parseSessionOp,
+  readLines,
   sessionOpCommand,
   claimWindowCommand,
   ownClientNameCommand,
@@ -34,6 +36,8 @@ import {
   type PaneColours,
   type OutboxToken,
   type PaneDirection,
+  type TmuxArgv,
+  type TmuxRead,
   type Typing,
 } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
@@ -188,14 +192,15 @@ export class TmuxClient {
    * machine look broken.
    */
   async listSessions(): Promise<Session[]> {
-    const reply = await this.runner.run(listSessionsCommand());
+    const read = listSessionsCommand();
+    const reply = await this.runner.run(read);
 
     if (!reply.ok) {
       if (meansNoServer(reply)) return [];
       throw failure('list Sessions', reply);
     }
 
-    return reply.text.flatMap((line) => {
+    return readLines(read, reply).flatMap((line) => {
       const fields = splitFields(line, 2);
       if (!fields) return [];
       const [name, windowCount] = fields;
@@ -216,14 +221,15 @@ export class TmuxClient {
 
   /** The Windows of a Session. A Session that has vanished reads as none. */
   async listWindows(sessionName: string): Promise<Window[]> {
-    const reply = await this.runner.run(listWindowsCommand(sessionName));
+    const read = listWindowsCommand(sessionName);
+    const reply = await this.runner.run(read);
 
     if (!reply.ok) {
       if (meansNoServer(reply) || meansMissingTarget(reply)) return [];
       throw failure('list Windows', reply);
     }
 
-    return reply.text.flatMap((line) => {
+    return readLines(read, reply).flatMap((line) => {
       const fields = splitFields(line, 7);
       if (!fields) return [];
       const [id, index, active, paneCount, zoomed, name, command] = fields;
@@ -245,7 +251,8 @@ export class TmuxClient {
 
   /** The Panes of one Window. A Window that has vanished reads as none. */
   async listPanes(sessionName: string, windowIndex: number): Promise<Pane[]> {
-    const reply = await this.runner.run(listPanesCommand(sessionName, windowIndex));
+    const read = listPanesCommand(sessionName, windowIndex);
+    const reply = await this.runner.run(read);
 
     if (!reply.ok) {
       if (meansNoServer(reply) || meansMissingTarget(reply)) return [];
@@ -257,7 +264,7 @@ export class TmuxClient {
     // where all of them are. See listPanesCommand for why it is asked for.
     let layout = new Map<number, PaneRect>();
 
-    return reply.text.flatMap((line) => {
+    return readLines(read, reply).flatMap((line) => {
       const fields = splitFields(line, 6);
       if (!fields) return [];
       const [index, id, command, active, path, windowLayout] = fields;
@@ -328,8 +335,9 @@ export class TmuxClient {
 
   /** The ids of every Pane in a Session, in every Window. */
   async sessionPaneIds(sessionName: string): Promise<string[]> {
-    const reply = await this.runner.run(listSessionPanesCommand(sessionName));
-    return reply.ok ? reply.text.map((line) => line.trim()).filter((id) => id.length > 0) : [];
+    const read = listSessionPanesCommand(sessionName);
+    const reply = await this.runner.run(read);
+    return reply.ok ? readLines(read, reply).map((line) => line.trim()).filter((id) => id.length > 0) : [];
   }
 
   /**
@@ -339,10 +347,11 @@ export class TmuxClient {
    * screen. A refusal reads as none.
    */
   async otherScreens(): Promise<Set<string>> {
-    const [own, clients] = await this.runner.runAll([ownClientNameCommand(), listClientsCommand()]);
+    const reads = [ownClientNameCommand(), listClientsCommand()];
+    const [own, clients] = await this.runner.runAll(reads);
     if (!own?.ok || !clients?.ok) return new Set();
-    const self = own.text[0]?.trim();
-    return new Set(clients.text.flatMap((line) => {
+    const self = readLines(reads[0], own)[0]?.trim();
+    return new Set(readLines(reads[1], clients).flatMap((line) => {
       const [name, control, flags] = line.split('\t');
       if (!name || name === self || control !== '1') return [];
       return (flags ?? '').split(',').includes('ignore-size') ? [] : [name];
@@ -368,8 +377,9 @@ export class TmuxClient {
     const { naming, guarded } = await this.host();
     const { key, seq } = batch;
     const option = inputOption(token);
+    const mark = paneMarkCommand(paneId, option);
     const type = async (typing: Typing) =>
-      deliveryOf(await this.runner.runChain(deliverCommands(paneId, typing, seq, option, guarded)), guarded);
+      deliveryOf(await this.runner.runChain(deliverCommands(paneId, typing, seq, option, guarded)), mark, guarded);
     switch (key.kind) {
       case 'text':
         return type({ bytes: Uint8Array.from(key.bytes) });
@@ -399,17 +409,16 @@ export class TmuxClient {
   /** The Pane's mark alone. Rejects only when the Connection ends. */
   async readMark(paneId: string, token: OutboxToken): Promise<DeliverResult> {
     const { guarded } = await this.host();
-    return deliveryOf([await this.runner.run(paneMarkCommand(paneId, inputOption(token)))], guarded);
+    const mark = paneMarkCommand(paneId, inputOption(token));
+    return deliveryOf([await this.runner.run(mark)], mark, guarded);
   }
 
   /** Makes the Pane refuse a Batch that a lost Connection may still deliver. */
   async burn(paneId: string, seq: Seq, token: OutboxToken): Promise<DeliverResult> {
     const { guarded } = await this.host();
     const option = inputOption(token);
-    return deliveryOf(
-      await this.runner.runChain([burnSeqCommand(paneId, seq, option, guarded), paneMarkCommand(paneId, option)]),
-      guarded,
-    );
+    const mark = paneMarkCommand(paneId, option);
+    return deliveryOf(await this.runner.runChain([burnSeqCommand(paneId, seq, option, guarded), mark.argv]), mark, guarded);
   }
 
   /** Whether this Host's tmux refuses a late line by itself; see guardsLateLines. */
@@ -427,10 +436,11 @@ export class TmuxClient {
   private abilities: Promise<{ naming: KeyNaming } & VerbServer> | null = null;
 
   private host(): Promise<{ naming: KeyNaming } & VerbServer> {
+    const read = hostCommand();
     this.abilities ??= this.runner
-      .run(['display-message', '-p', '#{version} #{pid}'])
+      .run(read)
       .then((reply) => {
-        const [version = '', pid = ''] = reply.ok ? reply.text.join('').trim().split(' ') : [];
+        const [version = '', pid = ''] = reply.ok ? readLines(read, reply).join('').trim().split(' ') : [];
         return {
           naming: keyNamingFor(version),
           guarded: guardsLateLines(version),
@@ -481,13 +491,14 @@ export class TmuxClient {
     startLine: number,
     endLine: number,
   ): Promise<SelectionCapture> {
-    const replies = await this.runner.runAll(captureSelectionCommands(paneId, startLine, endLine));
+    const commands = captureSelectionCommands(paneId, startLine, endLine);
+    const replies = await this.runner.runAll(commands);
     const [history, painted, joined] = replies;
     const refused = replies.find((reply) => !reply.ok);
     if (!history || !painted || !joined || refused) {
       throw failure('read the Pane text', refused ?? { ok: false, lines: [], text: [] });
     }
-    const top = countOf(history.text[0] ?? '') + Math.floor(startLine);
+    const top = countOf(readLines(commands[0], history)[0] ?? '') + Math.floor(startLine);
     return {
       lines: painted.lines,
       top,
@@ -503,9 +514,10 @@ export class TmuxClient {
    * caller should leave things as they are rather than guess.
    */
   async paneState(paneId: string): Promise<PaneState | undefined> {
-    const reply = await this.runner.run(paneStateCommand(paneId));
+    const read = paneStateCommand(paneId);
+    const reply = await this.runner.run(read);
     if (!reply.ok) return undefined;
-    const fields = splitFields(reply.text[0] ?? '', 9);
+    const fields = splitFields(readLines(read, reply)[0] ?? '', 9);
     if (!fields) return undefined;
     const [column, row, alternate, scrollback, width, height, wantsMouse, cursorShown, bracketedPaste] = fields;
     return {
@@ -592,17 +604,20 @@ export class TmuxClient {
    */
   async runVerb(sent: SentVerb, token: OutboxToken): Promise<VerbAnswer> {
     const { guarded } = await this.host();
+    const options = verbOptions(token);
     return verbAnswerOf(
-      await this.runner.runChain(verbCommands(sent.session, sent.verb, sent.op, verbOptions(token), guarded && sent.guarded)),
+      await this.runner.runChain(verbCommands(sent.session, sent.verb, sent.op, options, guarded && sent.guarded)),
+      sessionOpCommand(sent.session, options),
     );
   }
 
   /** The Session's Op and the Pane it made. Rejects only when the Connection ends. */
   async readOp(sessionName: string, token: OutboxToken): Promise<VerbAnswer> {
-    return verbAnswerOf([await this.runner.run(sessionOpCommand(sessionName, verbOptions(token)))]);
+    const read = sessionOpCommand(sessionName, verbOptions(token));
+    return verbAnswerOf([await this.runner.run(read)], read);
   }
 
-  private async mustRun(what: string, argv: string[]): Promise<void> {
+  private async mustRun(what: string, argv: TmuxArgv): Promise<void> {
     const reply = await this.runner.run(argv);
     if (!reply.ok) throw failure(what, reply);
   }
@@ -646,23 +661,23 @@ function meansMissingTarget(reply: CommandReply): boolean {
  * The mark is the last reply, and tmux prints it even after the key failed. A
  * line that tmux could not run at all has no mark, only its error.
  */
-function deliveryOf(replies: CommandReply[], refusesCopies: boolean): DeliverResult {
+function deliveryOf(replies: CommandReply[], mark: TmuxRead, refusesCopies: boolean): DeliverResult {
   const last = replies.at(-1);
-  const parsed = last?.ok ? parsePaneMark(last.text[0]) : null;
-  const mark = parsed === null || parsed === 'gone' ? parsed : { ...parsed, refusesCopies };
-  if (mark === 'gone') return 'gone';
+  const parsed = last?.ok ? parsePaneMark(readLines(mark, last)[0]) : null;
+  const read = parsed === null || parsed === 'gone' ? parsed : { ...parsed, refusesCopies };
+  if (read === 'gone') return 'gone';
   const refused = replies.find((reply) => !reply.ok);
   if (refused) {
-    if (mark === null && meansMissingTarget(refused)) return 'gone';
+    if (read === null && meansMissingTarget(refused)) return 'gone';
     return { refused: refused.text.join(' ').trim() || 'tmux refused the key' };
   }
-  return mark ?? { refused: 'tmux did not say which Pane it typed into' };
+  return read ?? { refused: 'tmux did not say which Pane it typed into' };
 }
 
 /** What the replies of a verb line, or of an Op read, say. The read is the last reply. */
-function verbAnswerOf(replies: CommandReply[]): VerbAnswer {
+function verbAnswerOf(replies: CommandReply[], op: TmuxRead): VerbAnswer {
   const last = replies.at(-1);
-  const read = last?.ok ? parseSessionOp(last.text[0]) : null;
+  const read = last?.ok ? parseSessionOp(readLines(op, last)[0]) : null;
   const refused = replies.find((reply) => !reply.ok);
   const error = refused ? refused.text.join(' ').trim() || 'tmux refused it' : null;
   if (read !== null) return { kind: 'read', ...read, error };

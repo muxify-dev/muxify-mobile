@@ -95,7 +95,7 @@ function fakeServer() {
   const buffers = new Map<string, string>();
   const mark = (paneId: string): string => {
     const pane = panes.get(paneId);
-    return pane ? `${pane.ack || ''}:${pid}:${pane.pid}:${program}` : `:${pid}::`;
+    return pane ? `<mark>${pane.ack || ''}:${pid}:${pane.pid}:${program}` : `<mark>:${pid}::`;
   };
   /** Runs one command of the commands that `if-shell` was given. */
   const type = (pane: { typed: string[] }, [verb, ...args]: string[]): void => {
@@ -137,8 +137,8 @@ function fakeServer() {
     },
     /** The reply blocks of a line that is about typed input, or null for any other line. */
     answer(line: string): Block[] | null {
-      if (line.includes('#{version}')) return [[`3.8 ${pid}`]];
-      const read = /^'display-message' '-p' '-t' '(%\d+)' '#\{@muxify-in-/.exec(line);
+      if (line.includes('#{version}')) return [[`<host>3.8 ${pid}`]];
+      const read = /^'display-message' '-p' '-t' '(%\d+)' '<mark>#\{@muxify-in-/.exec(line);
       if (read) return [[mark(read[1])]];
       const [[verb, ...args], ...rest] = commandsOf(line);
       if (verb === 'set-buffer') {
@@ -184,7 +184,7 @@ function fakeSessions(serverPid = () => 100) {
   const read = (target: string): Block =>
     gone.has(nameOf(target))
       ? { error: `can't find session: ${nameOf(target)}` }
-      : [`$1:${serverPid()}:${ops.get(nameOf(target)) ?? ''}:${recorded.get(nameOf(target)) ?? ''}:${active.get(nameOf(target)) ?? '%0'}`];
+      : [`<op>${serverPid()}:${ops.get(nameOf(target)) ?? ''}:${recorded.get(nameOf(target)) ?? ''}:${active.get(nameOf(target)) ?? '%0'}`];
   /** Runs `<verb> ; set-option ; set-option -F`, and stops at a verb that fails, as tmux does. */
   const runVerb = ([verb, ...args]: string[], [, , target, , op]: string[], recordsPane: boolean): Block[] => {
     if (refusing) return [{ error: refusing }];
@@ -254,7 +254,11 @@ function fakeHost(server?: ReturnType<typeof fakeServer>, sessions = fakeSession
       ? ['%0', '%5']
       : ['0\t%0\tzsh\t1\t/home/user\tb25d,49x41,0,0,0']],
     ['list-sessions', ['work\t1']],
-    ['display-message', ['0\t0\t0\t100\t49\t41\t0\t1\t1']],
+    ['display-message', (command) => command.includes('#{client_name}')
+      ? ['client-1']
+      : ['0\t0\t0\t100\t49\t41\t0\t1\t1']],
+    // The phone's own control Client: tmux lists the Client that asks.
+    ['list-clients', ['client-1\t1\tattached,focused,control-mode,UTF-8']],
   ]);
   /** Commands the Host refuses, by their first word. */
   const refusing = new Set<string>();
@@ -313,7 +317,10 @@ function fakeHost(server?: ReturnType<typeof fakeServer>, sessions = fakeSession
     }
     const answer = answers.get(verb) ?? [];
     const lines = typeof answer === 'function' ? answer(line) : answer;
-    say(`%begin 1 ${replies} 1\n${lines.map((each) => `${each}\n`).join('')}%end 1 ${replies} 1\n`);
+    // tmux prints a format's literal text as it is: a read's tag starts each line.
+    const format = commandsOf(line)[0].at(-1) ?? '';
+    const literal = format.includes('#{') ? format.split('#{')[0] : '';
+    say(`%begin 1 ${replies} 1\n${lines.map((each) => `${literal}${each}\n`).join('')}%end 1 ${replies} 1\n`);
   }
 
   return {
@@ -1451,7 +1458,7 @@ describe('the Theme’s colours', () => {
     await kit.attach.switchSession({ sessionName: 'play', topic: null });
     await settle();
 
-    expect(host.commands).toContain(`'list-panes' '-s' '-t' 'play:' '-F' '#{pane_id}'`);
+    expect(host.commands).toContain(`'list-panes' '-s' '-t' 'play:' '-F' '<session-panes>#{pane_id}'`);
     expect([...new Set(reports(host))].sort()).toEqual(['%0 10', '%0 11', '%5 10', '%5 11', '%7 10', '%7 11']);
   });
 
@@ -2359,7 +2366,7 @@ describe('the Panes on screen', () => {
     const said = kit.said();
     expect(said).toContain('attach: connecting to Dev Host (10.0.0.2:22) for work');
     expect(said).toContain('attach: phase connected');
-    expect(said).toContain('control: → list-windows -t work -F #{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}');
+    expect(said).toContain('control: → list-windows -t work -F <windows>#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}');
     expect(said).toContain('topology: 1 window, active @0 #0; 1 pane: %0* 0,0 49x41');
     expect(said).toContain('attach: Surface for %0 arrived, not yet reported; no view for it yet');
     expect(said).toContain('pane %0: Surface arrived');

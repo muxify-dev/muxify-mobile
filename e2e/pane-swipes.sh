@@ -89,6 +89,11 @@ expect_window() {
 
 scrolled_back() { agent-device is exists 'id="scroll-position"' >/dev/null 2>&1; }
 
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)
+# How many times the app's log says the Topology has no Windows. After a Pane
+# switch that is the black screen: a reply paired with the wrong command.
+no_windows() { grep -rhF '"text":"no Windows"' "$DATA/muxify-logs" 2>/dev/null | wc -l | tr -d ' '; }
+
 echo "1/8  a Window with one Pane shows no Layout map"
 attach
 [ -z "$(map_label)" ] || fail "one Pane, and there is a Layout map: $(map_label)"
@@ -108,6 +113,7 @@ on_host "tmux send-keys -t '$WINDOW.0' 'seq 1 300' Enter; \
   || fail "the Window did not get its three Panes"
 attach
 expect_window "0 1" "after the Attach"
+BLANK=$(no_windows)
 swipe_left;  expect_window "1 1" "a swipe left from Pane 0"
 swipe_left;  expect_window "2 1" "a swipe left from Pane 1"
 swipe_left;  expect_window "0 1" "a swipe left from the last Pane"
@@ -120,7 +126,8 @@ expect_window "0 1" "a swipe right across the Surface"
 agent-device is exists 'label="Open Terminal chooser" enabled=true' >/dev/null 2>&1 \
   || fail "a swipe right across the Surface left the Terminal Screen"
 swipe_left
-echo "     0 → 1 → 2 → 0, then back 0 → 2 → 1 → 0, zoomed throughout"
+[ "$(no_windows)" = "$BLANK" ] || fail "after the swipes, the app's log says the Topology has no Windows"
+echo "     0 → 1 → 2 → 0, then back 0 → 2 → 1 → 0, zoomed throughout, and the Topology kept its Windows"
 
 echo "3/8  the Layout map names the active Pane and opens the Panes picker"
 [ "$(map_label)" = "Layout map, Pane 1 of 3" ] || fail "the map says '$(map_label)' on Pane 1 of 3"
