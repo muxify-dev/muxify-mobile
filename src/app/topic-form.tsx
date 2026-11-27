@@ -1,10 +1,8 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
-  Button,
-  Text,
   Form,
   Host,
   HStack,
@@ -23,6 +21,8 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 
+import { HostReadRow } from '@/components/host-read-row';
+import { useConfigTags } from '@/hooks/use-config-tags';
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { TagChoice } from '@/components/tag-choice';
@@ -30,9 +30,7 @@ import { HostWriteRow } from '@/components/host-write-row';
 import { toggled } from '@/lib/toggled';
 import { useHostWrite } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/tmux/disconnect-reason';
-import { deviceHostStore } from '@/storage/device-store';
-import type { Tag, TopicId } from '@/topics/environment';
+import type { TopicId } from '@/topics/environment';
 import { createTopic, pushedListing } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
 import { topicSeedParam } from '@/topics/topic-detail';
@@ -44,21 +42,8 @@ export default function TopicFormScreen() {
     hostId: string;
   }>();
   const { appearance, palette } = useSettings();
-  const [tags, setTags] = useState<Tag[] | null>(null);
-  const [tagError, setTagError] = useState<string | undefined>();
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let left = false;
-    setTags(null);
-    setTagError(undefined);
-    void (async () => {
-      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('This Host is no longer saved.');
-      const { tags: listed } = await pushedListing(host);
-      if (!left) setTags(listed);
-    })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
-    return () => { left = true; };
-  }, [hostId, attempt]);
+  const tagsRead = useConfigTags(hostId);
+  const tags = tagsRead.data ?? null;
 
   const title = useNativeState('');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
@@ -141,12 +126,9 @@ export default function TopicFormScreen() {
             <FieldError error={titleError} palette={palette} />
           </Section>
 
-          {tags === null ? <Section
-            header={<SectionHeader palette={palette}>Tags</SectionHeader>}
-            modifiers={[listRowBackground(palette.rowSurface)]}>
-            <Text>{tagError ?? 'Reading Tags…'}</Text>
-            {tagError ? <Button label="Try again" onPress={() => setAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
-          </Section> : tags.length === 0 ? null : (
+          {tags === null ? (
+            <HostReadRow read={tagsRead} doing="Reading Tags" palette={palette} header={<SectionHeader palette={palette}>Tags</SectionHeader>} />
+          ) : tags.length === 0 ? null : (
             <Section
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}
               modifiers={[listRowBackground(palette.rowSurface)]}>

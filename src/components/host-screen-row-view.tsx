@@ -2,6 +2,7 @@ import { Button, ContextMenu, HStack, Image, ProgressView, Spacer, Text, VStack 
 import {
   accessibilityLabel,
   buttonStyle,
+  disabled,
   font,
   foregroundColor,
   frame,
@@ -13,6 +14,7 @@ import { Children, type ReactElement, type ReactNode } from 'react';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import { MarkImage, TagMarks } from '@/components/topic-marks';
 import type { Appearance } from '@/constants/app-theme';
+import { TRYING_AGAIN } from '@/components/host-read-row';
 import { actionLabel } from '@/domain/cover';
 import { menuCard, type BoardSessionRow, type CardRow, type HostScreenRow, type OpenableRow, type SessionRow } from '@/domain/host-screen';
 import type { AttachPhase } from '@/tmux/attach';
@@ -34,6 +36,8 @@ export interface RowActions {
   onOpenBoardSession?: (row: BoardSessionRow) => void;
   /** Whether a card by its `cardKey`, or a Session row by its id, waits on something: its Session opening, or a write to the Host. */
   isBusy?: (id: string) => boolean;
+  /** Whether the Session of this name is opening from a tap on its row. */
+  isOpening?: (name: string) => boolean;
   /** Wakes a Dormant card from its long-press menu. A screen that does not pass it gives a Dormant card no wake items. */
   onWake?: (row: CardRow, wake: Wake) => void;
   /** Sends one order of the long-press menu. A screen that does not pass it gives the card no order items. */
@@ -54,6 +58,8 @@ export interface RowActions {
   onFillPlace?: (row: OpenPlaceRow) => void;
   onToggle: (row: OpenableRow) => void;
   onRetry: () => void;
+  /** True from the tap on Try again or Retry until its result: the row says so, and the button is off. */
+  retrying?: boolean;
 }
 
 /**
@@ -113,7 +119,7 @@ export function HostScreenRowView({
           row={row}
           palette={palette}
           attached={attached}
-          busy={row.onHost !== undefined && (actions.isBusy?.(row.onHost.id) ?? false)}
+          busy={(row.onHost !== undefined && (actions.isBusy?.(row.onHost.id) ?? false)) || (actions.isOpening?.(row.name) ?? false)}
           onPress={() => actions.onOpenSession(row.name)}
           onAction={actions.onSessionAction}
         />
@@ -141,7 +147,7 @@ export function HostScreenRowView({
             </Text>
             <Spacer />
           </HStack>
-          <TryAgain onPress={actions.onRetry} />
+          <TryAgain onPress={actions.onRetry} running={actions.retrying === true} palette={palette} />
         </VStack>
       );
     case 'not-updated': {
@@ -158,10 +164,14 @@ export function HostScreenRowView({
               {`Not updated · ${age}`}
             </Text>
             <Spacer />
+            {actions.retrying ? <ProgressView /> : null}
             <Button
               label="Retry"
               onPress={actions.onRetry}
-              modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel(`Retry: not updated, ${age}`)]}
+              modifiers={[
+                buttonStyle('plain'), font({ size: 15 }), disabled(actions.retrying === true),
+                accessibilityLabel(actions.retrying ? `Retry, in progress: not updated, ${age}` : `Retry: not updated, ${age}`),
+              ]}
             />
           </HStack>
           <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{row.message}</Text>
@@ -184,7 +194,7 @@ export function HostScreenRowView({
           {row.detail ? (
             <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>{row.detail}</Text>
           ) : null}
-          <TryAgain onPress={actions.onRetry} />
+          <TryAgain onPress={actions.onRetry} running={actions.retrying === true} palette={palette} />
         </VStack>
       );
     case 'note':
@@ -530,7 +540,7 @@ function SessionRowView({
   palette: Appearance;
   /** The phase of the Attach on this Session, or undefined when it is not. */
   attached?: AttachPhase;
-  /** A write to the Host for this Session runs. */
+  /** The Session opens from a tap, or a write to the Host for it runs. */
   busy: boolean;
   onPress: () => void;
   onAction?: (session: NamedSession, action: SessionAction) => void;
@@ -589,7 +599,17 @@ function SessionActionButton({ action, onPress }: { action: SessionAction; onPre
   );
 }
 
-function TryAgain({ onPress }: { onPress: () => void }) {
+/** While it runs, the reason above stays, a spinner says so, and a second tap does nothing. */
+function TryAgain({ onPress, running, palette }: { onPress: () => void; running: boolean; palette: Appearance }) {
   const label = actionLabel('try-again');
-  return <Button label={label} onPress={onPress} modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel(label)]} />;
+  return running ? (
+    <HStack spacing={10}>
+      <ProgressView />
+      <Text modifiers={[font({ size: 15 }), foregroundColor(palette.secondaryLabel)]}>{TRYING_AGAIN}</Text>
+      <Spacer />
+      <Button label={label} onPress={onPress} modifiers={[buttonStyle('plain'), font({ size: 15 }), disabled(true), accessibilityLabel(`${label}, in progress`)]} />
+    </HStack>
+  ) : (
+    <Button label={label} onPress={onPress} modifiers={[buttonStyle('plain'), font({ size: 15 }), accessibilityLabel(label)]} />
+  );
 }

@@ -1,5 +1,6 @@
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert } from 'react-native';
 
 import { readBrowserTabs } from '@/browser/read-browser-tabs';
 import type { BrowserTab } from '@/browser/tabs';
@@ -178,6 +179,8 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
 
   /** The Session a switch is on its way to, whose row shows it is busy. */
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  /** The row picked in the Title Sheet, while its move runs, so that row shows a spinner. */
+  const [picking, setPicking] = useState<(TitlePick & { from: 'sheet' | 'drawer' }) | null>(null);
   /**
    * Where the Sessions list comes from. The Attach's own list while it is up;
    * once it has stopped, it has no Connection to ask, so the Host is asked
@@ -264,11 +267,17 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
 
   const chooserBusy = useRef(false);
   /** `then` runs in place of the move's own end once the Attach is there: a Tab opened in the Window it went to. */
-  const choose = useCallback((pick: TitlePick, explicitTopic: boolean, then?: () => void) => {
+  /**
+   * `from` is where the pick came from. The Edge Drawer closes at a pick, so
+   * the header says where the move goes, and a failure is an alert, since no
+   * sheet is open to say it.
+   */
+  const choose = useCallback((pick: TitlePick, explicitTopic: boolean, then?: () => void, from: 'sheet' | 'drawer' = 'sheet') => {
     if (!attach || !state || chooserBusy.current) return;
     const revision = chooserRevision.current;
     const current = () => chooserRevision.current === revision && holder.current() === attach;
     chooserBusy.current = true;
+    setPicking({ ...pick, from });
     if (pick.session !== null && pick.session !== state.sessionName) setSwitchingTo(pick.session);
     void (async () => {
       try {
@@ -294,9 +303,11 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
         entered(attach.state().topic === null ? restore?.tab ?? null : null);
       } catch (error) {
         say(`a move to ${pick.session ?? state.sessionName} failed: ${describeError(error)}`);
-        if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
+        if (from === 'drawer') Alert.alert(`Could not go to ${pick.session ?? state.sessionName}`, describeError(error));
+        else if (current()) setTitleSheet((previous) => previous.open ? { ...previous, error: describeError(error) } : previous);
       } finally {
         chooserBusy.current = false;
+        setPicking(null);
         setSwitchingTo(null);
       }
     })();
@@ -325,15 +336,18 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
    * The one Try again for a Host Problem: every read of the Host the sheet
    * shows, and the Attach too when its Cover would offer the same.
    */
+  const [retrying, setRetrying] = useState(false);
   const tryHostAgain = useCallback(() => {
-    void readHost();
+    if (retrying) return;
+    setRetrying(true);
+    void readHost().finally(() => setRetrying(false));
     rereadTopic();
     const typing = attach?.state().typing;
     if (typing?.kind === 'stopped' && typing.reason &&
         actionsFor(typing.reason.kind).some((action) => action === 'reconnect' || action === 'try-again')) {
       attach?.reconnect();
     }
-  }, [attach, readHost, rereadTopic]);
+  }, [attach, readHost, rereadTopic, retrying]);
   const notice = titleSheet.open && titleSheet.via === 'sheet'
     ? titleSheetNotice({ actionError: titleSheet.error, problem, hostName: attach?.hostName ?? 'the Host', topic: topicView })
     : null;
@@ -345,6 +359,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     rows: titleRows,
     topic,
     onRetry: notice?.retry === 'host' ? tryHostAgain : notice?.retry === 'topic' ? rereadTopic : undefined,
+    retrying: notice?.retry === 'host' && retrying,
     loading: titleSheet.open && topicView?.kind === 'loading',
     error: notice?.text,
     sessions: {
@@ -353,9 +368,15 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
       onSelect: selectSession,
       onAction: actOnSession,
     },
-    topics: topicsOn ? { sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost() } : undefined,
+    topics: topicsOn ? {
+      sections: pickerTopics, palette: chrome, onOpenTopic: openTopic, onRetry: () => void readHost(),
+      isBusy: (id) => hostEntry.busyCard === id,
+    } : undefined,
     onPick: pickTitleRow,
     onWindowAction: served === null ? undefined : actOnWindow,
+    isRowBusy: (pick, windowId) =>
+      (picking !== null && picking.session === pick.session && picking.window === pick.window) ||
+      (windowId !== undefined && sessionMenu.writing(windowId)),
     tabs: windowTabs?.revision === titleRevision && windowTabs.session === sessionName && windowTabs.window === activeWindowId
       ? windowTabs.tabs
       : NO_TABS,
@@ -385,11 +406,11 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
     switch (row.kind) {
       case 'session':
         leaveDrawer();
-        choose({ session: row.name, window: null }, true);
+        choose({ session: row.name, window: null }, true, undefined, 'drawer');
         return;
       case 'window':
         leaveDrawer();
-        choose({ session: row.session, window: row.window.index }, true);
+        choose({ session: row.session, window: row.window.index }, true, undefined, 'drawer');
         return;
       case 'pane':
         closeChooser();
@@ -403,7 +424,7 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
           return;
         }
         leaveDrawer();
-        choose({ session: row.session, window: row.window.index }, true, () => onOpenTab(row.tab));
+        choose({ session: row.session, window: row.window.index }, true, () => onOpenTab(row.tab), 'drawer');
         return;
       case 'topic':
         closeChooser();
@@ -413,7 +434,12 @@ export function useTitleSheet({ attach, state, hostId, onOpenTab, onMoved, befor
 
   /** A Topic picked in the sheet is on its way: the Attach can already be in it. */
   const openingTopic = hostEntry.busyCard !== null;
+  /** Where a move from the Edge Drawer goes, as tmux names it, such as `work:2`, while it runs. */
+  const going = picking?.from === 'drawer'
+    ? `${picking.session ?? state?.sessionName ?? ''}${picking.window === null ? '' : `:${picking.window}`}`
+    : null;
   return {
+    going,
     sheet, openTitleSheet, openSessionsOnly, closeChooser, topic, rereadTopic, openingTopic,
     attachedSession, actOnAttachedSession: sessionMenu.act,
     drawer: {

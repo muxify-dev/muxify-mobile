@@ -21,9 +21,6 @@ export interface SessionPathRow extends SessionPathFields {
   lastVisit: string | null;
 }
 
-/** What the read of a Topic's folder choices came to. */
-export type SessionPathsRead = { kind: 'listed'; choices: SessionPathChoice[] } | { kind: 'failed'; error: string };
-
 export interface SessionPathSection {
   id: 'in-topic' | 'paths' | 'worktrees';
   title: string;

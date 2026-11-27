@@ -10,6 +10,8 @@
 #   2  a key typed at once after the tap, before the new Pane is painted, and
 #      keys typed after the paint, all run in the new Pane and none in A
 #   3  with the keyboard down, a Pane swipe leaves it down
+#   4  on a slow link (e2e/slow-launch.sh), the header says "Splitting the
+#      Pane…" from the tap until tmux has made the Pane
 #
 # The Surface renders with Metal, so what it shows is never in the
 # accessibility tree. Each check reads the Host instead: the active Pane and
@@ -38,6 +40,10 @@ device=()
 on_host() { sh -c "$*" 2>/dev/null; }
 
 fail() { echo "FAIL: $1"; exit 1; }
+
+ROOT=$MUXIFY_E2E_ROOT
+. "$(dirname "$0")/slow-launch.sh"
+trap '[ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 active_pane() { on_host "tmux display-message -p -t '$WINDOW' '#{pane_id}'"; }
 pane_text() { on_host "tmux capture-pane -p -t '$1'"; }
@@ -126,5 +132,25 @@ sleep 3
 [ "$(active_pane)" = "$OLD" ] || fail "the swipe did not go to the other Pane"
 keyboard_up && fail "a Pane swipe raised the keyboard that the user had dismissed"
 echo "     the swipe moved to $OLD and the keyboard stayed down"
+
+echo "4/4  on a slow link, the header says that the Pane splits until tmux has made it"
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+MUXIFY_E2E_SLOW_LINK_SECONDS=0 slow_link
+attach
+# The Header takes a press once the push onto the Terminal Screen has ended.
+sleep 1.5
+agent-device press 'label="Options"' >/dev/null 2>&1
+agent-device wait 'label="Split Pane"' 8000 >/dev/null 2>&1 || fail "no Split Pane in Options"
+agent-device press 'label="Split Pane"' >/dev/null 2>&1
+agent-device wait 'label="Split ↓"' 8000 >/dev/null 2>&1 || fail "no Split ↓ in Split Pane"
+slow_each
+agent-device press 'label="Split ↓"' >/dev/null 2>&1
+# The header's button groups its lines for VoiceOver, so the line is found by its id.
+agent-device wait 'id="header-doing"' 3000 >/dev/null 2>&1 || fail "the header did not say that the Pane splits"
+agent-device wait absent 'id="header-doing"' 30000 >/dev/null 2>&1 || fail "the header still says that the Pane splits"
+fast_each
+echo "     the header said Splitting the Pane until tmux made the Pane"
 agent-device close >/dev/null 2>&1
 echo "PASS"

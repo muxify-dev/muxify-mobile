@@ -1,4 +1,4 @@
-import { Button, ContextMenu, HStack, Section, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import { Button, ContextMenu, HStack, ProgressView, Section, Spacer, Text, VStack } from '@expo/ui/swift-ui';
 import { accessibilityLabel, buttonStyle, disabled, font, foregroundColor, frame, lineLimit, listRowBackground } from '@expo/ui/swift-ui/modifiers';
 
 import { splitGraphemes } from 'unicode-segmenter/grapheme';
@@ -35,9 +35,11 @@ function rowLabel({ target, title }: HostGoToRow): string {
   return `Reopen ${title.text}`;
 }
 
-export function HostGoToList({ sections, highlighted, palette, appearance, tags, locked, onPick }: {
+export function HostGoToList({ sections, highlighted, palette, appearance, tags, locked, onPick, opening }: {
   sections: GoToSection[]; highlighted: number; palette: Appearance; appearance: ColorAppearance; tags: Tag[];
   locked: boolean; onPick: (row: HostGoToRow, another?: boolean) => void;
+  /** Whether what the row opens is opening now, from a tap on it: the row shows a spinner. */
+  opening?: (row: HostGoToRow) => boolean;
 }) {
   const colors = new Map(tags.map((tag) => [`#${tag.name}`, tag.color[appearance]]));
   let index = 0;
@@ -58,7 +60,7 @@ export function HostGoToList({ sections, highlighted, palette, appearance, tags,
                 {row.detail.text ? <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel), lineLimit(1)]}>{markedText(row.detail)}</Text> : null}
               </VStack>
               <Spacer />
-              <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{row.trailing}</Text>
+              {opening?.(row) ? <ProgressView /> : <Text modifiers={[font({ size: 13 }), foregroundColor(palette.secondaryLabel)]}>{row.trailing}</Text>}
               {index++ === highlighted ? <Text>↩</Text> : null}
             </HStack>
           </Button>

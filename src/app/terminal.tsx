@@ -149,6 +149,10 @@ type PickerState = { open: false } | { open: true; error?: string };
 // and checked nothing in this component; these rules are the ones it then
 // found.
 /* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect, react-hooks/preserve-manual-memoization */
+/** What the header says while a tmux verb runs from a tap. */
+const SPLITTING = 'Splitting the Pane';
+const ADDING_WINDOW = 'Adding a Window';
+
 export default function TerminalScreen() {
   const router = useRouter();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
@@ -859,6 +863,18 @@ export default function TerminalScreen() {
     setPicker({ open: false });
   }, [attach, state]);
 
+  /** The tmux verbs that run from a tap, newest last, so the header says what runs from the tap until tmux answers. */
+  const [verbs, setVerbs] = useState<readonly { id: symbol; doing: string }[]>([]);
+  /** Runs `verb` with the header saying `doing` until it ends. */
+  const showVerb = useCallback(async (doing: string, verb: () => Promise<void>) => {
+    const id = Symbol(doing);
+    setVerbs((running) => [...running, { id, doing }]);
+    try {
+      await verb();
+    } finally {
+      setVerbs((running) => running.filter((each) => each.id !== id));
+    }
+  }, []);
   /** The Splits: the Panes sheet's bottom bar. */
   const runSheetAction = useCallback(
     (id: string) => {
@@ -866,15 +882,15 @@ export default function TerminalScreen() {
       if (!attach) return;
       void (async () => {
         try {
-          if (id === 'split-right') await attach.split('right');
-          else if (id === 'split-down') await attach.split('down');
+          if (id === 'split-right') await showVerb(SPLITTING, () => attach.split('right'));
+          else if (id === 'split-down') await showVerb(SPLITTING, () => attach.split('down'));
           setPicker({ open: false });
         } catch (error) {
           showPickerError(error);
         }
       })();
     },
-    [attach, showPickerError],
+    [attach, showPickerError, showVerb],
   );
 
   /** The Theme's chrome colours: the Key Row's labels and the Banners. */
@@ -955,10 +971,12 @@ export default function TerminalScreen() {
   const headerTitle = useMemo((): HeaderTitle | null => {
     if (!state) return null;
     const program = topology?.activePane?.command ?? null;
-    return topic
+    const doing = verbs.at(-1)?.doing ?? (chooser.going === null ? undefined : `Going to ${chooser.going}`);
+    const title: HeaderTitle = topic
       ? { kind: 'topic', topic: topic.label, program, session: state.sessionName }
       : { kind: 'session', session: state.sessionName, program };
-  }, [state, topology, topic]);
+    return doing === undefined ? title : { ...title, doing };
+  }, [state, topology, topic, verbs, chooser.going]);
 
 
   /**
@@ -981,13 +999,13 @@ export default function TerminalScreen() {
   }, [holder, goHost]);
 
   /** A tmux verb from the menu. No sheet to show a failure in, so an Alert does. */
-  const runVerb = useCallback((label: string, verb: () => Promise<void>) => {
-    void verb().catch((error: unknown) => Alert.alert(`Could not ${label}`, describeError(error)));
-  }, []);
+  const runVerb = useCallback((label: string, doing: string, verb: () => Promise<void>) => {
+    void showVerb(doing, verb).catch((error: unknown) => Alert.alert(`Could not ${label}`, describeError(error)));
+  }, [showVerb]);
 
   const paneActions = useMemo(() => attach ? ({
-    'split-right': () => runVerb('split the Pane', () => attach.split('right')),
-    'split-down': () => runVerb('split the Pane', () => attach.split('down')),
+    'split-right': () => runVerb('split the Pane', SPLITTING, () => attach.split('right')),
+    'split-down': () => runVerb('split the Pane', SPLITTING, () => attach.split('down')),
     'clear-pane': clearPane,
     'copy-pane': copyPaneText,
   }) : null, [attach, runVerb, clearPane, copyPaneText]);
@@ -1109,7 +1127,7 @@ export default function TerminalScreen() {
         'new-window',
         'New Window',
         'plus.rectangle',
-        () => runVerb('add a Window', () => attach?.newWindow() ?? Promise.resolve()),
+        () => runVerb('add a Window', ADDING_WINDOW, () => attach?.newWindow() ?? Promise.resolve()),
         { disabled: !open },
       ),
       {
@@ -1122,14 +1140,14 @@ export default function TerminalScreen() {
             'split-right',
             'Split →',
             'rectangle.split.2x1',
-            () => runVerb('split the Pane', () => attach?.split('right') ?? Promise.resolve()),
+            () => runVerb('split the Pane', SPLITTING, () => attach?.split('right') ?? Promise.resolve()),
             { disabled: !open },
           ),
           action(
             'split-down',
             'Split ↓',
             'rectangle.split.1x2',
-            () => runVerb('split the Pane', () => attach?.split('down') ?? Promise.resolve()),
+            () => runVerb('split the Pane', SPLITTING, () => attach?.split('down') ?? Promise.resolve()),
             { disabled: !open },
           ),
         ],

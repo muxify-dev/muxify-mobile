@@ -1,6 +1,7 @@
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { HostServerError, type HostServer, type HostServerCall } from '@/ssh/host-server';
+import { cancelOnAbort } from '@/ssh/host-server-channel';
 import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';
 
@@ -132,7 +133,7 @@ function refusal(host: Host, write: EnvironmentWrite, error: HostServerError): E
  * The first item of a subscription, which holds the whole state, and then the
  * subscription ends. It is how a check reads what the Host Server pushes.
  */
-export function firstPush(server: HostServer, payload: object): Promise<unknown> {
+export function firstPush(server: HostServer, payload: object, signal?: AbortSignal): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let heard = false;
     let call: HostServerCall<unknown> | undefined;
@@ -143,6 +144,7 @@ export function firstPush(server: HostServer, payload: object): Promise<unknown>
       call?.cancel();
     });
     if (heard) call.cancel();
+    else if (signal) cancelOnAbort(call, signal);
     call.then(
       () => reject(new Error('The Host Server ended the subscription before its first item.')),
       (error: unknown) => reject(error),

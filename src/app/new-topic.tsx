@@ -2,7 +2,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { Button, Form, Host, HStack, ScrollView, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
+import { Form, Host, HStack, ScrollView, Section, TextField, useNativeState } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
   autocorrectionDisabled,
@@ -18,22 +18,22 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { FieldError } from '@/components/field-error';
+import { HostReadRow } from '@/components/host-read-row';
 import { GoToList, type FolderRow } from '@/components/go-to-list';
 import { HostWriteRow } from '@/components/host-write-row';
 import { SectionHeader } from '@/components/section-header';
 import { TagChoice } from '@/components/tag-choice';
-import { goToRows } from '@/domain/go-to';
-import { useGoToPaths } from '@/hooks/use-go-to-paths';
+import { goToRows, type RankedPaths } from '@/domain/go-to';
+import { useConfigTags } from '@/hooks/use-config-tags';
+import { rankedPaths, useGoToPaths } from '@/hooks/use-go-to-paths';
 import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/tmux/disconnect-reason';
-import { deviceHostStore } from '@/storage/device-store';
 import type { Host as HostRecord } from '@/storage/records';
 import { useOpenSession } from '@/tmux/attach-context';
 import { folderSessionName } from '@/topics/add-session';
-import type { Tag, TopicId } from '@/topics/environment';
+import type { TopicId } from '@/topics/environment';
 import { addSession, createTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { emptyTopicTitled } from '@/topics/new-topic';
 import type { TopicDetail } from '@/topics/topic-detail';
@@ -71,21 +71,8 @@ export default function NewTopicScreen() {
   const { write, hostName, send, check, request } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
 
-  const [tagsAttempt, setTagsAttempt] = useState(0);
-  const [tagsRead, setTagsRead] = useState<{ attempt: number; tags: Tag[] | null; error?: string } | null>(null);
-  useEffect(() => {
-    let left = false;
-    void (async () => {
-      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('This Host is no longer saved.');
-      const { tags: listed } = await pushedListing(host);
-      if (!left) setTagsRead({ attempt: tagsAttempt, tags: listed });
-    })().catch((error) => { if (!left) setTagsRead({ attempt: tagsAttempt, tags: null, error: describeConnectionFailure(error) }); });
-    return () => { left = true; };
-  }, [hostId, tagsAttempt]);
-  const newestTagsRead = tagsRead?.attempt === tagsAttempt ? tagsRead : null;
-  const tags = newestTagsRead?.tags ?? null;
-  const tagError = newestTagsRead?.error;
+  const tagsRead = useConfigTags(hostId);
+  const tags = tagsRead.data ?? null;
 
   const title = useNativeState('');
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
@@ -98,10 +85,12 @@ export default function NewTopicScreen() {
   const [highlighted, setHighlighted] = useState(0);
   const [listedAt] = useState(() => new Date());
   const adding = step.step === 'add-session';
-  const { paths, reading, ask } = useGoToPaths(hostId, true, adding && query.trim() === '');
+  const folders = useGoToPaths(hostId, true, adding && query.trim() === '');
+  const { ask } = folders;
   // Read when the sheet opens, so the list is there when the title is sent.
   useEffect(() => ask(''), [ask]);
-  const rows = adding ? goToRows({ query, mode: 'paths', sessions: [], paths, recent: [] }) : [];
+  const rowsOf = (paths: RankedPaths) => adding ? goToRows({ query, mode: 'paths', sessions: [], paths, recent: [] }) : [];
+  const rows = rowsOf(rankedPaths(folders));
   const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
   // The last add, for Retry.
   const [added, setAdded] = useState<Addition | null>(null);
@@ -153,7 +142,7 @@ export default function NewTopicScreen() {
     void request(
       JSON.stringify([addition.folder, addition.worktree]),
       ({ host, step: at }, id) => {
-        const row = paths.rows.find((candidate) => candidate.directory === addition.folder);
+        const row = folders.data?.find((candidate) => candidate.directory === addition.folder);
         const folder = { directory: addition.folder, worktree: row?.worktree ?? null, name: row?.name };
         // The Topic is new, so no Session of it has the name of the folder's Session Path. A new
         // Worktree's Session takes its name from the branch, which only the Host knows.
@@ -235,12 +224,9 @@ export default function NewTopicScreen() {
               <FieldError error={titleError} palette={palette} />
             </Section>
 
-            {tags === null ? <Section
-              header={<SectionHeader palette={palette}>Tags</SectionHeader>}
-              modifiers={[listRowBackground(palette.rowSurface)]}>
-              <Text>{tagError ?? 'Reading Tags…'}</Text>
-              {tagError ? <Button label="Try again" onPress={() => setTagsAttempt((value) => value + 1)} modifiers={[disabled(locked)]} /> : null}
-            </Section> : tags.length === 0 ? null : (
+            {tags === null ? (
+              <HostReadRow read={tagsRead} doing="Reading Tags" palette={palette} header={<SectionHeader palette={palette}>Tags</SectionHeader>} />
+            ) : tags.length === 0 ? null : (
               <Section
                 header={<SectionHeader palette={palette}>Tags</SectionHeader>}
                 modifiers={[listRowBackground(palette.rowSurface)]}>
@@ -295,14 +281,19 @@ export default function NewTopicScreen() {
                   autocorrectionDisabled(),
                   disabled(locked || step.made !== null),
                   submitLabel('go'),
-                  onSubmit(() => addAt(pathRow(rows[onShow]), false)),
+                  onSubmit(() => {
+                    // Return picks the best match for the text typed, so it waits for the read of that text.
+                    if (folders.isPending && onShow === 0) folders.whenAnswered((found) => addAt(pathRow(rowsOf({ query: query.trim(), rows: found })[0]), false));
+                    else addAt(pathRow(rows[onShow]), false);
+                  }),
                 ]}
               />
             </Section>
+            <HostReadRow read={folders} doing="Reading folders" palette={palette} />
             <GoToList
               rows={rows}
               highlighted={onShow}
-              reading={reading}
+              reading={{ isPending: folders.isPending, failed: folders.error !== null, held: folders.held !== null }}
               palette={palette}
               now={listedAt}
               locked={locked || step.made !== null}

@@ -12,6 +12,11 @@
 # it. A pick of a Session Path makes a Session in no Topic there and opens it,
 # and the running Session then takes the place of its Session Path.
 #
+# On a slow link (e2e/slow-launch.sh), the rows on screen stay while the Host
+# reads the text typed, and a line above them says that Go to reads.
+#
+# Go to opens at the top, also after a scroll down on the Board.
+#
 # Go to needs a muxify with the go-to capability. Put one first on
 # the PATH:
 #
@@ -24,6 +29,10 @@ set -uo pipefail
 APP=dev.muxify.app
 
 fail() { echo "FAIL: $*"; agent-device snapshot -i; agent-device close >/dev/null 2>&1; exit 1; }
+
+ROOT=$MUXIFY_E2E_ROOT
+. "$(dirname "$0")/slow-launch.sh"
+trap '[ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 case "$(tmux display-message -p '#{socket_path}')" in
   "$(cd "$MUXIFY_E2E_ROOT" && pwd -P)"/*) ;;
@@ -227,6 +236,54 @@ for _ in {1..20}; do
 done
 [ "$(grep '^Session ' <<<"$after" | head -1)" = "$picked" ] || fail "the phone visit did not move $picked up on the Host"
 echo "ok: the phone shows the Host order, and a visit on the phone moves $picked above the other Session on the Host"
+
+echo "== Go to on a slow link"
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
+agent-device close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+MUXIFY_E2E_SLOW_LINK_SECONDS=0 slow_link
+agent-device open "$APP" --platform ios "${device[@]}" --relaunch >/dev/null 2>&1
+agent-device wait 'label="Host Dev Host"' 45000 >/dev/null || fail "no Dev Host after the relaunch"
+agent-device press 'label="Host Dev Host"' --settle >/dev/null
+agent-device wait 'label="Host Options"' 15000 >/dev/null || fail "no Host Screen over the slow link"
+open_go_to "over the slow link"
+agent-device wait "label=\"Folder $PROJECTS/alpha\"" 15000 >/dev/null || fail "no alpha in the Go to list over the slow link"
+slow_each
+agent-device type gam >/dev/null 2>&1
+shown=$(agent-device snapshot -i 2>/dev/null)
+grep -qF '"Reading Go to"' <<<"$shown" || fail "no Reading Go to line while the Host reads gam"
+grep -qF "\"Folder $PROJECTS/alpha\"" <<<"$shown" || fail "the rows went while the Host reads gam"
+grep -qF '"Nothing matches."' <<<"$shown" && fail "Go to says Nothing matches while the Host reads gam"
+agent-device wait absent "label=\"Folder $PROJECTS/alpha\"" 20000 >/dev/null || fail "the answer to gam never came over the slow link"
+on_screen "Reading Go to" && fail "the Reading Go to line stays after the answer"
+fast_each
+echo "ok: on a slow link the rows stay and Go to says it reads, until the answer replaces them"
+
+echo "== Go to after a scroll"
+# Enough Topics that the Board scrolls, and enough folders that the Go to list
+# is longer than the Board's scroll offset. Go to opens at the top, not at the
+# Board's offset. A new visit to the Host Screen reads the new folders.
+agent-device press 'label="close"' --settle >/dev/null
+for i in $(seq 60); do mkdir -p "$PROJECTS/folder-$i"; done
+muxify session-paths refresh >/dev/null || fail "could not refresh the Session Paths"
+for i in $(seq 30); do muxify topic new "Fill $i" --json >/dev/null || fail "could not make Topic Fill $i"; done
+agent-device press 'id="BackButton"' --settle >/dev/null
+agent-device wait 'label="Host Dev Host"' 8000 >/dev/null || fail "Back did not return to the Hosts"
+agent-device press 'label="Host Dev Host"' --settle >/dev/null
+agent-device wait 'label="Host Options"' 15000 >/dev/null || fail "no Host Screen after the new Topics"
+agent-device press 'label="Board"' --settle >/dev/null
+agent-device wait 'label="Topic Fill 1"' 15000 >/dev/null || fail "no Fill Topics on the Board"
+sleep 2
+agent-device scroll bottom --settle >/dev/null
+on_screen "Topic One" && fail "the Board did not scroll down"
+open_go_to "after a scroll down on the Board"
+agent-device wait 'label="Topic One"' 8000 >/dev/null || fail "no Topic One, the first row of Go to: the list is cut at the top"
+shown=$(rects Topics)
+top=$(edge "$shown" top Topics)
+[ -n "$top" ] && [ "$top" -le "$bar" ] \
+  || fail "the Go to list is cut at the top after a scroll down on the Board: '$shown'"
+agent-device press 'label="close"' --settle >/dev/null
+echo "ok: Go to opens at the top after a scroll down on the Board"
 
 agent-device close >/dev/null 2>&1
 echo "PASS"

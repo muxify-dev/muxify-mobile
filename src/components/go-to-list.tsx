@@ -14,7 +14,6 @@ import type { SFSymbol } from 'expo-symbols';
 import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import type { GoToRow } from '@/domain/go-to';
-import type { PathsReading } from '@/hooks/use-go-to-paths';
 import { timeAgoFrom } from '@/lib/relative-time';
 
 export type FolderRow = Extract<GoToRow, { kind: 'path' | 'typed' }>;
@@ -30,9 +29,18 @@ export function goToRowKey(row: GoToRow): string {
   }
 }
 
+/** What the rows of a Go to list say about the read: it runs, it failed, or an answer waits. */
+export interface GoToListReading {
+  isPending: boolean;
+  failed: boolean;
+  held: boolean;
+}
+
 /**
  * The rows of a Go to list, as Sections of the Form around them. One row is
- * highlighted: Return picks it, and the List Keys move it.
+ * highlighted: Return picks it, and the List Keys move it. The rows stay while
+ * the next answer is on its way; the screen draws the read's own line above
+ * them, with `HostReadRow`.
  */
 export function GoToList({
   rows,
@@ -44,14 +52,13 @@ export function GoToList({
   onPick,
   folderMenu,
   hostRows = false,
-  ranked = false,
+  opening,
 }: {
   rows: readonly GoToRow[];
   hostRows?: boolean;
-  ranked?: boolean;
   /** The index of the row that Return picks. */
   highlighted: number;
-  reading: PathsReading;
+  reading: GoToListReading;
   palette: Appearance;
   /** The time that "2 hr ago" counts from. */
   now: Date;
@@ -60,16 +67,14 @@ export function GoToList({
   onPick: (row: GoToRow) => void;
   /** The one item of a folder row's long-press menu. A list that does not pass it gives the folder rows no menu. */
   folderMenu?: { label: string; icon: SFSymbol; onPress: (row: FolderRow) => void };
+  /** Whether the row's Session is opening now, from a tap on it: the row shows a spinner. */
+  opening?: (row: GoToRow) => boolean;
 }) {
   const secondaryText = [font({ size: 15 }), foregroundColor(palette.secondaryLabel)];
+  const nothing = rows.length === 0 && !hostRows && !reading.isPending && !reading.failed && !reading.held;
   return (
     <>
-      {reading.kind === 'failed' ? (
-        <Section modifiers={[listRowBackground(palette.rowSurface)]}>
-          <Text modifiers={[font({ size: 15 }), foregroundColor(palette.destructive)]}>{reading.error}</Text>
-        </Section>
-      ) : null}
-      {rows.length || !hostRows || reading.kind === 'reading' || reading.kind === 'waiting' ? <Section modifiers={[listRowBackground(palette.rowSurface)]}>
+      {rows.length || nothing || reading.held ? <Section modifiers={[listRowBackground(palette.rowSurface)]}>
         {rows.map((row, index) => {
           const face = rowFace(row, now);
           const line = (
@@ -78,7 +83,7 @@ export function GoToList({
               onPress={() => onPick(row)}
               modifiers={[buttonStyle('plain'), disabled(locked), accessibilityLabel(face.name)]}>
               <HStack spacing={12} modifiers={[frame({ maxWidth: 3000 }), TAPPABLE_ROW]}>
-                <Image systemName={face.icon} size={20} color={palette.rowIcon} />
+                {opening?.(row) ? <ProgressView /> : <Image systemName={face.icon} size={20} color={palette.rowIcon} />}
                 <VStack spacing={2} alignment="leading">
                   <Text modifiers={[font({ size: 17 }), lineLimit(1)]}>{face.title}</Text>
                   {face.about === '' ? null : (
@@ -110,16 +115,11 @@ export function GoToList({
           );
         })}
         {/* After the rows, so no row moves when it comes or goes. Not a Button: no tap and no highlight. */}
-        {reading.kind === 'reading' ? (
-          <HStack spacing={10}>
-            <ProgressView />
-            <Text modifiers={secondaryText}>{ranked ? 'Reading Go to…' : 'Reading folders…'}</Text>
-          </HStack>
-        ) : reading.kind === 'waiting' ? (
+        {reading.held ? (
           <Text modifiers={secondaryText}>
             The Host sent a new list. It shows when you type.
           </Text>
-        ) : rows.length === 0 && !hostRows ? (
+        ) : nothing ? (
           <Text modifiers={secondaryText}>Nothing matches.</Text>
         ) : null}
       </Section> : null}

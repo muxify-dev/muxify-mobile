@@ -12,7 +12,9 @@ const mockBack = jest.fn();
 const mockMovedIntoTopic = jest.fn();
 let mockAttachedHost: string | null = null;
 const TOPICS = [{ id: 'ship', label: 'Ship', state: 'live' }, { id: 'dock', label: 'Dock' }];
-let mockListing = snapshotPush({ topics: TOPICS, sessions: [{ id: '$3', name: 'scratch' }] });
+let mockListing: object | null = snapshotPush({ topics: TOPICS, sessions: [{ id: '$3', name: 'scratch' }] });
+/** The sheet's hold of the Host, as `useHostListing` reports it. */
+let mockHold: { topics: { kind: string; error?: string }; problem: null; retry: jest.Mock; retrying: boolean };
 jest.mock('expo-router', () => ({
   ...require('@/test-support/toolbar').mockStack, useRouter: () => ({ back: mockBack }),
   useLocalSearchParams: () => mockParams,
@@ -33,7 +35,9 @@ jest.mock('@/storage/device-store', () => ({
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/ssh-connection', () => ({ appConnections: () => ({ onServer: mockServer.onServer }) }));
 jest.mock('@/hooks/use-host-listing', () => ({
-  useLiveListing: () => ({ server: { kind: 'live' }, received: { snapshot: require('@/topics/environment').parseEnvironment(mockListing), at: 0 }, doubt: null }),
+  useHostListing: () => mockHold,
+  useLiveListing: () => (mockListing === null ? null
+    : { server: { kind: 'live' }, received: { snapshot: require('@/topics/environment').parseEnvironment(mockListing), at: 0 }, doubt: null }),
 }));
 jest.mock('@/tmux/attach-context', () => ({
   useAttachHolder: () => ({
@@ -52,6 +56,7 @@ beforeEach(() => {
   mockServer.answer = () => ({ changed: { topic_id: 'ship', created: false, session: '$3', session_name: 'scratch/ship' } });
   mockAttachedHost = null;
   mockListing = snapshotPush({ topics: TOPICS, sessions: [{ id: '$3', name: 'scratch' }] });
+  mockHold = { topics: { kind: 'listed' }, problem: null, retry: jest.fn(), retrying: false };
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(async () => { await act(async () => renderer?.unmount()); });
@@ -155,4 +160,28 @@ it('sends the title as it is now when Retry follows a refused new Topic', async 
   await act(async () => { button('Retry').props.onPress(); });
   expect(mockServer.writes().at(-1)!.command).toEqual({ move: { to: { new_topic: { title: 'Fix logout' } } } });
   expect(mockBack).toHaveBeenCalledTimes(1);
+});
+
+describe('before the Host pushes its Listing', () => {
+  beforeEach(() => { mockListing = null; });
+
+  it('says that it reads the Topics', async () => {
+    mockHold.topics = { kind: 'loading' };
+    await mount();
+    expect(texts()).toContain('Reading Topics…');
+  });
+
+  it('says why the Host could not be held, and holds it again on Try again', async () => {
+    mockHold.topics = { kind: 'failed', error: 'Dev Host refused the key.' };
+    await mount();
+    expect(texts()).toContain('Dev Host refused the key.');
+    await act(async () => { button('Try again').props.onPress(); });
+    expect(mockHold.retry).toHaveBeenCalledTimes(1);
+
+    mockHold = { ...mockHold, retrying: true };
+    await act(async () => { renderer.update(<MoveToTopicScreen />); });
+    expect(texts()).toContain('Dev Host refused the key.');
+    expect(texts()).toContain('Trying again…');
+    expect(button('Try again').props.modifiers).toContainEqual({ name: 'disabled', value: true });
+  });
 });

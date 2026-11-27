@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text as RNText, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import {
   Form,
@@ -25,17 +25,18 @@ import {
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
 import { RetiredTagChoice, TagChoice } from '@/components/tag-choice';
+import { HostReadRow } from '@/components/host-read-row';
 import { HostWriteRow } from '@/components/host-write-row';
 import type { Appearance } from '@/constants/app-theme';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { useConfigTags } from '@/hooks/use-config-tags';
+import type { HostReadHandle } from '@/hooks/use-host-read';
 import { useHostWrite } from '@/hooks/use-host-write';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/tmux/disconnect-reason';
-import { deviceHostStore } from '@/storage/device-store';
 import type { Tag, TopicId } from '@/topics/environment';
-import { changeTopic, pushedListing, pushedTopic } from '@/topics/host-writes';
+import { changeTopic, pushedTopic } from '@/topics/host-writes';
 import { newRequestId } from '@/topics/request';
 import {
   changes,
@@ -64,20 +65,7 @@ export default function TopicEditScreen() {
     topic?: string;
   }>();
   const opened = useMemo(() => fieldsFromParam(topic), [topic]);
-  const [configTags, setConfigTags] = useState<Tag[] | null>(null);
-  const [tagError, setTagError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let left = false;
-    setTagError(null);
-    void (async () => {
-      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('This Host is no longer saved.');
-      const { tags: listed } = await pushedListing(host);
-      if (!left) setConfigTags(listed);
-    })().catch((error) => { if (!left) setTagError(describeConnectionFailure(error)); });
-    return () => { left = true; };
-  }, [hostId, attempt]);
+  const tagsRead = useConfigTags(hostId);
   const { palette } = useSettings();
 
   if (opened === null) {
@@ -88,17 +76,13 @@ export default function TopicEditScreen() {
       </View>
     );
   }
-  if (configTags === null) return <View style={[styles.fill, styles.center]}>
-    <Stack.Screen options={{ title: 'Edit Topic' }} />
-    <RNText style={{ color: palette.secondaryLabel }}>{tagError ?? 'Reading Tags…'}</RNText>
-    {tagError ? <Pressable accessibilityLabel="Try again" onPress={() => setAttempt((value) => value + 1)}><RNText style={{ color: palette.controlAccent }}>Try again</RNText></Pressable> : null}
-  </View>;
+  // The title and the Note are known, so the form shows at once. Only the Tags wait for the Host.
   return (
     <EditForm
       hostId={hostId}
       topicId={topicId as TopicId}
       opened={opened}
-      configTags={configTags}
+      tagsRead={tagsRead}
       palette={palette}
     />
   );
@@ -108,15 +92,16 @@ function EditForm({
   hostId,
   topicId,
   opened,
-  configTags,
+  tagsRead,
   palette,
 }: {
   hostId: string;
   topicId: TopicId;
   opened: TopicFields;
-  configTags: Tag[];
+  tagsRead: HostReadHandle<string, Tag[]>;
   palette: Appearance;
 }) {
+  const configTags = tagsRead.data;
   const router = useRouter();
   const { appearance } = useSettings();
   const { write, hostName, send, check } = useHostWrite(hostId);
@@ -129,8 +114,9 @@ function EditForm({
   const [titleError, setTitleError] = useState<string | undefined>();
   const errors: FieldErrors = { ...(write.kind === 'failed' ? write.fields : undefined), ...(titleError ? { title: titleError } : {}) };
 
+  // Until the Tags are read, no Tag can be chosen, so the Topic keeps its own.
   const retired = useMemo(
-    () => opened.tags.filter((name) => !configTags.some((tag) => tag.name === name)),
+    () => (configTags ? opened.tags.filter((name) => !configTags.some((tag) => tag.name === name)) : []),
     [opened, configTags],
   );
 
@@ -142,7 +128,9 @@ function EditForm({
     title.value,
     note.value,
     // In Config order, as the Mac lists a Topic's Tags, with the kept retired ones last.
-    [...configTags.map((tag) => tag.name), ...retired].filter((name) => chosen.has(name)),
+    configTags
+      ? [...configTags.map((tag) => tag.name), ...retired].filter((name) => chosen.has(name))
+      : opened.tags,
   );
 
   // Nothing is read after a Save: the Host Server pushes the Topic to the Attach.
@@ -235,7 +223,9 @@ function EditForm({
             <FieldError error={errors.note} palette={palette} />
           </Section>
 
-          {configTags.length === 0 && retired.length === 0 ? null : (
+          {configTags === undefined ? (
+            <HostReadRow read={tagsRead} doing="Reading Tags" palette={palette} header={<SectionHeader palette={palette}>Tags</SectionHeader>} />
+          ) : configTags.length === 0 && retired.length === 0 ? null : (
             <Section
               header={<SectionHeader palette={palette}>Tags</SectionHeader>}
               modifiers={[listRowBackground(palette.rowSurface)]}>

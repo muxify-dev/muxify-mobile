@@ -315,8 +315,8 @@ function answered<T>(answer: EnvironmentAnswer, parse: (value: unknown) => T): T
 }
 
 /** The Host's Listing as its Host Server pushes it now. It is how a sheet checks a write it is unsure of. */
-export async function pushedListing(host: Host): Promise<EnvironmentSnapshot> {
-  return parseEnvironment(await appConnections().onServer(host, (server) => firstPush(server, { snapshot: {} })));
+export async function pushedListing(host: Host, signal?: AbortSignal): Promise<EnvironmentSnapshot> {
+  return parseEnvironment(await appConnections().onServer(host, (server) => firstPush(server, { snapshot: {} }, signal)));
 }
 
 /** One Topic as its Host Server pushes it now. A Topic that is gone fails with the reason. */

@@ -62,7 +62,11 @@ jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: 
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: () => ({ openSession: jest.fn(), openTopic: jest.fn(), openBoardSession: jest.fn(), busyCard: null }) }));
-jest.mock('@/hooks/use-go-to-paths', () => ({ useHostGoTo: () => ({ list: { query: '', rows: [] } }), useGoToPaths: () => ({ paths: { query: '', rows: [] }, reading: { kind: 'idle' }, ask: () => {} }) }));
+jest.mock('@/hooks/use-go-to-paths', () => {
+  // A Go to list that was never asked: these tests are about the Listing.
+  const unasked = { isPending: false, data: undefined, dataKey: undefined, held: null, error: null, ask: () => {}, retry: () => {}, cancel: () => {}, release: () => {}, seed: () => {}, whenAnswered: () => {} };
+  return { ...jest.requireActual('@/hooks/use-go-to-paths'), useHostGoTo: () => unasked, useGoToPaths: () => unasked };
+});
 jest.mock('@/topics/act-on-card', () => ({
   ...jest.requireActual('@/topics/act-on-card'),
   sendCardOrder: (...args: unknown[]) => mockSend(...args),
@@ -233,6 +237,30 @@ describe('a live Host Screen', () => {
 
     expect(mockConnections.hold).toHaveBeenCalledTimes(2);
     expect(texts()).not.toContain('Could not reach Dev Host');
+  });
+
+  it('says at once that it tries again, keeps the reason, and ignores a second tap until the hold ends', async () => {
+    const unreachable = { kind: 'host-unreachable', detail: 'Connection refused' } as const;
+    connect({ kind: 'live', build: 'muxify 1', protocol: 1 });
+    (mockConnections.hold as jest.Mock).mockImplementationOnce(async () => {
+      setProblem(unreachable);
+      throw new HostProblem(unreachable);
+    });
+    await mount();
+    let fail!: () => void;
+    (mockConnections.hold as jest.Mock).mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      fail = () => reject(new HostProblem(unreachable));
+    }));
+
+    act(() => { button('Try again').props.onPress(); });
+    expect(texts()).toEqual(expect.arrayContaining(['Could not reach Dev Host', 'Trying again…']));
+    expect(labels()).toContain('Try again, in progress');
+    await act(async () => { button('Try again, in progress').props.onPress(); });
+    expect(mockConnections.hold).toHaveBeenCalledTimes(2);
+
+    await act(async () => { fail(); });
+    expect(texts()).not.toContain('Trying again…');
+    expect(labels()).toContain('Try again');
   });
 
   it('holds its Connection while focused, draws each pushed snapshot, and reads nothing on focus', async () => {

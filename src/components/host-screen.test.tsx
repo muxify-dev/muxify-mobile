@@ -27,6 +27,8 @@ const mockVisit = jest.fn();
 const mockSearch = { focus: jest.fn(), cancelSearch: jest.fn(), setText: jest.fn() };
 let mockKeys: KeyboardHandlers = {};
 let mockFocused = true;
+/** The Session that opens from a tap, as `useHostEntry` reports it. */
+let mockBusySession: string | null = null;
 let mockAttachedHost: string | null = null;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
 let mockReading: { listing: unknown; topics: HostTopics; freshness: Freshness; sessionsOnly: boolean; hostRanksGoTo?: boolean; problem: DisconnectReason | null; retry: jest.Mock };
@@ -70,6 +72,7 @@ jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () =>
 jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
   openSession: (name: string) => { mockOpenSession(name); entered(); }, openTopic: mockOpenTopic, wakeSession: mockWake, reopenSettled: mockReopen, openBoardSession: jest.fn(), busyCard: null,
+  busySession: mockBusySession,
 }) }));
 jest.mock('@/hooks/use-card-writes', () => ({ useCardWrites: () => ({ order: jest.fn(), close: jest.fn(), writing: () => false }) }));
 jest.mock('@/keyboard/key-commands', () => ({ useScreenKeyboardShortcuts: (handlers: KeyboardHandlers) => { mockKeys = handlers; } }));
@@ -169,6 +172,21 @@ const menu = () => [...toolbarMenuActions(renderer).keys()];
 const tabs = () => renderer.root.findAllByType(Picker);
 const focusGoTo = () => act(async () => { searchBar(renderer)!.props.onFocus(); });
 const type = (text: string) => act(async () => { searchBar(renderer)!.props.onChangeText({ nativeEvent: { text } }); });
+
+describe('a Session that opens from a tap', () => {
+  afterEach(() => { mockBusySession = null; });
+
+  it('shows a spinner in its row on the Sessions tab and in Go to', async () => {
+    mockSettings = { hostScreenTabs: { host: 'sessions' } };
+    mockBusySession = 'api';
+    await mount();
+    expect(row('Session api').findAllByType('ProgressView' as never)).toHaveLength(1);
+    expect(row('Session api/fix-login').findAllByType('ProgressView' as never)).toHaveLength(0);
+
+    await focusGoTo();
+    expect(row('Session api').findAllByType('ProgressView' as never)).toHaveLength(1);
+  });
+});
 
 describe('the tabs', () => {
   it('opens on the Board, and remembers Sessions for this Host on a tap and on ⌥⌘T', async () => {
@@ -344,6 +362,70 @@ describe('Go to on a Host that ranks the list', () => {
     await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
     expect(mockServer.requests.at(-1)).toEqual({ go_to: { query: '' } });
   });
+
+  describe('on a slow link', () => {
+    /** The `go_to` requests that wait for an answer, by the text they ask for. */
+    let waiting: Record<string, { answer(value: unknown): void; fail(error: unknown): void }>;
+    const texts = () => renderer.root.findAllByType('Text' as never).map((node) => node.props.children);
+    const goToRequests = () => mockServer.requests.filter((payload) => 'go_to' in payload);
+
+    beforeEach(async () => {
+      jest.useFakeTimers();
+      await ranked();
+      waiting = {};
+      mockServer.on.go_to = (payload) => new Promise((resolve, reject) => {
+        waiting[(payload as { query: string }).query] = { answer: resolve, fail: reject };
+      });
+    });
+    afterEach(() => { jest.useRealTimers(); });
+
+    it('keeps the rows and says that it reads from the keystroke, cancels the replaced read, and drops its late answer', async () => {
+      const before = labels();
+      const sent = goToRequests().length;
+      await type('m');
+      expect(goToRequests()).toHaveLength(sent);
+      expect(texts()).toContain('Reading Go to…');
+      expect(labels()).toEqual(before);
+
+      await act(async () => { jest.advanceTimersByTime(150); });
+      await type('mu');
+      await act(async () => { jest.advanceTimersByTime(150); });
+      expect(mockServer.cancelled).toEqual([{ go_to: { query: 'm' } }]);
+
+      await act(async () => { waiting.m!.answer(taggedAnswer); });
+      expect(labels()).toEqual(before);
+      expect(texts()).toContain('Reading Go to…');
+
+      await act(async () => { waiting.mu!.answer(taggedAnswer); });
+      expect(labels()).toContain('Tag #backend');
+      expect(texts()).not.toContain('Reading Go to…');
+    });
+
+    it('offers Try again for a failed read, and shows at once that it tries again', async () => {
+      await type('x');
+      await act(async () => { jest.advanceTimersByTime(150); });
+      await act(async () => { waiting.x!.fail(refused('The Config is broken.', 'config_invalid')); });
+      expect(texts()).toContain('The Config is broken.');
+
+      await act(async () => { row('Try again').props.onPress(); });
+      expect(texts()).toEqual(expect.arrayContaining(['Trying again…', 'The Config is broken.']));
+      expect(labels()).toContain('Try again, in progress');
+
+      await act(async () => { waiting.x!.answer(taggedAnswer); });
+      expect(texts()).not.toContain('The Config is broken.');
+      expect(labels()).toContain('Tag #backend');
+    });
+
+    it('waits on Return for the answer to the text typed, then opens its first row', async () => {
+      await type('ship');
+      await act(async () => { searchBar(renderer)!.props.onSearchButtonPress(); });
+      expect(mockOpenTopic).not.toHaveBeenCalled();
+
+      await act(async () => { jest.advanceTimersByTime(150); });
+      await act(async () => { waiting.ship!.answer(rankedAnswer); });
+      expect(mockOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
+    });
+  });
 });
 
 describe('Go to', () => {
@@ -465,12 +547,12 @@ describe('Go to', () => {
 });
 
 describe('Go to while the Host reads the folders', () => {
-  it('says so after the rows on show, so no row moves, and stops when the answer comes', async () => {
+  it('says so above the rows on show, keeps them for a tap, and stops when the answer comes', async () => {
     const answer = pendingPaths();
     await mount();
     await focusGoTo();
 
-    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', READING]);
+    expect(goToLines()).toEqual([READING, 'Session api', 'Session api/fix-login']);
     await act(async () => { mockKeys['list-down']!(); mockKeys['list-down']!(); mockKeys['list-down']!(); });
     await act(async () => { mockKeys['list-pick']!(); });
     expect(mockOpenSession).toHaveBeenLastCalledWith('api/fix-login');
@@ -507,7 +589,7 @@ describe('Go to while the Host reads the folders', () => {
 
   it('keeps the folders on show in place while the field is empty, and says that a new list waits for the text', async () => {
     const answer = await comeBackAndOpenGoTo();
-    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web', READING]);
+    expect(goToLines()).toEqual([READING, 'Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
 
     await answer([path('web'), path('api')]);
     expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web', WAITING]);

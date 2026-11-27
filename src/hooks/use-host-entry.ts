@@ -44,7 +44,8 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   const router = useRouter();
   const holder = useAttachHolder();
   const deliverSession = useOpenSession();
-  const [entry, setEntry] = useState<{ card: string | null } | null>(null);
+  // What is opening: the card by its `cardKey`, or a plain Session by its name, so the row tapped shows a spinner.
+  const [entry, setEntry] = useState<{ card: string | null; session: string | null } | null>(null);
   const running = useRef<symbol | null>(null);
   const focused = useRef(false);
   const focusRevision = useRef(0);
@@ -84,14 +85,14 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
    * A Topic tapped on a list that was old may be gone from the Host by now. A
    * failure then says so, when the newest snapshot no longer has the Topic.
    */
-  const run = useCallback((card: { key: string; topic: TopicDetail | null } | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback) => {
+  const run = useCallback((card: { key: string; topic: TopicDetail | null } | null, work: (delivery: Delivery) => Promise<void>, retry?: () => void, feedback?: EntryFeedback, session: string | null = null) => {
     if (running.current || !focused.current) return;
     const operation = Symbol();
     const revision = focusRevision.current;
     running.current = operation;
     const isCurrent = () => focused.current && focusRevision.current === revision && running.current === operation && (feedback?.isCurrent() ?? true);
     const delivery = { origin: captureAttachOrigin(holder.current()), isCurrent };
-    setEntry({ card: card?.key ?? null });
+    setEntry({ card: card?.key ?? null, session });
     void work(delivery).catch((error) => {
       if (!isCurrent()) return;
       if (feedback) { feedback.onError(error); return; }
@@ -160,7 +161,7 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
   }, [hostId, deliverSession, onAttached]);
 
   const openSession = useCallback((sessionName: string) => {
-    run(null, (delivery) => attachSession(sessionName, delivery));
+    run(null, (delivery) => attachSession(sessionName, delivery), undefined, undefined, sessionName);
   }, [run, attachSession]);
 
   const wakeSession = useCallback((id: BoardSessionId, wake: Wake) => {
@@ -204,7 +205,10 @@ export function useHostEntry(hostId: string, onAttached: (tab: PlaceTab | null) 
     });
   }, [wakeSession, run, attachSession, askWake]);
 
-  return { openTopic, openSession, openBoardSession, reopenSettled, wakeSession, busyCard: entry?.card ?? null, busy: entry !== null };
+  return {
+    openTopic, openSession, openBoardSession, reopenSettled, wakeSession,
+    busyCard: entry?.card ?? null, busySession: entry?.session ?? null, busy: entry !== null,
+  };
 }
 
 /** One wake from a card tap, ended, with the Session the Host names when it names one. */

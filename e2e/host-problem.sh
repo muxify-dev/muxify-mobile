@@ -6,7 +6,9 @@
 #
 #   1  Host Screen: with the sandbox sshd stopped, Dev Host shows
 #      "Could not reach Dev Host" with one Try again and no Retry. With the
-#      sshd back on the same port, Try again shows Session 0.
+#      sshd back on the same port, Try again shows Session 0. The link is
+#      slow (e2e/slow-launch.sh), so the row says "Trying again…", with the
+#      reason and the button off, before the Host answers.
 #   2  Terminal Screen: with the sshd and its connections stopped, Session 0
 #      shows the Cover card. The Title Sheet then has at most one Try again,
 #      and no screen shows Retry.
@@ -23,6 +25,10 @@ device=()
 ad() { agent-device "$@" "${device[@]}"; }
 
 fail() { echo "FAIL: $1"; ad screenshot /tmp/muxify-host-problem-fail.png >/dev/null 2>&1; exit 1; }
+
+ROOT=$MUXIFY_E2E_ROOT
+. "$(dirname "$0")/slow-launch.sh"
+trap '[ -n "$RELAY" ] && kill $RELAY 2>/dev/null' EXIT
 
 # The button lines of the screen, as agent-device reads them.
 buttons() { ad snapshot 2>/dev/null | grep '\[button\]'; }
@@ -58,8 +64,12 @@ start_sshd() {
 }
 
 echo "1/2  Host Screen with Dev Host unreachable"
-stop_sshd
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
 ad close >/dev/null 2>&1
+xcrun simctl terminate "${MUXIFY_E2E_DEVICE:-booted}" "$APP" >/dev/null 2>&1
+# Each new Connection waits 4 s for the sshd's banner, so Try again takes that long.
+MUXIFY_E2E_SLOW_LINK_SECONDS=4 slow_link
+stop_sshd
 ad open "$APP" --platform ios --relaunch >/dev/null 2>&1
 ad wait 'label="Host Dev Host"' 25000 >/dev/null 2>&1 || fail "Home never showed Dev Host"
 ad press 'label="Host Dev Host"' >/dev/null 2>&1
@@ -76,6 +86,11 @@ echo "ok: one Host Problem row with one Try again, no Retry"
 
 start_sshd
 ad press 'label="Try again"' >/dev/null 2>&1
+snap=$(ad snapshot 2>/dev/null)
+grep -q 'Trying again' <<<"$snap" || fail "the row did not say Trying again after the tap"
+grep -q 'Could not reach Dev Host' <<<"$snap" || fail "the reason went while Try again runs"
+grep -q '"Try again, in progress"' <<<"$snap" || fail "the Try again button is not off while it runs"
+echo "ok: the row says Trying again at once, keeps the reason, and turns the button off"
 ad wait 'label="Session 0"' 20000 >/dev/null 2>&1 || fail "Try again did not bring back Session 0"
 ad is absent 'label="Try again"' >/dev/null 2>&1 || fail "Try again stayed after the Host answered"
 echo "ok: Try again reads the Host again and shows Session 0"

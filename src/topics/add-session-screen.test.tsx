@@ -248,3 +248,30 @@ describe('the Session name and the Request id', () => {
     expect(first!.command).toMatchObject({ add_session: { chosen_name: 'project' } });
   });
 });
+
+it('shows that it reads the folders, and that Try again runs, until the Host answers', async () => {
+  const texts = () => renderer.root.findAllByType('Text' as never).map((node) => node.props.children);
+  let fail!: (error: unknown) => void;
+  mockPaths.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+  await mount();
+  expect(texts()).toContain('Reading folders…');
+
+  await act(async () => { fail(refused('read failed', 'config_invalid')); });
+  expect(texts()).toContain('read failed');
+
+  let answer!: (value: unknown) => void;
+  mockPaths.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+  await act(async () => { renderer.root.findAllByType(Button).find((button) => button.props.label === 'Try again')!.props.onPress(); });
+  expect(texts()).toEqual(expect.arrayContaining(['read failed', 'Trying again…']));
+
+  await act(async () => { answer(listed); });
+  expect(texts()).not.toContain('read failed');
+  expect(row().props.modifiers).toContainEqual({ name: 'accessibilityLabel', value: 'Select folder  /exact folder/ ' });
+});
+
+it('cancels the folder read on the Host when the sheet closes before the answer', async () => {
+  mockPaths.mockImplementationOnce(() => new Promise(() => {}));
+  await mount();
+  await act(async () => { renderer.unmount(); });
+  expect(mockServer.cancelled).toEqual([{ session_paths: { topic: 'topic' } }]);
+});

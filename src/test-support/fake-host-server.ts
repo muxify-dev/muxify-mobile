@@ -1,5 +1,5 @@
 import { channelEnded, HostServerError } from '@/ssh/host-server-channel';
-import type { HostServer, HostServerCall } from '@/ssh/host-server';
+import type { HostServer } from '@/ssh/host-server';
 
 /** One `environment` request as the Host Server got it. */
 export interface SentWrite {
@@ -18,13 +18,16 @@ export interface SentWrite {
  * for its kind (`snapshot`, `topic`).
  *
  * `onServer` is the part of the Connections that the Host Writes use.
+ * `cancelled` holds each request whose call was cancelled, in that order.
  */
 export function fakeHostServer() {
   const requests: object[] = [];
+  const cancelled: object[] = [];
   const pushes: Record<string, unknown> = {};
   const on: Record<string, (value: unknown) => unknown> = {};
   const fake = {
     requests,
+    cancelled,
     pushes,
     on,
     answer: ((): unknown => ({ changed: {} })) as (payload: Record<string, unknown>) => unknown,
@@ -41,8 +44,9 @@ export function fakeHostServer() {
       requests.push(payload);
       const [kind] = Object.keys(payload);
       const each = kind === undefined ? undefined : on[kind];
-      return callOf(Promise.resolve().then(() =>
-        each ? each((payload as Record<string, unknown>)[kind!]) : fake.answer(payload as Record<string, unknown>)));
+      const promise = Promise.resolve().then(() =>
+        each ? each((payload as Record<string, unknown>)[kind!]) : fake.answer(payload as Record<string, unknown>));
+      return Object.assign(promise, { cancel: () => { cancelled.push(payload); } });
     },
     subscribe: (payload, onItem) => {
       const [kind] = Object.keys(payload);
@@ -66,10 +70,6 @@ export function fakeHostServer() {
     close: () => {},
   };
   return fake;
-}
-
-function callOf(promise: Promise<unknown>): HostServerCall<unknown> {
-  return Object.assign(promise, { cancel: () => {} });
 }
 
 /** What a Host Server that stops before it answers ends a request with. */

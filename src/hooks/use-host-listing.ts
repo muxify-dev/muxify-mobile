@@ -36,13 +36,16 @@ const say = speakingAs(deviceLog(), 'host');
  * reaches the Host and clears it.
  *
  * `retry` holds the Connection again after it could not be held, and lists the
- * Sessions again.
+ * Sessions again. `retrying` is true from its tap until the hold ends, and a
+ * second tap meanwhile does nothing.
  */
 export function useHostListing(hostId: string) {
   const [failure, setFailure] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Listing>(UNASKED);
   const [hostName, setHostName] = useState('this Host');
   const [attempt, setAttempt] = useState(0);
+  // From the tap on Try again until the hold it starts ends, so the row says at once that it tries again.
+  const [retrying, setRetrying] = useState(false);
   const { live, listing, topics, problem } = useLiveReading(hostId, { sessions, failure, host: hostName });
 
   const focused = useIsFocused();
@@ -58,11 +61,12 @@ export function useHostListing(hostId: string) {
       if (left) return;
       if (!host) {
         setFailure('This Host is no longer saved.');
+        setRetrying(false);
         return;
       }
       setHostName(host.displayName);
       try {
-        const held = await appConnections().hold(host);
+        const held = await appConnections().hold(host).finally(() => { if (!left) setRetrying(false); });
         if (left) held();
         else {
           release = held;
@@ -119,7 +123,11 @@ export function useHostListing(hostId: string) {
     };
   }, [focused, hostId, fallback, attempt]);
 
-  const retry = useCallback(() => setAttempt((count) => count + 1), []);
+  const retry = useCallback(() => {
+    if (retrying) return;
+    setRetrying(true);
+    setAttempt((count) => count + 1);
+  }, [retrying]);
   return {
     listing,
     topics,
@@ -129,6 +137,7 @@ export function useHostListing(hostId: string) {
     hostRanksGoTo: live?.server.kind === 'live' && live.server.goTo === true,
     problem,
     retry,
+    retrying,
   };
 }
 

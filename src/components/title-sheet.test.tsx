@@ -9,7 +9,7 @@ import type { TopicRow } from './host-screen-row-view';
 jest.mock('@osuki-dev/react-native-ssh', () => ({ connect: jest.fn() }));
 jest.mock('@expo/ui/swift-ui', () => ({
   BottomSheet: 'BottomSheet', Button: 'Button', Divider: 'Divider', Group: 'Group', Host: 'Host',
-  HStack: 'HStack', Image: 'Image', Picker: 'Picker', ScrollView: 'ScrollView', Spacer: 'Spacer',
+  HStack: 'HStack', Image: 'Image', Picker: 'Picker', ProgressView: 'ProgressView', ScrollView: 'ScrollView', Spacer: 'Spacer',
   Text: 'Text', Toggle: 'Toggle', VStack: 'VStack', ZStack: 'ZStack',
 }));
 jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, {
@@ -133,4 +133,25 @@ it('shows a remaining list when the selected list is disabled', async () => {
   await act(async () => renderer.update(<TitleSheet {...props} lists={['windows']} />));
   expect(button('shell')).toBeDefined();
   expect(button('work')).toBeUndefined();
+});
+
+it('keeps the reason while Try again runs, says so, and turns the button off', async () => {
+  const onRetry = jest.fn();
+  await act(async () => { renderer = create(<TitleSheet {...props} error="Could not reach Dev Host" onRetry={onRetry} retrying />); });
+  const texts = renderer.root.findAllByType(Text).map((node) => node.props.children);
+  expect(texts).toEqual(expect.arrayContaining(['Could not reach Dev Host', 'Trying again…']));
+  expect(button('Try again, in progress')).toBeDefined();
+  expect(button('Try again')).toBeUndefined();
+});
+
+it('shows a spinner in the Window row whose pick or Window Action runs', async () => {
+  props.rows = [
+    { kind: 'window', id: '@1', index: 0, name: 'shell', program: 'bash', current: true, mark: null },
+    { kind: 'window', id: '@2', index: 1, name: 'logs', program: null, current: false, mark: null },
+  ];
+  props.isRowBusy = (pick) => pick.window === 1;
+  await mount();
+  await select('windows');
+  expect(button('logs')!.findAllByType('ProgressView' as never)).toHaveLength(1);
+  expect(button('shell')!.findAllByType('ProgressView' as never)).toHaveLength(0);
 });

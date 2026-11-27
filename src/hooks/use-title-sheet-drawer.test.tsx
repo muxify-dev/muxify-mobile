@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { BrowserTab } from '@/browser/tabs';
@@ -168,4 +169,19 @@ it('marks the shown Tab on the Web View, and the active Pane once the screen is 
   await act(async () => { renderer.update(<Screen attach={fake.attach} onScreen={ON_PANE} />); });
 
   expect(marked()).toEqual(['pane:%0']);
+});
+
+it('says where a move from the closed drawer goes while it runs, and says a failure in an alert', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const { attach } = await mountAndOpen();
+  let fail!: (error: Error) => void;
+  (attach as unknown as { selectWindow: () => Promise<void> }).selectWindow = () => new Promise((_resolve, reject) => { fail = reject; });
+
+  await pick('window:gs-server:@2');
+  expect(chooser.drawer.open).toBe(false);
+  expect(chooser.going).toBe('gs-server:2');
+
+  await act(async () => { fail(new Error('can not find window: 2')); });
+  expect(chooser.going).toBeNull();
+  expect(alert).toHaveBeenCalledWith('Could not go to gs-server', 'can not find window: 2');
 });

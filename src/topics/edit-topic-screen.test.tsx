@@ -102,3 +102,26 @@ it('sends each changed field as its own write, and reads nothing after the Save'
   expect(mockServer.requests).toHaveLength(1);
   expect(mockBack).toHaveBeenCalledTimes(1);
 });
+
+it('shows the form at once, and saves the title while the Tags are on their way', async () => {
+  mockServer.server.subscribe = () => Object.assign(new Promise<unknown>(() => {}), { cancel: () => {} });
+  await mount();
+  expect(fields()).toHaveLength(2);
+  expect(texts()).toContain('Reading Tags…');
+
+  fields()[0].props.text.value = 'Fix the login';
+  await act(async () => { save().props.onPress(); });
+  expect(mockServer.writes().map((write) => write.command)).toEqual([{ rename: { title: 'Fix the login' } }]);
+});
+
+it('says why the Tags could not be read, and reads them again on Try again', async () => {
+  delete mockServer.pushes.snapshot;
+  await mount();
+  expect(texts()).toContain('no push of snapshot in this test');
+  expect(fields()).toHaveLength(2);
+
+  mockServer.pushes.snapshot = snapshotPush();
+  await act(async () => { button('Try again').props.onPress(); });
+  expect(texts()).not.toContain('no push of snapshot in this test');
+  expect(texts()).not.toContain('Reading Tags…');
+});
