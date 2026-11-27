@@ -89,10 +89,17 @@ expect_window() {
 
 scrolled_back() { agent-device is exists 'id="scroll-position"' >/dev/null 2>&1; }
 
-DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
 # How many times the app's log says the Topology has no Windows. After a Pane
 # switch that is the black screen: a reply paired with the wrong command.
 no_windows() { grep -rhF '"text":"no Windows"' "$DATA/muxify-logs" 2>/dev/null | wc -l | tr -d ' '; }
+# Each cell size the Surfaces of the app's latest launch reported, one a line.
+# Every Surface draws the same font, so a second size is text drawn at another.
+cells_reported() {
+  local launch
+  launch=$(ls -t "$DATA/muxify-logs" | head -1 | cut -d- -f1)
+  cat "$DATA/muxify-logs/$launch"-* | grep -oE '"text":"cell [0-9.x]+ points"' | sort -u
+}
 
 echo "1/8  a Window with one Pane shows no Layout map"
 attach
@@ -136,7 +143,7 @@ swipe_right
 agent-device press 'id="layout-map"' >/dev/null 2>&1
 agent-device wait 'label="Close Panes"' 5000 >/dev/null 2>&1 \
   || fail "a tap on the Layout map did not open the Panes picker"
-agent-device press 'label="Close Panes"' >/dev/null 2>&1
+agent-device press 'role=button label="Close Panes"' >/dev/null 2>&1
 agent-device wait 1500 >/dev/null 2>&1
 echo "     it follows the swipe, and a tap opens the picker"
 
@@ -223,7 +230,9 @@ expect_window "1 0" "a swipe on the active Pane of a split"
 # From Pane 0 again, which is now the other Pane: the layer over it.
 drag 180 400 -150 0
 expect_window "0 0" "a swipe on the other Pane of a split"
-echo "     0 → 1 → 0, and never zoomed"
+[ "$(cells_reported | wc -l | tr -d ' ')" = 1 ] \
+  || fail "the Surfaces drew more than one cell size: $(cells_reported | tr '\n' ' ')"
+echo "     0 → 1 → 0, never zoomed, and every Surface drew the same cell"
 
 echo "8/8  a press that drifts a little opens a Selection, not a swipe or a scroll"
 # Rows of text wide enough that the press and its drift both land on a word.
