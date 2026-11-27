@@ -1,5 +1,5 @@
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..816a840a5e64c724a78e05ecceb41bc04833b700 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..29abea840b4ccc4f0b1b9cca9a06e18ef3131bd1 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
 @@ -10,6 +10,12 @@ export type TerminalResizeEvent = {
@@ -71,6 +71,17 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..816a840a5e64c724a78e05ecceb41bc0
  export type TerminalTheme = {
      /**
       * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
+@@ -42,8 +96,8 @@ export type TerminalViewProps = {
+     /**
+      * Base font size in density-independent units (default 14, clamped to
+      * 4–64); pinch-to-zoom steps from this value. Android applies changes
+-     * live (the grid reflows in place); on iOS a change after mount rebuilds
+-     * the terminal surface, resetting the grid — set it before mounting.
++     * live (the grid reflows in place). On iOS it is app-wide, like the
++     * theme: every mounted view takes the last size set, and reflows in place.
+      */
+     fontSize?: number;
+     /**
 @@ -52,10 +106,101 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
@@ -240,10 +251,10 @@ index 0000000000000000000000000000000000000000..666b1d18e7ee1502bab7cd85be5d0d3d
 +    void native?.swipeTick?.();
 +}
 diff --git a/ios/ExpoLibghosttyModule.swift b/ios/ExpoLibghosttyModule.swift
-index 2f32970ab6b560820b12b8e17842ed05471ba8ec..602617ac3f8c8c25dc3feda1151457774f006460 100644
+index 2f32970ab6b560820b12b8e17842ed05471ba8ec..fc3a145794d7ed05a29ecda149a482cbc9d52400 100644
 --- a/ios/ExpoLibghosttyModule.swift
 +++ b/ios/ExpoLibghosttyModule.swift
-@@ -1,11 +1,21 @@
+@@ -1,14 +1,24 @@
  import ExpoModulesCore
 +import GhosttyTerminal
  
@@ -264,23 +275,35 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..602617ac3f8c8c25dc3feda115145777
 +        "onSelectionPress", "onSelectionEnd", "onSelectionEdge", "onPaste", "onKeyboardTap"
 +      )
  
-       // Base font size in points (default 14). Changing it after mount
-       // rebuilds the surface and resets the grid.
-@@ -19,6 +29,13 @@ public class ExpoLibghosttyModule: Module {
-         view.applyTheme(theme)
+-      // Base font size in points (default 14). Changing it after mount
+-      // rebuilds the surface and resets the grid.
++      // Base font size in points. App-wide on iOS, like the theme: a change
++      // reflows every surface in place.
+       Prop("fontSize") { (view: ExpoLibghosttyView, size: Float?) in
+         view.fontSize = size
        }
- 
+@@ -16,7 +26,19 @@ public class ExpoLibghosttyModule: Module {
+       // Theme colors (ghostty config syntax); nil clears to the defaults.
+       // App-wide on iOS: applied through the shared controller's config.
+       Prop("theme") { (view: ExpoLibghosttyView, theme: TerminalThemeRecord?) in
+-        view.applyTheme(theme)
++        view.theme = theme
++      }
++
 +      // Whether the font may join characters such as >= into one glyph.
 +      // Defaults to true, which is ghostty's own behaviour. App-wide on iOS,
 +      // like the theme.
 +      Prop("ligatures") { (view: ExpoLibghosttyView, on: Bool?) in
-+        view.applyLigatures(on ?? true)
++        view.ligatures = on ?? true
 +      }
 +
++      // The three props above make one config, handed over whole.
++      OnViewDidUpdateProps { (view: ExpoLibghosttyView) in
++        view.applyConfiguration()
+       }
+ 
        // PTY output bytes (base64) → terminal grid.
-       AsyncFunction("write") { (view: ExpoLibghosttyView, base64: String) in
-         guard let data = Data(base64Encoded: base64) else {
-@@ -36,6 +53,74 @@ public class ExpoLibghosttyModule: Module {
+@@ -36,6 +58,74 @@ public class ExpoLibghosttyModule: Module {
        AsyncFunction("finish") { (view: ExpoLibghosttyView, exitCode: UInt32) in
          view.finish(exitCode: exitCode)
        }.runOnQueue(.main)
@@ -355,7 +378,7 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..602617ac3f8c8c25dc3feda115145777
      }
    }
  }
-@@ -46,6 +131,37 @@ internal final class InvalidBase64Exception: Exception {
+@@ -46,6 +136,37 @@ internal final class InvalidBase64Exception: Exception {
    }
  }
  
@@ -394,10 +417,10 @@ index 2f32970ab6b560820b12b8e17842ed05471ba8ec..602617ac3f8c8c25dc3feda115145777
    @Field var background: String?
    @Field var foreground: String?
 diff --git a/ios/ExpoLibghosttyView.swift b/ios/ExpoLibghosttyView.swift
-index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88faa1179a88 100644
+index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..70160e14e79c1a829504b51cd9326d2d1b311cf7 100644
 --- a/ios/ExpoLibghosttyView.swift
 +++ b/ios/ExpoLibghosttyView.swift
-@@ -4,10 +4,55 @@ import GhosttyTerminal
+@@ -4,29 +4,94 @@ import GhosttyTerminal
  // Ghostty-backed terminal view. The JS side owns transport and session
  // lifecycle; this view only renders bytes pushed via `write` and reports
  // user input / grid resizes back through events.
@@ -429,14 +452,27 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88fa
 +  private var hiddenShortcutGroups: [ObjectIdentifier: (leading: [UIBarButtonItemGroup], trailing: [UIBarButtonItemGroup])] = [:]
    private var session: InMemoryTerminalSession?
  
+-  /// Base font size in points (nil → ghostty's default, 14). Changing it on a
+-  /// mounted view rebuilds the surface, which resets the grid — set it before
+-  /// mounting. Pinch-to-zoom steps from this value.
+-  var fontSize: Float? {
+-    didSet {
+-      guard fontSize != oldValue, let session else { return }
+-      terminalView.configuration = TerminalSurfaceOptions(
+-        backend: .inMemory(session),
+-        fontSize: fontSize
+-      )
+-    }
 +  /// One grid, as reported across the bridge. Points, not pixels.
 +  private struct Report: Equatable {
 +    var cols: Int
 +    var rows: Int
 +    var cellWidth: Double
 +    var cellHeight: Double
-+  }
-+
+   }
+ 
+-  /// Theme colors, applied through the shared controller's ghostty config —
+-  /// on iOS the theme is app-wide (every terminal view of the controller),
 +  /// Which ghostty surface is under the view. Bumped each time one is built.
 +  private var surfaceGeneration = 0
 +  /// Whether there is one right now.
@@ -451,36 +487,35 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88fa
 +  /// a repaint can show anyway.
 +  private static let pendingOutputLimit = 2 * 1024 * 1024
 +
-   /// Base font size in points (nil → ghostty's default, 14). Changing it on a
-   /// mounted view rebuilds the surface, which resets the grid — set it before
-   /// mounting. Pinch-to-zoom steps from this value.
-@@ -21,12 +66,39 @@ class ExpoLibghosttyView: ExpoView {
-     }
-   }
- 
-+  private var theme: TerminalThemeRecord?
-+  private var ligatures = true
++  /// Base font size in points (nil → ghostty's default). Part of the shared
++  /// ghostty config, like the theme: see applyConfiguration.
++  ///
++  /// Not the surface's own font size. ghostty puts the config's font size
++  /// back on every surface whenever the config changes, so a surface given
++  /// its own size drew at ghostty's default from the next theme change on,
++  /// while a surface built after it drew at the size asked for: two cell
++  /// sizes side by side, 24 by 53 pixels and 31 by 69 at 13 points.
++  var fontSize: Float?
 +
-   /// Theme colors, applied through the shared controller's ghostty config —
-   /// on iOS the theme is app-wide (every terminal view of the controller),
++  /// Theme colors. App-wide on iOS (every terminal view of the controller),
    /// unlike Android's per-view application. Colors accept ghostty config
    /// syntax; nil clears back to the defaults.
-   func applyTheme(_ theme: TerminalThemeRecord?) {
-+    self.theme = theme
-+    applyConfiguration()
-+  }
+-  func applyTheme(_ theme: TerminalThemeRecord?) {
++  var theme: TerminalThemeRecord?
 +
 +  /// Whether the font may join characters such as `>=` into one glyph.
-+  /// App-wide like the theme, because it goes into the same ghostty config.
-+  func applyLigatures(_ on: Bool) {
-+    ligatures = on
-+    applyConfiguration()
-+  }
++  var ligatures = true
 +
 +  /// Builds the one ghostty config every terminal view shares, from the
-+  /// theme and the ligature choice, and hands it to the shared controller.
-+  /// The controller ignores a config equal to the one it has.
-+  private func applyConfiguration() {
++  /// font size, the theme and the ligature choice, and hands it to the
++  /// shared controller. The controller ignores a config equal to the one it
++  /// has; a different one reaches every surface, each view's included.
++  ///
++  /// Once per batch of props, after all of them are set. Built after each
++  /// prop instead, a view mounting with its theme set and its font size not
++  /// yet set handed over a config with no font size, and every surface on
++  /// screen went to ghostty's default size until the font size came.
++  func applyConfiguration() {
 +    // No padding, so the grid starts at the view's top left. The Selection
 +    // Layer and every caller that turns a touch into a cell count from there;
 +    // ghostty's default of 2 pt drew each glyph 2 pt past the cell they meant.
@@ -491,10 +526,11 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88fa
 +      .appending(.windowPaddingX(0))
 +      .appending(.windowPaddingY(0))
 +      .appending(.custom(key: "macos-option-as-alt", value: "true"))
++    if let fontSize { config = config.fontSize(fontSize) }
      if let theme {
        if let value = theme.background { config = config.background(value) }
        if let value = theme.foreground { config = config.foreground(value) }
-@@ -39,11 +111,82 @@ class ExpoLibghosttyView: ExpoView {
+@@ -39,11 +104,82 @@ class ExpoLibghosttyView: ExpoView {
          }
        }
      }
@@ -577,7 +613,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88fa
  
    required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -56,8 +199,19 @@ class ExpoLibghosttyView: ExpoView {
+@@ -56,8 +192,19 @@ class ExpoLibghosttyView: ExpoView {
            "text": String(decoding: data, as: UTF8.self),
          ])
        },
@@ -599,7 +635,7 @@ index 12925b541f7d4ebb98b5a9976486a561c69d6fe2..11750d3738ccf04b6fff5c2c2b7f88fa
        }
      )
      self.session = session
-@@ -66,21 +220,285 @@ class ExpoLibghosttyView: ExpoView {
+@@ -66,21 +213,285 @@ class ExpoLibghosttyView: ExpoView {
      terminalView.controller = TerminalController.shared
      terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
      terminalView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -2699,7 +2735,7 @@ index 1fb2cce36487e53aa94bf1b2cd66bd1479329f8a..b5f6dd26d6f808fba90bd7b1447c9de7
          pendingImmediateTick = true
          lastTickTimestamp = 0
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..3c6cc88912d43d96f80eb50c47aa60d381edddfa 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..99ba15c505cdc66204818039ffa50aff61148998 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
 @@ -12,6 +12,12 @@ export type TerminalResizeEvent = {
@@ -2776,6 +2812,17 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..3c6cc88912d43d96f80eb50c47aa60d3
  export type TerminalTheme = {
    /**
     * Colors accept ghostty config syntax: 3/6-digit hex (with or without a
+@@ -47,8 +105,8 @@ export type TerminalViewProps = {
+   /**
+    * Base font size in density-independent units (default 14, clamped to
+    * 4–64); pinch-to-zoom steps from this value. Android applies changes
+-   * live (the grid reflows in place); on iOS a change after mount rebuilds
+-   * the terminal surface, resetting the grid — set it before mounting.
++   * live (the grid reflows in place). On iOS it is app-wide, like the
++   * theme: every mounted view takes the last size set, and reflows in place.
+    */
+   fontSize?: number;
+   /**
 @@ -57,8 +115,89 @@ export type TerminalViewProps = {
     * pass undefined fields to keep ghostty's defaults.
     */
