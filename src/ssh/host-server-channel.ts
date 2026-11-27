@@ -79,6 +79,19 @@ export type HostServerCall<T> = Promise<T> & {
   cancel(): void;
 };
 
+/** The call, cancelled on the Host Server when `signal` aborts, so a Host Read that is replaced stops the Host's work too. */
+export function cancelOnAbort<T>(call: HostServerCall<T>, signal: AbortSignal): HostServerCall<T> {
+  if (signal.aborted) {
+    call.cancel();
+    return call;
+  }
+  const stop = () => call.cancel();
+  signal.addEventListener('abort', stop, { once: true });
+  const forget = () => signal.removeEventListener('abort', stop);
+  call.then(forget, forget);
+  return call;
+}
+
 /** The server's `hello`, as the phone answered it. */
 export interface ServerHello {
   /** The protocol both sides speak, which the phone's `hello` carries. */

@@ -149,3 +149,17 @@ it('opens a Session chosen in place of one that has ended through the Host Scree
   expect(mockOpenSession).toHaveBeenCalledWith('play');
   expect(switches).toEqual([]);
 });
+
+it('marks the Window row picked as busy until tmux has selected it', async () => {
+  const { attach } = fakeAttach({ kind: 'open' });
+  let selected!: () => void;
+  (attach as unknown as { selectWindow: () => Promise<void> }).selectWindow = () => new Promise((resolve) => { selected = resolve; });
+  await mount(attach);
+
+  await act(async () => { shownRef.current!.onPick({ session: null, window: 2 }); });
+  expect(shownRef.current!.isRowBusy!({ session: null, window: 2 })).toBe(true);
+  expect(shownRef.current!.isRowBusy!({ session: null, window: 1 })).toBe(false);
+
+  await act(async () => { selected(); });
+  expect(shownRef.current!.isRowBusy!({ session: null, window: 2 })).toBe(false);
+});

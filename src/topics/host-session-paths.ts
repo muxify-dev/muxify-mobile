@@ -2,6 +2,7 @@
  * The Session Paths of a Host as its Host Server ranks them, and the visit
  * that ranks a folder. The rows come in the Host's order; the phone keeps it.
  */
+import { cancelOnAbort } from '@/ssh/host-server-channel';
 import type { Host } from '@/storage/records';
 import { appConnections } from '@/tmux/ssh-connection';
 
@@ -19,9 +20,13 @@ export async function rankedSessionPaths(
   host: Host,
   query: string,
   connections: ServerConnections = appConnections(),
+  signal?: AbortSignal,
 ): Promise<SessionPathRow[]> {
   const text = query.trim();
-  const answer = await connections.onServer(host, (server) => server.request({ session_paths: text === '' ? {} : { query: text } }));
+  const answer = await connections.onServer(host, (server) => {
+    const call = server.request({ session_paths: text === '' ? {} : { query: text } });
+    return signal ? cancelOnAbort(call, signal) : call;
+  });
   return parseSessionPathRows(answer);
 }
 
@@ -30,7 +35,11 @@ export async function topicSessionPaths(
   host: Host,
   topic: TopicId,
   connections: ServerConnections = appConnections(),
+  signal?: AbortSignal,
 ): Promise<SessionPathChoice[]> {
-  const answer = await connections.onServer(host, (server) => server.request({ session_paths: { topic } }));
+  const answer = await connections.onServer(host, (server) => {
+    const call = server.request({ session_paths: { topic } });
+    return signal ? cancelOnAbort(call, signal) : call;
+  });
   return parseSessionPaths(answer, topic);
 }

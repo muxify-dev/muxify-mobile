@@ -299,3 +299,14 @@ describe('a tap on a Board Session card', () => {
     expect(mockWakeBoardSession).not.toHaveBeenCalled();
   });
 });
+
+it('names the Session that opens from a tap on its row, until the open ends', async () => {
+  let answer!: (value: Records) => void;
+  mockLoad.mockImplementation(() => new Promise<Records>((resolve) => { answer = resolve; }));
+  await mount();
+  await act(async () => { actions.openSession('notes'); });
+  expect(actions).toMatchObject({ busy: true, busySession: 'notes', busyCard: null });
+
+  await act(async () => { answer(records); });
+  expect(actions).toMatchObject({ busy: false, busySession: null });
+});

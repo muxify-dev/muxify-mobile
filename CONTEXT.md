@@ -295,6 +295,22 @@ and a card reads the Listing again. A sheet reports it in a row at the top of
 its form, and a Topic card with a spinner and an alert. See ADR 0020 and ADR 0021.
 _Avoid_: request (a Request is the Host CLI command of a Host Write, with its id), save (for the general idea), mutation
 
+**Host Read**:
+One question the user asks of a Host, from the tap or keystroke until its
+answer, its failure or a newer question: the Go to list, the hold of the Host
+Screen, and the reads of Tags, folders and Topics that a sheet makes before
+the user can act. A screen owns each Host Read separately, and each one shows
+that it runs in the render of the tap: a progress line, or the reason with
+Try again. The last answer stays on screen, and the user can tap its rows,
+until a newer answer replaces it. A newer question cancels the older one on
+the Host Server, and a late answer to the older one changes nothing. Try
+again asks the same question again at once, and a second tap while it runs
+does nothing. A read that meets the Host Problem says it only on a screen
+with no Host Problem row, such as a sheet. A Host Read changes nothing on
+the Host, so the phone can cancel it and ask it again freely. The Listing is a feed that the Host pushes, not a Host Read.
+See ADR 0040.
+_Avoid_: query, fetch, load, request (a Request belongs to a Host Write)
+
 **Client**:
 tmux's own term for what an Attach creates. Muxify's is a *control* client: it
 has no terminal, renders nothing, and holds no Session option of its own. A

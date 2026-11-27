@@ -20,22 +20,24 @@ import {
 
 import { FieldError } from '@/components/field-error';
 import { SectionHeader } from '@/components/section-header';
+import { HostReadRow } from '@/components/host-read-row';
 import { HostWriteRow } from '@/components/host-write-row';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
+import { useHostRead } from '@/hooks/use-host-read';
 import { useHostWrite, type HostWriteRun } from '@/hooks/use-host-write';
 import { useSettings } from '@/settings/settings-context';
-import { describeConnectionFailure } from '@/tmux/disconnect-reason';
 import { deviceHostStore } from '@/storage/device-store';
 import type { TopicId } from '@/topics/environment';
 import { useAttachHolder, useOpenSession } from '@/tmux/attach-context';
+import { appConnections } from '@/tmux/ssh-connection';
 import { captureAttachOrigin } from '@/tmux/attach-holder';
 import { topicSeedFromParam } from '@/topics/topic-detail';
 import { freeSessionName } from '@/topics/add-session';
 import { topicSessionPaths } from '@/topics/host-session-paths';
 import { addSession, pushedListing, pushedTopic } from '@/topics/host-writes';
 import { intentAfter, intentFor, type Intent } from '@/topics/request';
-import { sessionPathSections, type SessionPathsRead } from '@/topics/session-paths';
+import { sessionPathSections, type SessionPathChoice } from '@/topics/session-paths';
 
 const say = speakingAs(deviceLog(), 'add-session');
 
@@ -63,30 +65,22 @@ export default function TopicAddSessionScreen() {
   const folder = useNativeState('');
   const [query, setQuery] = useState('');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-  const [paths, setPaths] = useState<SessionPathsRead | { kind: 'loading' }>({ kind: 'loading' });
-  const [readAttempt, setReadAttempt] = useState(0);
+  const folders = useHostRead<string, SessionPathChoice[]>({
+    read: async (topic, signal) => {
+      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
+      if (!host) throw new Error('This Host is no longer saved.');
+      return topicSessionPaths(host, topic as TopicId, appConnections(), signal);
+    },
+  });
+  const { ask: askFolders } = folders;
+  useEffect(() => askFolders(topicId), [askFolders, topicId]);
   const [folderError, setFolderError] = useState<string | undefined>();
   const choosing = !locked && made === null;
   // The Request of the last Create and open, and the Session name picked for
   // it, so a second try at the same folder finds the Session of the first.
   const sent = useRef<{ intent: Intent; name: string } | null>(null);
-  const sections = paths.kind === 'listed' ? sessionPathSections(paths.choices, query) : [];
+  const sections = folders.data ? sessionPathSections(folders.data, query) : [];
   const choose = (directory: string) => { if (!closed.current && madeRef.current === null) setSelectedFolder(directory); };
-
-  useEffect(() => {
-    let left = false;
-    const settled = () => !left && !closed.current && madeRef.current === null;
-    setPaths({ kind: 'loading' });
-    void (async () => {
-      const host = (await deviceHostStore().load()).hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('This Host is no longer saved.');
-      const choices = await topicSessionPaths(host, topicId as TopicId);
-      if (settled()) setPaths({ kind: 'listed', choices });
-    })().catch((caught) => {
-      if (settled()) setPaths({ kind: 'failed', error: describeConnectionFailure(caught) });
-    });
-    return () => { left = true; };
-  }, [hostId, topicId, readAttempt]);
 
   const attach = async (session: string, step: HostWriteRun['step']) => {
     madeRef.current = session;
@@ -107,7 +101,7 @@ export default function TopicAddSessionScreen() {
     setFolderError(undefined);
     void send(async ({ host, step, refuse, unsure }) => {
       const intent = intentFor(sent.current?.intent ?? null, wanted);
-      const choices = paths.kind === 'listed' ? paths.choices : [];
+      const choices = folders.data ?? [];
       if (sent.current?.intent !== intent) {
         // The Session's name in the Topic, as the Listing the Host Server pushes has it, so a second send finds it.
         const name = freeSessionName(wanted, choices, await pushedListing(host), topicId as TopicId);
@@ -219,13 +213,9 @@ export default function TopicAddSessionScreen() {
               ]}
             />
             <FieldError error={folderError} palette={palette} />
-            {paths.kind === 'loading' && <Text>Reading folders…</Text>}
-            {paths.kind === 'failed' && <>
-              <FieldError error={paths.error} palette={palette} />
-              <Button label="Try again" onPress={() => setReadAttempt((value) => value + 1)} modifiers={[disabled(!choosing)]} />
-            </>}
-            {paths.kind === 'listed' && sections.length === 0 && <Text>No matching folders.</Text>}
+            {folders.data !== undefined && sections.length === 0 && <Text>No matching folders.</Text>}
           </Section>
+          <HostReadRow read={folders} doing="Reading folders" palette={palette} />
           {sections.map((section) => <Section
             key={section.id}
             header={<SectionHeader palette={palette}>{section.title}</SectionHeader>}

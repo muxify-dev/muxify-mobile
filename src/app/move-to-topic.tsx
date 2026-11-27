@@ -2,7 +2,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { Button, Form, Host, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
+import { Button, Form, Host, HStack, ProgressView, Section, Text, TextField, useNativeState } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
   background,
@@ -17,14 +17,17 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { FieldError } from '@/components/field-error';
+import { TRYING_AGAIN } from '@/components/host-read-row';
 import { HostWriteRow } from '@/components/host-write-row';
 import { SectionHeader } from '@/components/section-header';
-import { useLiveListing } from '@/hooks/use-host-listing';
+import { useHostListing, useLiveListing } from '@/hooks/use-host-listing';
 import { useHostWrite } from '@/hooks/use-host-write';
+import type { Appearance } from '@/constants/app-theme';
 import { useSettings } from '@/settings/settings-context';
 import { useAttachHolder } from '@/tmux/attach-context';
 import { openTopics, type SessionId } from '@/topics/environment';
 import { moveSession, pushedListing } from '@/topics/host-writes';
+import { topicsUnavailable } from '@/topics/host-topics';
 import { movedTopic, type MoveDestination, type Moved } from '@/topics/move-to-topic';
 
 /** The Session the sheet moves, by tmux's id, with the name it had when the sheet opened. */
@@ -42,6 +45,10 @@ export default function MoveToTopicScreen() {
   const holder = useAttachHolder();
   const { hostId, session, name } = useLocalSearchParams<MoveToTopicParams>();
   const { appearance, palette } = useSettings();
+  // The sheet holds the Host's Connection while it is open, as the Host Screen
+  // does, so the Listing comes even when no Connection was up, and a Host
+  // that cannot be reached says why, with Try again.
+  const listing = useHostListing(hostId);
   const snapshot = useLiveListing(hostId)?.received?.snapshot ?? null;
   const { write, hostName, check, request } = useHostWrite(hostId);
   const locked = write.kind === 'running' || write.kind === 'unsure';
@@ -148,7 +155,7 @@ export default function MoveToTopicScreen() {
                 header={<SectionHeader palette={palette}>Open Topics</SectionHeader>}
                 modifiers={[listRowBackground(palette.rowSurface)]}>
                 {topics === null ? (
-                  <Text modifiers={[foregroundColor(palette.secondaryLabel)]}>Reading Topics…</Text>
+                  <TopicsRead listing={listing} palette={palette} />
                 ) : topics.length === 0 ? (
                   <Text modifiers={[foregroundColor(palette.secondaryLabel)]}>No open Topics</Text>
                 ) : topics.map((topic) => (
@@ -165,6 +172,37 @@ export default function MoveToTopicScreen() {
         </Form>
       </Host>
     </View>
+  );
+}
+
+/** What the Topics wait for: the Host's first push, or a Try again after the Host could not be used. */
+function TopicsRead({ listing, palette }: { listing: ReturnType<typeof useHostListing>; palette: Appearance }) {
+  const { topics, problem, retry, retrying } = listing;
+  const reason = topics.kind === 'failed' ? topics.error
+    : topics.kind === 'host-problem' ? problem?.detail ?? 'The Host could not be used.'
+    : null;
+  if (topics.kind === 'unavailable') {
+    return <Text modifiers={[foregroundColor(palette.secondaryLabel)]}>{topicsUnavailable(topics.host, topics.reason)}</Text>;
+  }
+  return (
+    <>
+      {reason === null || retrying ? (
+        <HStack spacing={10}>
+          <ProgressView />
+          <Text modifiers={[foregroundColor(palette.secondaryLabel)]}>{reason === null ? 'Reading Topics…' : TRYING_AGAIN}</Text>
+        </HStack>
+      ) : null}
+      {reason === null ? null : (
+        <>
+          <Text modifiers={[foregroundColor(palette.destructive)]}>{reason}</Text>
+          <Button
+            label="Try again"
+            onPress={retry}
+            modifiers={[disabled(retrying), accessibilityLabel(retrying ? 'Try again, in progress' : 'Try again')]}
+          />
+        </>
+      )}
+    </>
   );
 }
 

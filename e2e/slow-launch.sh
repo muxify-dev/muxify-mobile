@@ -72,5 +72,9 @@ sys.exit(1 if found or not shown else 0)
 PY
 }
 
+# Every chunk on the slow relay waits while slow_each is on (see e2e/slow-relay.py).
+slow_each() { : >"$ROOT/slow-each"; }
+fast_each() { rm -f "$ROOT/slow-each"; }
+
 # The number of Connections the slow relay has taken: one line each in relay.log.
 relayed() { cat "$ROOT/relay.log" 2>/dev/null | grep -c '^relayed'; }

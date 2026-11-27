@@ -32,7 +32,9 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 
 import { placeTabRoute } from '@/browser/place-tab-route';
+import { cardKey } from '@/topics/board-card';
 import { HostGoToList } from '@/components/host-go-to-list';
+import { HostReadRow } from '@/components/host-read-row';
 import { FillPlaceSheet } from '@/components/fill-place-sheet';
 import { GoToList, type FolderRow } from '@/components/go-to-list';
 import {
@@ -48,7 +50,7 @@ import { TabSwipe } from '@/components/tab-swipe';
 import { SectionHeader } from '@/components/section-header';
 import type { Appearance } from '@/constants/app-theme';
 import { hostProblemWords } from '@/domain/cover';
-import { goToRows, pathOpening, folderOpening, typedFolderRows, type PathOpening, type GoToMode, type GoToRow } from '@/domain/go-to';
+import { goToRows, pathOpening, folderOpening, typedFolderRows, type PathOpening, type GoToMode, type GoToRow, type RankedPaths } from '@/domain/go-to';
 import {
   cardOf,
   cardTitle,
@@ -67,7 +69,7 @@ import {
 } from '@/domain/host-screen';
 import { fillChoices, findCardRow, moveTargetLabel, moveTargets, type MoveTarget } from '@/domain/host-screen-move';
 import { useCardWrites } from '@/hooks/use-card-writes';
-import { useGoToPaths, useHostGoTo } from '@/hooks/use-go-to-paths';
+import { rankedPaths, useGoToPaths, useHostGoTo } from '@/hooks/use-go-to-paths';
 import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
@@ -111,7 +113,7 @@ export default function HostScreen() {
   const [host, setHost] = useState<HostRecord | undefined>();
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [opened, setOpened] = useState<ReadonlySet<OpenableRow>>(new Set());
-  const { listing, topics, freshness, sessionsOnly, hostRanksGoTo, problem, retry: retryHost } = useHostListing(id);
+  const { listing, topics, freshness, sessionsOnly, hostRanksGoTo, problem, retry: retryHost, retrying } = useHostListing(id);
   /** The card the user moves: picked from its menu, until a target or Cancel is tapped. */
   const [moving, setMoving] = useState<BoardCard | null>(null);
   /** The Open Place the user fills: tapped, until a card is picked or the sheet is closed. */
@@ -163,20 +165,32 @@ export default function HostScreen() {
   const still = goTo !== null && query.trim() === '';
   const folders = useGoToPaths(id, hasGoTo && !ranked, still);
   const hostList = useHostGoTo(id, hasGoTo && ranked, still, attachedHere?.sessionName, goToTag);
-  const { ask, reading } = ranked ? hostList : folders;
+  const goToRead = ranked ? hostList : folders;
+  const { ask, cancel: cancelGoTo } = goToRead;
+  // The text in the field. A keystroke asks from its own handler; this is for
+  // the read on focus, and for a new question (the Session, the Tag, the list).
+  const typed = useRef('');
   useFocusEffect(useCallback(() => {
-    if (hasGoTo) ask(query);
-  }, [hasGoTo, ask, query]));
+    if (hasGoTo) ask(typed.current);
+    return cancelGoTo;
+  }, [hasGoTo, ask, cancelGoTo]));
 
-  // The field's own Cancel button has already ended the search. A second
-  // cancelSearch from its handler leaves the field deaf to the next tap.
-  const goToCancelled = useCallback(() => {
+  const resetGoTo = useCallback(() => {
     setGoTo(null);
     setGoToTag(null);
     setQuery('');
+    typed.current = '';
     setHighlighted(0);
   }, []);
-  useFocusEffect(useCallback(() => goToCancelled, [goToCancelled]));
+  useFocusEffect(useCallback(() => resetGoTo, [resetGoTo]));
+  // The field's own Cancel button has already ended the search. A second
+  // cancelSearch from its handler leaves the field deaf to the next tap.
+  // The list then answers the empty field again, as it did before the user typed.
+  const goToCancelled = useCallback(() => {
+    const typedText = typed.current.trim() !== '';
+    resetGoTo();
+    if (typedText) ask('');
+  }, [resetGoTo, ask]);
   const closeGoTo = useCallback(() => {
     search.current?.cancelSearch();
     goToCancelled();
@@ -190,15 +204,17 @@ export default function HostScreen() {
   const pick = useGoToPick(id, useCallback(() => entered(null), [entered]));
 
   const sessions = useMemo(() => runningSessions(listing, topics) ?? [], [listing, topics]);
-  const rankedSections = goTo !== null && ranked && hostList.list.query === query.trim() ? hostList.list.rows : [];
+  // The last answer stays on screen while the next one is on its way, so the rows do not blink on each keystroke.
+  const rankedSections = goTo !== null && ranked ? hostList.data ?? [] : [];
   const rankedRows = rankedSections.flatMap((section) => section.rows);
-  const localRows = goTo === null ? [] : ranked ? typedFolderRows(query) : goToRows({
+  const localRowsOf = (paths: RankedPaths) => goTo === null ? [] : ranked ? typedFolderRows(query) : goToRows({
     query,
     mode: goTo,
     sessions: sessions.map(({ name, topicLabel }) => ({ name, topicLabel: topicLabel ?? null })),
-    paths: folders.paths,
+    paths,
     recent,
   });
+  const localRows = localRowsOf(rankedPaths(folders));
   const rows = [...rankedRows, ...localRows];
   const onShow = Math.min(highlighted, Math.max(rows.length - 1, 0));
 
@@ -228,6 +244,7 @@ export default function HostScreen() {
       else {
         setGoToTag(t.tag.name);
         setQuery('');
+        typed.current = '';
         setHighlighted(0);
         search.current?.setText('');
       }
@@ -235,6 +252,15 @@ export default function HostScreen() {
     }
     if (row.kind === 'session') hostEntry.openSession(row.name);
     else openFolder(row, another);
+  };
+  // Return means the best match for what the user typed. While the read for
+  // it runs, the rows on screen answer older text, so Return waits for the
+  // answer and picks its first row. A row chosen with the List Keys is the
+  // user's own pick, so it opens at once.
+  const pickHighlighted = () => {
+    if (!goToRead.isPending || onShow > 0) pickRow(rows[onShow]);
+    else if (ranked) hostList.whenAnswered((sections) => pickRow(sections.flatMap((section) => section.rows)[0] ?? typedFolderRows(query)[0]));
+    else folders.whenAnswered((rows) => pickRow(localRowsOf({ query: query.trim(), rows })[0]));
   };
 
   const disconnect = useCallback(() => {
@@ -279,7 +305,7 @@ export default function HostScreen() {
     ...(goTo === null ? {} : {
       'list-up': () => setHighlighted(Math.max(onShow - 1, 0)),
       'list-down': () => setHighlighted(Math.max(0, Math.min(onShow + 1, rows.length - 1))),
-      'list-pick': () => pickRow(rows[onShow]),
+      'list-pick': pickHighlighted,
       'list-close': closeGoTo,
       'new-session-here': () => pickRow(rows[onShow], true),
     }),
@@ -319,6 +345,7 @@ export default function HostScreen() {
     onOpenTopic: (row) => hostEntry.openTopic(row.seed),
     onOpenBoardSession: hostEntry.openBoardSession,
     isBusy: (busy) => hostEntry.busyCard === busy || cardWrites.writing(busy) || sessionActions.writing(busy),
+    isOpening: (name) => hostEntry.busySession === name,
     onSessionAction: sessionActions.act,
     onWake: (row, wake) => void cardWrites.order(cardOf(row), { kind: 'wake', wake }),
     onCardAction: (row, action) => void actFromMenu(cardOf(row), action),
@@ -329,6 +356,7 @@ export default function HostScreen() {
     onFillPlace: (row) => setFilling(row.id),
     onToggle: toggleOpened,
     onRetry: retryHost,
+    retrying,
   };
 
   // While a card moves, a tap does not leave the screen, and no row has a menu or a swipe.
@@ -395,13 +423,15 @@ export default function HostScreen() {
   const changeQuery = useCallback((event: { nativeEvent: { text?: string } }) => {
     const text = event.nativeEvent.text ?? '';
     setQuery(text);
+    typed.current = text;
     setHighlighted(0);
-  }, []);
+    ask(text);
+  }, [ask]);
   const fieldFocused = useCallback(() => setGoTo((mode) => mode ?? 'all'), []);
   // Return on the software keyboard. A hardware Return is the List Key, which the app takes before the field.
   const submit = useRef(() => {});
   useEffect(() => {
-    submit.current = () => pickRow(rows[onShow]);
+    submit.current = pickHighlighted;
   });
   const fieldSubmitted = useCallback(() => submit.current(), []);
 
@@ -439,14 +469,23 @@ export default function HostScreen() {
           onRetry={pick.retry}
           onCheck={pick.check}
         />
+        <HostReadRow read={goToRead} doing={ranked ? 'Reading Go to' : 'Reading folders'} palette={palette} hostProblemShown />
         <HostGoToList sections={rankedSections} tags={lastSnapshot(topics)?.tags ?? []}
-          appearance={appearance} palette={palette} locked={pickLocked} onPick={pickRow} highlighted={onShow} />
+          appearance={appearance} palette={palette} locked={pickLocked} onPick={pickRow} highlighted={onShow}
+          opening={(row) => {
+            const t = row.target;
+            if ('session' in t) return hostEntry.busySession === t.session.name;
+            if ('topic' in t) return hostEntry.busyCard === t.topic.id;
+            if ('settled' in t) return hostEntry.busyCard === t.settled.id;
+            if ('board_session' in t) return hostEntry.busyCard === cardKey({ kind: 'dormant-session', id: t.board_session.id });
+            return false;
+          }} />
         <GoToList
-          ranked={ranked}
           hostRows={rankedRows.length > 0}
           rows={localRows}
           highlighted={onShow - rankedRows.length}
-          reading={reading}
+          reading={{ isPending: goToRead.isPending, failed: goToRead.error !== null, held: goToRead.held !== null }}
+          opening={(row) => row.kind === 'session' && hostEntry.busySession === row.name}
           palette={palette}
           now={listedAt}
           locked={pickLocked}
@@ -559,7 +598,12 @@ export default function HostScreen() {
           <Host style={styles.fill} matchContents={false}>
             <VStack spacing={0} modifiers={[...swiftUIColors, noTopInset]}>
               {/* A new push animates the rows it adds, drops or moves, as SwiftUI's List does. */}
-              <Form modifiers={[scrollContentBackground('hidden'), animation(Animation.default, lastReceived(topics)?.at ?? 0)]}>
+              {/*
+                A new key when Go to opens or closes gives a new SwiftUI List, at the top. The
+                same List keeps the tab's scroll offset, so a Go to list longer than that
+                offset opens cut at the top.
+              */}
+              <Form key={each === tab && goTo !== null ? 'go-to' : 'tab'} modifiers={[scrollContentBackground('hidden'), animation(Animation.default, lastReceived(topics)?.at ?? 0)]}>
                 {each === tab ? onShowTab : hostScreen({ ...input, tab: each, opened }).map(renderSection)}
               </Form>
             </VStack>

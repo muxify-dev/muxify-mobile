@@ -5,8 +5,13 @@
 Listens on a free port of 127.0.0.1 and writes it to <run directory>/relay.port.
 Each connection goes on to the sshd, and the sshd's first bytes, its SSH
 banner, are held for <seconds>: every new Connection of the app takes that
-much longer to sign in, and nothing after that is slowed. It prints one
-"relayed" line for each Connection.
+much longer to sign in. It prints one "relayed" line for each Connection.
+
+While <run directory>/slow-each exists, every chunk after the banner, in both
+directions, is also held for MUXIFY_E2E_SLOW_EACH_SECONDS (1.5 by default).
+A Host Server request and its answer then take at least twice that, so a
+suite can see what the app shows while it waits. A suite makes the file after
+the app has connected, so the sign-in stays fast.
 
 It writes nothing outside the run directory, and it stops by itself once the
 run directory is gone, which is the last thing the sandbox does.
@@ -19,6 +24,8 @@ import threading
 import time
 
 root, target_port, delay = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+each = float(os.environ.get("MUXIFY_E2E_SLOW_EACH_SECONDS", "1.5"))
+slow_each = os.path.join(root, "slow-each")
 
 
 def pipe(source, sink, hold):
@@ -30,6 +37,8 @@ def pipe(source, sink, hold):
                 break
             if first and hold:
                 time.sleep(delay)
+            elif os.path.exists(slow_each):
+                time.sleep(each)
             first = False
             sink.sendall(data)
     except OSError:

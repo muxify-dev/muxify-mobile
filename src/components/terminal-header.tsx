@@ -1,16 +1,20 @@
 import { SymbolView } from 'expo-symbols';
 import { Stack } from 'expo-router';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { HeaderBand } from '@/components/header-band';
 import type { Appearance, TerminalPalette } from '@/constants/app-theme';
 
 /** What the header says the screen is showing. */
-export type HeaderTitle =
+export type HeaderTitle = (
   | { kind: 'session'; session: string; program: string | null }
-  | { kind: 'topic'; topic: string; program: string | null; session: string };
+  | { kind: 'topic'; topic: string; program: string | null; session: string }
+) & {
+  /** A tmux verb that runs from a tap, such as "Splitting the Pane". The dim line says it, with a spinner, in place of the program. */
+  doing?: string;
+};
 
 /**
  * One entry of the ⋯ menu. A table of these is rendered by one map, so the
@@ -120,7 +124,15 @@ function TitleLines({ title, terminal, detailTestID }: { title: HeaderTitle; ter
       <SymbolView name="chevron.down" tintColor={terminal.foreground} size={11} style={styles.chevron} />
       </View>
       <View style={styles.detail}>
-        {title.program === null ? null : (
+        {title.doing === undefined ? null : (
+          <>
+            <ActivityIndicator size="small" color={terminal.dim} style={styles.doing} />
+            <Text numberOfLines={1} maxFontSizeMultiplier={1.2} style={[styles.program, { color: terminal.dim }]} testID="header-doing">
+              {`${title.doing}…`}
+            </Text>
+          </>
+        )}
+        {title.doing !== undefined || title.program === null ? null : (
           <Text
             numberOfLines={1}
             maxFontSizeMultiplier={1.2}
@@ -131,7 +143,7 @@ function TitleLines({ title, terminal, detailTestID }: { title: HeaderTitle; ter
         )}
         {title.kind === 'topic' ? (
           <>
-            {title.program === null ? null : <Text maxFontSizeMultiplier={1.2} style={[styles.program, { color: terminal.dim }]}> · </Text>}
+            {title.doing === undefined && title.program === null ? null : <Text maxFontSizeMultiplier={1.2} style={[styles.program, { color: terminal.dim }]}> · </Text>}
             <Text
               numberOfLines={1}
               maxFontSizeMultiplier={1.2}
@@ -214,6 +226,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     maxWidth: '100%',
+  },
+  doing: {
+    transform: [{ scale: 0.7 }],
+    marginRight: 2,
   },
   program: {
     fontSize: 12,

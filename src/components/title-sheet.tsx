@@ -9,6 +9,7 @@ import {
   HStack,
   Image,
   Picker,
+  ProgressView,
   ScrollView,
   Spacer,
   Text,
@@ -16,6 +17,7 @@ import {
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel,
+  disabled,
   background,
   buttonStyle,
   cornerRadius,
@@ -32,6 +34,7 @@ import {
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
+import { TRYING_AGAIN } from '@/components/host-read-row';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
 import { tabAddress, tabLabel, type BrowserTab } from '@/browser/tabs';
@@ -67,6 +70,8 @@ export interface TitleSheetProps {
   rows: TitleRow[];
   topic?: TopicDetail | null;
   onRetry?: () => void;
+  /** True from the tap on Try again until its reads end: the sheet says so, keeps the reason, and the button is off. */
+  retrying?: boolean;
   /** A Topic read in flight with nothing read before it. */
   loading: boolean;
   error?: string;
@@ -76,6 +81,8 @@ export interface TitleSheetProps {
   onPick: (pick: TitlePick) => void;
   /** An Action of a Window row's long-press menu. Undefined while the Host Server offers none, as in Sessions only. */
   onWindowAction?: (row: TitleWindowRow, action: WindowAction) => void;
+  /** Whether a pick of this row, or a Window Action on it, runs now: the row shows a spinner. `session` is null for the Session on screen. */
+  isRowBusy?: (pick: TitlePick, windowId?: string) => boolean;
   /** The Browser Tabs of the Window on screen that the phone can open. */
   tabs: BrowserTab[];
   onOpenTab: (tab: BrowserTab) => void;
@@ -86,6 +93,8 @@ export interface SheetTopics {
   palette: Appearance;
   onOpenTopic: (row: TopicRow) => void;
   onRetry: () => void;
+  /** Whether a Topic card, by its `cardKey`, opens now. */
+  isBusy?: (id: string) => boolean;
 }
 
 const ROW_HEIGHT = 44;
@@ -99,12 +108,14 @@ export function TitleSheet({
   rows,
   topic,
   onRetry,
+  retrying = false,
   loading,
   error,
   sessions,
   topics,
   onPick,
   onWindowAction,
+  isRowBusy = () => false,
   tabs,
   onOpenTab,
 }: TitleSheetProps) {
@@ -152,7 +163,19 @@ export function TitleSheet({
                   {error}
                 </Text>
               ) : null}
-              {error !== undefined && onRetry ? <Button label={TRY_AGAIN} onPress={onRetry} modifiers={[accessibilityLabel(TRY_AGAIN)]} /> : null}
+              {error !== undefined && onRetry && retrying ? (
+                <HStack spacing={10}>
+                  <ProgressView />
+                  <Text modifiers={[foregroundColor(chrome.secondaryLabel)]}>{TRYING_AGAIN}</Text>
+                </HStack>
+              ) : null}
+              {error !== undefined && onRetry ? (
+                <Button
+                  label={TRY_AGAIN}
+                  onPress={onRetry}
+                  modifiers={[disabled(retrying), accessibilityLabel(retrying ? `${TRY_AGAIN}, in progress` : TRY_AGAIN)]}
+                />
+              ) : null}
               {selectedTab === 'sessions' && <>
                 {sessions.loading && sessions.cards.length === 0 ? <SheetNote palette={palette}>Reading…</SheetNote> : null}
                 {!sessions.loading && sessions.cards.length === 0 && error === undefined ? <SheetNote palette={palette}>No Sessions</SheetNote> : null}
@@ -172,6 +195,7 @@ export function TitleSheet({
                     {section.title ? <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundColor(palette.secondary), padding({ vertical: 8 })]}>{section.title}</Text> : null}
                     {section.rows.map((row, index) => <HStack key={rowKey(row, index)} modifiers={[frame({ minHeight: 56 })]}>
                       <HostScreenRowView row={row} palette={topics.palette} actions={{
+                        isBusy: topics.isBusy,
                         onOpenTopic: topics.onOpenTopic,
                         onRetry: topics.onRetry,
                         onOpenSession: () => {},
@@ -204,6 +228,7 @@ export function TitleSheet({
                             row={row}
                             palette={palette}
                             chrome={chrome}
+                            busy={isRowBusy({ session: null, window: row.index }, row.id)}
                             onPress={() => onPick({ session: null, window: row.index })}
                             onAction={onWindowAction}
                           />
@@ -213,11 +238,11 @@ export function TitleSheet({
                               onPress={() => onPick({ session: row.name, window: null })}
                               modifiers={[buttonStyle('plain'), accessibilityLabel(`Session ${row.name}`)]}>
                               <HStack spacing={10} modifiers={[frame({ maxWidth: Infinity, height: ROW_HEIGHT }), TAPPABLE_ROW]}>
-                                <Image
+                                {isRowBusy({ session: row.name, window: null }) ? <ProgressView /> : <Image
                                   systemName="terminal"
                                   size={17}
                                   color={row.current ? palette.accent : palette.secondary}
-                                />
+                                />}
                                 <Text
                                   modifiers={[
                                     font({ size: 17, weight: 'semibold' }),
@@ -235,6 +260,7 @@ export function TitleSheet({
                                 palette={palette}
                                 chrome={chrome}
                                 indented
+                                busy={isRowBusy({ session: row.name, window: window.index }, window.id)}
                                 onPress={() => onPick({ session: row.name, window: window.index })}
                                 onAction={onWindowAction}
                               />
@@ -276,11 +302,14 @@ function WindowRow({
   indented,
   onPress,
   onAction,
+  busy = false,
 }: {
   row: TitleWindowRow;
   palette: SheetPalette;
   chrome: Appearance;
   indented?: boolean;
+  /** Its pick or a Window Action on it runs. */
+  busy?: boolean;
   onPress: () => void;
   /** Rename Window… and Close Window… in its long-press menu. No menu when undefined. */
   onAction?: (row: TitleWindowRow, action: WindowAction) => void;
@@ -317,7 +346,7 @@ function WindowRow({
           </Text>
         )}
         <Spacer />
-        {row.mark === null ? null : <MarkImage mark={row.mark} palette={chrome} />}
+        {busy ? <ProgressView /> : row.mark === null ? null : <MarkImage mark={row.mark} palette={chrome} />}
       </HStack>
     </Button>
   );

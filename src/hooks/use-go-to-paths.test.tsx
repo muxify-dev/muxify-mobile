@@ -21,7 +21,7 @@ const row = (name: string): SessionPathRow => ({
 });
 /** The `ok` of a `session_paths`: these rows, in the order the Host ranked them. */
 const listed = (...names: string[]) => sessionPathRowsJson(names.map(row));
-const shown = () => ({ query: paths.paths.query, names: paths.paths.rows.map((each) => each.name) });
+const shown = () => ({ query: paths.dataKey ?? '', names: (paths.data ?? []).map((each) => each.name) });
 
 let renderer: ReactTestRenderer;
 let paths: ReturnType<typeof useGoToPaths>;
@@ -65,11 +65,11 @@ it('shows the list the phone kept before the Host answers, and then the answer o
   await act(async () => { paths.ask(''); });
 
   expect(shown()).toEqual({ query: '', names: ['kept'] });
-  expect(paths.reading).toEqual({ kind: 'reading' });
+  expect(paths.isPending).toBe(true);
 
   await act(async () => { answer(listed('fresh', 'kept')); });
   expect(shown()).toEqual({ query: '', names: ['fresh', 'kept'] });
-  expect(paths.reading).toEqual({ kind: 'idle' });
+  expect(paths.isPending).toBe(false);
   expect(mockSave).toHaveBeenCalledWith('host', [row('fresh'), row('kept')]);
 });
 
@@ -80,12 +80,12 @@ it('does not move the rows under the finger: a new answer for an empty field wai
   await act(async () => { paths.ask(''); });
 
   expect(shown().names).toEqual(['kept']);
-  expect(paths.reading).toEqual({ kind: 'waiting' });
+  expect(paths.held?.data.map((each) => each.name)).toEqual(['fresh', 'kept']);
   expect(mockSave).toHaveBeenCalled();
 
   await setStill(false);
   expect(shown().names).toEqual(['fresh', 'kept']);
-  expect(paths.reading).toEqual({ kind: 'idle' });
+  expect(paths.held).toBeNull();
 });
 
 it('shows the first answer at once when the phone kept no list', async () => {
@@ -129,7 +129,7 @@ it('keeps the rows on show and says why when the Host cannot be read', async () 
   await act(async () => { paths.ask(''); });
 
   expect(shown().names).toEqual(['kept']);
-  expect(paths.reading).toEqual({ kind: 'failed', error: 'no Config' });
+  expect(paths).toMatchObject({ isPending: false, error: { key: '', reason: 'no Config' } });
 });
 
 it('asks nothing of a Host CLI that has no Go to', async () => {
