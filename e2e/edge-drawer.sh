@@ -18,9 +18,8 @@
 #      active Pane on the Terminal Screen, and the Tab again after the round
 #      trip (ADR 0038)
 #
-# A slide is `agent-device gesture drag` from the Grip, held past its
-# 400 ms, to the row. The row shows only once the drawer opens, so this
-# needs agent-device to find the destination after the hold. The Lift Lane,
+# A slide is a slow drag from the Grip to the row, at the place the drawer
+# writes to the app's log: see slide_to. The Lift Lane,
 # the Cancel Zone and the automatic scroll are tried on a device. The drawer
 # closes at each lift, so its mark is read from the app's log, where it
 # writes the row it marks each time that changes while it is open.
@@ -59,7 +58,8 @@ attach() {
 }
 
 # The active Window's index and its active Pane's, as `window.pane`.
-now() { on_host "tmux display-message -p -t '$SESSION' '#{window_index}.#{pane_index}'"; }
+# `$SESSION:` and not `$SESSION`: tmux reads a bare `0` as Pane 0 of the current Window.
+now() { on_host "tmux display-message -p -t '$SESSION:' '#{window_index}.#{pane_index}'"; }
 expect_now() { [ "$(now)" = "$1" ] || fail "$2: tmux is at '$(now)', not '$1'"; }
 
 # The Grip's centre on screen, as `x y`, from the accessibility tree.
@@ -67,7 +67,8 @@ grip_centre() {
   agent-device snapshot --json 2>/dev/null | python3 -c "
 import json, sys
 for n in json.load(sys.stdin)['data']['nodes']:
-    if n.get('label') == 'Destinations' and n.get('role', '').lower().find('button') >= 0:
+    # The label alone: the JSON gives the native view's class as its role, not button.
+    if n.get('label') == 'Destinations':
         r = n.get('rect') or n.get('frame') or {}
         print(int(r['x'] + r['width'] / 2), int(r['y'] + r['height'] / 2)); break
 "
@@ -92,13 +93,57 @@ expect_mark() {
 # switch that is the black screen: a reply paired with the wrong command.
 no_windows() { grep -rhF '"text":"no Windows"' "$DATA/muxify-logs" 2>/dev/null | wc -l | tr -d ' '; }
 
-# The drawer's header says SESSION only while it is open: the sandbox's Session is in no Topic.
-drawer_open() { agent-device is exists 'text="SESSION"' >/dev/null 2>&1; }
+# On a phone the open drawer lies on a scrim, which closes it on a tap. A
+# `text=` selector would not do: it ignores case, so SESSION matches the
+# Session title of the navigation bar.
+drawer_open() { agent-device is exists 'label="Close Destinations"' >/dev/null 2>&1; }
+# How many times the app's log says where the drawer's rows are.
+picks() { grep -rhF ' in the Edge Drawer"' "$DATA/muxify-logs" 2>/dev/null | grep -cF '"text":"picked ' | tr -d ' '; }
+rows_said() { grep -rhF 'the Edge Drawer shows ' "$DATA/muxify-logs" 2>/dev/null | wc -l | tr -d ' '; }
+# Where the finger last opened the drawer, as `x y`.
+opened_at() {
+  grep -rhF '"the Edge Drawer opened at ' "$DATA/muxify-logs" 2>/dev/null | tail -1 \
+    | sed -E 's/.* at ([0-9]+),([0-9]+)".*/\1 \2/'
+}
+# Where the drawer last said it put the row with the label $1, as `x y`.
+row_at() {
+  grep -rhF "\"the Edge Drawer shows $1 at " "$DATA/muxify-logs" 2>/dev/null | tail -1 \
+    | sed -E 's/.* at ([0-9]+),([0-9]+)".*/\1 \2/'
+}
 # Holds the Grip past its 400 ms, slides onto the row with the label, and lifts there.
+#
+# The row shows only once the drawer opens, and agent-device finds a drag's
+# end before its hold, so the slide is in two parts. A hold and a lift on the
+# Grip, which picks nothing, makes the drawer write where it opened and where
+# its rows are. Then one slow drag from that place to the row: 30 points a
+# second keeps the finger inside the Grip's 20 points for its 400 ms, so it
+# is a hold, and the drawer opens where it did before.
 slide_to() {
-  agent-device gesture drag 'role=button label="Destinations"' "label=\"$1\"" 700 400 150 >/dev/null 2>&1 \
+  local gx gy x y before i ms
+  before=$(rows_said)
+  agent-device longpress 'role=button label="Destinations"' 1200 >/dev/null 2>&1
+  for i in $(seq 1 10); do
+    [ "$(rows_said)" -gt "$before" ] && break
+    sleep 0.5
+  done
+  read -r gx gy <<<"$(opened_at)"
+  read -r x y <<<"$(row_at "$1")"
+  [ -n "${x:-}" ] || fail "$2: the drawer has no row '$1'"
+  # The drawer of that hold slides out after the lift. Over its scrim the
+  # finger would close it, not hold the Grip.
+  agent-device wait absent 'label="Close Destinations"' 3000 >/dev/null 2>&1
+  sleep 0.5
+  before=$(picks)
+  ms=$(python3 -c "import math; print(max(1500, int(math.hypot($x - $gx, $y - $gy) / 30 * 1000)))")
+  agent-device gesture pan "$gx" "$gy" "$((x - gx))" "$((y - gy))" "$ms" >/dev/null 2>&1 \
     || fail "$2: no slide from the Grip onto '$1'"
-  sleep 2
+  # agent-device can answer before a long drag ends: the pick says it did.
+  for i in $(seq 1 30); do
+    [ "$(picks)" -gt "$before" ] && break
+    sleep 0.5
+  done
+  [ "$(picks)" -gt "$before" ] || fail "$2: the slide onto '$1' picked nothing"
+  sleep 1.5
 }
 
 SHELL_COMMAND="env PS1='\$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --noprofile --norc"
@@ -108,7 +153,7 @@ on_host "tmux split-window -h -t '$SESSION:0.0' \"$SHELL_COMMAND\"; \
 [ "$(on_host "tmux display-message -p -t '$SESSION:0' '#{window_panes}'")" = 2 ] || fail "Window 0 did not get its two Panes"
 stored-tabs "$SESSION:1" 0 "$TAB_URL" || fail "could not store the Tab of Window 1"
 LOGS_WINDOW=$(on_host "tmux display-message -p -t '$SESSION:1' '#{window_id}'")
-DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)
+DATA=$(xcrun simctl get_app_container "${MUXIFY_E2E_DEVICE:-booted}" "$APP" data)/Documents
 
 echo "1/7  a hold on the Grip and a lift there closes the drawer and picks nothing"
 attach

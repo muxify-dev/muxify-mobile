@@ -12,6 +12,8 @@ import { directoryName } from '@/lib/paths';
 import {
   autoScrollSpeed, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
 } from '@/navigation/grip';
+import { deviceLog } from '@/diagnostics/device-log';
+import { speakingAs } from '@/diagnostics/log';
 import { useSettings } from '@/settings/settings-context';
 
 import { markSymbol } from './topic-marks';
@@ -192,12 +194,36 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
   }, [frame, light, stopScrolling]);
   useEffect(() => stopScrolling, [stopScrolling]);
 
+  /**
+   * Where the finger opened the drawer and where each row is on screen, in
+   * the Log. The rows show only once a finger holds the Grip, so a driver
+   * that must slide onto one cannot ask the screen first: it holds once,
+   * reads this, and slides from the same place.
+   */
+  const latestRows = useRef(rows);
+  useEffect(() => { latestRows.current = rows; }, [rows]);
+  const sayWhereRowsAre = useCallback((at: Point) => {
+    const panel = frame();
+    if (!panel) return;
+    say(`the Edge Drawer opened at ${Math.round(at.x)},${Math.round(at.y)}`);
+    const { listTop, scrollY } = measured.current;
+    const x = Math.round((panel.left + panel.right - panel.lane) / 2);
+    for (const row of latestRows.current) {
+      const place = measured.current.rows.get(row.key);
+      const label = drawnLabel(row);
+      if (!place || label === null) continue;
+      const y = Math.round(panel.top + listTop + (place.top + place.bottom) / 2 - scrollY);
+      say(`the Edge Drawer shows ${label} at ${x},${y}`);
+    }
+  }, [frame]);
+
   const grip = {
     onHold: (at: Point) => {
       heldAt.current = at;
       finger.current = at;
       setHold({ lit: null, cancelling: false });
       opening(at);
+      setTimeout(() => { if (heldAt.current === at) sayWhereRowsAre(at); }, LAID_OUT_MS);
     },
     onHeldMove: (to: Point) => {
       finger.current = to;
@@ -453,6 +479,13 @@ function MarkSymbol({ symbol, color }: { symbol: SFSymbol; color: string }) {
   return <SymbolView name={symbol} size={15} tintColor={color} />;
 }
 
+/** The accessibility label a row is drawn with, or null for a row the drawer does not draw. */
+function drawnLabel(row: DestinationRow): string | null {
+  if (row.kind === 'topic') return null;
+  if (row.kind === 'session') return `Session ${row.name}`;
+  return rowParts(row).label;
+}
+
 /** What a row says: its name, a second line, its symbol and its indent under its Window. */
 function rowParts(row: Extract<DrawerItem, { kind: 'row' }>['row']): {
   name: string; detail?: string; icon: SFSymbol; indent: number; label: string;
@@ -480,6 +513,10 @@ function drawerWidth(screen: number): number {
 
 /** How far the floating panel sits in from the screen's edges. */
 const PANEL_MARGIN = 8;
+/** How long after a hold the drawer has laid out, and says where its rows are. */
+const LAID_OUT_MS = 300;
+
+const say = speakingAs(deviceLog(), 'screen');
 const SCRIM = 'rgba(0, 0, 0, 0.35)';
 const CANCEL_TINT = 'rgba(160, 30, 30, 0.45)';
 
