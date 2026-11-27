@@ -1,5 +1,5 @@
 import {
-  AUTOSCROLL_EDGE, AUTOSCROLL_MAX, autoScrollSpeed, DRAWER_ROW_REACH, drawerBottom, endGrip, FAN_DEAD_RADIUS, FAN_RADIUS, fanSlotCentre, GRIP_BAND, gripCentre, GRIP_HOLD_MS,
+  AUTOSCROLL_EDGE, AUTOSCROLL_MAX, autoScrollSpeed, DRAWER_ROW_REACH, drawerBottom, endGrip, FAN_DEAD_RADIUS, FAN_RADIUS, FAN_SLOT_SIZE, fanSlotCentre, GRIP_BUTTON, gripCentre, GRIP_HOLD_MS,
   gripShown, GRIP_SLOP, holdGrip, liftGrip, lightsSlot, moveGrip, slotAt, type ActionSlot, type DrawerFrame, type FanSlot, type GripTouch, type Point,
 } from './grip';
 
@@ -166,7 +166,7 @@ describe('liftGrip', () => {
     expect(liftGrip({ x: 200, y: 220 }, drawer, rowAt)).toEqual({ kind: 'pick', key: 'window:gs-client:@7' });
   });
 
-  it('closes the drawer when the finger lifts on the Grip, where it opened', () => {
+  it('closes the drawer when the finger lifts where it lit Destinations, in the Lift Lane', () => {
     expect(liftGrip({ x: 395, y: 660 }, drawer, rowAt)).toEqual({ kind: 'close' });
   });
 
@@ -224,7 +224,11 @@ describe('gripCentre', () => {
 
   it('puts the Grip three quarters down an iPad, inside an area that ends above that', () => {
     expect(gripCentre({ top: 70, bottom: 1300 }, 1366, true)).toBe(1366 * 0.75);
-    expect(gripCentre({ top: 70, bottom: 700 }, 1366, true)).toBe(700 - GRIP_BAND.height / 2);
+    expect(gripCentre({ top: 70, bottom: 700 }, 1366, true)).toBe(700 - GRIP_BUTTON.target / 2);
+  });
+
+  it('keeps the highest slot of the Fan inside an area that starts below the Header', () => {
+    expect(gripCentre({ top: 400, bottom: 800 }, 874, false)).toBe(400 + FAN_RADIUS + FAN_SLOT_SIZE / 2);
   });
 });
 

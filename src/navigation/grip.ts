@@ -12,14 +12,16 @@
  * gesture: the Pane Swipe on the Terminal Screen. See ADR 0042.
  */
 
-/** The band at the right edge that takes the touch: wider than the line, so a thumb finds it. */
-export const GRIP_BAND = { width: 28, height: 110 };
-
-/** The glass line the user sees, in the band's middle. */
-export const GRIP_LINE = { width: 6, height: 48 };
+/**
+ * The button: `drawn` points wide and round, `inset` points from the right
+ * edge to its centre. The touch lands in a square `target` points wide round
+ * it, because React Native cannot hit-test a circle, so a thumb finds it
+ * without a look and the button takes fewer touches than a band down the edge.
+ */
+export const GRIP_BUTTON = { drawn: 36, target: 44, inset: 22 };
 
 /**
- * How far down the screen the band's centre is. On a phone the middle,
+ * How far down the screen the button's centre is. On a phone the middle,
  * where the thumb rests, and just above where the keyboard comes, so the
  * Grip is in one place with the keyboard up or down. On an iPad three
  * quarters, where a thumb reaches it.
@@ -29,12 +31,13 @@ export function gripHeight(wide: boolean): number {
 }
 
 /**
- * Where the band's centre is in an area that spans `top` to `bottom` on a
- * screen `screen` high, kept inside the area.
+ * Where the button's centre is in an area that spans `top` to `bottom` on a
+ * screen `screen` high: kept inside the area, and low enough that the Fan's
+ * highest slot is inside it too, as the Fan opens up.
  */
 export function gripCentre(area: { top: number; bottom: number }, screen: number, wide: boolean): number {
-  const half = GRIP_BAND.height / 2;
-  return Math.min(Math.max(screen * gripHeight(wide), area.top + half), area.bottom - half);
+  const above = FAN_RADIUS + FAN_SLOT_SIZE / 2;
+  return Math.min(Math.max(screen * gripHeight(wide), area.top + above), area.bottom - GRIP_BUTTON.target / 2);
 }
 
 /**
@@ -204,15 +207,15 @@ export interface DrawerFrame {
 }
 
 /**
- * The width of the Lift Lane: the panel's right strip, past the Grip's
- * band, so the finger that opened the drawer starts in it. The rows stop
- * left of it. A held finger can move up and down in it, and a lift there
- * closes the drawer with no pick.
+ * The width of the Lift Lane: the panel's right strip. A finger lights
+ * Destinations straight above the button, so it starts in the lane. The rows
+ * stop left of it. A held finger can move up and down in it, and a lift
+ * there closes the drawer with no pick.
  */
 export const LIFT_LANE = 44;
 
 /**
- * How far below the finger that opened the drawer the panel ends: the
+ * How far below the finger that lit Destinations the panel ends: the
  * list's bottom padding (10) and half a row's least height (24), so the
  * last row is level with the finger and a slide left from the Lift Lane
  * lands on it. It follows those two sizes in components/edge-drawer.tsx.
@@ -221,7 +224,7 @@ export const DRAWER_ROW_REACH = 34;
 
 /**
  * Where the drawer's panel ends on screen, as a y: just below `anchorY`,
- * where the finger held the Grip, but never below `floorY`, the top of the
+ * where the finger lit Destinations, but never below `floorY`, the top of the
  * keyboard or of the home indicator. The panel grows up from there.
  */
 export function drawerBottom(anchorY: number, floorY: number): number {
@@ -237,8 +240,8 @@ export function inLiftLane(point: Point, drawer: DrawerFrame): boolean {
  * What lifting a held finger at `to` does. The drawer closes on each lift.
  *
  * - `pick`: it lifted on a row in the list, whose key `rowAt` gives.
- * - `close`: it lifted anywhere else: on the Grip or in the Lift Lane, on
- *   the header or on no row, or in the Cancel Zone. Nothing is picked.
+ * - `close`: it lifted anywhere else: in the Lift Lane, on the header or on
+ *   no row, or in the Cancel Zone. Nothing is picked.
  */
 export type GripLift = { kind: 'close' } | { kind: 'pick'; key: string };
 
