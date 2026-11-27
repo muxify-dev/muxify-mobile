@@ -29,6 +29,69 @@ import type { Op, Verb } from './verb-guard';
 export type TmuxArgv = string[];
 
 /**
+ * The text a read puts at the front of its format. tmux prints a format's
+ * literal text as it is, so the tag starts every line of the read's answer.
+ */
+export type ReadTag = string & { readonly __brand: 'ReadTag' };
+
+/**
+ * A command that reads a format: each line of its answer starts with its tag.
+ *
+ * The Control Connection pairs a reply block with a command by order. A block
+ * that answers no command, or a command that gets two, puts every later reply
+ * one out of step. A write cannot tell, because each one answers with no
+ * lines. A read can: a block without its tag is not its answer, and the read
+ * waits for the next one. So a shift stops at the first read after it.
+ *
+ * Every read prints at least one line, so its true answer always carries the
+ * tag. Each builder says why its read cannot be empty.
+ */
+export interface TmuxRead {
+  readonly argv: TmuxArgv;
+  readonly tag: ReadTag;
+}
+
+/** What a runner takes: a read, or any other command. */
+export type TmuxCommand = TmuxArgv | TmuxRead;
+
+/** A reply as far as these functions read one. */
+interface ReplyText {
+  readonly ok: boolean;
+  readonly text: readonly string[];
+}
+
+/**
+ * A read of one format. Names are short, because a list repeats the tag on
+ * every line, and plain ASCII, because a client that is not UTF-8 gets `_`
+ * for anything else. tmux expands nothing outside `#{…}`.
+ */
+function read(name: string, argv: TmuxArgv, format: string): TmuxRead {
+  const tag = `<${name}>` as ReadTag;
+  return { argv: [...argv, `${tag}${format}`], tag };
+}
+
+export function argvOf(command: TmuxCommand): TmuxArgv {
+  return Array.isArray(command) ? command : command.argv;
+}
+
+/**
+ * Whether a reply block is the answer to this command.
+ *
+ * Only a read can tell: any other command takes the block it gets. An
+ * `%error` is a read's answer too, because tmux refused the read itself and
+ * prints no format.
+ */
+export function isAnswerTo(command: TmuxCommand, reply: ReplyText): boolean {
+  if (Array.isArray(command) || !reply.ok) return true;
+  return reply.text.length > 0 && reply.text.every((line) => line.startsWith(command.tag));
+}
+
+/** The lines of a read's answer, each without its tag. A line without the tag is no part of it. */
+export function readLines(read: TmuxRead, reply: Pick<ReplyText, 'text'>): string[] {
+  return reply.text.flatMap((line) => (line.startsWith(read.tag) ? [line.slice(read.tag.length)] : []));
+}
+
+/**
  * Wraps a value in single quotes so a shell treats it as one literal argument.
  *
  * Session names come from the remote machine and Host paths come from user
@@ -150,13 +213,13 @@ export function controlAttachCommand(sessionName: string, tmuxExecutablePath?: s
  *
  * A Host with no tmux server running fails here; that is an empty Session
  * list, not a failure, and the caller must treat it as such.
+ *
+ * Down the Control Connection the answer is never empty: the phone is
+ * attached to a Session. On an exec channel it can be, and there no block
+ * is paired by order, so nothing waits for the tag.
  */
-export function listSessionsCommand(): TmuxArgv {
-  return [
-    'list-sessions',
-    '-F',
-    '#{session_name}\t#{session_windows}',
-  ];
+export function listSessionsCommand(): TmuxRead {
+  return read('sessions', ['list-sessions', '-F'], '#{session_name}\t#{session_windows}');
 }
 
 /**
@@ -206,16 +269,17 @@ function currentPaneTarget(sessionName: string): string {
  * same reason: it is the one field that may contain a tab, and splitFields
  * rejoins the overflow into that position. Tab is the separator because a name
  * may contain spaces and colons but rarely a tab.
+ *
+ * A Session has at least one Window, and a Session that is gone is an
+ * `%error`, so the answer is never empty.
  */
-export function listWindowsCommand(sessionName: string): TmuxArgv {
-  return [
-    'list-windows',
-    '-t',
-    sessionName,
-    '-F',
+export function listWindowsCommand(sessionName: string): TmuxRead {
+  return read(
+    'windows',
+    ['list-windows', '-t', sessionName, '-F'],
     '#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}' +
       '\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}',
-  ];
+  );
 }
 
 /**
@@ -227,16 +291,17 @@ export function listWindowsCommand(sessionName: string): TmuxArgv {
  * one. `#{window_layout}` describes the arrangement zoom is hiding; it repeats
  * on every line, which is the price of reading it without a second round trip.
  * See parseWindowLayout.
+ *
+ * A Window has at least one Pane, and a Window that is gone is an `%error`,
+ * so the answer is never empty.
  */
-export function listPanesCommand(sessionName: string, windowIndex: number): TmuxArgv {
-  return [
-    'list-panes',
-    '-t',
-    windowTarget(sessionName, windowIndex),
-    '-F',
+export function listPanesCommand(sessionName: string, windowIndex: number): TmuxRead {
+  return read(
+    'panes',
+    ['list-panes', '-t', windowTarget(sessionName, windowIndex), '-F'],
     '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}' +
       '\t#{pane_current_path}\t#{window_layout}',
-  ];
+  );
 }
 
 /** Moves the Client to another Window. */
@@ -342,22 +407,31 @@ function oscColour(hex: string): string {
   return `rgb:${channels.map((channel) => channel + channel).join('/')}`;
 }
 
-/** Every Pane of a Session, in every Window: the Panes to report colours to. */
-export function listSessionPanesCommand(sessionName: string): TmuxArgv {
-  return ['list-panes', '-s', '-t', currentPaneTarget(sessionName), '-F', '#{pane_id}'];
+/**
+ * Every Pane of a Session, in every Window: the Panes to report colours to.
+ * A Session has at least one Pane, so the answer is never empty.
+ */
+export function listSessionPanesCommand(sessionName: string): TmuxRead {
+  return read('session-panes', ['list-panes', '-s', '-t', currentPaneTarget(sessionName), '-F'], '#{pane_id}');
 }
 
-/** The name tmux gives the Client that runs it: the phone's own. */
-export function ownClientNameCommand(): TmuxArgv {
-  return ['display-message', '-p', '#{client_name}'];
+/** The name tmux gives the Client that runs it: the phone's own. One line. */
+export function ownClientNameCommand(): TmuxRead {
+  return read('client', ['display-message', '-p'], '#{client_name}');
 }
 
 /**
  * Every Client on the server: its name, whether it is a control Client, and
- * its flags, among them `ignore-size` for a Listener.
+ * its flags, among them `ignore-size` for a Listener. The phone that asks is
+ * one of them, so the answer is never empty.
  */
-export function listClientsCommand(): TmuxArgv {
-  return ['list-clients', '-F', '#{client_name}\t#{client_control_mode}\t#{client_flags}'];
+export function listClientsCommand(): TmuxRead {
+  return read('clients', ['list-clients', '-F'], '#{client_name}\t#{client_control_mode}\t#{client_flags}');
+}
+
+/** The version of the Host's tmux and its server's pid. One line. */
+export function hostCommand(): TmuxRead {
+  return read('host', ['display-message', '-p'], '#{version} #{pid}');
 }
 
 /**
@@ -438,19 +512,13 @@ export function inputOption(token: OutboxToken): string {
  *
  * Measured on tmux 3.2a and 3.8: for a Pane that is gone this does not fail.
  * It prints the server's pid and leaves the Pane's fields empty. On 3.0a it
- * fails with `can't find pane`.
+ * fails with `can't find pane`. So the answer is one line or an `%error`.
  */
-export function paneMarkCommand(paneId: string, option: string): TmuxArgv {
-  return [
-    'display-message',
-    '-p',
-    '-t',
-    paneId,
-    `#{${option}}:#{pid}:#{pane_pid}:#{pane_current_command}`,
-  ];
+export function paneMarkCommand(paneId: string, option: string): TmuxRead {
+  return read('mark', ['display-message', '-p', '-t', paneId], `#{${option}}:#{pid}:#{pane_pid}:#{pane_current_command}`);
 }
 
-/** The reply of paneMarkCommand. Null when it is not a mark at all. */
+/** The line of paneMarkCommand's answer, without its tag. Null when it is not a mark at all. */
 export function parsePaneMark(line: string | undefined): Omit<PaneMark, 'refusesCopies'> | 'gone' | null {
   const [ack, serverPid, panePid, ...program] = (line ?? '').split(':');
   if (program.length === 0 || !/^\d+$/.test(serverPid)) return null;
@@ -558,7 +626,7 @@ export function deliverCommands(
 ): TmuxArgv[] {
   const send = typingCommands(paneId, typing);
   const record = ['set-option', '-p', '-t', paneId, option, String(seq)];
-  const mark = paneMarkCommand(paneId, option);
+  const mark = paneMarkCommand(paneId, option).argv;
   if (!guarded) return [...send, record, mark];
   const otherwise = 'buffer' in typing ? [renderControlCommand(['delete-buffer', '-b', typing.buffer])] : [];
   return [
@@ -628,10 +696,10 @@ export function captureSelectionCommands(
   paneId: string,
   startLine: number,
   endLine: number,
-): TmuxArgv[] {
+): [history: TmuxRead, painted: TmuxArgv, joined: TmuxArgv] {
   const range = ['-S', String(Math.floor(startLine)), '-E', String(Math.floor(endLine))];
   return [
-    ['display-message', '-p', '-t', paneId, '#{history_size}'],
+    read('history', ['display-message', '-p', '-t', paneId], '#{history_size}'),
     ['capture-pane', '-t', paneId, '-p', '-e', '-N', ...range],
     ['capture-pane', '-t', paneId, '-p', '-J', ...range],
   ];
@@ -648,16 +716,16 @@ export function captureSelectionCommands(
  * read nothing else, and tmux 3.6 dropped the `alternate-scroll` option that
  * used to do that translation. On the normal screen the gesture becomes a
  * `capture-pane` over the Scrollback instead. See ticket 06.
+ *
+ * One line, or an `%error` for a Pane that is gone.
  */
-export function paneStateCommand(paneId: string): TmuxArgv {
-  return [
-    'display-message',
-    '-p',
-    '-t',
-    paneId,
+export function paneStateCommand(paneId: string): TmuxRead {
+  return read(
+    'pane-state',
+    ['display-message', '-p', '-t', paneId],
     '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
       '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}\t#{bracket_paste_flag}',
-  ];
+  );
 }
 
 /**
@@ -749,22 +817,20 @@ export function verbOptions(token: OutboxToken): VerbOptions {
 }
 
 /**
- * Reads a Session's Op after its id, so a reply that is not this read shows,
- * and the server's pid, so a read of a server that started again shows. Then
- * the Pane that Op made, and the Pane that is active now.
+ * Reads the server's pid, so a read of a server that started again shows,
+ * then a Session's Op, the Pane that Op made, and the Pane that is active
+ * now. One line, or an `%error` for a Session that is gone.
  */
-export function sessionOpCommand(sessionName: string, options: VerbOptions): TmuxArgv {
-  return [
-    'display-message',
-    '-p',
-    '-t',
-    currentPaneTarget(sessionName),
-    `#{session_id}:#{pid}:#{${options.op}}:#{${options.pane}}:#{pane_id}`,
-  ];
+export function sessionOpCommand(sessionName: string, options: VerbOptions): TmuxRead {
+  return read(
+    'op',
+    ['display-message', '-p', '-t', currentPaneTarget(sessionName)],
+    `#{pid}:#{${options.op}}:#{${options.pane}}:#{pane_id}`,
+  );
 }
 
 /**
- * The reply of sessionOpCommand: the Session's Op, 0 for none. Null when it is not that read.
+ * The line of sessionOpCommand's answer, without its tag: the Session's Op, 0 for none. Null when it is not that read.
  *
  * `madePane` is the Pane the Op made, as the guarded line recorded it, and
  * `activePane` the one active now, which is the made Pane only right after
@@ -773,9 +839,9 @@ export function sessionOpCommand(sessionName: string, options: VerbOptions): Tmu
 export function parseSessionOp(
   line: string | undefined,
 ): { held: number; serverPid: number; madePane: string | null; activePane: string | null } | null {
-  const read = /^\$\d+:(\d+):(\d*):(%\d+)?:(%\d+)?$/.exec(line ?? '');
-  return read
-    ? { held: Number(read[2] || 0), serverPid: Number(read[1]), madePane: read[3] ?? null, activePane: read[4] ?? null }
+  const fields = /^(\d+):(\d*):(%\d+)?:(%\d+)?$/.exec(line ?? '');
+  return fields
+    ? { held: Number(fields[2] || 0), serverPid: Number(fields[1]), madePane: fields[3] ?? null, activePane: fields[4] ?? null }
     : null;
 }
 
@@ -794,8 +860,8 @@ export function verbCommands(sessionName: string, verb: Verb, op: Op, options: V
   const run = verb.kind === 'split' ? splitWindowCommand(sessionName, verb.direction) : newWindowCommand(sessionName);
   const record = ['set-option', '-t', target, options.op, String(op)];
   const recordPane = ['set-option', '-F', '-t', target, options.pane, '#{pane_id}'];
-  const read = sessionOpCommand(sessionName, options);
-  if (!guarded) return [run, record, read];
+  const readOp = sessionOpCommand(sessionName, options).argv;
+  if (!guarded) return [run, record, readOp];
   return [
     [
       'if-shell',
@@ -805,6 +871,6 @@ export function verbCommands(sessionName: string, verb: Verb, op: Op, options: V
       optionBelow(options.op, op),
       [run, record, recordPane].map(renderControlCommand).join(' ; '),
     ],
-    read,
+    readOp,
   ];
 }

@@ -21,8 +21,16 @@ import { bytesToUtf8 } from '@/lib/utf8';
 
 /** What the parser makes of the stream. */
 export type ControlEvent =
-  /** A command's reply, complete. `ok` is false when tmux answered `%error`. */
-  | { kind: 'reply'; id: number; ok: boolean; lines: Uint8Array[] }
+  /**
+   * A reply block, complete. `ok` is false when tmux answered `%error`.
+   *
+   * `mine` is false when tmux wrote the block for itself: the attach, or a
+   * hook that ran in this client's queue, such as a foreground `run-shell` on
+   * `after-select-pane`. Such a block answers no line the phone wrote. tmux
+   * 3.8 writes flags 1 only for a command from the control client's own line
+   * (`cmd-queue.c:594`). A `%begin` with no flags field counts as the phone's.
+   */
+  | { kind: 'reply'; id: number; ok: boolean; mine: boolean; lines: Uint8Array[] }
   /** Bytes a Pane wrote. The only event on the hot path. */
   | { kind: 'output'; pane: string; bytes: Uint8Array }
   | { kind: 'layout-change'; window: string; layout: string; visibleLayout: string; flags: string }
@@ -80,7 +88,7 @@ export function createControlParser(): ControlParser {
   /** Bytes of a line that has not ended yet. */
   let partial: number[] = [];
   /** The command whose reply is being collected, if one is open. */
-  let block: { id: number; lines: Uint8Array[] } | null = null;
+  let block: { id: number; mine: boolean; lines: Uint8Array[] } | null = null;
 
   function readLine(line: Uint8Array, events: ControlEvent[]): void {
     if (block) {
@@ -90,7 +98,7 @@ export function createControlParser(): ControlParser {
       // stream.
       const closing = closes(line, block.id);
       if (closing) {
-        events.push({ kind: 'reply', id: block.id, ok: closing === 'end', lines: block.lines });
+        events.push({ kind: 'reply', id: block.id, ok: closing === 'end', mine: block.mine, lines: block.lines });
         block = null;
         return;
       }
@@ -124,8 +132,8 @@ export function createControlParser(): ControlParser {
     const rest = space < 0 ? '' : bytesToUtf8(line.subarray(space + 1));
 
     if (name === '%begin') {
-      const id = commandId(rest);
-      if (id !== undefined) block = { id, lines: [] };
+      const head = blockHead(rest);
+      if (head) block = { id: head.id, mine: head.flags !== '0', lines: [] };
       return;
     }
 
@@ -168,15 +176,19 @@ function closes(line: Uint8Array, id: number): 'end' | 'error' | null {
   const kind = text.startsWith('%end ') ? 'end' : text.startsWith('%error ') ? 'error' : null;
   if (!kind) return null;
   const rest = text.slice(kind === 'end' ? '%end '.length : '%error '.length);
-  return commandId(rest) === id ? kind : null;
+  return blockHead(rest)?.id === id ? kind : null;
 }
 
-/** The id out of a `%begin`/`%end`/`%error` tail: `<time> <id> <flags>`. */
-function commandId(rest: string): number | undefined {
+/**
+ * The id and the flags out of a `%begin`/`%end`/`%error` tail:
+ * `<time> <id> <flags>`. The flags are absent from a tmux that does not write
+ * them.
+ */
+function blockHead(rest: string): { id: number; flags: string | undefined } | undefined {
   const fields = rest.split(' ');
   if (fields.length < 2) return undefined;
   const id = Number(fields[1]);
-  return Number.isInteger(id) ? id : undefined;
+  return Number.isInteger(id) ? { id, flags: fields[2] } : undefined;
 }
 
 function notification(name: string, rest: string): ControlEvent | null {

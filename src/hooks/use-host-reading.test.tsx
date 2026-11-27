@@ -17,7 +17,7 @@ const mockConnections: HostConnections = createHostConnections({
     if (mockDown) return Promise.reject(new Error('Connection refused (os error 61)'));
     return Promise.resolve({
       transport: {
-        exec: () => Promise.resolve({ stdout: 'work\t2\n', stderr: '', exitCode: 0 }),
+        exec: () => Promise.resolve({ stdout: '<sessions>work\t2\n', stderr: '', exitCode: 0 }),
         openControl: () => Promise.reject(new Error('not in these tests')),
       },
       fingerprint: 'SHA256:1',

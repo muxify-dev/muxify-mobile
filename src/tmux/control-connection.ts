@@ -3,10 +3,13 @@ import { systemClock, type Clock } from '@/lib/clock';
 import { bytesToUtf8 } from '@/lib/utf8';
 
 import {
+  argvOf,
   controlAttachCommand,
   describeCommand,
+  isAnswerTo,
   renderControlCommand,
   type TmuxArgv,
+  type TmuxCommand,
 } from './commands';
 import { createControlParser, type ControlEvent } from './control-protocol';
 import { TmuxError } from './tmux-error';
@@ -40,7 +43,7 @@ export interface CommandRunner {
    *
    * Rejects only when the channel itself is gone.
    */
-  run(argv: TmuxArgv): Promise<CommandReply>;
+  run(command: TmuxCommand): Promise<CommandReply>;
 
   /**
    * Runs several commands off one write, answered in order.
@@ -48,7 +51,7 @@ export interface CommandRunner {
    * One round trip rather than one each, which is the difference between a
    * picker that opens and a picker that loads.
    */
-  runAll(commands: TmuxArgv[]): Promise<CommandReply[]>;
+  runAll(commands: TmuxCommand[]): Promise<CommandReply[]>;
 
   /**
    * Runs several commands as one line, joined with ` ; `, and resolves with
@@ -141,7 +144,9 @@ interface Pending {
  * Commands are answered in the order they were written, which is what makes
  * correlation possible at all — tmux's `%begin` id groups a reply, but says
  * nothing about which command asked. So the connection keeps a queue and hands
- * each reply to the caller at its head.
+ * each reply to the caller at its head. A block whose flags say tmux wrote it
+ * for itself, such as a hook's, answers nothing in the queue and is dropped.
+ * A read also checks the tag at the front of its lines; see TmuxRead.
  *
  * The attach itself answers first, unprompted, before anything has been sent.
  * That reply is the readiness signal: until it lands, no command is written,
@@ -283,6 +288,14 @@ export async function openControlConnection(
         return;
       }
 
+      // A hook that ran in this client's queue: a foreground `run-shell` on
+      // `after-select-pane` writes one after every `select-pane`. It answers
+      // no command, so it must not take the head of the queue.
+      if (!event.mine) {
+        say(`← tmux's own block (${reply.lines.length} lines), dropped`);
+        return;
+      }
+
       // A reply nobody asked for is tmux talking to itself; dropping it is the
       // only safe thing, because handing it to the next command would put
       // every later reply one out of step.
@@ -305,15 +318,13 @@ export async function openControlConnection(
   }
 
   const connection: ControlConnection = {
-    run(argv: TmuxArgv): Promise<CommandReply> {
-      return runLines([renderControlCommand(argv)], [describeCommand(argv)]).then(
-        (replies) => replies[0],
-      );
+    run(command: TmuxCommand): Promise<CommandReply> {
+      return runLines([command]).then((replies) => replies[0]);
     },
 
-    runAll(commands: TmuxArgv[]): Promise<CommandReply[]> {
+    runAll(commands: TmuxCommand[]): Promise<CommandReply[]> {
       if (commands.length === 0) return Promise.resolve([]);
-      return runLines(commands.map(renderControlCommand), commands.map(describeCommand));
+      return runLines(commands);
     },
 
     runChain(commands: TmuxArgv[]): Promise<CommandReply[]> {
@@ -369,27 +380,34 @@ export async function openControlConnection(
   };
 
   /**
-   * Queues lines to be written together and resolves with their replies.
+   * Queues commands to be written together and resolves with their replies.
    *
    * Written in one go rather than one after another: tmux answers in the order
    * it read them, so a batch costs one round trip. Every line still gets its
    * own entry in the queue and its own reply, so a command that fails does not
    * take its neighbours with it.
    */
-  function runLines(lines: string[], described: string[]): Promise<CommandReply[]> {
+  function runLines(commands: TmuxCommand[]): Promise<CommandReply[]> {
     if (closed !== null) {
-      say(`refused ${described.join(', ')}: the Connection is closed`);
+      say(`refused ${commands.map((command) => describeCommand(argvOf(command))).join(', ')}: the Connection is closed`);
       return Promise.reject(new TmuxError(closed));
     }
 
-    const replies = lines.map(
-      (line, at) =>
+    const replies = commands.map(
+      (command) =>
         new Promise<CommandReply>((resolve, reject) => {
-          const what = described[at];
+          const argv = argvOf(command);
+          const what = describeCommand(argv);
           waiting.push({
-            line,
+            line: renderControlCommand(argv),
             what,
             take: (reply) => {
+              // A block out of step: it answers the command before this one,
+              // or none. This read's own block is still to come.
+              if (!isAnswerTo(command, reply)) {
+                say(`← ${what}: a block without its tag (${reply.lines.length} lines), skipped`);
+                return false;
+              }
               say(
                 reply.ok
                   ? `← ${what}: ok, ${reply.lines.length} lines`

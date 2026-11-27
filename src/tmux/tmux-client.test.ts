@@ -1,7 +1,8 @@
 import { bytesToUtf8 } from '@/lib/utf8';
 
-import { renderControlCommand, type OutboxToken, type TmuxArgv } from './commands';
+import { argvOf, renderControlCommand, type OutboxToken, type TmuxCommand } from './commands';
 import type { CommandReply, CommandRunner } from './control-connection';
+import { execCommandRunner } from './exec-runner';
 import type { Batch, Key, MessageId, Seq } from './input-lane';
 import { TmuxClient, TmuxError } from './tmux-client';
 
@@ -13,21 +14,27 @@ import { TmuxClient, TmuxError } from './tmux-client';
 function fakeTmux(answers: Record<string, string[] | { error: string[] }>) {
   const asked: string[] = [];
 
-  function reply(argv: TmuxArgv): CommandReply {
-    const line = renderControlCommand(argv);
+  function reply(command: TmuxCommand): CommandReply {
+    const line = renderControlCommand(argvOf(command));
     asked.push(line);
     const answer = answers[line];
     if (answer === undefined) return replyOf(false, [`no such command in this test: ${line}`]);
-    return Array.isArray(answer) ? replyOf(true, answer) : replyOf(false, answer.error);
+    return Array.isArray(answer) ? replyOf(true, printed(command, answer)) : replyOf(false, answer.error);
   }
 
   const runner: CommandRunner = {
-    run: (argv) => Promise.resolve(reply(argv)),
+    run: (command) => Promise.resolve(reply(command)),
     runAll: (commands) => Promise.resolve(commands.map(reply)),
     runChain: (commands) => Promise.resolve(commands.map(reply)),
   };
 
   return { runner, asked, client: new TmuxClient(runner) };
+}
+
+/** What tmux prints for a read: the literal text at the front of its format, then the fields. */
+function printed(command: TmuxCommand, fields: string[]): string[] {
+  const literal = Array.isArray(command) ? '' : (command.argv.at(-1) ?? '').split('#{')[0];
+  return fields.map((line) => `${literal}${line}`);
 }
 
 function replyOf(ok: boolean, text: string[]): CommandReply {
@@ -37,7 +44,7 @@ function replyOf(ok: boolean, text: string[]): CommandReply {
 const LIST_SESSIONS = renderControlCommand([
   'list-sessions',
   '-F',
-  '#{session_name}\t#{session_windows}',
+  '<sessions>#{session_name}\t#{session_windows}',
 ]);
 
 const listWindows = (session: string) =>
@@ -46,7 +53,7 @@ const listWindows = (session: string) =>
     '-t',
     session,
     '-F',
-    '#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}' +
+    '<windows>#{window_id}\t#{window_index}\t#{window_active}\t#{window_panes}' +
       '\t#{window_zoomed_flag}\t#{window_name}\t#{pane_current_command}',
   ]);
 
@@ -56,9 +63,31 @@ const listPanes = (session: string, window: number) =>
     '-t',
     `${session}:${window}`,
     '-F',
-    '#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}' +
+    '<panes>#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_active}' +
       '\t#{pane_current_path}\t#{window_layout}',
   ]);
+
+describe('a read on an exec channel', () => {
+  /** A shell on the Host whose tmux lists these Sessions; the format's literal text comes first, as tmux prints it. */
+  function shell(stdout: (format: string) => string) {
+    return execCommandRunner({
+      exec: async (command) => ({ stdout: stdout(/'([^']*#\{session_name\}[^']*)'$/.exec(command)?.[1] ?? ''), stderr: '', exitCode: 0 }),
+      openControl: () => Promise.reject(new Error('not this path')),
+    });
+  }
+
+  it('reads the Sessions out of the lines a shell hands back, which carry the tag', async () => {
+    const runner = shell((format) => `${format.split('#{')[0]}work\t3\n${format.split('#{')[0]}play\t1\n`);
+    expect(await new TmuxClient(runner).listSessions()).toEqual([
+      { name: 'work', windowCount: 3 },
+      { name: 'play', windowCount: 1 },
+    ]);
+  });
+
+  it('reads no lines as no Sessions: a server can have none, and no block is paired here', async () => {
+    expect(await new TmuxClient(shell(() => '')).listSessions()).toEqual([]);
+  });
+});
 
 describe('listing Sessions', () => {
   it('reads the name and the Window count', async () => {
@@ -244,8 +273,8 @@ describe('sizing the Client', () => {
 });
 
 describe('the other screens', () => {
-  const OWN = renderControlCommand(['display-message', '-p', '#{client_name}']);
-  const CLIENTS = renderControlCommand(['list-clients', '-F', '#{client_name}\t#{client_control_mode}\t#{client_flags}']);
+  const OWN = renderControlCommand(['display-message', '-p', '<client>#{client_name}']);
+  const CLIENTS = renderControlCommand(['list-clients', '-F', '<clients>#{client_name}\t#{client_control_mode}\t#{client_flags}']);
 
   it('names the control Clients other than this one that did not ask for ignore-size', async () => {
     const { client } = fakeTmux({
@@ -268,8 +297,8 @@ describe('the other screens', () => {
 
 describe('typing a Batch', () => {
   const token = 'k7f2' as OutboxToken;
-  const MARK = "'display-message' '-p' '-t' '%4' '#{@muxify-in-k7f2}:#{pid}:#{pane_pid}:#{pane_current_command}'";
-  const VERSION = "'display-message' '-p' '#{version} #{pid}'";
+  const MARK = "'display-message' '-p' '-t' '%4' '<mark>#{@muxify-in-k7f2}:#{pid}:#{pane_pid}:#{pane_current_command}'";
+  const VERSION = "'display-message' '-p' '<host>#{version} #{pid}'";
   const GUARD = "'if-shell' '-F' '-t' '%4' '#{e|<:#{e|+:0,#{@muxify-in-k7f2}},7}'";
   const batch = (key: Key): Batch => ({ seq: 7 as Seq, key, typedAt: 0 });
   const text = (value: string): Key => ({ kind: 'text', bytes: [...new TextEncoder().encode(value)], gesture: false });
@@ -278,13 +307,14 @@ describe('typing a Batch', () => {
   function chained(version: string, replies: (string[] | { error: string[] })[], staging: string[] | null = null) {
     const asked: string[] = [];
     const runner: CommandRunner = {
-      run: (argv) => {
-        asked.push(renderControlCommand(argv));
-        return Promise.resolve(replyOf(true, argv.at(-1) === '#{version} #{pid}' ? [`${version} 100`] : (replies[0] as string[])));
+      run: (command) => {
+        asked.push(renderControlCommand(argvOf(command)));
+        const host = argvOf(command).at(-1)?.endsWith('#{version} #{pid}');
+        return Promise.resolve(replyOf(true, host ? [`<host>${version} 100`] : (replies[0] as string[])));
       },
       /** `staging`: tmux refuses each `set-buffer` with this error. */
       runAll: (commands) => {
-        asked.push(...commands.map(renderControlCommand));
+        asked.push(...commands.map((command) => renderControlCommand(argvOf(command))));
         return Promise.resolve(commands.map(() => (staging ? replyOf(false, staging) : replyOf(true, []))));
       },
       runChain: (commands) => {
@@ -298,7 +328,7 @@ describe('typing a Batch', () => {
   }
 
   it('types the key and its Seq only when the Pane does not have that Seq, and reads the mark', async () => {
-    const { client, asked } = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.8', [[], [], [], ['<mark>7:100:200:zsh']]);
     expect(await client.deliver('%4', batch(text('hi')), token)).toEqual({
       serverPid: 100,
       panePid: 200,
@@ -313,7 +343,7 @@ describe('typing a Batch', () => {
   });
 
   it('sends a named key by its name, also one that tmux quoting must protect', async () => {
-    const { client, asked } = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.8', [[], [], [], ['<mark>7:100:200:zsh']]);
     await client.deliver('%4', batch({ kind: 'key', key: "M-'" }), token);
     expect(asked[1]).toBe(
       `${GUARD} "'send-keys' '-t' '%4' \\"M-'\\" ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`,
@@ -321,7 +351,7 @@ describe('typing a Batch', () => {
   });
 
   it('clears with C-l, waits for the program to redraw, then drops the Scrollback, under one Seq', async () => {
-    const { client, asked } = chained('3.8', [[], [], [], [], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.8', [[], [], [], [], [], ['<mark>7:100:200:zsh']]);
     expect(await client.deliver('%4', batch({ kind: 'clear' }), token)).toMatchObject({ ack: 7 });
     expect(asked[1]).toBe(
       `${GUARD} "'send-keys' '-t' '%4' 'C-l' ; 'run-shell' 'sleep 0.25' ; 'clear-history' '-t' '%4' ; ` +
@@ -330,7 +360,7 @@ describe('typing a Batch', () => {
   });
 
   it('clears without the guard on a tmux that cannot compare numbers', async () => {
-    const { client, asked } = chained('3.1c', [[], [], [], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.1c', [[], [], [], [], ['<mark>7:100:200:zsh']]);
     await client.deliver('%4', batch({ kind: 'clear' }), token);
     expect(asked[1]).toBe(
       `'send-keys' '-t' '%4' 'C-l' ; 'run-shell' 'sleep 0.25' ; 'clear-history' '-t' '%4' ; ` +
@@ -340,16 +370,16 @@ describe('typing a Batch', () => {
 
   it('sends a hardware key as this tmux can deliver it', async () => {
     const press = { key: 'r', ctrl: true, alt: false, shift: false };
-    const modern = chained('3.8', [[], [], [], ['7:100:200:zsh']]);
+    const modern = chained('3.8', [[], [], [], ['<mark>7:100:200:zsh']]);
     await modern.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
     expect(modern.asked[1]).toContain("'send-keys' '-t' '%4' 'C-/'");
-    const classic = chained('3.4', [[], [], [], ['7:100:200:zsh']]);
+    const classic = chained('3.4', [[], [], [], ['<mark>7:100:200:zsh']]);
     await classic.client.deliver('%4', batch({ kind: 'key', key: { ...press, key: '/' } }), token);
     expect(classic.asked[1]).toContain("'send-keys' '-t' '%4' '-H' '1f'");
   });
 
   it('sends the plain chain to a tmux that cannot compare numbers', async () => {
-    const { client, asked } = chained('3.1c', [[], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.1c', [[], [], ['<mark>7:100:200:zsh']]);
     await client.deliver('%4', batch(text('hi')), token);
     expect(asked[1]).toBe(
       `'send-keys' '-t' '%4' '-H' '68' '69' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
@@ -358,11 +388,11 @@ describe('typing a Batch', () => {
   });
 
   it.each([
-    ['a Pane that is gone', [[], { error: ["can't find pane: %4"] }, [':100::']], 'gone'],
+    ['a Pane that is gone', [[], { error: ["can't find pane: %4"] }, ['<mark>:100::']], 'gone'],
     ['a line that an old tmux stopped at a missing Pane', [{ error: ["can't find pane: %4"] }], 'gone'],
-    ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['6:100:200:zsh']], { refused: 'repeat count invalid' }],
+    ['a key that tmux refused', [[], { error: ['repeat count invalid'] }, ['<mark>6:100:200:zsh']], { refused: 'repeat count invalid' }],
     ['a line that tmux could not parse', [{ error: ['yacc stack overflow'] }], { refused: 'yacc stack overflow' }],
-    ['a line that was a copy', [[], ['9:100:200:vim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9, refusesCopies: true }],
+    ['a line that was a copy', [[], ['<mark>9:100:200:vim']], { serverPid: 100, panePid: 200, program: 'vim', ack: 9, refusesCopies: true }],
   ] as [string, (string[] | { error: string[] })[], unknown][])('reads %s', async (_, replies, result) => {
     const { client } = chained('3.8', replies);
     expect(await client.deliver('%4', batch(text('hi')), token)).toEqual(result);
@@ -381,7 +411,7 @@ describe('typing a Batch', () => {
     };
 
     it('stages the text in chunks of whole characters, then pastes it, waits and presses Enter under the guard', async () => {
-      const { client, asked } = chained('3.8', [[], [], [], [], [], ['7:100:200:zsh']]);
+      const { client, asked } = chained('3.8', [[], [], [], [], [], ['<mark>7:100:200:zsh']]);
       const long = `${'a'.repeat(2047)}🙂b`;
       expect(await client.deliver('%4', batch(paste(long, true)), token)).toMatchObject({ ack: 7 });
       const { buffer, lines } = named(asked);
@@ -397,7 +427,7 @@ describe('typing a Batch', () => {
     });
 
     it('pastes without Enter, and without the guard on a tmux that cannot compare numbers', async () => {
-      const { client, asked } = chained('3.1c', [[], [], ['7:100:200:zsh']]);
+      const { client, asked } = chained('3.1c', [[], [], ['<mark>7:100:200:zsh']]);
       await client.deliver('%4', batch(paste('ls', false)), token);
       expect(named(asked).lines.at(-1)).toBe(
         `'paste-buffer' '-p' '-r' '-d' '-b' BUF '-t' '%4' ; 'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7' ; ${MARK}`,
@@ -405,7 +435,7 @@ describe('typing a Batch', () => {
     });
 
     it('uses a new buffer for each write of the same Batch', async () => {
-      const { client, asked } = chained('3.8', [[], ['7:100:200:zsh']]);
+      const { client, asked } = chained('3.8', [[], ['<mark>7:100:200:zsh']]);
       await client.deliver('%4', batch(paste('ls', false)), token);
       await client.deliver('%4', batch(paste('ls', false)), token);
       const buffers = new Set(asked.flatMap((line) => /'(muxify-k7f2-7-[a-z0-9]+)'/.exec(line)?.[1] ?? []));
@@ -421,26 +451,26 @@ describe('typing a Batch', () => {
     });
 
     it('deletes the buffer when the mark does not show the paste, and keeps the mark as the answer', async () => {
-      const { client, asked } = chained('3.8', [[], ['6:100:200:zsh']]);
+      const { client, asked } = chained('3.8', [[], ['<mark>6:100:200:zsh']]);
       expect(await client.deliver('%4', batch(paste('hunter2', false)), token)).toMatchObject({ ack: 6 });
       expect(named(asked).lines.at(-1)).toBe("'delete-buffer' '-b' BUF");
     });
 
     it('deletes no buffer when the mark shows the paste', async () => {
-      const { client, asked } = chained('3.8', [[], ['7:100:200:zsh']]);
+      const { client, asked } = chained('3.8', [[], ['<mark>7:100:200:zsh']]);
       await client.deliver('%4', batch(paste('ls', false)), token);
       expect(named(asked).lines.at(-1)).toContain('paste-buffer');
     });
 
     it('deletes the buffer when the Pane is gone', async () => {
-      const { client, asked } = chained('3.8', [[], { error: ["can't find pane: %4"] }, [':100::']]);
+      const { client, asked } = chained('3.8', [[], { error: ["can't find pane: %4"] }, ['<mark>:100::']]);
       expect(await client.deliver('%4', batch(paste('ls', false)), token)).toBe('gone');
       expect(named(asked).lines.at(-1)).toBe("'delete-buffer' '-b' BUF");
     });
   });
 
   it('reads the mark alone', async () => {
-    const { client, asked } = chained('3.8', [[':100:200:node']]);
+    const { client, asked } = chained('3.8', [['<mark>:100:200:node']]);
     expect(await client.readMark('%4', token)).toEqual({
       serverPid: 100,
       panePid: 200,
@@ -452,12 +482,12 @@ describe('typing a Batch', () => {
   });
 
   it('reads that a tmux which cannot compare numbers does not refuse a copy', async () => {
-    const { client } = chained('3.1c', [[':100:200:node']]);
+    const { client } = chained('3.1c', [['<mark>:100:200:node']]);
     expect(await client.readMark('%4', token)).toMatchObject({ refusesCopies: false });
   });
 
   it('raises the Seq of a Pane without typing, and reads the mark', async () => {
-    const { client, asked } = chained('3.8', [[], [], ['7:100:200:zsh']]);
+    const { client, asked } = chained('3.8', [[], [], ['<mark>7:100:200:zsh']]);
     expect(await client.burn('%4', 7 as Seq, token)).toEqual({ serverPid: 100, panePid: 200, program: 'zsh', ack: 7, refusesCopies: true });
     expect(asked[1]).toBe(`${GUARD} "'set-option' '-p' '-t' '%4' '@muxify-in-k7f2' '7'" ; ${MARK}`);
   });
@@ -484,7 +514,7 @@ describe('reading a Pane back', () => {
   it('reads a range for a Selection: the rows to paint, their text, and their lines', async () => {
     const range = ['-S', '-1', '-E', '1'];
     const { client } = fakeTmux({
-      [renderControlCommand(['display-message', '-p', '-t', '%1', '#{history_size}'])]: ['40'],
+      [renderControlCommand(['display-message', '-p', '-t', '%1', '<history>#{history_size}'])]: ['40'],
       [renderControlCommand(['capture-pane', '-t', '%1', '-p', '-e', '-N', ...range])]: [
         '\u001b[31mold\u001b[0m',
         'a long ',
@@ -517,7 +547,7 @@ describe('reading a Pane back', () => {
         '-p',
         '-t',
         '%1',
-        '#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
+        '<pane-state>#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{history_size}' +
           '\t#{pane_width}\t#{pane_height}\t#{mouse_any_flag}\t#{cursor_flag}\t#{bracket_paste_flag}',
       ])]: ['43\t2\t1\t120\t80\t24\t1\t0\t1'],
     });
