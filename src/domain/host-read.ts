@@ -4,7 +4,7 @@
  *
  * It is pending from the ask, so a screen shows its progress line in the
  * render of the tap. The last answer stays until a current answer replaces
- * it. Each ask gets a ticket, and only the newest ticket's answer or failure
+ * it, or until the screen forgets it, as Go to does when it closes. Each ask gets a ticket, and only the newest ticket's answer or failure
  * changes the read, so a late answer to a replaced ask changes nothing.
  */
 
@@ -34,33 +34,27 @@ export interface HostRead<K, D> {
   pending: { key: K; since: number } | null;
   /** The last answer. It stays through a newer ask and a failure. */
   answer: HostReadAnswer<K, D> | null;
-  /** A current answer that the screen holds back, so the rows do not move under the finger. */
-  held: HostReadAnswer<K, D> | null;
   /** The failure of the newest ask. Try again keeps it on screen until its result. */
   error: HostReadError<K> | null;
 }
 
 export function unasked<K, D>(): HostRead<K, D> {
-  return { ticket: 0, asked: null, pending: null, answer: null, held: null, error: null };
+  return { ticket: 0, asked: null, pending: null, answer: null, error: null };
 }
 
 export function isPending(read: HostRead<unknown, unknown>): boolean {
   return read.pending !== null;
 }
 
-/**
- * A new ask. It replaces any ask that runs and clears the failure of the
- * older key. A held answer goes on screen: the user is typing, so the rows
- * can move, and the held answer is newer than the one on screen.
- */
+/** A new ask. It replaces any ask that runs and clears the failure of the older key. */
 export function ask<K, D>(read: HostRead<K, D>, key: K, now: number): HostRead<K, D> {
-  return { ...release(read), ticket: read.ticket + 1, asked: key, pending: { key, since: now }, error: null };
+  return { ...read, ticket: read.ticket + 1, asked: key, pending: { key, since: now }, error: null };
 }
 
 /** The newest key asked again, with its failure kept on screen, or null when the tap must be ignored. */
 export function retry<K, D>(read: HostRead<K, D>, now: number): HostRead<K, D> | null {
   if (read.pending !== null || read.asked === null) return null;
-  return { ...read, ticket: read.ticket + 1, pending: { key: read.asked, since: now }, held: null };
+  return { ...read, ticket: read.ticket + 1, pending: { key: read.asked, since: now } };
 }
 
 /** The ask stops, and any answer to it that still comes is dropped. */
@@ -68,13 +62,10 @@ export function cancel<K, D>(read: HostRead<K, D>): HostRead<K, D> {
   return read.pending === null ? read : { ...read, ticket: read.ticket + 1, pending: null };
 }
 
-/** The answer to the ask with `ticket`. `hold` keeps it in `held` instead of on screen. */
-export function answered<K, D>(read: HostRead<K, D>, ticket: number, data: D, hold: boolean): HostRead<K, D> {
+/** The answer to the ask with `ticket`. */
+export function answered<K, D>(read: HostRead<K, D>, ticket: number, data: D): HostRead<K, D> {
   if (ticket !== read.ticket || read.pending === null) return read;
-  const answer = { key: read.pending.key, data };
-  return hold
-    ? { ...read, pending: null, held: answer, error: null }
-    : { ...read, pending: null, answer, held: null, error: null };
+  return { ...read, pending: null, answer: { key: read.pending.key, data }, error: null };
 }
 
 export function failed<K, D>(read: HostRead<K, D>, ticket: number, reason: string, hostProblem = false): HostRead<K, D> {
@@ -82,18 +73,12 @@ export function failed<K, D>(read: HostRead<K, D>, ticket: number, reason: strin
   return { ...read, pending: null, error: { key: read.pending.key, reason, hostProblem } };
 }
 
-/** The held answer goes on screen. */
-export function release<K, D>(read: HostRead<K, D>): HostRead<K, D> {
-  return read.held === null ? read : { ...read, answer: read.held, held: null };
-}
-
 /**
- * An answer the phone kept from an earlier visit. It shows only while the read
- * has no answer, and only for the key that runs, if one runs.
+ * The read stops and drops its answer and its failure, so the next ask starts
+ * a new search with no rows. Any answer to the stopped ask that still comes is dropped.
  */
-export function seed<K, D>(read: HostRead<K, D>, answer: HostReadAnswer<K, D>): HostRead<K, D> {
-  if (read.answer !== null || (read.pending !== null && read.pending.key !== answer.key)) return read;
-  return { ...read, answer };
+export function forget<K, D>(read: HostRead<K, D>): HostRead<K, D> {
+  return { ...unasked<K, D>(), ticket: read.ticket + 1 };
 }
 
 /** A read that ends after this long says its result to VoiceOver. A faster one stays quiet, so typing does not make it speak. */

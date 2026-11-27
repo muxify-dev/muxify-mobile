@@ -165,14 +165,15 @@ it('says the result of a slow read to VoiceOver, and stays quiet for a fast one'
   expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledWith('2 results');
 });
 
-it('holds an answer that would move the rows until the screen releases it', async () => {
-  await mount({ hold: (shownNow) => shownNow !== null });
-  await act(async () => { handle.seed('', ['kept']); handle.ask(''); });
-  expect(handle.data).toEqual(['kept']);
+it('forgets its answer and cancels the read, so the next ask shows no rows', async () => {
+  await mount();
+  await shown('', 'muxify');
 
-  await act(async () => { reply('').answer(['fresh', 'kept']); });
-  expect(handle).toMatchObject({ isPending: false, data: ['kept'], held: { key: '', data: ['fresh', 'kept'] } });
+  await act(async () => { handle.ask('m'); jest.advanceTimersByTime(1000); });
+  act(() => { handle.forget(); });
+  expect(handle).toMatchObject({ isPending: false, data: undefined, error: null });
+  expect(queries(server.cancelled)).toContain('m');
 
-  act(() => { handle.release(); });
-  expect(handle).toMatchObject({ data: ['fresh', 'kept'], held: null });
+  await act(async () => { handle.ask(''); });
+  expect(handle).toMatchObject({ isPending: true, data: undefined });
 });

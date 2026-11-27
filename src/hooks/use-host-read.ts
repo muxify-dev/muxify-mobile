@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { AccessibilityInfo } from 'react-native';
 
 import {
-  answered, ask, ANNOUNCE_AFTER_MS, cancel, failed, isPending, release, retry, seed, unasked,
-  type HostRead, type HostReadAnswer, type HostReadError,
+  answered, ask, ANNOUNCE_AFTER_MS, cancel, failed, forget, isPending, retry, unasked,
+  type HostRead, type HostReadError,
 } from '@/domain/host-read';
 import { HostProblem } from '@/ssh/failures';
 import { describeConnectionFailure } from '@/tmux/disconnect-reason';
@@ -16,8 +16,6 @@ export interface HostReadOptions<K, D> {
   read(key: K, signal: AbortSignal): Promise<D>;
   /** How long an ask of `key` waits before the read is sent. The progress line does not wait. Try again never waits. */
   debounceMs?(key: K): number;
-  /** True when `next` must wait in `held` instead of replacing `shown`, because it would move rows under the finger. */
-  hold?(shown: HostReadAnswer<K, D> | null, next: HostReadAnswer<K, D>): boolean;
   /** What VoiceOver says when a slow read ends with `data`, such as "4 results". A slow failure says its reason. */
   announce?(data: D): string | null;
 }
@@ -29,7 +27,6 @@ export interface HostReadHandle<K, D> {
   data: D | undefined;
   /** The key that `data` answers. */
   dataKey: K | undefined;
-  held: HostReadAnswer<K, D> | null;
   error: HostReadError<K> | null;
   /** Asks from the event handler of the tap or keystroke, so `isPending` is true in its render. */
   ask(key: K): void;
@@ -37,10 +34,8 @@ export interface HostReadHandle<K, D> {
   retry(): void;
   /** Stops the read that runs, as when the screen loses the focus. */
   cancel(): void;
-  /** Puts the held answer on screen. */
-  release(): void;
-  /** Shows an answer the phone kept, until the Host answers. */
-  seed(key: K, data: D): void;
+  /** Stops the read and drops its answer, so the next ask starts with no rows. */
+  forget(): void;
   /** Gives the answer to the newest ask when it comes, or now when nothing runs. A newer ask, a cancel or a failure drops it. */
   whenAnswered(pick: (data: D) => void): void;
 }
@@ -99,7 +94,7 @@ export function useHostRead<K extends string | number, D>(options: HostReadOptio
       if (!present.current) return;
       const before = current.current;
       const next = outcome.ok
-        ? answered(before, ticket, outcome.data, latest.current.hold?.(before.answer, { key: pending.key, data: outcome.data }) ?? false)
+        ? answered(before, ticket, outcome.data)
         : failed(before, ticket, outcome.reason, outcome.hostProblem);
       // A newer ask or a cancel replaced this one.
       if (next === before) return;
@@ -136,9 +131,11 @@ export function useHostRead<K extends string | number, D>(options: HostReadOptio
     move(cancel(current.current));
   }, [move, stop]);
 
-  const releaseHeld = useCallback(() => move(release(current.current)), [move]);
-
-  const seedAnswer = useCallback((key: K, data: D) => move(seed(current.current, { key, data })), [move]);
+  const forgetRead = useCallback(() => {
+    queued.current = null;
+    stop();
+    move(forget(current.current));
+  }, [move, stop]);
 
   const whenAnswered = useCallback((pick: (data: D) => void) => {
     const now = current.current;
@@ -146,21 +143,18 @@ export function useHostRead<K extends string | number, D>(options: HostReadOptio
       queued.current = pick;
       return;
     }
-    const shown = now.held ?? now.answer;
-    if (now.error === null && shown !== null) pick(shown.data);
+    if (now.error === null && now.answer !== null) pick(now.answer.data);
   }, []);
 
   return useMemo(() => ({
     isPending: isPending(read),
     data: read.answer?.data,
     dataKey: read.answer?.key,
-    held: read.held,
     error: read.error,
     ask: askKey,
     retry: retryKey,
     cancel: cancelRead,
-    release: releaseHeld,
-    seed: seedAnswer,
+    forget: forgetRead,
     whenAnswered,
-  }), [read, askKey, retryKey, cancelRead, releaseHeld, seedAnswer, whenAnswered]);
+  }), [read, askKey, retryKey, cancelRead, forgetRead, whenAnswered]);
 }

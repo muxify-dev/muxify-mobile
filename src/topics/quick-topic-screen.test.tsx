@@ -38,7 +38,6 @@ jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () =>
 jest.mock('@/keyboard/key-commands', () => ({ useScreenKeyboardShortcuts: (handlers: KeyboardHandlers) => { mockKeys = handlers; } }));
 jest.mock('@/storage/device-store', () => ({
   deviceHostStore: () => ({ load: mockLoad }),
-  deviceGoToCache: () => ({ load: async () => [], save: async () => {} }),
 }));
 jest.mock('@/settings/settings-context', () => ({ useSettings: () => ({ appearance: 'dark', palette: require('@/constants/app-theme').AppPalettes.dark }) }));
 jest.mock('@/tmux/attach-context', () => ({ useOpenSession: () => mockOpen }));

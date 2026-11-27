@@ -33,6 +33,8 @@ let mockAttachedHost: string | null = null;
 let mockSettings: { hostScreenTabs?: Record<string, string> } = {};
 let mockReading: { listing: unknown; topics: HostTopics; freshness: Freshness; sessionsOnly: boolean; hostRanksGoTo?: boolean; problem: DisconnectReason | null; retry: jest.Mock };
 
+// The push of the screen has ended, so its rows mount.
+jest.mock('@/navigation/use-push-ended', () => ({ usePushEnded: () => true }));
 jest.mock('expo-router', () => {
   const React = require('react');
   return {
@@ -68,6 +70,11 @@ jest.mock('@expo/ui/swift-ui/modifiers', () => new Proxy({}, { get: (_, name) =>
 jest.mock('@/components/tappable-row', () => ({ TAPPABLE_ROW: {} }));
 jest.mock('@/components/topic-marks', () => ({ MarkImage: () => null, TagMarks: () => null }));
 jest.mock('@/components/fill-place-sheet', () => ({ FillPlaceSheet: () => null }));
+// The budget has its own test. Here every row mounts in the first render.
+jest.mock('@/hooks/use-row-budget', () => ({
+  ...jest.requireActual('@/hooks/use-row-budget'),
+  useRowBudget: (total: number) => ({ budget: total, more: () => {} }),
+}));
 jest.mock('@/diagnostics/device-log', () => ({ deviceLog: () => ({ record: () => {} }) }));
 jest.mock('@/hooks/use-host-listing', () => ({ useHostListing: () => mockReading }));
 jest.mock('@/hooks/use-host-entry', () => ({ useHostEntry: (_host: string, entered: () => void) => ({
@@ -84,8 +91,6 @@ jest.mock('@/storage/device-store', () => ({
     load: async () => ({ hosts: [{ id: 'host', displayName: 'Dev Host' }] }),
     recentSessionsFor: async () => [],
   }),
-  deviceRankedGoToCache: () => ({ load: async () => [], save: async () => {} }),
-  deviceGoToCache: () => ({ load: async () => [], save: async () => {} }),
 }));
 jest.mock('@/tmux/attach-context', () => ({
   useAttachHolder: () => ({ current: () => null, disconnect: jest.fn() }),
@@ -152,13 +157,14 @@ const newSessionOf = (payload: object) =>
 const newSessions = () => mockServer.requests.flatMap((payload) => newSessionOf(payload) ?? []);
 
 /** What VoiceOver calls each button on screen, in order. */
-const labels = () => renderer.root.findAllByType(Button).flatMap((node) => labelOf(node) ?? []);
-const row = (label: string) => renderer.root.findAllByType(Button).find((node) => labelOf(node) === label)!;
+/** What the user sees: the Go to list while it is open, which hides the tab under it from VoiceOver. */
+const shownRoot = () => renderer.root.findAll((node) => node.props.testID === 'go-to-list')[0] ?? renderer.root;
+const labels = () => shownRoot().findAllByType(Button).flatMap((node) => labelOf(node) ?? []);
+const row = (label: string) => shownRoot().findAllByType(Button).find((node) => labelOf(node) === label)!;
 const READING = 'Reading folders…';
-const WAITING = 'The Host sent a new list. It shows when you type.';
 /** The Go to list from top to bottom: each row by what VoiceOver calls it, and the lines about the read. */
-const goToLines = () => renderer.root
-  .findAll((node) => node.type === Button || (node.type === ('Text' as never) && [READING, WAITING].includes(node.props.children)))
+const goToLines = () => shownRoot()
+  .findAll((node) => node.type === Button || (node.type === ('Text' as never) && node.props.children === READING))
   .map((node) => (node.type === Button ? labelOf(node) : node.props.children))
   .filter((line) => line !== undefined && line !== 'New Session here');
 const labelOf = (node: { props: { modifiers?: { name: string; value: unknown }[] } }) =>
@@ -169,7 +175,7 @@ function pendingPaths() {
   return (rows: ReturnType<typeof path>[]) => act(async () => { answers.shift()!(rows); });
 }
 const menu = () => [...toolbarMenuActions(renderer).keys()];
-const tabs = () => renderer.root.findAllByType(Picker);
+const tabs = () => shownRoot().findAllByType(Picker);
 const focusGoTo = () => act(async () => { searchBar(renderer)!.props.onFocus(); });
 const type = (text: string) => act(async () => { searchBar(renderer)!.props.onChangeText({ nativeEvent: { text } }); });
 
@@ -346,6 +352,24 @@ describe('Go to on a Host that ranks the list', () => {
     expect(bold.map((part) => part.props.children)).toEqual(['👨‍👩‍👧‍👦e\u0301']);
   });
 
+  it('opens each time as a new search, with no rows from the last open', async () => {
+    await ranked();
+    expect(labels()).toContain('Topic Ship music');
+    await type('ship');
+    // iOS empties the field after its Cancel, as a change of the text.
+    await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+    const asked = mockServer.requests.length;
+    await type('');
+    expect(mockServer.requests).toHaveLength(asked);
+
+    let answer!: (value: unknown) => void;
+    mockServer.on.go_to = () => new Promise((resolve) => { answer = resolve; });
+    await focusGoTo();
+    expect(labels()).not.toContain('Topic Ship music');
+    await act(async () => { answer(rankedAnswer); });
+    expect(labels()).toContain('Topic Ship music');
+  });
+
   it('reopens a Settled Topic by id', async () => {
     const topic = rankedAnswer.sections[0].rows[0];
     await ranked({ sections: [{ id: 'settled', title: 'Settled', rows: [{ ...topic, target: { settled: { id: 'closed' } } }] }] });
@@ -359,7 +383,10 @@ describe('Go to on a Host that ranks the list', () => {
     await act(async () => { row('Tag #backend').props.onPress(); });
     expect(mockServer.requests.at(-1)).toEqual({ go_to: { query: '', tag: 'backend' } });
     expect(labels()).toEqual(['Topic Ship music']);
+    const asked = mockServer.requests.length;
     await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+    expect(mockServer.requests).toHaveLength(asked);
+    await act(async () => { searchBar(renderer)!.props.onFocus(); });
     expect(mockServer.requests.at(-1)).toEqual({ go_to: { query: '' } });
   });
 
@@ -557,7 +584,10 @@ describe('Go to while the Host reads the folders', () => {
     await act(async () => { mockKeys['list-pick']!(); });
     expect(mockOpenSession).toHaveBeenLastCalledWith('api/fix-login');
 
+    // The pick closed Go to, which dropped its read. The new open asks again.
     await focusGoTo();
+    await answer([path('old')]);
+    expect(goToLines()).toEqual([READING, 'Session api', 'Session api/fix-login']);
     await answer([path('web')]);
     expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/web']);
   });
@@ -575,31 +605,17 @@ describe('Go to while the Host reads the folders', () => {
     expect(renderer.root.findAllByType('Text' as never).filter((node) => node.props.children === 'Nothing matches.')).toEqual([]);
   });
 
-  // The screen comes back from the Terminal and reads again, and the user opens Go to before the answer.
-  async function comeBackAndOpenGoTo() {
+  it('opens each time as a new search, with no folders from the last open', async () => {
     await mount();
-    const answer = pendingPaths();
-    mockFocused = false;
-    await act(async () => { renderer.update(<HostScreen />); });
-    mockFocused = true;
-    await act(async () => { renderer.update(<HostScreen />); });
     await focusGoTo();
-    return answer;
-  }
-
-  it('keeps the folders on show in place while the field is empty, and says that a new list waits for the text', async () => {
-    const answer = await comeBackAndOpenGoTo();
-    expect(goToLines()).toEqual([READING, 'Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
-
-    await answer([path('web'), path('api')]);
-    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web', WAITING]);
-  });
-
-  it('shows a new answer at once, with no line, when it moves no row', async () => {
-    const answer = await comeBackAndOpenGoTo();
-    await answer([path('api'), path('web')]);
-
     expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/api', 'Folder /work/web']);
+    await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+
+    const answer = pendingPaths();
+    await focusGoTo();
+    expect(goToLines()).toEqual([READING, 'Session api', 'Session api/fix-login']);
+    await answer([path('web')]);
+    expect(goToLines()).toEqual(['Session api', 'Session api/fix-login', 'Folder /work/web']);
   });
 });
 

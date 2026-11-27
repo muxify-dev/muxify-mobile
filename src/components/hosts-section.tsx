@@ -30,7 +30,7 @@ import { TAPPABLE_ROW } from '@/components/tappable-row';
 import type { Appearance } from '@/constants/app-theme';
 import { movedHostIds } from '@/domain/host-order';
 import { useCopyLog } from '@/hooks/use-copy-log';
-import { deviceRankedGoToCache, deviceGoToCache, deviceHostStore } from '@/storage/device-store';
+import { deviceHostStore } from '@/storage/device-store';
 import type { Host } from '@/storage/records';
 
 /**
@@ -80,7 +80,6 @@ export function HostsSection({ palette }: { palette: Appearance }) {
           void (async () => {
             await deviceHostStore().removeHost(host.id);
             livePages.releaseHost(host.id);
-            await Promise.all([deviceGoToCache().forget(host.id), deviceRankedGoToCache().forget(host.id)]);
             await reload();
           })();
         },
