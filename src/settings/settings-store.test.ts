@@ -28,6 +28,7 @@ const CHANGED: Settings = {
     ctrl: [null, 'interrupt-twice', null, 'suspend'],
     cmd: ['paste', null, 'copy-pane', null],
   },
+  gripActions: ['keyboard', null, 'split-right'],
 };
 
 describe('settings store', () => {
