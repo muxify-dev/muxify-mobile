@@ -1021,13 +1021,15 @@ so ⌘ and delete removes the line and ⌥ and an arrow goes one word. See ADR
 0003. A chord with ⌘ is first a Keyboard Shortcut, decided as for a
 hardware keyboard. While the Composer is open,
 or while Typing is not open, the keys are disabled. The strip and key frames stay
-fixed during touch. A physical keyboard hides the row. iOS supplies its
-initial state, connection changes, and a fresh state on foreground entry.
-That state can stay "connected" after a Bluetooth keyboard goes, so the full
-software keyboard overrules it: iOS shows that keyboard only when no physical
-keyboard is in use, and the row comes back with it until a keyboard connects
-again or iOS shrinks its keyboard to the bar it shows for a physical one.
-Hiding the software keyboard alone does not hide the row. Hiding the row
+fixed during touch. A physical keyboard in use hides the row, and the row
+never shows before the first check says no physical keyboard is in use (see
+Keyboard Snapshot). GameController can say "connected" after a Bluetooth
+keyboard goes, with no notice, so a full software keyboard in the window makes
+that word *stale*: iOS shows that keyboard only when no physical keyboard is in
+use, and the row comes back with it. It stays until a key is pressed on a
+physical keyboard, GameController announces a connection or a change, or iOS
+shrinks its keyboard to the bar it shows for a physical one. Hiding the
+software keyboard alone does not hide the row. Hiding the row
 clears armed modifiers and stops arrow repeat. Options keeps Panes and
 Keyboard available. Software keyboard clearance belongs to the Terminal
 Screen and remains when the row is hidden.
@@ -1134,16 +1136,30 @@ _Avoid_: connected (which is one phase of the Attach), input enabled, ready
 Whether the user wants the system keyboard up: `up` or `down`. The Attach holds
 it, so it stays through a split, a Pane change, a Composer, a sheet, and a trip
 to the Host Screen and back. Only a user act changes it: the Keyboard key, a tap
-on the Pane, a hardware keyboard that leaves while the Pane holds the keyboard,
-and a Pane that the phone makes (a split, a New Window, a Session made on the
+on the Pane, a physical keyboard that stops being in use (the Attach does this
+once, while Typing is open and a Terminal Screen is in focus: the Attach cannot
+see a Composer or a sheet), and a Pane that the phone makes (a split, a New Window, a Session made on the
 phone), which sets it `up` when tmux has made the Pane. A new Attach starts
 `down`, unless the phone made the Pane it opens on. One rule turns the intent
 into the keyboard: only the active Pane's Surface holds it, and only while
-Typing is open. A hardware keyboard always wants the active Pane. The Composer,
+Typing is open. A physical keyboard in use always wants the active Pane. The Composer,
 a Selection, a sheet, the Edge Drawer, and another screen hold input
 themselves, and the rule touches nothing while they do. A key from any other
 Surface goes to the active Pane. See ADR 0039.
-_Avoid_: keyboard state, keyboard visible (the system's own fact, which the Key Row reads)
+_Avoid_: keyboard state, keyboard visible (the system's own fact, which the Keyboard Snapshot holds)
+
+**Keyboard Snapshot**:
+What iOS says about the keyboard, held by one native module and mirrored in JS:
+whether a physical keyboard is in use (`unknown` before the first check, then
+`inUse` or `absent`) and where the software keyboard shows in the app's window,
+or that none does. A keyboard that hides is reported below the screen, so a
+hide is none. A physical keyboard is *in use* when GameController says it is
+connected and no full software keyboard in the window has made that stale.
+One pure rule, `keyboardPlan`, turns the snapshot, the Keyboard Intent and the
+open screens into every decision about the keyboard: the Key Row, the shortcut
+bar, the Surface that holds the keyboard and the room the Window leaves. The
+Log has a line for each snapshot, with the event that changed it. See ADR 0043.
+_Avoid_: presence, keyboard frame
 
 **Cover**:
 What the Terminal Screen draws over the Window while Typing is not open, and
