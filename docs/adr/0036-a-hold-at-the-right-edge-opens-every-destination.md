@@ -12,8 +12,10 @@ there. The left edge goes back (ADR 0034), and the right edge had no meaning.
 ## Decision
 
 A Grip at the right edge opens the Edge Drawer, on the
-Terminal Screen and on the Web View. Gleb chose each part on the planning
-page of 26 Nov 2026:
+Terminal Screen and on the Web View. **[Replaced by ADR 0042: the Grip is a
+round button whose hold opens a Fan of Grip actions, and the Edge Drawer is
+its Destinations action. The drawer itself stays as this ADR has it.]**
+Gleb chose each part on the planning page of 26 Nov 2026:
 
 - **D1, the design:** the Edge Drawer, a tree list that slides from the
   Grip. Not a full-screen map of Windows, a slide through columns, or a
@@ -26,7 +28,9 @@ page of 26 Nov 2026:
   Lane, a strip beside the rows where the held finger can move and lift
   with no pick, and an automatic scroll near the list's top and bottom.
   VoiceOver has no held finger, so its activate on the Grip still
-  opens a drawer that stays open. Later the Grip went from a thin pill at
+  opens a drawer that stays open. **[The look of the Grip, in the
+  sentences that follow, up to "three quarters down an iPad", is replaced
+  by ADR 0042. Its place stays.]** Later the Grip went from a thin pill at
   the middle of the right edge to a round Liquid Glass button where a
   thumb reaches it: a little in from the bottom right corner on a phone,
   in the corner on an iPad. Then it became almost clear glass with no
@@ -51,7 +55,8 @@ page of 26 Nov 2026:
 - **D4, the Tabs:** the Tabs of every listed Window, one read per Window
   each time the drawer opens.
 - **D5, the hold:** 400 ms. Between the Selection long press (0.35 s) and
-  the UIKit default (0.5 s).
+  the UIKit default (0.5 s). **[Replaced by ADR 0042 D3: 250 ms, and it
+  opens the Fan.]**
 - **D6, the old switchers:** they stay. A trial setting, off by default,
   hides every way into the Panes picker: the Layout Map, the Panes key and
   Options › Panes. Zoom and Split keep their own items in Options. Whether
@@ -73,9 +78,11 @@ the Pane Swipe, as the layer on a Pane that is not the active one does.
 ## Consequences
 
 - A page in the Web View does not scroll from the Grip's band, 28 × 110
-  points at the right edge.
+  points at the right edge. **[Replaced by ADR 0042: the touch is a square of
+  44 points round the button.]**
 - A tap in the band does nothing. It does not raise the keyboard, as a tap
-  on the Surface does.
+  on the Surface does. **[Replaced by ADR 0042: the same, for the touch
+  square.]**
 - The drawer lists the Panes of the Window on screen only. The Topology has
   no Panes of other Windows; a pick of that Window and then a Pane is two
   picks.

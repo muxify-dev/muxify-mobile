@@ -746,24 +746,68 @@ hides the map (see Edge Drawer).
 _Avoid_: minimap, Pane indicator, thumbnail
 
 **Grip**:
-The small Liquid Glass line, 6 × 48 points, at the right edge: in the
-middle of a phone's screen, where the thumb rests and just above where the
-keyboard comes, so it stays in one place with the keyboard up or down; three quarters down an iPad's. It is on
-the Terminal Screen and on the Web View, but not on a phone on its side. The touch lands in a band round it, 28 × 110 points.
-From the touch the line fills with the accent colour. A finger that stays
-on it for 400 ms with less than 20 points of drift opens the Edge Drawer,
-with a tick; the line then glows, and the finger stays down for the
-drawer. A finger that
-moves 20 points first is a drag: on the Terminal Screen a sideways drag is
-the Pane Swipe, as on a Pane that is not the active one. A tap on it does
-nothing. The band takes every touch that lands in it, so a page does not
-scroll from there. The Grip is off while a Selection is open, while a sheet
-is open, and while keys cannot reach the active Pane (see Typing). See ADR
-0036.
-_Avoid_: handle, edge button, tab
+The round Liquid Glass button at the right edge. It is 36 points wide, and
+its centre is 22 points from the edge. On a phone it is in the middle of the
+screen, where the thumb rests and just above where the keyboard comes, so it
+stays in one place with the keyboard up or down. On an iPad it is three
+quarters down. It is on the Terminal Screen and on the Web View, but not on
+a phone on its side. The touch lands in a square of 44 points round it.
+
+At rest it is two hairline rings, a light ring inside a dark ring, and it has
+no glass. So the content under it shows as it is, on the terminal and on a
+white page. From the touch, the glass comes in and the button fills with the
+accent colour. A finger that stays on it for 250 ms, with less than 20
+points of drift, opens the Fan. The phone gives a medium haptic tap, and the
+button glows. A finger that moves 20 points before then is a drag. On the
+Terminal Screen a sideways drag is the Pane Swipe, as on a Pane that is not
+the active one. A tap on the button does nothing. The square takes every
+touch that lands in it, so a page does not scroll from there. The Grip is off
+while a Selection is open, while a sheet is open, and while keys cannot reach
+the active Pane (see Typing).
+
+VoiceOver reads it as "Grip actions". Its activate opens the Edge Drawer at
+once, and the drawer stays open. Each other Grip action that the screen can
+run is a custom action. See ADR 0042.
+_Avoid_: handle, edge button, tab, line
+
+**Fan**:
+The four slots that open round the Grip when the hold ends, while the finger
+stays down. They are circles of clear glass, 40 points wide, 100 points from
+the button's centre, at 12, 11, 10 and 9 o'clock. A thumb at the right edge
+goes up and to the left, so the Fan has no slot below the button or to its
+right.
+
+The finger picks a slot by direction. It must be more than 44 points from
+the button's centre, and the slot with the nearest angle lights. Below the
+horizontal line, or right of vertical by more than half a step (15 degrees),
+no slot lights. The lit slot shows its name, and the phone gives a light tick
+each time a slot lights. A lift on a lit Grip action runs it. A lift in the
+dead centre, on no slot, or on a dimmed slot runs nothing. Each lift closes
+the Fan. When Destinations lights, the Fan closes at once and the Edge Drawer
+opens under the finger. The finger cannot go back to the Fan.
+
+While the Fan is open, it holds the input, as the Edge Drawer does (see
+Keyboard Intent). A Selection or a sheet that opens under the Fan closes it.
+_Avoid_: menu, radial menu, pie
+
+**Grip action**:
+One slot of the Fan. The slot at 12 o'clock is always Destinations, which
+opens the Edge Drawer. Settings chooses the other three, as it chooses the
+Key Row quick actions. The catalog is Go to, Compose, Options, Keyboard,
+Title Sheet, Host Screen, Split right, Split down, New Window, Zoom Pane,
+Paste and Copy Pane text. An empty slot stays empty, an action cannot be in
+two slots, and the defaults are Go to, Compose and Options.
+
+A screen that cannot run an action draws its slot dimmed, and the slots do
+not move between screens. On the Terminal Screen most of them do what the
+same item of Options does. Compose says "Close composer" while the Composer
+is open. Options opens the Options table in a sheet, because iOS cannot open
+the Header's ⋯ menu from code. The Web View runs Go to, Title Sheet and Host
+Screen, and dims the rest.
+_Avoid_: shortcut, gesture action
 
 **Edge Drawer**:
-The chooser that the Grip opens: a floating Liquid Glass panel at the right
+The chooser that the Grip's Destinations action opens: a floating Liquid Glass panel at the right
 that lists the Destinations of the place on screen, and nothing of other
 Topics or Sessions; the Host Screen reaches those. It is the Title Sheet's
 second presentation: a pick in it does what the same pick in the Title
@@ -784,19 +828,19 @@ of a Tab of another Window goes to that Window first, so the Tab is in the
 Place of its own Window. A Pane pick from the Web View goes to the Terminal
 Screen; the Live Page is hidden, not ended.
 
-While the finger that opened it is down, the row under the finger is lit,
-and the drawer is a quick switch: each lift closes it, and a pick goes on
-after it closes. A move that fails says so in the log only. A lift on a row
-picks the row. A lift anywhere else picks nothing: on the Grip, in the Lift
-Lane, on the header or on no row, or in the Cancel Zone. The drawer has no
+While the finger that lit Destinations is down, the row under the finger is
+lit, and the drawer is a quick switch: each lift closes it, and a pick goes
+on after it closes. A move that fails says so in the log only. A lift on a
+row picks the row. A lift anywhere else picks nothing: in the Lift Lane, on
+the header or on no row, or in the Cancel Zone. The drawer has no
 close button and no tap. Only VoiceOver, which has no held finger, opens
 it with no hold, and then it stays open for its rows to be activated. The finger cannot scroll the
 list, so near the list's top or bottom the list scrolls by itself, faster
-as the finger goes nearer the edge. The panel ends at the finger that held
-the Grip, so the last row is level with it, and is as tall as its list, up
-to the top of the screen. It stays above the keyboard and the home
-indicator. It does not move with the finger. With VoiceOver it ends at the
-Grip's centre (ADR 0037).
+as the finger goes nearer the edge. The panel ends at the point where the
+finger lit Destinations, so the last row is level with it, and is as tall as
+its list, up to the top of the screen. It stays above the keyboard and the
+home indicator. It does not move with the finger. With VoiceOver it ends at
+the Grip's centre (ADR 0037, ADR 0042).
 On a phone it covers 85 % of the width over a scrim. On an iPad it is a
 320-point column with no scrim, and the terminal beside it stays live. A Dormant or Empty
 Topic has no live Session, so it is not in the drawer: the Title Sheet or the
@@ -821,8 +865,9 @@ is in it. A lift there closes the drawer and picks nothing.
 _Avoid_: dismiss area, close zone
 
 **Lift Lane**:
-The 44-point strip at the right of the Edge Drawer, beside its rows, past
-the Grip's band, so the finger that opened the drawer starts in it. It is
+The 44-point strip at the right of the Edge Drawer, beside its rows. The
+finger lights Destinations straight above the Grip's button, so it starts in
+the lane. It is
 not drawn: the rows stop short of it, on the bare glass. That finger can
 move up and down in it, and a lift there closes the drawer and picks
 nothing.

@@ -17,7 +17,10 @@ The panel ends at the finger. Gleb chose each part on the review page of
 
 - **D1, the anchor:** the point where the finger held the Grip. The band is
   110 points high, so the Grip's centre can be 55 points from the finger.
-  VoiceOver has no finger, so its open uses the Grip's centre.
+  VoiceOver has no finger, so its open uses the Grip's centre. **[Amended by
+  ADR 0042: the anchor is the point where the finger lit Destinations on the
+  Grip's Fan, about 44 points above the button's centre. VoiceOver still uses
+  the Grip's centre.]**
 - **D2, the height:** the panel is as tall as its list, up to the top of the
   screen. ADR 0036 D3 keeps the list short, so most panels are small and
   stay at the finger. A long list reaches the top and scrolls by itself.
