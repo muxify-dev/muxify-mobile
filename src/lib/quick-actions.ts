@@ -10,7 +10,7 @@ export const CONTROL_ACTIONS = {
   suspend: { title: 'Suspend', keys: ['z'] },
 } as const;
 
-const COMMAND_ACTIONS = ['split-right', 'split-down', 'paste', 'copy-pane', 'clear-pane'] as const;
+const COMMAND_ACTIONS = ['split-right', 'split-down', 'paste', 'go-to', 'copy-pane', 'clear-pane'] as const;
 export type QuickAction = keyof typeof CONTROL_ACTIONS | typeof COMMAND_ACTIONS[number];
 export type QuickActionKey = 'ctrl' | 'cmd';
 type Slot = QuickAction | null;
@@ -23,14 +23,15 @@ export const QUICK_ACTION_CATALOG: Readonly<Record<QuickActionKey, readonly Quic
 };
 
 export const DEFAULT_QUICK_ACTIONS: QuickActions = {
-  ctrl: ['interrupt', 'end-of-input', 'clear-screen', 'interrupt-twice'],
-  cmd: ['split-right', 'split-down', 'paste', null],
+  ctrl: ['clear-screen', 'interrupt-twice', 'end-of-input', 'interrupt'],
+  cmd: ['paste', 'go-to', 'split-right', 'split-down'],
 };
 
 export function quickActionLabel(action: QuickAction, shortcuts?: KeyboardShortcuts) {
   switch (action) {
     case 'paste':
       return { title: 'Paste', chord: '⌘V' };
+    case 'go-to':
     case 'split-right':
     case 'split-down':
     case 'copy-pane':

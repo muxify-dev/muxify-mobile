@@ -1011,8 +1011,12 @@ export default function TerminalScreen() {
     'copy-pane': copyPaneText,
   }) : null, [attach, runVerb, clearPane, copyPaneText]);
 
+  const openGoTo = useMemo(() => hostId
+    ? () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); }
+    : undefined, [hostId, goHost]);
+
   const shortcutHandlers = useMemo<KeyboardHandlers>(() => attach && paneActions ? {
-    ...(hostId ? { 'go-to': () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } } : {}),
+    ...(openGoTo ? { 'go-to': openGoTo } : {}),
     ...paneActions,
     'pane-left': () => attach.selectPaneToward('left'),
     'pane-down': () => attach.selectPaneToward('down'),
@@ -1020,7 +1024,7 @@ export default function TerminalScreen() {
     'pane-right': () => attach.selectPaneToward('right'),
     // ⌘C is the system's Copy wherever a text has the keys.
     'copy-pane': inputElsewhere ? undefined : paneActions['copy-pane'],
-  } : {}, [attach, hostId, goHost, paneActions, inputElsewhere]);
+  } : {}, [attach, openGoTo, paneActions, inputElsewhere]);
   useScreenKeyboardShortcuts(shortcutHandlers);
 
   const quickActions = useMemo(() => {
@@ -1051,6 +1055,7 @@ export default function TerminalScreen() {
         if (hasTarget()) attach.view(activePaneId).press({ key, ctrl: true, alt: false, shift: false });
       },
       paste: () => surface.pressKey('v', { ...NO_MODIFIERS, cmd: true }),
+      goTo: () => openGoTo?.(),
       shortcut: id => paneActions[id](),
     });
   };
@@ -1197,7 +1202,7 @@ export default function TerminalScreen() {
    */
   const gripActions: GripActionRuns = {
     ...NO_GRIP_ACTIONS,
-    'go-to': hostId ? () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } : undefined,
+    'go-to': openGoTo,
     compose: optionRun(options, 'compose'),
     options: () => setOptionsOpen(true),
     keyboard: optionRun(options, 'keyboard'),
