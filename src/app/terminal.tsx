@@ -24,6 +24,7 @@ import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
 import { ON_PANE } from '@/domain/destinations';
 import { EdgeGrip } from '@/components/edge-grip';
 import { LayoutMap } from '@/components/layout-map';
+import { OptionsSheet } from '@/components/options-sheet';
 import { ComposerPanel } from '@/composer/composer-panel';
 import type { ComposerInputRef } from '@/composer/native-input';
 import { stageFile } from '@/composer/staging';
@@ -74,6 +75,8 @@ import {
   type Modifier,
   type Modifiers,
 } from '@/lib/modifier-keys';
+import { NO_GRIP_ACTIONS, type GripActionRuns } from '@/lib/grip-actions';
+import { optionRun } from '@/lib/options-table';
 import { DEFAULT_QUICK_ACTIONS, quickActionLabel, type QuickAction, type QuickActionSlots } from '@/lib/quick-actions';
 import { runQuickAction } from '@/keyboard/run-quick-action';
 import { requestGoTo } from '@/keyboard/go-to-request';
@@ -240,6 +243,10 @@ export default function TerminalScreen() {
     onReplacingStopped: forgetLookup, onScreen: ON_PANE });
   const { closeChooser, openTitleSheet, openSessionsOnly, topic, attachedSession, actOnAttachedSession } = chooser;
   const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
+  /** The Grip's Fan is open under a held finger. */
+  const [fanOpen, setFanOpen] = useState(false);
+  /** The Options sheet, which the Grip's Options action opens: the ⋯ menu cannot be opened from code. */
+  const [optionsOpen, setOptionsOpen] = useState(false);
   /** The trial of the Edge Drawer as the way to a Pane: see Settings.hidePanesPicker. */
   const hidePanesPicker = settings.hidePanesPicker;
   useFocusEffect(useCallback(() => closePicker, [closePicker]));
@@ -443,7 +450,7 @@ export default function TerminalScreen() {
   // Unread on visit: the Terminal Screen in focus shows the Attach's Panes, as a visit on the Mac does.
   useFocusEffect(useCallback(() => attach?.terminalFocused(), [attach]));
 
-  const sheetOpen = picker.open || chooser.sheet.isPresented;
+  const sheetOpen = picker.open || chooser.sheet.isPresented || optionsOpen;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
     paneId: slot.pane.id,
     box: slot.box,
@@ -578,8 +585,8 @@ export default function TerminalScreen() {
    */
   const surfaces = useRef(new Map<string, ScreenSurface>());
   const keyboardIntent = state?.keyboard ?? 'down';
-  /** The Edge Drawer is input too: its open, and the finger that holds its Grip, own the touches. */
-  const inputElsewhere = composerOpen || selecting || sheetOpen || chooser.drawer.open || !screenFocused;
+  /** The Edge Drawer and the Grip's Fan are input too: their open, and the finger that holds the Grip, own the touches. */
+  const inputElsewhere = composerOpen || selecting || sheetOpen || chooser.drawer.open || fanOpen || !screenFocused;
   const target = keyboardTarget({
     intent: keyboardIntent,
     physicalKeyboard,
@@ -1011,7 +1018,7 @@ export default function TerminalScreen() {
   }) : null, [attach, runVerb, clearPane, copyPaneText]);
 
   const shortcutHandlers = useMemo<KeyboardHandlers>(() => attach && paneActions ? {
-    ...(hostId ? { 'go-to': () => { requestGoTo(hostId); goHost(); } } : {}),
+    ...(hostId ? { 'go-to': () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } } : {}),
     ...paneActions,
     'pane-left': () => attach.selectPaneToward('left'),
     'pane-down': () => attach.selectPaneToward('down'),
@@ -1189,6 +1196,26 @@ export default function TerminalScreen() {
     closeChooser,
   ]);
 
+  /**
+   * What each Grip action does on this screen. Most are an entry of the Options
+   * table, so a lift in the Fan does what the same item of the ⋯ menu does and
+   * is dimmed when that item is disabled.
+   */
+  const gripActions: GripActionRuns = {
+    ...NO_GRIP_ACTIONS,
+    'go-to': hostId ? () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } : undefined,
+    compose: optionRun(options, 'compose'),
+    options: () => setOptionsOpen(true),
+    keyboard: optionRun(options, 'keyboard'),
+    'title-sheet': openTitleSheet,
+    'host-screen': goHost,
+    'split-right': optionRun(options, 'split-right'),
+    'split-down': optionRun(options, 'split-down'),
+    'new-window': optionRun(options, 'new-window'),
+    'zoom-pane': optionRun(options, 'zoom'),
+    paste: open && !composerOpen ? () => pickQuickAction('paste') : undefined,
+    'copy-pane': optionRun(options, 'copy-pane'),
+  };
 
   const place = {
     hostName: attach?.hostName ?? opening.hostName,
@@ -1380,6 +1407,9 @@ export default function TerminalScreen() {
               at the edge. */}
           <EdgeGrip
             enabled={open && !selecting && !sheetOpen}
+            actions={gripActions}
+            titles={composerOpen ? { compose: 'Close composer' } : undefined}
+            onFanChange={setFanOpen}
             {...switcher.grip}
             swipe={{ swipe, width: activeSlot?.box.width ?? containerSize.width }}
           />
@@ -1420,6 +1450,8 @@ export default function TerminalScreen() {
         />
 
         <TitleSheet {...chooser.sheet} />
+
+        <OptionsSheet isPresented={optionsOpen} items={options} onClose={() => setOptionsOpen(false)} />
 
         {composerOpen && attach && activePaneId ? (
           <ComposerPanel

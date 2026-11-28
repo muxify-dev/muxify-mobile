@@ -6,6 +6,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { HeaderBand } from '@/components/header-band';
 import type { Appearance, TerminalPalette } from '@/constants/app-theme';
+import { optionGroups } from '@/lib/options-table';
 
 /** What the header says the screen is showing. */
 export type HeaderTitle = (
@@ -159,17 +160,7 @@ function TitleLines({ title, terminal, detailTestID }: { title: HeaderTitle; ter
 }
 
 function renderOptions(items: OptionsItem[]): ReactNode[] {
-  const groups: { id: string; items: Exclude<OptionsItem, { kind: 'divider' }>[] }[] = [
-    { id: 'first', items: [] },
-  ];
-  for (const item of items) {
-    if (item.kind === 'divider') {
-      groups.push({ id: item.id, items: [] });
-    } else {
-      groups[groups.length - 1].items.push(item);
-    }
-  }
-  return groups.filter((group) => group.items.length > 0).map((group) => (
+  return optionGroups(items).map((group) => (
     <Stack.Toolbar.Menu key={group.id} inline>
       {group.items.map((item) => {
         switch (item.kind) {

@@ -6,6 +6,7 @@ import {
   type ThemeId,
   type ThemeKind,
 } from '@/constants/app-theme';
+import { parseGripActions, type GripActionSlots } from '@/lib/grip-actions';
 import { parseQuickActions, type QuickActions } from '@/lib/quick-actions';
 import type { HostScreenTab } from '@/domain/host-screen';
 import { parseKeyboardShortcuts, type KeyboardShortcuts } from '@/keyboard/keyboard-shortcuts';
@@ -63,6 +64,8 @@ export interface Settings {
   /** The Keyboard Shortcuts the user changed. The rest keep their defaults. */
   keyboardShortcuts?: KeyboardShortcuts;
   quickActions?: QuickActions;
+  /** The three Grip actions beside Destinations in the Fan. Absent means the defaults. */
+  gripActions?: GripActionSlots;
 }
 
 export const APPEARANCE_SETTINGS = ['system', 'light', 'dark'] as const;
@@ -240,12 +243,14 @@ export function parseSettings(raw: unknown): Settings {
     : undefined;
 
   const quickActions = parseQuickActions(record.quickActions);
+  const gripActions = parseGripActions(record.gripActions);
   const keyboardShortcuts = parseKeyboardShortcuts(record.keyboardShortcuts);
   const hostScreenTabs = parseHostScreenTabs(record.hostScreenTabs);
 
   return {
     ...(chooserListPreferences === undefined ? {} : { chooserListPreferences }),
     ...(quickActions === undefined ? {} : { quickActions }),
+    ...(gripActions === undefined ? {} : { gripActions }),
     ...(keyboardShortcuts === undefined ? {} : { keyboardShortcuts }),
     ...(hostScreenTabs === undefined ? {} : { hostScreenTabs }),
     fontSize: typeof fontSize === 'number' ? clampFontSize(fontSize) : null,

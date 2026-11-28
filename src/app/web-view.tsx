@@ -19,9 +19,11 @@ import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { coverOf } from '@/domain/cover';
 import type { OnScreen } from '@/domain/destinations';
-import { useCoverAction } from '@/hooks/use-cover-action';
+import { useCoverAction, useGoHost } from '@/hooks/use-cover-action';
 import { useRouteSession, type RouteSession } from '@/hooks/use-route-session';
 import { useTitleSheet } from '@/hooks/use-title-sheet';
+import { requestGoTo } from '@/keyboard/go-to-request';
+import { NO_GRIP_ACTIONS, type GripActionRuns } from '@/lib/grip-actions';
 import { useSettings } from '@/settings/settings-context';
 import { placeOwner, type PlaceOwner, type PlaceTab } from '@/storage/records';
 import type { Attach } from '@/tmux/attach';
@@ -179,6 +181,19 @@ export default function WebViewScreen() {
   const chooser = useTitleSheet({ attach, state, hostId, onOpenTab: showTab, onMoved: moved,
     onReplacingStopped: opening.forgetLookup, onScreen });
   const switcher = useEdgeSwitcher(chooser.drawer, chooser.openDrawer);
+  const goHost = useGoHost(hostId);
+  /**
+   * The Grip actions this screen runs. The page has no Pane, Composer or
+   * Options of its own, so those slots are dimmed and keep their places.
+   */
+  const gripActions: GripActionRuns = {
+    ...NO_GRIP_ACTIONS,
+    'go-to': hostId
+      ? () => { requestGoTo(hostId, { kind: 'page', tab: { url: shown.url, page: shown.page, scrollY: shown.scrollY } }); goHost(); }
+      : undefined,
+    'title-sheet': chooser.openTitleSheet,
+    'host-screen': goHost,
+  };
 
   // A page that a Place opened: once the Attach is back in the Place's
   // Window, the Host must still list the Tab. A Tab closed on the Mac sends the
@@ -272,6 +287,7 @@ export default function WebViewScreen() {
         {/* Over the page at the right edge: the page scrolls under the rest. */}
         <EdgeGrip
           enabled={state?.typing.kind === 'open' && !chooser.sheet.isPresented && cover.kind !== 'connection-screen'}
+          actions={gripActions}
           {...switcher.grip}
         />
         <EdgeDrawer {...switcher.drawer} />

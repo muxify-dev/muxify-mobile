@@ -206,9 +206,10 @@ export default function SettingsScreen() {
             header={<SectionHeader palette={palette}>Destinations</SectionHeader>}
             footer={
               <Text modifiers={[font({ size: 13 }), foregroundColor(palette.sectionHeader)]}>
-                Hold the line at the right edge to open the Panes, Windows, Sessions and Tabs of the
-                Topic or Session on screen. This trial hides every way into the Panes picker, so the
-                Grip is the way to a Pane. The title tap stays. Zoom and Split stay in Options.
+                Hold the button at the right edge, then slide up to Destinations to open the Panes,
+                Windows, Sessions and Tabs of the Topic or Session on screen. This trial hides every
+                way into the Panes picker, so the Grip is the way to a Pane. The title tap stays.
+                Zoom and Split stay in Options.
               </Text>
             }
             modifiers={[listRowBackground(palette.rowSurface)]}>
@@ -217,6 +218,12 @@ export default function SettingsScreen() {
               isOn={value.hidePanesPicker}
               onIsOnChange={(on) => update({ hidePanesPicker: on })}
               modifiers={[tint(palette.controlAccent)]}
+            />
+            <Button
+              label="Grip Actions"
+              systemImage="circle.grid.2x2"
+              onPress={() => router.push('/grip-actions')}
+              modifiers={[accessibilityLabel('Grip Actions')]}
             />
           </Section>
 

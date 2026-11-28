@@ -64,6 +64,11 @@ describe('parseSettings', () => {
     });
   });
 
+  it('keeps empty Grip action slots and drops repeated or unknown actions in place', () => {
+    expect(parseSettings({ gripActions: ['paste', 'paste', 'removed-action'] }).gripActions).toEqual(['paste', null, null]);
+    expect(parseSettings({ gripActions: 'paste' }).gripActions).toBeUndefined();
+  });
+
   it('defaults a file that is not there', () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
   });

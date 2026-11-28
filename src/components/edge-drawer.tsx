@@ -10,7 +10,7 @@ import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
 import type { DestinationRow } from '@/domain/destinations';
 import { directoryName } from '@/lib/paths';
 import {
-  autoScrollSpeed, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
+  autoScrollSpeed, backToFan, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
 } from '@/navigation/grip';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -47,10 +47,10 @@ interface Measured {
 }
 
 /**
- * The Grip and the Edge Drawer as one control, for a screen to render
- * `<EdgeGrip {...grip}>` and `<EdgeDrawer {...drawer}>` with.
+ * The Grip's Destinations action and the Edge Drawer as one control, for a
+ * screen to render `<EdgeGrip {...grip}>` and `<EdgeDrawer {...drawer}>` with.
  *
- * While the finger that opened the drawer is still down, the row under it
+ * While the finger that lit Destinations is still down, the row under it
  * is lit and a lift there picks it. Each lift closes the drawer: on no row
  * it picks nothing. See navigation/grip.ts.
  *
@@ -65,7 +65,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
   const list = useRef<ScrollView>(null);
   /** The scroll loop's next frame and the time of its last one, while a held finger is near the list's top or bottom. */
   const scrolling = useRef<{ frame: number; last: number } | null>(null);
-  /** Where the finger held the Grip, on screen, for the panel to end at: see drawerBottom. */
+  /** Where the finger lit Destinations, on screen, for the panel to end at: see drawerBottom. */
   const [anchorY, setAnchorY] = useState<number | null>(null);
   /** While the finger that opened the drawer is down: the row it lights, and whether it is in the Cancel Zone or the Lift Lane. */
   const [hold, setHold] = useState<{ lit: string | null; cancelling: boolean } | null>(null);
@@ -145,7 +145,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
   const light = useCallback((to: Point) => {
     const at = heldAt.current;
     const panel = frame();
-    // Nothing is lit until the finger leaves the Grip, where a lift picks nothing.
+    // Nothing is lit until the finger leaves the point where it lit Destinations, where a lift picks nothing.
     const away = at !== null && Math.hypot(to.x - at.x, to.y - at.y) > GRIP_SLOP;
     const lit = away ? rowAt(to) : null;
     const next = {
@@ -164,7 +164,7 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
    * bottom the list scrolls under it, one step each frame, and the row now
    * under the finger is lit. The loop stops when the finger leaves the edge
    * or lifts. The finger opens the drawer low in the list, so the scroll
-   * waits until it has moved off the Grip.
+   * waits until it has moved off the point where it opened.
    */
   const startScrolling = useCallback(() => {
     if (scrolling.current) return;
@@ -217,24 +217,39 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
     }
   }, [frame]);
 
+  /** The held finger is no longer the drawer's. */
+  const letGo = () => {
+    heldAt.current = null;
+    finger.current = null;
+    stopScrolling();
+    setHold(null);
+  };
+
   const grip = {
-    onHold: (at: Point) => {
+    onDestinations: (at: Point) => {
       heldAt.current = at;
       finger.current = at;
       setHold({ lit: null, cancelling: false });
       opening(at);
       setTimeout(() => { if (heldAt.current === at) sayWhereRowsAre(at); }, LAID_OUT_MS);
     },
-    onHeldMove: (to: Point) => {
+    /** 'fan' when the finger went down past the panel: the drawer closes, and the Grip opens its Fan again. */
+    onHeldMove: (to: Point): 'drawer' | 'fan' => {
+      const at = heldAt.current;
+      const panel = frame();
+      if (at && panel && backToFan(to, at, panel)) {
+        letGo();
+        say('the finger went back from the Edge Drawer to the Fan');
+        onDismiss();
+        return 'fan';
+      }
       finger.current = to;
       light(to);
       startScrolling();
+      return 'drawer';
     },
     onHeldLift: (to: Point) => {
-      heldAt.current = null;
-      finger.current = null;
-      stopScrolling();
-      setHold(null);
+      letGo();
       const panel = frame();
       const lift = panel ? liftGrip(to, panel, rowAt) : null;
       const row = lift?.kind === 'pick' ? rows.find((each) => each.key === lift.key) : undefined;
@@ -262,8 +277,8 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
 
 /**
  * The Edge Drawer: a panel at the right edge that lists every Destination,
- * from the Grip. It ends at the finger that held the Grip and is as tall as
- * its list, up to the top of the screen, so the last row is by the finger. On a phone it covers most of the screen over a scrim, and a
+ * from the Grip's Destinations action. It ends at the finger that lit it and is
+ * as tall as its list, up to the top of the screen, so the last row is by the finger. On a phone it covers most of the screen over a scrim, and a
  * tap on the scrim closes it. On an iPad it is a column with no scrim, and
  * the terminal beside it stays live.
  *
@@ -309,7 +324,7 @@ export function EdgeDrawer({
       onLayout={() => overlay.current?.measureInWindow((x, y, w, h) => measure.overlay({ x, y, width: w, height: h }))}>
       {scrim ? (
         <Pressable
-          style={[StyleSheet.absoluteFill, { backgroundColor: cancelling ? CANCEL_TINT : wide ? 'transparent' : SCRIM }]}
+          style={[StyleSheet.absoluteFill, { backgroundColor: wide ? 'transparent' : SCRIM }]}
           onPress={onDismiss}
           accessibilityLabel="Close Destinations"
           accessibilityRole="button">
@@ -518,7 +533,6 @@ const LAID_OUT_MS = 300;
 
 const say = speakingAs(deviceLog(), 'screen');
 const SCRIM = 'rgba(0, 0, 0, 0.35)';
-const CANCEL_TINT = 'rgba(160, 30, 30, 0.45)';
 
 const styles = StyleSheet.create({
   column: { position: 'absolute', top: PANEL_MARGIN, right: PANEL_MARGIN, justifyContent: 'flex-end' },

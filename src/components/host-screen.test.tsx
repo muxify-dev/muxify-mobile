@@ -5,6 +5,7 @@ import { Button, Picker } from '@expo/ui/swift-ui';
 import HostScreen from '@/app/hosts/[id]';
 import { answered, HOST_PROBLEM } from '@/domain/host-listing';
 import { requestGoTo } from '@/keyboard/go-to-request';
+import { placeTabRoute } from '@/browser/place-tab-route';
 import type { KeyboardHandlers } from '@/keyboard/key-commands';
 import { fakeHostServer, refused } from '@/test-support/fake-host-server';
 import { protocolFrames } from '@/test-support/protocol-frames';
@@ -15,6 +16,7 @@ import type { Freshness, HostTopics, Shown } from '@/topics/host-topics';
 import { sessionPathRowsJson, type SessionPathRow } from '@/topics/session-paths';
 
 const mockRouter = { push: jest.fn() };
+const mockNavigation = { addListener: () => () => undefined };
 const mockRemember = jest.fn();
 const mockReopen = jest.fn();
 const mockWake = jest.fn();
@@ -42,6 +44,7 @@ jest.mock('expo-router', () => {
     useRouter: () => mockRouter,
     useLocalSearchParams: () => ({ id: 'host' }),
     useIsFocused: () => mockFocused,
+    useNavigation: () => mockNavigation,
     useFocusEffect: (effect: () => void) => {
       const focused = mockFocused;
       React.useEffect(() => (focused ? effect() : undefined), [effect, focused]);
@@ -275,12 +278,48 @@ describe('the bar at the bottom', () => {
 
     expect(searchBar(renderer)).toBeUndefined();
 
-    requestGoTo('host');
+    requestGoTo('host', { kind: 'terminal' });
     mockFocused = true;
     await act(async () => { renderer.update(<HostScreen />); });
 
     expect(searchBar(renderer)).toBeDefined();
     expect(mockSearch.focus).toHaveBeenCalledTimes(1);
+  });
+
+  async function askedFrom(from: Parameters<typeof requestGoTo>[1]) {
+    mockAttachedHost = 'host';
+    await mount();
+    mockFocused = false;
+    await act(async () => { renderer.update(<HostScreen />); });
+    requestGoTo('host', from);
+    mockFocused = true;
+    await act(async () => { renderer.update(<HostScreen />); });
+    await act(async () => { searchBar(renderer)!.props.onFocus(); });
+    mockRouter.push.mockClear();
+  }
+
+  it('goes back to the Terminal Screen when Go to that it asked for is cancelled', async () => {
+    await askedFrom({ kind: 'terminal' });
+    await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+
+    expect(mockRouter.push).toHaveBeenCalledWith('/terminal');
+  });
+
+  it('goes back to the page when Go to that the Web View asked for is closed with Escape', async () => {
+    const tab = { url: 'https://example.com/', page: 'https://example.com/a', scrollY: 120 };
+    await askedFrom({ kind: 'page', tab });
+    await act(async () => { mockKeys['list-close']!(); });
+
+    expect(mockRouter.push).toHaveBeenCalledWith(placeTabRoute(tab));
+  });
+
+  it('stays on the Host Screen when Go to opened here is cancelled', async () => {
+    mockAttachedHost = 'host';
+    await mount();
+    await act(async () => { searchBar(renderer)!.props.onFocus(); });
+    await act(async () => { searchBar(renderer)!.props.onCancelButtonPress(); });
+
+    expect(mockRouter.push).not.toHaveBeenCalled();
   });
 
   it('goes away while a Topic card moves', async () => {
