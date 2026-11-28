@@ -16,10 +16,9 @@ import { TrackpadScroll } from '@/components/trackpad-scroll';
 import type { TrackpadTarget } from '@/lib/trackpad-gesture';
 import { ConnectionScreen } from '@/components/connection-screen';
 import { KeyRow, KEY_ROW_HEIGHT } from '@/components/key-row';
-import { usePhysicalKeyboard } from '@/hooks/use-physical-keyboard';
-import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
+import { useKeyboard } from '@/hooks/use-keyboard';
 import { inputNoticeCopy, shownInputNotice } from '@/lib/input-notice-copy';
-import { terminalClearance, type ScreenRect } from '@/lib/terminal-clearance';
+import type { ScreenRect } from '@/lib/terminal-clearance';
 import { EdgeDrawer, useEdgeSwitcher } from '@/components/edge-drawer';
 import { ON_PANE } from '@/domain/destinations';
 import { EdgeGrip } from '@/components/edge-grip';
@@ -44,7 +43,7 @@ import type { NamedKey } from '@/constants/row-keys';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
 import { actionLabel, coverOf, type Cover, type CoverAction } from '@/domain/cover';
-import { keyboardTarget } from '@/domain/keyboard';
+import { keyboardPlan } from '@/domain/keyboard';
 import { useCopyLog } from '@/hooks/use-copy-log';
 import { usePaneSwipe, type PaneSwipe } from '@/hooks/use-pane-swipe';
 import { clampFontSize, fontSizeInForce } from '@/settings/settings';
@@ -198,12 +197,9 @@ export default function TerminalScreen() {
   const [paneGrids, setPaneGrids] = useState<ReadonlyMap<string, Grid>>(new Map());
   /** Scroll distance not yet worth a notch of the wheel. */
   const carriedLines = useRef(0);
-  const physicalKeyboard = usePhysicalKeyboard();
-  const keyboardFrame = useKeyboardFrame();
-  const keyboardVisible = keyboardFrame !== null && keyboardFrame.height > 0;
+  const keyboard = useKeyboard();
   const rootView = useRef<View>(null);
   const [rootBounds, setRootBounds] = useState<ScreenRect>({ x: 0, y: 0, width: 0, height: 0 });
-  const clearance = terminalClearance(rootBounds, keyboardFrame, insets.bottom);
   const [composerOpen, setComposerOpen] = useState(false);
   const composerInput = useRef<ComposerInputRef | null>(null);
   /**
@@ -220,11 +216,6 @@ export default function TerminalScreen() {
    * must find nothing armed, or the modifiers would go with it a second time.
    */
   const armedRef = useRef<Modifiers>(NO_MODIFIERS);
-  armedRef.current = physicalKeyboard ? NO_MODIFIERS : armed;
-  useLayoutEffect(() => {
-    if (physicalKeyboard) setArmed(NO_MODIFIERS);
-    say(`physical keyboard ${physicalKeyboard ? 'connected' : 'disconnected'}`);
-  }, [physicalKeyboard]);
   const [picker, setPicker] = useState<PickerState>({ open: false });
   const closePicker = useCallback(() => setPicker({ open: false }), []);
   /**
@@ -289,10 +280,33 @@ export default function TerminalScreen() {
     if (cellSize) attach?.cellReported(cellSize);
   }, [attach, cellSize]);
 
-  /** The full height survives keyboard and Composer layout changes. */
-  const windowHeight = Math.max(0, rootBounds.height - (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) - clearance.resting);
   const [selectionArea, setSelectionArea] = useState<Extent | null>(null);
   const selecting = selectionArea !== null;
+  const [screenFocused, setScreenFocused] = useState(navigation.isFocused());
+  useFocusEffect(useCallback(() => {
+    setScreenFocused(true);
+    return () => setScreenFocused(false);
+  }, []));
+  const sheetOpen = picker.open || chooser.sheet.isPresented || optionsOpen;
+  /** The Edge Drawer and the Grip's Fan are input too: their open, and the finger that holds the Grip, own the touches. */
+  const inputElsewhere = composerOpen || selecting || sheetOpen || chooser.drawer.open || fanOpen || !screenFocused;
+  /**
+   * Every keyboard decision of this screen, made once from what iOS says, what
+   * the user wants and what is open here. Nothing below decides one itself.
+   */
+  const plan = keyboardPlan(keyboard, state?.keyboard ?? 'down', {
+    activePaneId: activePaneId === '' ? null : activePaneId,
+    typingOpen: open,
+    inputElsewhere,
+    rootBounds,
+    safeBottom: insets.bottom,
+    keyRowHeight: KEY_ROW_HEIGHT,
+  });
+  armedRef.current = plan.keyRow ? armed : NO_MODIFIERS;
+  useLayoutEffect(() => {
+    if (!plan.keyRow) setArmed(NO_MODIFIERS);
+    say(`Key Row ${plan.keyRow ? 'shown' : 'hidden'}`);
+  }, [plan.keyRow]);
   // A handle of a Selection can sit at column 1, where the back swipe starts.
   useBackSwipe(selecting ? 'off' : 'edge');
   /** The mouse layer's long press is still down. See MouseLayer. */
@@ -300,11 +314,11 @@ export default function TerminalScreen() {
   const windowArea = useMemo(
     (): Extent => selectionArea ?? {
       width: containerSize.width,
-      height: keyboardVisible && state?.alternate && !composerOpen
+      height: plan.keyboardShown && state?.alternate && !composerOpen
         ? containerSize.height
-        : windowHeight || containerSize.height,
+        : plan.windowHeight || containerSize.height,
     },
-    [containerSize, windowHeight, keyboardVisible, state?.alternate, composerOpen, selectionArea],
+    [containerSize, plan.windowHeight, plan.keyboardShown, state?.alternate, composerOpen, selectionArea],
   );
 
   /**
@@ -442,15 +456,9 @@ export default function TerminalScreen() {
    * whose only job was to remember the last render's value. What a closing
    * sheet means for the Client's size is the sizing module's business.
    */
-  const [screenFocused, setScreenFocused] = useState(navigation.isFocused());
-  useFocusEffect(useCallback(() => {
-    setScreenFocused(true);
-    return () => setScreenFocused(false);
-  }, []));
   // Unread on visit: the Terminal Screen in focus shows the Attach's Panes, as a visit on the Mac does.
   useFocusEffect(useCallback(() => attach?.terminalFocused(), [attach]));
 
-  const sheetOpen = picker.open || chooser.sheet.isPresented || optionsOpen;
   const trackpadTargets: TrackpadTarget[] = slots.map((slot) => ({
     paneId: slot.pane.id,
     box: slot.box,
@@ -584,40 +592,26 @@ export default function TerminalScreen() {
    * has released its view, and because a key is pressed into it.
    */
   const surfaces = useRef(new Map<string, ScreenSurface>());
-  const keyboardIntent = state?.keyboard ?? 'down';
-  /** The Edge Drawer and the Grip's Fan are input too: their open, and the finger that holds the Grip, own the touches. */
-  const inputElsewhere = composerOpen || selecting || sheetOpen || chooser.drawer.open || fanOpen || !screenFocused;
-  const target = keyboardTarget({
-    intent: keyboardIntent,
-    physicalKeyboard,
-    activePaneId: activeSlot ? activePaneId : null,
-    typingOpen: open,
-    inputElsewhere,
-  });
-  const targetKind = target.kind;
-  const targetPaneId = target.kind === 'pane' ? target.paneId : null;
+  const targetKind = plan.target.kind;
+  const targetPaneId = plan.target.kind === 'pane' ? plan.target.paneId : null;
+  const hasActiveSlot = activeSlot !== undefined;
   /**
    * The one place the system keyboard is moved. Only the active Pane's Surface
    * holds it: a Pane that takes it from another needs no blur first, because
-   * a first responder gives way to the next. See keyboardTarget.
+   * a first responder gives way to the next. See keyboardPlan.
    */
   useEffect(() => {
     if (targetKind === 'elsewhere') return;
     if (targetPaneId !== null) {
+      // Its Surface is not on screen yet: this runs again when it is.
+      if (!hasActiveSlot) return;
       say('keyboard: focus');
       surfaces.current.get(targetPaneId)?.focus();
       return;
     }
     say('keyboard: blur');
     for (const surface of surfaces.current.values()) surface.blur();
-  }, [targetKind, targetPaneId]);
-  // A hardware keyboard that leaves while the active Pane holds the keyboard
-  // leaves the system keyboard up on it: that is what the user now has.
-  const heldForHardware = useRef(false);
-  useLayoutEffect(() => {
-    if (heldForHardware.current && !physicalKeyboard) attach?.setKeyboard('up');
-    heldForHardware.current = physicalKeyboard && targetKind === 'pane';
-  }, [attach, physicalKeyboard, targetKind]);
+  }, [targetKind, targetPaneId, hasActiveSlot]);
   const mouseGrid = activeSlot
     ? activeSlot.fillsWindow
       ? visibleGrid
@@ -815,11 +809,11 @@ export default function TerminalScreen() {
    * The question goes to the Surface rather than to a global listener: React
    * Native's registry never heard of this view, so `Keyboard.dismiss()` was a
    * no-op and there was no way at all to raise the keyboard again. The
-   * listener below only decides which way the Key Row's button points.
+   * keyboard plan only decides which way the Key Row's button points.
    */
   const toggleKeyboard = useCallback(() => {
     if (composerOpen) {
-      if (keyboardVisible) void composerInput.current?.blur();
+      if (plan.keyboardShown) void composerInput.current?.blur();
       else void composerInput.current?.focus();
       return;
     }
@@ -829,7 +823,7 @@ export default function TerminalScreen() {
     void view?.toggleKeyboard().then((intent) => {
       if (intent !== null) attach?.setKeyboard(intent);
     });
-  }, [activeView, activePaneId, attach, composerOpen, keyboardVisible]);
+  }, [activeView, activePaneId, attach, composerOpen, plan.keyboardShown]);
 
   const toggleComposer = useCallback(() => {
     if (composerOpen) void composerInput.current?.blur();
@@ -1257,7 +1251,7 @@ export default function TerminalScreen() {
             const size = { width: nativeEvent.layout.width, height: nativeEvent.layout.height };
             say(
               `container ${Math.round(size.width)}x${Math.round(size.height)}` +
-                (keyboardVisible ? ', keyboard up' : ''),
+                (plan.keyboardShown ? ', keyboard up' : ''),
             );
             setContainerSize(size);
           }}>
@@ -1310,7 +1304,7 @@ export default function TerminalScreen() {
                 key={slot.pane.id}
                 slot={slot}
                 painted={painted.has(slot.pane.id)}
-                physicalKeyboard={physicalKeyboard}
+                shortcutBar={plan.shortcutBar}
                 font={fontSize}
                 ligatures={settings.ligatures}
                 terminal={terminal}
@@ -1468,7 +1462,7 @@ export default function TerminalScreen() {
             }}
           />
         ) : null}
-        {!physicalKeyboard ? <KeyRow
+        {plan.keyRow ? <KeyRow
           key={JSON.stringify([hostId, sessionName, activePaneId])}
           quickActions={quickActions}
           onQuickAction={pickQuickAction}
@@ -1478,16 +1472,16 @@ export default function TerminalScreen() {
           onSymbol={pressSymbol}
           onPanes={hidePanesPicker ? undefined : openPanes}
           onKeyboard={toggleKeyboard}
-          keyboardVisible={keyboardVisible}
+          keyboardVisible={plan.keyboardShown}
           keysDisabled={!open || composerOpen || sheetOpen || !screenFocused}
           // One Pane is when you reach for Split, so never disabled while keys go through.
           panesDisabled={!open}
-          below={clearance.bottom}
-        /> : <View style={{ height: clearance.bottom }} pointerEvents="none" />}
+          below={plan.clearance.bottom}
+        /> : <View style={{ height: plan.clearance.bottom }} pointerEvents="none" />}
 
         {inputCard && cover.kind !== 'connection-screen' ? (
           <View
-            style={[styles.top, { bottom: (physicalKeyboard ? 0 : KEY_ROW_HEIGHT) + clearance.bottom + 8 }]}
+            style={[styles.top, { bottom: plan.reservedBottom + plan.clearance.bottom + 8 }]}
             pointerEvents="box-none">
             {inputCard}
           </View>
@@ -1609,7 +1603,7 @@ async function pasteInto(destination: () => Attach | null, read: () => Promise<P
  */
 function PaneSurfaceView({
   slot,
-  physicalKeyboard,
+  shortcutBar,
   painted,
   font,
   ligatures,
@@ -1631,7 +1625,8 @@ function PaneSurfaceView({
   onKeyboardTap,
 }: {
   slot: PaneSlot;
-  physicalKeyboard: boolean;
+  /** The Surface's iPad shortcut bar is on. See keyboardPlan. */
+  shortcutBar: boolean;
   /** Whether the Attach has painted this Pane's Surface. */
   painted: boolean;
   font: number;
@@ -1723,7 +1718,7 @@ function PaneSurfaceView({
         // and the iPad's undo, redo and Paste bar, both turned off by a local
         // patch. The Key Row stands in their place; see ADR 0003.
         accessoryBar={false}
-        shortcutBar={physicalKeyboard}
+        shortcutBar={shortcutBar}
         theme={{
           background: terminal.background,
           foreground: terminal.foreground,

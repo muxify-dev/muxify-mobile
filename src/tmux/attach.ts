@@ -272,6 +272,14 @@ export interface Attach {
   newWindow(): Promise<void>;
   /** The user raised or dismissed the keyboard: the Keyboard key, a tap on the Pane. */
   setKeyboard(intent: KeyboardIntent): void;
+  /**
+   * The physical keyboard that the active Pane held the keyboard for is no
+   * longer in use, so the system keyboard is the user's now: the intent
+   * becomes `up`. Only while Typing is open and the Terminal Screen is in
+   * focus, which is all the Attach can see of "the Pane holds the keyboard".
+   * See ADR 0039.
+   */
+  physicalKeyboardLeft(): void;
   setZoom(on: boolean): void;
   /** Fills in the previews for a sheet that is already open. */
   capturePreviews(targets: string[]): void;
@@ -1912,6 +1920,12 @@ export function openAttach(options: AttachOptions): Attach {
       if (closed || state.keyboard === intent) return;
       say(`keyboard intent ${intent}`);
       change({ keyboard: intent });
+    },
+
+    physicalKeyboardLeft(): void {
+      if (closed || state.typing.kind !== 'open' || !paneVisit.focused() || state.keyboard === 'up') return;
+      say('keyboard intent up, the physical keyboard left');
+      change({ keyboard: 'up' });
     },
 
     setZoom(on: boolean): void {
