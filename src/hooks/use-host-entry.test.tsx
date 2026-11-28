@@ -11,6 +11,9 @@ import type { TopicDetail, TopicRead } from '@/topics/topic-detail';
 
 import { useHostEntry } from './use-host-entry';
 
+// The keyboard is the native module's, and nothing here moves it.
+jest.mock('@/hooks/use-keyboard', () => ({ subscribeKeyboard: () => () => {} }));
+
 const mockPush = jest.fn();
 const mockEntered = jest.fn();
 const mockOpenAttach = jest.fn();

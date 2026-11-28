@@ -6,7 +6,7 @@ import Animated, { SlideInRight, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { tabAddress, tabLabel } from '@/browser/tabs';
-import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
+import { useKeyboard } from '@/hooks/use-keyboard';
 import type { DestinationRow } from '@/domain/destinations';
 import { directoryName } from '@/lib/paths';
 import {
@@ -295,7 +295,7 @@ export function EdgeDrawer({
   const insets = useSafeAreaInsets();
   const overlay = useRef<View>(null);
   const layout = useMemo(() => drawerLayout(rows), [rows]);
-  const keyboard = useKeyboardFrame();
+  const { software: keyboard } = useKeyboard();
   const screenHeight = useWindowDimensions().height;
   /**
    * The panel is as tall as its title and rows, up to its column. These are
@@ -310,7 +310,7 @@ export function EdgeDrawer({
   const panelHeight = columnHeight === null || rowsHeight === 0
     ? columnHeight ?? undefined
     : Math.min(columnHeight, titleHeight + rowsHeight + 2 * StyleSheet.hairlineWidth);
-  const keyboardCovers = keyboard !== null && keyboard.height > 0 ? Math.max(screenHeight - keyboard.y, 0) : 0;
+  const keyboardCovers = keyboard !== null ? Math.max(screenHeight - keyboard.y, 0) : 0;
   const floorY = screenHeight - (keyboardCovers > 0 ? keyboardCovers : insets.bottom) - PANEL_MARGIN;
   // The overlay ends at the screen's bottom, so a y on screen is this far up from its bottom.
   const bottom = screenHeight - (anchorY === null ? floorY : drawerBottom(anchorY, floorY));

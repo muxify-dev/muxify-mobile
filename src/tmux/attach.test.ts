@@ -688,6 +688,37 @@ describe('the keyboard the user wants', () => {
     expect(kit.attach.state().keyboard).toBe('down');
   });
 
+  describe('when a physical keyboard leaves', () => {
+    it('goes up while Typing is open and the Terminal Screen is in focus', async () => {
+      const kit = attachOn();
+      await connected(kit);
+      kit.attach.terminalFocused();
+
+      kit.attach.physicalKeyboardLeft();
+
+      expect(kit.attach.state().keyboard).toBe('up');
+    });
+
+    it('stays as it was with no Terminal Screen in focus', async () => {
+      const kit = attachOn();
+      await connected(kit);
+      kit.attach.terminalFocused()();
+
+      kit.attach.physicalKeyboardLeft();
+
+      expect(kit.attach.state().keyboard).toBe('down');
+    });
+
+    it('stays as it was while Typing is not open', async () => {
+      const kit = attachOn();
+      kit.attach.terminalFocused();
+
+      kit.attach.physicalKeyboardLeft();
+
+      expect(kit.attach.state().keyboard).toBe('down');
+    });
+  });
+
   it('keeps the intent through a break and a reconnect', async () => {
     const kit = attachOn({ hosts: [fakeHost(), fakeHost()] });
     await connected(kit);

@@ -234,6 +234,11 @@ extension UIApplication {
 
   /// After the exchange, `muxifySendEvent` here is UIKit's own `sendEvent`.
   @objc private func muxifySendEvent(_ event: UIEvent) {
+    // Tells the KeyboardSnapshot module that a physical keyboard is in use: no
+    // key of the software keyboard is a press. The name is read there too.
+    if let presses = event as? UIPressesEvent, presses.allPresses.contains(where: { $0.phase == .began && $0.key != nil }) {
+      NotificationCenter.default.post(name: Notification.Name("dev.muxify.hardwareKeyPressed"), object: nil)
+    }
     if KeyCommandRegistry.shared.takes(event) { return }
     muxifySendEvent(event)
   }

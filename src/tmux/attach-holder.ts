@@ -1,4 +1,5 @@
 import { silentLog, speakingAs, type Log } from '@/diagnostics/log';
+import { physicalKeyboardLeft, type KeyboardSnapshot } from '@/domain/keyboard';
 import type { Host } from '@/storage/records';
 import type { HostStore } from '@/storage/store';
 
@@ -27,6 +28,9 @@ export interface AttachRequest {
   /** Set when the phone made the Pane this opens on: the keyboard comes up on it. */
   keyboard?: 'up';
 }
+
+/** How the holder hears the keyboard: `listener` is called with each snapshot and the one before it. */
+export type SubscribeKeyboard = (listener: (now: KeyboardSnapshot, before: KeyboardSnapshot) => void) => () => void;
 
 export interface AttachHolder {
   /** The attached Session, or null when nothing is. */
@@ -65,12 +69,14 @@ export interface AttachHolder {
  *
  * **The app's lifecycle is forwarded as a fact, not as an instruction.** What
  * background and foreground *mean* is the Attach's policy; this only knows
- * which Attach to tell.
+ * which Attach to tell. The keyboard is the same: when a physical keyboard
+ * stops being in use, the Attach held now is told once (ADR 0039).
  */
 export function createAttachHolder(
   open: (request: Pick<AttachRequest, 'host' | 'destination' | 'zoomed' | 'keyboard'> & { colours: PaneColours | null }) => Attach,
   lastPlace: Pick<HostStore, 'forgetLastPlace'>,
   log: Log = silentLog,
+  subscribeKeyboard?: SubscribeKeyboard,
 ): AttachHolder {
   let current: Attach | null = null;
   let opening = false;
@@ -80,6 +86,12 @@ export function createAttachHolder(
   let colours: PaneColours | null = null;
   const listeners = new Set<(attach: Attach | null) => void>();
   const say = speakingAs(log, 'holder');
+
+  subscribeKeyboard?.((now, before) => {
+    if (!physicalKeyboardLeft(before, now)) return;
+    say('physical keyboard left');
+    current?.physicalKeyboardLeft();
+  });
 
   function publish(): void {
     for (const listener of [...listeners]) listener(current);

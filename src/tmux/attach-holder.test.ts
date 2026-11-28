@@ -1,10 +1,11 @@
 import type { Host } from '@/storage/records';
 import { createComposer } from '@/composer/composer';
+import type { KeyboardSnapshot } from '@/domain/keyboard';
 import { typingOf } from '@/domain/typing';
 import type { TopicId } from '@/topics/environment';
 
 import type { Attach, AttachState, LifecyclePhase } from './attach';
-import { createAttachHolder, type AttachRequest } from './attach-holder';
+import { createAttachHolder, type AttachRequest, type SubscribeKeyboard } from './attach-holder';
 import type { PaneColours } from './commands';
 import { EMPTY_TOPOLOGY } from './topology';
 
@@ -65,6 +66,7 @@ function fakeAttach(options: AttachRequest & { colours: PaneColours | null }, lo
     split: () => Promise.resolve(),
     newWindow: () => Promise.resolve(),
     setKeyboard: (intent) => log.push(`keyboard ${options.destination.sessionName} ${intent}`),
+    physicalKeyboardLeft: () => log.push(`keyboard ${options.destination.sessionName} physical keyboard left`),
     setZoom: () => {},
     capturePreviews: () => {},
     capturePaneText: () => Promise.resolve(''),
@@ -425,4 +427,54 @@ it('does not retain delivery guards in the new Attach', async () => {
   const request = { host: host('a'), destination: { sessionName: 'work', topic: null }, zoomed: true };
   await holder.open({ ...request, origin: { attach: null, sessionName: null, topicId: null }, isCurrent: () => true });
   expect(create).toHaveBeenCalledWith({ ...request, colours: null });
+});
+
+describe('a physical keyboard that leaves', () => {
+  const open = { host: host('a'), zoomed: true } as const;
+  const at = (physical: KeyboardSnapshot['physical']): KeyboardSnapshot => ({ physical, software: null });
+
+  /** A holder that hears the keyboard through a fake in place of the native module. */
+  function holderHearing() {
+    const log: string[] = [];
+    let heard: Parameters<SubscribeKeyboard>[0] | undefined;
+    const holder = createAttachHolder(
+      (options) => fakeAttach(options, log),
+      { forgetLastPlace: () => Promise.resolve() },
+      undefined,
+      (listener) => { heard = listener; return () => { heard = undefined; }; },
+    );
+    const says = (before: KeyboardSnapshot['physical'], now: KeyboardSnapshot['physical']) => heard?.(at(now), at(before));
+    return { holder, log, says };
+  }
+
+  it('tells the Attach it holds, once, when a keyboard in use is no longer', async () => {
+    const { holder, log, says } = holderHearing();
+    await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+    log.length = 0;
+
+    says('inUse', 'absent');
+
+    expect(log).toEqual(['keyboard work physical keyboard left']);
+  });
+
+  it.each([
+    ['inUse', 'inUse'],
+    ['absent', 'inUse'],
+    ['absent', 'absent'],
+    ['unknown', 'absent'],
+    ['unknown', 'inUse'],
+  ] as const)('tells it nothing for %s then %s', async (before, now) => {
+    const { holder, log, says } = holderHearing();
+    await holder.open({ ...open, destination: { sessionName: 'work', topic: null } });
+    log.length = 0;
+
+    says(before, now);
+
+    expect(log).toEqual([]);
+  });
+
+  it('has nobody to tell while nothing is attached', () => {
+    const { says } = holderHearing();
+    expect(() => says('inUse', 'absent')).not.toThrow();
+  });
 });

@@ -18,7 +18,7 @@ The user chose the goal and the rules of the intent on the planning page
 - **The Attach holds the Keyboard Intent**, `up` or `down`. It lives as long
   as the Attach, so it stays through a split, a Pane change, a Composer and a
   trip to the Host Screen. Only a user act changes it. One pure function,
-  `keyboardTarget`, turns the intent and the facts into the Surface that
+  `keyboardTarget` (ADR 0043 grew it into `keyboardPlan`), turns the intent and the facts into the Surface that
   holds the keyboard: the active Pane's, none, or "elsewhere" when the
   Composer, a Selection, a sheet, the Edge Drawer or another screen has
   input. It replaces the two rules before it.
@@ -63,3 +63,5 @@ The user chose the goal and the rules of the intent on the planning page
 - A hardware keyboard that leaves while the Pane holds the keyboard sets the
   intent `up`, because the system keyboard comes up on it. It can show for a
   moment as down and up again.
+  (ADR 0043 moves this rule to the Attach, which sees only Typing and the
+  Terminal Screen's focus, and gives the exact condition.)

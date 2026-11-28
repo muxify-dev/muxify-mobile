@@ -61,3 +61,17 @@ describe('Unread on visit', () => {
     expect(sent).toEqual([['%1'], ['%1']]);
   });
 });
+
+describe('Terminal Screen focus', () => {
+  it('is in focus from focus until its own blur, and counts overlapping screens', () => {
+    const visit = createPaneVisit();
+    expect(visit.focused()).toBe(false);
+    const first = visit.focus();
+    const second = visit.focus();
+    expect(visit.focused()).toBe(true);
+    first();
+    expect(visit.focused()).toBe(true);
+    second();
+    expect(visit.focused()).toBe(false);
+  });
+});

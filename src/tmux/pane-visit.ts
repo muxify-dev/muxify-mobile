@@ -7,6 +7,8 @@
 export interface PaneVisit {
   /** The Terminal Screen came into focus, which is an entry. Returns the call that says it lost focus. */
   focus(): () => void;
+  /** Whether a Terminal Screen is in focus now. */
+  focused(): boolean;
   /** The Attach moved to another Session: the next look reads every shown Pane. */
   enter(): void;
   /**
@@ -34,6 +36,8 @@ export function createPaneVisit(): PaneVisit {
         focusCount -= 1;
       };
     },
+
+    focused: () => focusCount > 0,
 
     enter() {
       read = new Set();

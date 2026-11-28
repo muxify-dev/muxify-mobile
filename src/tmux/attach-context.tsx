@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { deviceLog } from '@/diagnostics/device-log';
+import { subscribeKeyboard } from '@/hooks/use-keyboard';
 import { deviceHostStore } from '@/storage/device-store';
 import { useSettings } from '@/settings/settings-context';
 import { followHostTopic } from '@/topics/read-topic';
@@ -45,6 +46,7 @@ export function AttachProvider({ children }: { children: ReactNode }) {
           }),
         deviceHostStore(),
         deviceLog(),
+        subscribeKeyboard,
       ),
     [],
   );
