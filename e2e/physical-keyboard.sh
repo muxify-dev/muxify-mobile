@@ -4,6 +4,9 @@ set -euo pipefail
 : "${MUXIFY_E2E_DEVICE:?Set MUXIFY_E2E_DEVICE to a simulator UDID}"
 ad() { agent-device "$@" --session muxify-keyboard-check; }
 trap 'ad close >/dev/null 2>&1 || true' EXIT
+# The sandbox turns minimization off, which makes iOS show the full keyboard over a connected one and
+# the Key Row come back (e2e/keyboard-latch.sh). Here the keyboard is the one in use.
+xcrun simctl spawn "$MUXIFY_E2E_DEVICE" defaults write com.apple.keyboard.preferences AutomaticMinimizationEnabled -bool true
 ad open dev.muxify.app --platform ios --udid "$MUXIFY_E2E_DEVICE" --relaunch
 ad wait 'label="Host Dev Host"' 15000
 ad press 'label="Host Dev Host"' --settle
