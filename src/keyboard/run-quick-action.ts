@@ -5,11 +5,15 @@ type PaneShortcut = Extract<QuickAction, 'split-right' | 'split-down' | 'clear-p
 export function runQuickAction(action: QuickAction, target: {
   control: (key: string) => void;
   paste: () => void;
+  goTo: () => void;
   shortcut: (id: PaneShortcut) => void;
 }) {
   switch (action) {
     case 'paste':
       target.paste();
+      return;
+    case 'go-to':
+      target.goTo();
       return;
     case 'split-right':
     case 'split-down':
