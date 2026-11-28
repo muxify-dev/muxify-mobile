@@ -13,7 +13,7 @@ import {
 } from '@/lib/grip-actions';
 import { panAxis, swipeOf } from '@/lib/pan-axis';
 import {
-  endGrip, GRIP_BUTTON, GRIP_HOLD_MS, gripCentre, gripShown, holdGrip, lightsSlot, moveGrip, WIDE_DRAWER_SCREEN,
+  endGrip, GRIP_BUTTON, GRIP_HOLD_MS, gripCentre, gripShown, holdGrip, lightsSlot, moveGrip, returnToFan, WIDE_DRAWER_SCREEN,
   type ActionSlot, type GripTouch, type Point,
 } from '@/navigation/grip';
 import { useSettings } from '@/settings/settings-context';
@@ -56,7 +56,8 @@ export function EdgeGrip({
   titles?: GripActionTitles;
   /** The finger lit Destinations at this point on screen: the Edge Drawer opens under it. */
   onDestinations: (at: Point) => void;
-  onHeldMove: (to: Point) => void;
+  /** A move of the finger the drawer holds. 'fan' when it went down past the drawer, which closed: the Fan opens again. */
+  onHeldMove: (to: Point) => 'drawer' | 'fan';
   onHeldLift: (to: Point) => void;
   /** VoiceOver's activate: the drawer opens with no finger held, at the button's centre. */
   onOpen: (at: Point) => void;
@@ -113,6 +114,16 @@ export function EdgeGrip({
     clearTint();
   };
   useEffect(() => stopTimer, []);
+  /** The Fan open round the button, from the hold or from a finger back from the drawer. */
+  const openFan = () => {
+    setTouching(true);
+    setFan({ lit: null });
+    cancelAnimation(tint);
+    tint.set(withTiming(1, { duration: 120 }));
+    glow.set(withTiming(1, { duration: 120 }));
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    say('the Fan opened');
+  };
   // A Grip turned off mid-touch, as by a Selection or a sheet, lets the touch go and closes the Fan.
   const [wasEnabled, setWasEnabled] = useState(enabled);
   if (wasEnabled !== enabled) {
@@ -228,10 +239,7 @@ export function EdgeGrip({
               timer.current = null;
               if (touch.current?.phase !== 'waiting') return;
               touch.current = holdGrip(touch.current, buttonCentre);
-              setFan({ lit: null });
-              glow.set(withTiming(1, { duration: 120 }));
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-              say('the Fan opened');
+              openFan();
             }, GRIP_HOLD_MS);
           }}
           onResponderMove={(event) => {
@@ -239,7 +247,10 @@ export function EdgeGrip({
             if (!was) return;
             const to = pointOf(event);
             if (was.phase === 'held') {
-              onHeldMove(to);
+              if (onHeldMove(to) === 'fan') {
+                touch.current = returnToFan(was);
+                openFan();
+              }
               return;
             }
             if (was.phase === 'fan') {

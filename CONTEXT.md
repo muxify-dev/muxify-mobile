@@ -227,6 +227,11 @@ once. A new answer from the Host does not move rows that are on show: it shows
 when the user types or closes Go to. A pick that makes a Session is a Host
 Write. It waits for the Connection while the Host Screen has the focus, and
 sends nothing after the user leaves.
+
+The Terminal Screen and the Web View have no Go to field. ⌘P or the Go to
+Grip action goes to the Host Screen with the keys in its field. Cancel, or
+Escape on a physical keyboard, then goes back to the screen that asked, as it
+was: the Terminal Screen, or the Web View with the same Live Page.
 _Avoid_: search, command palette, quick open, switcher
 
 **New Session at a folder**:
@@ -784,7 +789,10 @@ no slot lights. The lit slot shows its name, and the phone gives a light tick
 each time a slot lights. A lift on a lit Grip action runs it. A lift in the
 dead centre, on no slot, or on a dimmed slot runs nothing. Each lift closes
 the Fan. When Destinations lights, the Fan closes at once and the Edge Drawer
-opens under the finger. The finger cannot go back to the Fan.
+opens under the finger. A slide down past the drawer's panel closes the
+drawer and opens the Fan again, with nothing lit. Destinations does not
+light again until the finger points at another slot or goes back to the
+dead centre, so the drawer does not open again while the finger moves down.
 
 While the Fan is open, it holds the input, as the Edge Drawer does (see
 Keyboard Intent). A Selection or a sheet that opens under the Fan closes it.
@@ -860,8 +868,9 @@ _Avoid_: target, location
 
 **Cancel Zone**:
 While the finger that opened the Edge Drawer is down, the area outside the
-drawer's column. It says "Lift here to close", and turns red while the finger
-is in it. A lift there closes the drawer and picks nothing.
+drawer's column, but not below the panel: there the finger goes back to the
+Fan. It says "Lift here to close", which gets brighter while the finger is in
+it. A lift there closes the drawer and picks nothing.
 _Avoid_: dismiss area, close zone
 
 **Lift Lane**:

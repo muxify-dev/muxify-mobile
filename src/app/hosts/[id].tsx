@@ -1,4 +1,6 @@
-import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import type { NativeStackNavigationProp } from 'expo-router/native-stack';
+import type { ParamListBase } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import type { SearchBarCommands } from 'react-native-screens';
@@ -77,7 +79,7 @@ import { useGoToPick } from '@/hooks/use-go-to-pick';
 import { useHostEntry } from '@/hooks/use-host-entry';
 import { useHostListing } from '@/hooks/use-host-listing';
 import { useSessionActions, type SessionSheet } from '@/hooks/use-session-actions';
-import { takeGoToRequest } from '@/keyboard/go-to-request';
+import { takeGoToRequest, type GoToReturn } from '@/keyboard/go-to-request';
 import { useScreenKeyboardShortcuts } from '@/keyboard/key-commands';
 import { toggled } from '@/lib/toggled';
 import { useSettings } from '@/settings/settings-context';
@@ -195,7 +197,10 @@ export default function HostScreen() {
     askedWith.current = read.ask;
     read.ask('');
   };
+  // The screen that asked for this Go to, which its Cancel goes back to.
+  const goToFrom = useRef<GoToReturn | null>(null);
   const resetGoTo = useCallback(() => {
+    goToFrom.current = null;
     openMode.current = null;
     forgetFolders();
     forgetHostList();
@@ -315,10 +320,25 @@ export default function HostScreen() {
   // that expo-router puts back in the toolbar after a push and a pop no longer
   // takes a tap, and a new field does.
   const barShown = useIsFocused() && hasGoTo && targets === null && filling === null;
-  // ⌘P in the Terminal asks for Go to here, and the field takes it once the bar is back.
+  // ⌘P or the Go to Grip action on another screen asks for Go to here, and
+  // the field takes it once the bar is back. During the pop back here the new
+  // field is not in the window yet and ignores a focus, so it is asked again
+  // when the pop ends.
+  const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   useEffect(() => {
-    if (barShown && takeGoToRequest(id)) search.current?.focus();
-  }, [barShown, id]);
+    if (!barShown) return;
+    const from = takeGoToRequest(id);
+    if (!from) return;
+    goToFrom.current = from;
+    search.current?.focus();
+    return navigation.addListener('transitionEnd', () => search.current?.focus());
+  }, [barShown, id, navigation]);
+  // Cancel or Escape of a Go to that another screen asked for goes back to that screen, as it was.
+  const cancelGoTo = useCallback((close: () => void) => {
+    const from = goToFrom.current;
+    close();
+    if (from && attachedHere) router.push(from.kind === 'page' ? placeTabRoute(from.tab) : '/terminal');
+  }, [router, attachedHere]);
 
   useScreenKeyboardShortcuts({
     ...(barShown ? { 'go-to': () => search.current?.focus(), 'new-topic': newTopic } : {}),
@@ -327,7 +347,7 @@ export default function HostScreen() {
       'list-up': () => setHighlighted(Math.max(onShow - 1, 0)),
       'list-down': () => setHighlighted(Math.max(0, Math.min(onShow + 1, rows.length - 1))),
       'list-pick': pickHighlighted,
-      'list-close': closeGoTo,
+      'list-close': () => cancelGoTo(closeGoTo),
       'new-session-here': () => pickRow(rows[onShow], true),
     }),
   });
@@ -589,7 +609,7 @@ export default function HostScreen() {
             onFocus={fieldFocused}
             onChangeText={changeQuery}
             onSearchButtonPress={fieldSubmitted}
-            onCancelButtonPress={resetGoTo}
+            onCancelButtonPress={() => cancelGoTo(resetGoTo)}
           />
           <Stack.Toolbar placement="bottom">
             <Stack.Toolbar.SearchBarSlot />

@@ -1,6 +1,6 @@
 import {
   AUTOSCROLL_EDGE, AUTOSCROLL_MAX, autoScrollSpeed, DRAWER_ROW_REACH, drawerBottom, endGrip, FAN_DEAD_RADIUS, FAN_RADIUS, FAN_SLOT_SIZE, fanSlotCentre, GRIP_BUTTON, gripCentre, GRIP_HOLD_MS,
-  gripShown, GRIP_SLOP, holdGrip, liftGrip, lightsSlot, moveGrip, slotAt, type ActionSlot, type DrawerFrame, type FanSlot, type GripTouch, type Point,
+  backToFan, gripShown, GRIP_SLOP, holdGrip, inCancelZone, liftGrip, lightsSlot, moveGrip, returnToFan, slotAt, type ActionSlot, type DrawerFrame, type FanSlot, type GripTouch, type Point,
 } from './grip';
 
 const from = { x: 380, y: 400 };
@@ -11,7 +11,8 @@ const finger = (degrees: number, distance: number): Point => ({
   x: centre.x + distance * Math.cos((degrees * Math.PI) / 180),
   y: centre.y - distance * Math.sin((degrees * Math.PI) / 180),
 });
-const fan = (lit: ActionSlot | null = null): GripTouch => ({ phase: 'fan', centre, lit });
+const fan = (lit: ActionSlot | null = null, returned = false): GripTouch => ({ phase: 'fan', centre, lit, returned });
+const held = (at: Point): GripTouch => ({ phase: 'held', at, centre });
 
 describe('holding the Grip', () => {
   it('waits 250 ms, so a hold is shorter than the Selection long press', () => {
@@ -19,7 +20,7 @@ describe('holding the Grip', () => {
   });
 
   it('opens the Fan round the button when the hold ends with the finger still', () => {
-    expect(holdGrip({ phase: 'waiting', from }, centre)).toEqual({ phase: 'fan', centre, lit: null });
+    expect(holdGrip({ phase: 'waiting', from }, centre)).toEqual(fan());
   });
 
   it('leaves a drag a drag: the Fan never opens under a finger that moved first', () => {
@@ -94,13 +95,33 @@ describe('moveGrip in the Fan', () => {
 
   it('hands the finger to the Edge Drawer at the point where it lit Destinations', () => {
     const lit = finger(92, 60);
-    expect(moveGrip(fan(), lit)).toEqual({ phase: 'held', at: lit });
-    expect(moveGrip(fan(2), lit)).toEqual({ phase: 'held', at: lit });
+    expect(moveGrip(fan(), lit)).toEqual(held(lit));
+    expect(moveGrip(fan(2), lit)).toEqual(held(lit));
   });
 
-  it('cannot go back to the Fan once the drawer is open', () => {
-    const held: GripTouch = { phase: 'held', at: finger(90, 60) };
-    expect(moveGrip(held, finger(180, 90))).toBe(held);
+  it('leaves the drawer to the drawer while it is open: a move there lights no slot', () => {
+    const open = held(finger(90, 60));
+    expect(moveGrip(open, finger(180, 90))).toBe(open);
+  });
+
+  it('opens the Fan again with nothing lit when the finger comes back from the drawer', () => {
+    expect(returnToFan(held(finger(90, 60)))).toEqual(fan(null, true));
+  });
+
+  it('does not open the drawer again for a finger still on its way down from it', () => {
+    const back = fan(null, true);
+    expect(moveGrip(back, finger(90, 50))).toBe(back);
+  });
+
+  it('lights a Grip action at once for a finger that came back from the drawer', () => {
+    expect(moveGrip(fan(null, true), finger(150, 90))).toEqual(fan(2));
+  });
+
+  it('opens the drawer again once the finger came back to the centre or pointed elsewhere first', () => {
+    const centred = moveGrip(fan(null, true), finger(90, 20));
+    expect(centred).toEqual(fan());
+    expect(moveGrip(centred, finger(90, 60))).toEqual(held(finger(90, 60)));
+    expect(moveGrip(moveGrip(fan(null, true), finger(180, 90)), finger(90, 60))).toEqual(held(finger(90, 60)));
   });
 
   it('ends the panel just below the point where the finger lit Destinations, as the last row is level with it', () => {
@@ -119,12 +140,12 @@ describe('lightsSlot', () => {
   });
 
   it('ticks when Destinations lights, which opens the drawer', () => {
-    expect(lightsSlot(fan(2), { phase: 'held', at: finger(90, 60) })).toBe(true);
+    expect(lightsSlot(fan(2), held(finger(90, 60)))).toBe(true);
   });
 
   it('does not tick for a move outside the Fan', () => {
     expect(lightsSlot({ phase: 'waiting', from }, { phase: 'dragging', from })).toBe(false);
-    expect(lightsSlot({ phase: 'held', at: from }, { phase: 'held', at: from })).toBe(false);
+    expect(lightsSlot(held(from), held(from))).toBe(false);
   });
 });
 
@@ -154,7 +175,7 @@ describe('endGrip', () => {
 
   it('gives a drag to the screen, and an open drawer to its own lift', () => {
     expect(endGrip({ phase: 'dragging', from }, true, canRun)).toEqual({ kind: 'drag', from });
-    expect(endGrip({ phase: 'held', at: from }, true, canRun)).toEqual({ kind: 'held', at: from });
+    expect(endGrip(held(from), true, canRun)).toEqual({ kind: 'held', at: from });
   });
 });
 
@@ -181,6 +202,32 @@ describe('liftGrip', () => {
 
   it('closes the drawer when the finger lifts in the panel on no row', () => {
     expect(liftGrip({ x: 200, y: 500 }, drawer, rowAt)).toEqual({ kind: 'close' });
+  });
+});
+
+describe('backToFan', () => {
+  const drawer: DrawerFrame = { left: 60, right: 402, top: 100, bottom: 700, lane: 44 };
+  const lit = { x: 380, y: 666 };
+
+  it('gives the finger back to the Fan when it goes down past the panel', () => {
+    expect(backToFan({ x: 380, y: 701 }, lit, drawer)).toBe(true);
+    expect(backToFan({ x: 30, y: 760 }, lit, drawer)).toBe(true);
+  });
+
+  it('keeps the finger in the drawer on the panel and beside it', () => {
+    expect(backToFan({ x: 380, y: 690 }, lit, drawer)).toBe(false);
+    expect(backToFan({ x: 30, y: 400 }, lit, drawer)).toBe(false);
+  });
+
+  it('keeps the finger in the drawer until it is a row below where it lit Destinations, on a panel the keyboard holds up', () => {
+    const raised = { ...drawer, bottom: 640 };
+    expect(backToFan({ x: 380, y: 680 }, lit, raised)).toBe(false);
+    expect(backToFan({ x: 380, y: lit.y + DRAWER_ROW_REACH + 1 }, lit, raised)).toBe(true);
+  });
+
+  it('leaves the area below the panel out of the Cancel Zone, as the finger goes back to the Fan there', () => {
+    expect(inCancelZone({ x: 30, y: 400 }, drawer)).toBe(true);
+    expect(inCancelZone({ x: 200, y: 760 }, drawer)).toBe(false);
   });
 });
 

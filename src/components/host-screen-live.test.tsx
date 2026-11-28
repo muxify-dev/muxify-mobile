@@ -34,6 +34,7 @@ jest.mock('expo-router', () => {
     useRouter: () => mockRouter,
     useLocalSearchParams: () => ({ id: 'host' }),
     useIsFocused: () => mockFocused,
+    useNavigation: () => ({ addListener: () => () => undefined }),
     useFocusEffect: (effect: () => void) => {
       const focused = mockFocused;
       React.useEffect(() => (focused ? effect() : undefined), [effect, focused]);

@@ -188,7 +188,9 @@ export default function WebViewScreen() {
    */
   const gripActions: GripActionRuns = {
     ...NO_GRIP_ACTIONS,
-    'go-to': hostId ? () => { requestGoTo(hostId); goHost(); } : undefined,
+    'go-to': hostId
+      ? () => { requestGoTo(hostId, { kind: 'page', tab: { url: shown.url, page: shown.page, scrollY: shown.scrollY } }); goHost(); }
+      : undefined,
     'title-sheet': chooser.openTitleSheet,
     'host-screen': goHost,
   };

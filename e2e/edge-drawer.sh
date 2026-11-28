@@ -12,7 +12,7 @@
 #      the point where the finger lit Destinations, and a lift in the Lift
 #      Lane closes it and picks nothing: the drawer is drag-only
 #   3  a hold and a slide up and to the left run the Go to action, which goes
-#      to the Host Screen
+#      to the Host Screen, and its Cancel goes back to the Terminal Screen
 #   4  a hold and a slide to the left run the Options action, which opens the
 #      Options sheet
 #   5  a hold, a slide up to Destinations and on to a Pane row goes to that Pane
@@ -25,7 +25,8 @@
 #  10  the drawer marks the row on screen: the Tab on the Web View, the
 #      active Pane on the Terminal Screen, and the Tab again after the round
 #      trip (ADR 0038)
-#  11  the Web View has the Grip too: Go to runs there
+#  11  the Web View has the Grip too: Go to runs there, and its Cancel goes
+#      back to the Web View
 #
 # agent-device draws straight lines only, and the Fan wants a bend: up to
 # light Destinations, then left to a row. So a slide to a row is one straight
@@ -179,6 +180,12 @@ row_at() {
   last_batch | grep -F "\"the Edge Drawer shows $1 at " | tail -1 | sed -E 's/.* at ([0-9]+),([0-9]+)".*/\1 \2/'
 }
 
+# The Go to field's own Cancel, once the field has the keys. iOS draws it as an ✕ named "close".
+cancel_go_to() {
+  agent-device wait 'role=button label="close"' 10000 >/dev/null 2>&1 || fail "Go to has no Cancel: the field did not take the keys"
+  agent-device press 'role=button label="close"' >/dev/null 2>&1 || fail "no press on the Cancel of Go to"
+}
+
 # One slow straight slide of the finger, from $1,$2 to $3,$4, at SPEED points a second.
 # At least 1.5 seconds: a shorter one is not slow enough for the Fan to open in it.
 slide() {
@@ -314,12 +321,15 @@ agent-device wait absent 'label="Close Destinations"' 3000 >/dev/null 2>&1 || fa
 expect_now "0.0" "a lift in the Lift Lane"
 echo "      the drawer opened at $AX,$AY, closed at the lift, and picked nothing"
 
-echo "3/11  a slide to Go to runs it, and goes to the Host Screen"
+echo "3/11  a slide to Go to runs it, goes to the Host Screen, and Cancel goes back"
 RAN=$(said "the Fan ran go-to")
 slide_to_slot 120
 said_more "the Fan ran go-to" "$RAN" || fail "the lift on the Go to slot ran no Go to"
 agent-device wait 'label="Host Options"' 10000 >/dev/null 2>&1 || fail "Go to did not reach the Host Screen"
-echo "      the Host Screen"
+cancel_go_to
+agent-device wait 'label="Open Terminal chooser" enabled=true' 10000 >/dev/null 2>&1 \
+  || fail "Cancel of Go to did not go back to the Terminal Screen"
+echo "      the Host Screen, and Cancel went back to the Terminal Screen"
 attach
 read -r GX GY <<<"$(grip_centre)"
 
@@ -406,7 +416,9 @@ RAN=$(said "the Fan ran go-to")
 slide_to_slot 120
 said_more "the Fan ran go-to" "$RAN" || fail "the lift on the Go to slot ran no Go to on the Web View"
 agent-device wait 'label="Host Options"' 10000 >/dev/null 2>&1 || fail "Go to on the Web View did not reach the Host Screen"
-echo "      Go to from the Web View reached the Host Screen"
+cancel_go_to
+agent-device wait 'id="web-view-title"' 10000 >/dev/null 2>&1 || fail "Cancel of Go to did not go back to the Web View"
+echo "      Go to from the Web View reached the Host Screen, and Cancel went back to the page"
 
 agent-device close >/dev/null 2>&1
 echo "PASS"

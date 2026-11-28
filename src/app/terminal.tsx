@@ -1018,7 +1018,7 @@ export default function TerminalScreen() {
   }) : null, [attach, runVerb, clearPane, copyPaneText]);
 
   const shortcutHandlers = useMemo<KeyboardHandlers>(() => attach && paneActions ? {
-    ...(hostId ? { 'go-to': () => { requestGoTo(hostId); goHost(); } } : {}),
+    ...(hostId ? { 'go-to': () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } } : {}),
     ...paneActions,
     'pane-left': () => attach.selectPaneToward('left'),
     'pane-down': () => attach.selectPaneToward('down'),
@@ -1203,7 +1203,7 @@ export default function TerminalScreen() {
    */
   const gripActions: GripActionRuns = {
     ...NO_GRIP_ACTIONS,
-    'go-to': hostId ? () => { requestGoTo(hostId); goHost(); } : undefined,
+    'go-to': hostId ? () => { requestGoTo(hostId, { kind: 'terminal' }); goHost(); } : undefined,
     compose: optionRun(options, 'compose'),
     options: () => setOptionsOpen(true),
     keyboard: optionRun(options, 'keyboard'),

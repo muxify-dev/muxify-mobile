@@ -45,7 +45,13 @@ actions round the button. Gleb chose each part on the planning page of
   the Edge Drawer. The moment it lights, the Fan closes and the drawer opens
   under the finger, with no wait. From there the held-drawer flow of ADR 0036
   runs as it did: light rows, the Cancel Zone, the Lift Lane, the automatic
-  scroll. The finger cannot go back to the Fan. A lift on another lit slot
+  scroll. A slide down past the drawer's panel closes the drawer and opens
+  the Fan again, with nothing lit (amended 28 Nov 2026, after use: Gleb
+  asked for a way back to the other actions). Destinations does not light
+  again until the finger points at another slot or comes back to the dead
+  centre, so the drawer does not open again under a finger on its way down.
+  The Cancel Zone is no longer tinted red, and the area below the panel is
+  not part of it. A lift on another lit slot
   runs that Grip action. A lift in the dead centre, on a slot that is dimmed,
   or on no slot runs nothing. Each lift closes the Fan, and so does a touch
   that the system takes, with nothing run.

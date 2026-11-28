@@ -7,7 +7,8 @@
  * A finger on it waits `GRIP_HOLD_MS`. Still, it opens the Fan: four Grip
  * actions round the button, which the finger lights by direction and a lift
  * runs. The Destinations action, straight up, hands the finger to the Edge
- * Drawer, so a slide onto a row and a lift there picks that row. One that
+ * Drawer, so a slide onto a row and a lift there picks that row. A slide down
+ * past the drawer gives the finger back to the Fan. One that
  * moves `GRIP_SLOP` first is a drag, which the screen gives its own sideways
  * gesture: the Pane Swipe on the Terminal Screen. See ADR 0042.
  */
@@ -129,18 +130,27 @@ export function slotAt(centre: Point, finger: Point): FanSlot | null {
  * - `fan`: the hold ended and the Fan is open round `centre`, the button's
  *   centre. `lit` is the Grip action the finger points at. It is never
  *   Destinations, which hands the finger to the drawer the moment it lights.
+ *   `returned` is true while a finger that came back from the drawer still
+ *   points at Destinations: it lights nothing until it points elsewhere or
+ *   comes back to the centre, so the drawer does not open again under a
+ *   finger that is still on its way down.
  * - `held`: the finger lit Destinations at `at`, and the Edge Drawer is open
- *   under it. The finger cannot go back to the Fan.
+ *   under it. A slide down past the drawer goes back to the Fan round `centre`.
  */
 export type GripTouch =
   | { phase: 'waiting'; from: Point }
   | { phase: 'dragging'; from: Point }
-  | { phase: 'fan'; centre: Point; lit: ActionSlot | null }
-  | { phase: 'held'; at: Point };
+  | { phase: 'fan'; centre: Point; lit: ActionSlot | null; returned: boolean }
+  | { phase: 'held'; at: Point; centre: Point };
 
 /** The hold ended with the finger still: the Fan opens round the button's `centre`. */
 export function holdGrip(touch: GripTouch, centre: Point): GripTouch {
-  return touch.phase === 'waiting' ? { phase: 'fan', centre, lit: null } : touch;
+  return touch.phase === 'waiting' ? { phase: 'fan', centre, lit: null, returned: false } : touch;
+}
+
+/** The finger went down past the drawer, which closed: the Fan opens again round the button, with nothing lit. */
+export function returnToFan(touch: GripTouch): GripTouch {
+  return touch.phase === 'held' ? { phase: 'fan', centre: touch.centre, lit: null, returned: true } : touch;
 }
 
 /**
@@ -154,8 +164,10 @@ export function moveGrip(touch: GripTouch, to: Point): GripTouch {
       return distance(touch.from, to) > GRIP_SLOP ? { phase: 'dragging', from: touch.from } : touch;
     case 'fan': {
       const slot = slotAt(touch.centre, to);
-      if (slot === DESTINATIONS_SLOT) return { phase: 'held', at: to };
-      return slot === touch.lit ? touch : { ...touch, lit: slot };
+      if (slot === DESTINATIONS_SLOT && !touch.returned) return { phase: 'held', at: to, centre: touch.centre };
+      const lit = slot === DESTINATIONS_SLOT ? null : slot;
+      const returned = touch.returned && slot === DESTINATIONS_SLOT;
+      return lit === touch.lit && returned === touch.returned ? touch : { ...touch, lit, returned };
     }
     default:
       return touch;
@@ -233,7 +245,18 @@ export function drawerBottom(anchorY: number, floorY: number): number {
 
 /** Whether a held finger at `point` is in the Lift Lane. */
 export function inLiftLane(point: Point, drawer: DrawerFrame): boolean {
-  return !inCancelZone(point, drawer) && point.x >= drawer.right - drawer.lane;
+  return !outsidePanel(point, drawer) && point.x >= drawer.right - drawer.lane;
+}
+
+/**
+ * Whether a held finger at `point` has gone down past the drawer, which then
+ * closes and gives the finger back to the Fan. That is below the panel, and
+ * at least `DRAWER_ROW_REACH` below `at`, where the finger lit Destinations:
+ * a panel held up by the keyboard can end above that point, and the finger
+ * must not go back the moment the drawer opens.
+ */
+export function backToFan(point: Point, at: Point, drawer: DrawerFrame): boolean {
+  return point.y > Math.max(drawer.bottom, at.y + DRAWER_ROW_REACH);
 }
 
 /**
@@ -246,13 +269,20 @@ export function inLiftLane(point: Point, drawer: DrawerFrame): boolean {
 export type GripLift = { kind: 'close' } | { kind: 'pick'; key: string };
 
 export function liftGrip(to: Point, drawer: DrawerFrame, rowAt: (point: Point) => string | null): GripLift {
-  if (inCancelZone(to, drawer) || inLiftLane(to, drawer)) return { kind: 'close' };
+  if (outsidePanel(to, drawer) || inLiftLane(to, drawer)) return { kind: 'close' };
   const key = rowAt(to);
   return key === null ? { kind: 'close' } : { kind: 'pick', key };
 }
 
-/** Whether a held finger at `point` is in the Cancel zone: anywhere outside the panel. */
+/**
+ * Whether a held finger at `point` is in the Cancel zone: outside the panel,
+ * but not below it, where the finger goes back to the Fan.
+ */
 export function inCancelZone(point: Point, drawer: DrawerFrame): boolean {
+  return outsidePanel(point, drawer) && point.y <= drawer.bottom;
+}
+
+function outsidePanel(point: Point, drawer: DrawerFrame): boolean {
   return point.x < drawer.left || point.y < drawer.top || point.y > drawer.bottom;
 }
 
@@ -275,10 +305,10 @@ export interface ListWindow {
  * The scroll starts `AUTOSCROLL_EDGE` points in from the list's top or
  * bottom and gets faster as the finger goes nearer, up to `AUTOSCROLL_MAX`
  * on the edge. Over the header above the list, still in the panel, it is
- * the fastest. In the Cancel zone it is zero: there the lift closes.
+ * the fastest. Outside the panel it is zero.
  */
 export function autoScrollSpeed(point: Point, drawer: DrawerFrame, list: ListWindow): number {
-  if (inCancelZone(point, drawer)) return 0;
+  if (outsidePanel(point, drawer)) return 0;
   const intoTop = list.top + AUTOSCROLL_EDGE - point.y;
   if (intoTop > 0) return -AUTOSCROLL_MAX * Math.min(intoTop / AUTOSCROLL_EDGE, 1);
   const intoBottom = point.y - (list.bottom - AUTOSCROLL_EDGE);

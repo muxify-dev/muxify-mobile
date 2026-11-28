@@ -10,7 +10,7 @@ import { useKeyboardFrame } from '@/hooks/use-keyboard-frame';
 import type { DestinationRow } from '@/domain/destinations';
 import { directoryName } from '@/lib/paths';
 import {
-  autoScrollSpeed, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
+  autoScrollSpeed, backToFan, drawerBottom, GRIP_SLOP, inCancelZone, inLiftLane, liftGrip, LIFT_LANE, WIDE_DRAWER_SCREEN, type DrawerFrame, type ListWindow, type Point,
 } from '@/navigation/grip';
 import { deviceLog } from '@/diagnostics/device-log';
 import { speakingAs } from '@/diagnostics/log';
@@ -217,6 +217,14 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
     }
   }, [frame]);
 
+  /** The held finger is no longer the drawer's. */
+  const letGo = () => {
+    heldAt.current = null;
+    finger.current = null;
+    stopScrolling();
+    setHold(null);
+  };
+
   const grip = {
     onDestinations: (at: Point) => {
       heldAt.current = at;
@@ -225,16 +233,23 @@ export function useEdgeSwitcher(state: EdgeDrawerState, open: () => void) {
       opening(at);
       setTimeout(() => { if (heldAt.current === at) sayWhereRowsAre(at); }, LAID_OUT_MS);
     },
-    onHeldMove: (to: Point) => {
+    /** 'fan' when the finger went down past the panel: the drawer closes, and the Grip opens its Fan again. */
+    onHeldMove: (to: Point): 'drawer' | 'fan' => {
+      const at = heldAt.current;
+      const panel = frame();
+      if (at && panel && backToFan(to, at, panel)) {
+        letGo();
+        say('the finger went back from the Edge Drawer to the Fan');
+        onDismiss();
+        return 'fan';
+      }
       finger.current = to;
       light(to);
       startScrolling();
+      return 'drawer';
     },
     onHeldLift: (to: Point) => {
-      heldAt.current = null;
-      finger.current = null;
-      stopScrolling();
-      setHold(null);
+      letGo();
       const panel = frame();
       const lift = panel ? liftGrip(to, panel, rowAt) : null;
       const row = lift?.kind === 'pick' ? rows.find((each) => each.key === lift.key) : undefined;
@@ -309,7 +324,7 @@ export function EdgeDrawer({
       onLayout={() => overlay.current?.measureInWindow((x, y, w, h) => measure.overlay({ x, y, width: w, height: h }))}>
       {scrim ? (
         <Pressable
-          style={[StyleSheet.absoluteFill, { backgroundColor: cancelling ? CANCEL_TINT : wide ? 'transparent' : SCRIM }]}
+          style={[StyleSheet.absoluteFill, { backgroundColor: wide ? 'transparent' : SCRIM }]}
           onPress={onDismiss}
           accessibilityLabel="Close Destinations"
           accessibilityRole="button">
@@ -518,7 +533,6 @@ const LAID_OUT_MS = 300;
 
 const say = speakingAs(deviceLog(), 'screen');
 const SCRIM = 'rgba(0, 0, 0, 0.35)';
-const CANCEL_TINT = 'rgba(160, 30, 30, 0.45)';
 
 const styles = StyleSheet.create({
   column: { position: 'absolute', top: PANEL_MARGIN, right: PANEL_MARGIN, justifyContent: 'flex-end' },
